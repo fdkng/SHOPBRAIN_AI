@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ShopBrain AI</title>
+  <meta name="description" content="L’assistant intelligent qui automatise ton e-commerce.">
+  <style>
+    body {
+      font-family: 'Poppins', sans-serif;
+      background-color: #0A2540;
+      color: white;
+      text-align: center;
+      padding: 60px;
+    }
+    img {
+      width: 120px;
+      margin-bottom: 20px;
+    }
+    h1 {
+      font-size: 2.5em;
+      margin-bottom: 10px;
+    }
+    p {
+      font-size: 1.2em;
+      color: #ddd;
+    }
+    .button {
+      display: inline-block;
+      background-color: #0077FF;
+      color: white;
+      padding: 15px 25px;
+      border-radius: 8px;
+      text-decoration: none;
+      margin-top: 25px;
+      font-weight: bold;
+      transition: background-color 0.3s;
+    }
+    .button:hover {
+      background-color: #005FCC;
+    }
+    footer {
+      margin-top: 50px;
+      font-size: 0.9em;
+      color: #aaa;
+    }
+  </style>
+</head>
+<body>
+  <img src="https://via.placeholder.com/120" alt="Logo ShopBrain AI">
+  <h1>ShopBrain AI</h1>
+  <p>L’intelligence artificielle qui booste ton business e-commerce.</p>
+  <p><em>Bientôt disponible.</em> Rejoins la liste d’attente pour le lancement.</p>
+  <a href="#" class="button">Rejoindre la liste d’attente</a>
+  <footer>© 2025 ShopBrain AI — Powered by AI Automation</footer>
+</body>
+</html>
