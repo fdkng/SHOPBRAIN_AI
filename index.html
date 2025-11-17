@@ -15,9 +15,11 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
+      justify-content: flex-start; /* Pour coller le contenu en haut */
       text-align: center;
       min-height: 100vh;
+      padding-top: 50px; /* Décalage depuis le haut */
+      box-sizing: border-box;
     }
 
     .logo {
@@ -39,11 +41,11 @@
       font-size: 18px;
       color: #d3d3d3;
       max-width: 600px;
-      margin-bottom: 2px; /* FORM REMONTÉ AU MAXIMUM */
+      margin-bottom: 10px; /* rapproché du formulaire */
     }
 
     form {
-      margin-top: 0px;  /* FORM COLLÉ AU TEXTE */
+      margin-top: 0px;
       margin-bottom: 10px;
     }
 
@@ -85,13 +87,13 @@
 
   <img class="logo" src="https://i.postimg.cc/BbVk5fzw/upscalemedia-transformed.png" alt="ShopBrain AI Logo">
 
-  <h1>ShopBrain AI</h1>
-  <p>L’assistant intelligent qui révolutionne la gestion et la croissance des boutiques en ligne.</p>
-
   <form action="https://formspree.io/f/mvgdewrl" method="POST">
     <input type="email" name="email" placeholder="Entrez votre email" required>
     <button type="submit">Prévenez-moi</button>
   </form>
+
+  <h1>ShopBrain AI</h1>
+  <p>L’assistant intelligent qui révolutionne la gestion et la croissance des boutiques en ligne.</p>
 
   <footer>© 2025 ShopBrain AI. Tous droits réservés.</footer>
 
