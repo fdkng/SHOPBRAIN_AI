@@ -18,16 +18,19 @@
       text-align: center;
     }
 
-    /* Logo */
+    /* Logo — pas de bordure, légèrement plus grand */
     img {
-      width: 220px;
-      margin-bottom: 10px;
+      width: 185px;    /* ← légèrement plus grand que l'ancien (160px) */
+      margin-bottom: 20px;
       display: block;
+      border-radius: 0;   /* ← enlève toute bordure / arrondi */
+      box-shadow: none;   /* ← enlève la bordure d'ombre */
     }
 
     h1 {
       font-size: 36px;
-      margin: 8px 0;
+      margin: 10px 0;
+      color: #ffffff;
     }
 
     p {
@@ -37,9 +40,9 @@
       margin: 5px auto 20px auto;
     }
 
-    /* Formulaire remonté */
+    /* Remonte le email légèrement */
     form {
-      margin-top: 5px; /* <<< remonte le email */
+      margin-top: 5px;
     }
 
     input[type="email"] {
@@ -77,13 +80,13 @@
 </head>
 <body>
 
-  <!-- Logo sans bordure -->
+  <!-- Logo HD sans bordure -->
   <img src="https://i.postimg.cc/wRDwHZgh/SHOPBRAIN-AI-LOGO.png" alt="ShopBrain AI Logo">
 
   <h1>ShopBrain AI</h1>
   <p>L’assistant intelligent qui révolutionne la gestion et la croissance des boutiques en ligne.</p>
 
-  <!-- Formspree intégré -->
+  <!-- Formulaire Formspree -->
   <form action="https://formspree.io/f/mvgdewrl" method="POST">
     <input type="email" name="email" placeholder="Entrez votre email" required>
     <button type="submit">Prévenez-moi</button>
