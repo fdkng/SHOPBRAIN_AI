@@ -1,99 +1,95 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SHOPBRAIN AI</title>
-
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ShopBrain AI – Bientôt disponible</title>
   <style>
     body {
       margin: 0;
-      padding: 0;
-      background: #ffffff;
-      font-family: Arial, sans-serif;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: linear-gradient(135deg, #0a0a23, #1b1b3a);
+      color: #ffffff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
       text-align: center;
     }
 
-    .container {
-      max-width: 600px;
-      margin: 0 auto;
-      padding: 20px;
-    }
-
-    /* --- LOGO SANS BORDURE, SANS CADRE, EXACTE GRANDEUR RESPONSIVE --- */
-    .logo-container {
-      width: 100%;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-    }
-
-    .logo {
-      width: 100%;
-      height: auto;
-      max-width: 420px; /* ← ajuste ici si tu veux plus grand ou plus petit */
+    /* Logo */
+    img {
+      width: 220px;
+      margin-bottom: 10px;
       display: block;
-      border: none !important;
-      outline: none !important;
-      box-shadow: none !important;
     }
 
     h1 {
-      margin-top: 20px;
-      font-size: 28px;
-      font-weight: bold;
+      font-size: 36px;
+      margin: 8px 0;
     }
 
     p {
       font-size: 18px;
-      margin-bottom: 20px;
+      color: #d3d3d3;
+      max-width: 600px;
+      margin: 5px auto 20px auto;
     }
 
-    /* Formulaire formspree */
+    /* Formulaire remonté */
+    form {
+      margin-top: 5px; /* <<< remonte le email */
+    }
+
     input[type="email"] {
-      padding: 12px;
-      width: 80%;
-      max-width: 300px;
+      padding: 12px 16px;
+      width: 250px;
+      border: none;
+      border-radius: 8px;
+      outline: none;
       font-size: 16px;
-      border-radius: 6px;
-      border: 1px solid #ccc;
-      margin-bottom: 10px;
+      margin-right: 10px;
     }
 
     button {
-      padding: 12px 20px;
-      background: black;
+      background-color: #00bfff;
       color: white;
       border: none;
-      border-radius: 6px;
-      cursor: pointer;
+      padding: 12px 18px;
+      border-radius: 8px;
       font-size: 16px;
+      cursor: pointer;
+      transition: 0.2s;
     }
 
     button:hover {
-      background: #333;
+      background-color: #0099cc;
+    }
+
+    footer {
+      position: absolute;
+      bottom: 15px;
+      font-size: 14px;
+      color: #888;
     }
   </style>
 </head>
-
 <body>
-  <div class="container">
 
-    <!-- LOGO SANS BORDURE -->
-    <div class="logo-container">
-      <img src="logo.png" alt="SHOPBRAIN AI Logo" class="logo" />
-    </div>
+  <!-- Logo sans bordure -->
+  <img src="https://i.postimg.cc/wRDwHZgh/SHOPBRAIN-AI-LOGO.png" alt="ShopBrain AI Logo">
 
-    <h1>SHOPBRAIN AI</h1>
-    <p>Inscris ton e-mail pour être averti du lancement.</p>
+  <h1>ShopBrain AI</h1>
+  <p>L’assistant intelligent qui révolutionne la gestion et la croissance des boutiques en ligne.</p>
 
-    <!-- FORMULAIRE FORMSPREE -->
-    <form action="https://formspree.io/f/mvgdewrl" method="POST">
-      <input type="email" name="email" placeholder="Votre e-mail" required />
-      <br />
-      <button type="submit">Prévenez-moi</button>
-    </form>
+  <!-- Formspree intégré -->
+  <form action="https://formspree.io/f/mvgdewrl" method="POST">
+    <input type="email" name="email" placeholder="Entrez votre email" required>
+    <button type="submit">Prévenez-moi</button>
+  </form>
 
-  </div>
+  <footer>© 2025 ShopBrain AI. Tous droits réservés.</footer>
+
 </body>
 </html>
