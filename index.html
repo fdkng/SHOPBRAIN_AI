@@ -1,14 +1,13 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ShopBrain AI – Bientôt disponible</title>
-
   <style>
+    /* ===== Styles généraux ===== */
     body {
       margin: 0;
-      padding: 0;
       font-family: 'Segoe UI', Arial, sans-serif;
       background: linear-gradient(135deg, #0a0a23, #1b1b3a);
       color: #ffffff;
@@ -16,53 +15,68 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      text-align: center;
       min-height: 100vh;
+      text-align: center;
+      padding: 20px;
+      box-sizing: border-box;
     }
 
-    .logo {
-      width: 100%;
-      max-width: 420px;
-      height: auto;
-      display: block;
-      margin-bottom: 20px; /* ← légèrement réduit */
-      border: none;
-      box-shadow: none;
+    /* ===== Logo ===== */
+    img {
+      width: 90%;          /* s’adapte à la largeur de l’écran */
+      max-width: 250px;    /* limite sur grands écrans */
+      height: auto;        /* garde proportions */
+      margin-bottom: 20px;
+      border-radius: 24px;
+      box-shadow: 0 6px 16px rgba(0,0,0,0.3);
+      transition: transform 0.3s ease;
     }
 
+    img:hover {
+      transform: scale(1.05);
+    }
+
+    /* ===== Titres ===== */
     h1 {
-      font-size: 38px;
+      font-size: 36px;
       margin: 10px 0;
+      color: #ffffff;
     }
 
     p {
       font-size: 18px;
       color: #d3d3d3;
       max-width: 600px;
-      margin-bottom: 20px; /* ← un peu remonté */
+      margin: 10px auto 30px auto;
     }
 
-    form {
-      margin-top: 5px;  /* ← FORM REMONTÉ */
-      margin-bottom: 10px;
+    /* ===== Formulaire ===== */
+    .form-container {
+      display: flex;
+      flex-direction: row; /* côte à côte sur desktop */
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 10px;
+      margin-bottom: 40px;
+      width: 100%;
+      max-width: 400px;
     }
 
     input[type="email"] {
       padding: 12px 16px;
-      width: 260px;
+      flex: 1;             /* prend toute la place disponible */
       border: none;
-      border-radius: 10px;
-      font-size: 16px;
+      border-radius: 8px;
       outline: none;
-      margin-right: 10px;
+      font-size: 16px;
     }
 
     button {
       background-color: #00bfff;
       color: white;
       border: none;
-      padding: 12px 20px;
-      border-radius: 10px;
+      padding: 12px 18px;
+      border-radius: 8px;
       font-size: 16px;
       cursor: pointer;
       transition: 0.2s;
@@ -70,30 +84,50 @@
 
     button:hover {
       background-color: #0099cc;
-      transform: scale(1.05);
     }
 
+    /* ===== Footer ===== */
     footer {
-      position: absolute;
-      bottom: 15px;
       font-size: 14px;
       color: #888;
+    }
+
+    /* ===== Responsive pour iPhone / petits écrans ===== */
+    @media (max-width: 600px) {
+      h1 {
+        font-size: 28px;
+      }
+      p {
+        font-size: 16px;
+      }
+      .form-container {
+        flex-direction: column; /* empile email et bouton */
+        gap: 12px;
+        max-width: 90%;
+      }
+      input[type="email"], button {
+        width: 100%;  /* prennent toute la largeur */
+      }
     }
   </style>
 </head>
 <body>
+  <!-- ===== Logo ===== -->
+  <img src="https://i.postimg.cc/wRDwHZgh/SHOPBRAIN-AI-LOGO.png" alt="ShopBrain AI Logo">
 
-  <img class="logo" src="https://i.postimg.cc/BbVk5fzw/upscalemedia-transformed.png" alt="ShopBrain AI Logo">
-
+  <!-- ===== Titre et description ===== -->
   <h1>ShopBrain AI</h1>
   <p>L’assistant intelligent qui révolutionne la gestion et la croissance des boutiques en ligne.</p>
 
-  <form action="https://formspree.io/f/mvgdewrl" method="POST">
-    <input type="email" name="email" placeholder="Entrez votre email" required>
-    <button type="submit">Prévenez-moi</button>
-  </form>
+  <!-- ===== Formulaire email ===== -->
+  <div class="form-container">
+    <form action="https://formspree.io/f/mvgdewrl" method="POST">
+      <input type="email" name="email" placeholder="Entrez votre email" required>
+      <button type="submit">Prévenez-moi</button>
+    </form>
+  </div>
 
+  <!-- ===== Footer ===== -->
   <footer>© 2025 ShopBrain AI. Tous droits réservés.</footer>
-
 </body>
 </html>
