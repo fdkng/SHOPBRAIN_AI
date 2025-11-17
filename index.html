@@ -15,11 +15,17 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: flex-start; /* Pour coller le contenu en haut */
-      text-align: center;
+      justify-content: space-between; /* contenu en haut, footer en bas */
       min-height: 100vh;
-      padding-top: 50px; /* Décalage depuis le haut */
       box-sizing: border-box;
+    }
+
+    .content {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      margin-top: 40px; /* espace depuis le haut */
     }
 
     .logo {
@@ -41,7 +47,7 @@
       font-size: 18px;
       color: #d3d3d3;
       max-width: 600px;
-      margin-bottom: 10px; /* rapproché du formulaire */
+      margin-bottom: 15px;
     }
 
     form {
@@ -76,24 +82,41 @@
     }
 
     footer {
-      position: absolute;
-      bottom: 15px;
       font-size: 14px;
       color: #888;
+      margin-bottom: 15px;
+    }
+
+    @media (max-width: 600px) {
+      h1 {
+        font-size: 32px;
+      }
+      p {
+        font-size: 16px;
+      }
+      input[type="email"] {
+        width: 80%;
+        margin-bottom: 10px;
+      }
+      button {
+        width: 80%;
+      }
     }
   </style>
 </head>
 <body>
 
-  <img class="logo" src="https://i.postimg.cc/BbVk5fzw/upscalemedia-transformed.png" alt="ShopBrain AI Logo">
+  <div class="content">
+    <img class="logo" src="https://i.postimg.cc/BbVk5fzw/upscalemedia-transformed.png" alt="ShopBrain AI Logo">
 
-  <form action="https://formspree.io/f/mvgdewrl" method="POST">
-    <input type="email" name="email" placeholder="Entrez votre email" required>
-    <button type="submit">Prévenez-moi</button>
-  </form>
+    <h1>ShopBrain AI</h1>
+    <p>L’assistant intelligent qui révolutionne la gestion et la croissance des boutiques en ligne.</p>
 
-  <h1>ShopBrain AI</h1>
-  <p>L’assistant intelligent qui révolutionne la gestion et la croissance des boutiques en ligne.</p>
+    <form action="https://formspree.io/f/mvgdewrl" method="POST">
+      <input type="email" name="email" placeholder="Entrez votre email" required>
+      <button type="submit">Prévenez-moi</button>
+    </form>
+  </div>
 
   <footer>© 2025 ShopBrain AI. Tous droits réservés.</footer>
 
