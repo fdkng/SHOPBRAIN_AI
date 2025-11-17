@@ -18,15 +18,14 @@
       text-align: center;
     }
 
+    /* IMAGE = taille naturelle, aucun effet */
     img {
-      width: 100%;
-      max-width: 380px; /* taille idéale */
+      width: auto;
       height: auto;
-      object-fit: cover;
-      image-rendering: crisp-edges;
-      border-radius: 20px;
-      box-shadow: 0 6px 16px rgba(0,0,0,0.3);
+      max-width: 90%; /* sécurité mobile */
+      max-height: 70vh; /* pour éviter de dépasser l’écran */
       margin-bottom: 20px;
+      display: block;
     }
 
     h1 {
@@ -77,12 +76,13 @@
 </head>
 <body>
 
+  <!-- LOGO taille naturelle -->
   <img src="https://i.postimg.cc/BbVk5fzw/upscalemedia-transformed.png" alt="ShopBrain AI Logo">
 
   <h1>ShopBrain AI</h1>
   <p>L’assistant intelligent qui révolutionne la gestion et la croissance des boutiques en ligne.</p>
 
-  <!-- FORMULAIRE EMAIL AVEC TON FORM ENDPOINT -->
+  <!-- FORM EMAIL FONCTIONNEL -->
   <form action="https://formspree.io/f/mvgdewrl" method="POST">
       <input type="email" name="email" placeholder="Entrez votre email" required>
       <button type="submit">Prévenez-moi</button>
