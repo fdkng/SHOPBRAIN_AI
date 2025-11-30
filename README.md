@@ -7,9 +7,14 @@ A complete, production-ready fullstack application to help e-commerce sellers op
 - Supabase Auth (email/password signup)
 - Server-side history (RLS-protected)
 - Stripe pricing (3 plans: $99, $199, $299; 14-day free trial)
-- Deployed to Vercel (frontend) + Railway (backend) + Supabase (database)
+- Deployed to Vercel (frontend) + Render (backend) + Supabase (database)
 
-## Quick Start
+## 🚀 Quick Start
+
+**New to this project?** Start here:
+1. Read [QUICKSTART.md](./QUICKSTART.md) for local development
+2. For production deployment, see [COMPLETE_DEPLOYMENT.md](./COMPLETE_DEPLOYMENT.md)
+3. Check [DEPLOYMENT_CHECKLIST.md](./DEPLOYMENT_CHECKLIST.md) for step-by-step guide
 
 ### Backend
 
