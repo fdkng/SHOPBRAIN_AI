@@ -1,0 +1,11 @@
+import openai
+
+openai.api_key = "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"
+
+response = openai.Completion.create(
+    model="text-davinci-003",
+    prompt="Salut, test OpenAI !",
+    max_tokens=20
+)
+
+print(response.choices[0].text.strip())
