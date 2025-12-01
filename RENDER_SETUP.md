@@ -9,9 +9,9 @@ In the service settings, verify:
 - **Name**: shopbrain-backend
 - **GitHub Repo**: fdkng/SHOPBRAIN_AI
 - **Branch**: main
-- **Root Directory**: `backend` (IMPORTANT!)
-- **Build Command**: `pip install -r requirements.txt`
-- **Start Command**: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+- **Root Directory**: leave blank (use default repo root)
+- **Build Command**: `pip install -r backend/requirements.txt`
+- **Start Command**: `uvicorn main:app --app-dir backend --host 0.0.0.0 --port $PORT`
 
 ## Step 3: Add Environment Variables
 Go to **Environment** tab in Render service and add these:
