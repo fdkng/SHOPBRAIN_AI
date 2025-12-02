@@ -1,123 +1,117 @@
-import React, { useState } from 'react'
+import React from 'react'
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
-
-const PLANS = [
-  {
-    name: 'Starter',
-    price: '99',
-    description: 'Perfect to get started',
-    features: ['100 product optimizations/month', 'Basic analytics', 'Email support'],
-    priceId: 'price_1SQfzmPSvADOSbOzpxoK8hG3',
-  },
-  {
-    name: 'Pro',
-    price: '199',
-    description: 'For growing businesses',
-    features: ['Unlimited optimizations', 'Advanced analytics', 'Priority support', 'API access'],
-    priceId: 'price_1SQg0xPSvADOSbOzrZbOGs06',
-    popular: true,
-  },
-  {
-    name: 'Enterprise',
-    price: '299',
-    description: 'For large-scale operations',
-    features: ['Custom optimizations', 'Dedicated support', 'Advanced integrations', 'Team access'],
-    priceId: 'price_1SQg3CPSvADOSbOzHXSoDkGN',
-  },
-]
-
-export default function Pricing({ user }) {
-  const [loading, setLoading] = useState(null)
-  const [message, setMessage] = useState('')
-
-  async function handleCheckout(plan) {
-    setLoading(plan.price)
-    setMessage('')
-
-    try {
-      const res = await fetch(`${API_BASE}/create-checkout-session`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('sb_token') || ''}`,
-        },
-        body: JSON.stringify({ plan: plan.price, email: user.email }),
-      })
-
-      const data = await res.json()
-      if (data.url) {
-        window.location.href = data.url
-      } else {
-        setMessage('Error creating checkout session')
-      }
-    } catch (e) {
-      setMessage('Network error')
-    } finally {
-      setLoading(null)
-    }
-  }
+export default function Pricing() {
+  const plans = [
+    {
+      name: 'Standard',
+      price: '99',
+      color: 'from-blue-500 to-cyan-600',
+      stripeLink: 'https://buy.stripe.com/4gMfZj0q1fk9dQk4sh',
+      features: [
+        { text: 'Détecte jusqu\'à 5 produits faibles', icon: '🔍' },
+        { text: 'Titres + descriptions simples', icon: '✍️' },
+        { text: 'Actions sur 5 produits max', icon: '⚡' },
+        { text: 'Rapport hebdomadaire PDF/email', icon: '📊' },
+        { text: 'Cross-sell limité aux produits principaux', icon: '🛒' },
+      ],
+    },
+    {
+      name: 'Pro',
+      price: '199',
+      color: 'from-purple-500 to-pink-600',
+      stripeLink: 'https://buy.stripe.com/bJebJ36Op5Jz13y3od',
+      popular: true,
+      features: [
+        { text: 'Détecte jusqu\'à 20 produits faibles', icon: '🔍' },
+        { text: 'Titres + descriptions avancées', icon: '✍️' },
+        { text: 'Ajustements sur 20 produits', icon: '⚡' },
+        { text: 'Rapport hebdo complet', icon: '📊' },
+        { text: 'Suggestions cross-sell avancées', icon: '🛒' },
+      ],
+    },
+    {
+      name: 'Premium',
+      price: '299',
+      color: 'from-yellow-500 to-orange-600',
+      stripeLink: 'https://buy.stripe.com/bJeaEZdcN7RHcMg9MB',
+      features: [
+        { text: 'Détecte TOUS les produits faibles', icon: '🔍' },
+        { text: 'Descriptions optimisées conversions', icon: '✍️' },
+        { text: 'Ajustements automatiques illimités', icon: '⚡' },
+        { text: 'Analyses avancées + insights', icon: '📊' },
+        { text: 'Cross-sell & upsell maximaux', icon: '🛒' },
+      ],
+    },
+  ]
 
   return (
-    <div className="space-y-6">
-      <div className="text-center mb-8">
-        <h2 className="text-3xl font-bold mb-2">Plans & Pricing</h2>
-        <p className="text-gray-600">Essai gratuit 14 jours inclus avec tous les plans</p>
-      </div>
+    <div className="min-h-screen py-20 px-6">
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="text-center mb-16">
+          <h1 className="text-5xl font-bold text-white mb-4">
+            Choisissez votre abonnement
+          </h1>
+          <p className="text-xl text-gray-300 max-w-2xl mx-auto">
+            Optimisez vos produits et boostez vos ventes grâce à notre IA intelligente
+          </p>
+        </div>
 
-      <div className="grid md:grid-cols-3 gap-6">
-        {PLANS.map(plan => (
-          <div
-            key={plan.price}
-            className={`rounded-lg border-2 overflow-hidden transition ${
-              plan.popular ? 'border-blue-600 shadow-xl' : 'border-gray-200'
-            }`}
-          >
-            {plan.popular && (
-              <div className="bg-blue-600 text-white text-center py-2 font-semibold">
-                MOST POPULAR
+        {/* Pricing Cards */}
+        <div className="grid md:grid-cols-3 gap-8 max-w-6xl mx-auto">
+          {plans.map((plan) => (
+            <div
+              key={plan.name}
+              className={`relative bg-white/10 backdrop-blur-lg rounded-3xl p-8 border-2 ${
+                plan.popular 
+                  ? 'border-cyan-400 shadow-2xl shadow-cyan-500/50 transform scale-105' 
+                  : 'border-white/20 hover:border-white/40'
+              } transition-all`}
+            >
+              {plan.popular && (
+                <div className="absolute -top-4 left-1/2 transform -translate-x-1/2 bg-gradient-to-r from-cyan-500 to-blue-600 text-white px-6 py-2 rounded-full text-sm font-bold shadow-lg">
+                  ⭐ POPULAIRE
+                </div>
+              )}
+
+              <div className="text-center mb-8">
+                <h3 className={`text-3xl font-bold mb-4 bg-gradient-to-r ${plan.color} bg-clip-text text-transparent`}>
+                  {plan.name}
+                </h3>
+                <div className="flex items-baseline justify-center gap-2">
+                  <span className="text-5xl font-bold text-white">{plan.price} $</span>
+                  <span className="text-gray-400">/mois</span>
+                </div>
               </div>
-            )}
 
-            <div className="p-6">
-              <h3 className="text-2xl font-bold mb-2">{plan.name}</h3>
-              <p className="text-gray-600 text-sm mb-4">{plan.description}</p>
-
-              <div className="mb-4">
-                <span className="text-4xl font-bold">${plan.price}</span>
-                <span className="text-gray-600">/month</span>
-              </div>
-
-              <button
-                onClick={() => handleCheckout(plan)}
-                disabled={loading === plan.price}
-                className={`w-full py-2 px-4 rounded-lg font-semibold transition ${
-                  plan.popular
-                    ? 'bg-blue-600 text-white hover:bg-blue-700'
-                    : 'border-2 border-blue-600 text-blue-600 hover:bg-blue-50'
-                } disabled:opacity-50`}
-              >
-                {loading === plan.price ? 'Processing...' : 'Start Free Trial'}
-              </button>
-
-              <ul className="mt-6 space-y-3">
-                {plan.features.map((feature, i) => (
-                  <li key={i} className="flex items-center">
-                    <span className="text-green-500 mr-2">✓</span>
-                    <span className="text-sm">{feature}</span>
+              <ul className="space-y-4 mb-8">
+                {plan.features.map((feature, idx) => (
+                  <li key={idx} className="flex items-start gap-3 text-gray-200">
+                    <span className="text-2xl">{feature.icon}</span>
+                    <span>{feature.text}</span>
                   </li>
                 ))}
               </ul>
-            </div>
-          </div>
-        ))}
-      </div>
 
-      {message && (
-        <div className="p-4 bg-red-100 text-red-800 rounded-lg text-center">
-          {message}
+              <a
+                href={plan.stripeLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`block w-full text-center bg-gradient-to-r ${plan.color} text-white font-bold py-4 rounded-xl hover:shadow-2xl transition-all transform hover:scale-105`}
+              >
+                S'inscrire {plan.name} – {plan.price}$/mois
+              </a>
+            </div>
+          ))}
         </div>
-      )}
+
+        {/* Footer Note */}
+        <div className="text-center mt-16 text-gray-400 max-w-2xl mx-auto">
+          <p className="text-sm">
+            En vous inscrivant, vous acceptez nos conditions d'utilisation et notre politique de confidentialité.
+          </p>
+        </div>
+      </div>
     </div>
   )
 }
