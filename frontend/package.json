@@ -10,7 +10,7 @@
   "dependencies": {
     "react": "18.2.0",
     "react-dom": "18.2.0",
-    "stripe-js": "1.49.0",
+    "@stripe/stripe-js": "^2.0.0",
     "@supabase/supabase-js": "2.38.0"
   },
   "devDependencies": {
