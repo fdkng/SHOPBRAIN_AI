@@ -1,63 +1,156 @@
-import React from 'react'
+import React, { useState } from 'react'
+import { createClient } from '@supabase/supabase-js'
+
+const supabase = createClient(
+  'https://jgmsfadayzbgykzajvmw.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpnbXNmYWRheXpiZ3lremFqdm13Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQwODk0NTksImV4cCI6MjA3OTY2NTQ1OX0.sg0O2QGdoKO5Zb6vcRJr5pSu2zlaxU3r7nHtyXb07hg'
+)
 
 export default function App() {
+  const [showAuthModal, setShowAuthModal] = useState(false)
+  const [email, setEmail] = useState('')
+  const [authMessage, setAuthMessage] = useState('')
+
+  const handleLogin = async (e) => {
+    e.preventDefault()
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: {
+          emailRedirectTo: window.location.origin,
+        },
+      })
+      if (error) throw error
+      setAuthMessage('✅ Email envoyé ! Vérifiez votre boîte de réception.')
+    } catch (error) {
+      setAuthMessage('❌ Erreur : ' + error.message)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-white">
       {/* Apple-style Navigation */}
-      <nav className="fixed top-0 w-full bg-white/80 backdrop-blur-xl border-b border-gray-200/50 z-50">
+      <nav className="fixed top-0 w-full bg-white/80 backdrop-blur-xl border-b border-gray-200/50 z-50 animate-slideDown">
         <div className="max-w-[980px] mx-auto px-6">
-          <div className="flex items-center justify-between h-11">
-            <div className="flex items-center gap-2">
+          <div className="flex items-center justify-between h-16">
+            <div className="flex items-center gap-3">
               <img 
                 src="https://i.postimg.cc/BbVk5fzw/upscalemedia-transformed.png" 
                 alt="ShopBrain AI" 
-                className="h-5 w-auto"
+                className="h-12 w-auto hover:scale-110 transition-transform"
               />
-              <span className="text-xl font-semibold text-gray-900">ShopBrain</span>
+              <span className="text-2xl font-semibold text-gray-900">ShopBrain AI</span>
             </div>
             
             <div className="flex items-center gap-8">
-              <a href="#features" className="text-xs font-normal text-gray-600 hover:text-gray-900 transition-colors">
+              <a href="#features" className="text-sm font-normal text-gray-600 hover:text-gray-900 transition-colors">
                 Fonctionnalités
               </a>
-              <a href="#how-it-works" className="text-xs font-normal text-gray-600 hover:text-gray-900 transition-colors">
+              <a href="#how-it-works" className="text-sm font-normal text-gray-600 hover:text-gray-900 transition-colors">
                 Comment ça marche
               </a>
-              <a
-                href="https://agent-691bc09978ef5d16ca1--abonnementshopbrainai.netlify.app/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="px-3 py-1 bg-blue-600 text-white text-xs font-medium rounded-full hover:bg-blue-700 transition-colors"
+              <button
+                onClick={() => setShowAuthModal(true)}
+                className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-full hover:bg-blue-700 transition-all hover:scale-105 shadow-lg"
               >
-                S'abonner
-              </a>
+                Se connecter
+              </button>
             </div>
           </div>
         </div>
       </nav>
 
+      {/* Auth Modal */}
+      {showAuthModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-6" onClick={() => setShowAuthModal(false)}>
+          <div className="bg-white rounded-3xl max-w-md w-full p-8 shadow-2xl animate-scaleIn" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-2xl font-semibold text-gray-900">Se connecter</h3>
+              <button onClick={() => setShowAuthModal(false)} className="text-gray-400 hover:text-gray-600 text-2xl">×</button>
+            </div>
+            <p className="text-gray-600 mb-6">Entrez votre email pour recevoir un lien de connexion magique.</p>
+            <form onSubmit={handleLogin} className="space-y-4">
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="votre@email.com"
+                required
+                className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent"
+              />
+              <button
+                type="submit"
+                className="w-full px-6 py-3 bg-blue-600 text-white font-medium rounded-xl hover:bg-blue-700 transition-colors"
+              >
+                Envoyer le lien de connexion
+              </button>
+            </form>
+            {authMessage && (
+              <div className="mt-4 p-3 bg-gray-100 rounded-xl text-sm text-gray-700">
+                {authMessage}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Hero Section - Apple Style */}
-      <section className="pt-32 pb-16 px-6">
+      <section className="pt-40 pb-20 px-6 animate-fadeIn">
         <div className="max-w-[980px] mx-auto text-center">
-          <h1 className="text-6xl md:text-7xl font-semibold text-gray-900 tracking-tight leading-[1.05] mb-6">
+          <h1 className="text-6xl md:text-7xl font-semibold text-gray-900 tracking-tight leading-[1.05] mb-6 animate-slideUp">
             L'IA qui transforme<br />vos ventes Shopify.
           </h1>
-          <p className="text-xl md:text-2xl text-gray-600 font-normal mb-8 max-w-2xl mx-auto leading-relaxed">
+          <p className="text-xl md:text-2xl text-gray-600 font-normal mb-8 max-w-2xl mx-auto leading-relaxed animate-slideUp" style={{ animationDelay: '0.1s' }}>
             Optimisation automatique de vos produits, descriptions et stratégies de vente.<br/>
             Augmentation moyenne de <span className="text-gray-900 font-medium">+127%</span> des ventes.
           </p>
-          <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
+          <div className="flex flex-col sm:flex-row gap-4 justify-center items-center animate-slideUp" style={{ animationDelay: '0.2s' }}>
             <a
               href="https://agent-691bc09978ef5d16ca1--abonnementshopbrainai.netlify.app/"
               target="_blank"
               rel="noopener noreferrer"
-              className="px-6 py-3 bg-blue-600 text-white text-base font-medium rounded-full hover:bg-blue-700 transition-all"
+              className="px-8 py-4 bg-blue-600 text-white text-lg font-medium rounded-full hover:bg-blue-700 transition-all hover:scale-105 shadow-lg hover:shadow-xl"
             >
               Commencer maintenant
             </a>
-            <button className="px-6 py-3 text-blue-600 text-base font-medium hover:underline">
+            <a
+              href="#about"
+              className="px-8 py-4 text-blue-600 text-lg font-medium hover:underline hover:scale-105 transition-all"
+            >
               En savoir plus →
-            </button>
+            </a>
+          </div>
+        </div>
+      </section>
+
+      {/* About Section - En savoir plus */}
+      <section id="about" className="py-20 px-6 bg-gray-50">
+        <div className="max-w-[980px] mx-auto">
+          <div className="text-center mb-12">
+            <h2 className="text-5xl font-semibold text-gray-900 mb-6 tracking-tight">
+              Pourquoi ShopBrain AI ?
+            </h2>
+            <p className="text-xl text-gray-600 max-w-3xl mx-auto leading-relaxed">
+              ShopBrain AI est la première plateforme d'optimisation e-commerce alimentée par l'intelligence artificielle.
+              Nous analysons vos produits en temps réel et appliquons automatiquement les meilleures stratégies de vente.
+            </p>
+          </div>
+          <div className="grid md:grid-cols-3 gap-8 mt-16">
+            <div className="text-center p-6 hover:transform hover:scale-105 transition-all">
+              <div className="text-5xl mb-4">🚀</div>
+              <h3 className="text-2xl font-semibold text-gray-900 mb-3">Rapide</h3>
+              <p className="text-gray-600">Résultats visibles en moins de 48h. Notre IA travaille 24/7 pour vous.</p>
+            </div>
+            <div className="text-center p-6 hover:transform hover:scale-105 transition-all">
+              <div className="text-5xl mb-4">🎯</div>
+              <h3 className="text-2xl font-semibold text-gray-900 mb-3">Précis</h3>
+              <p className="text-gray-600">Algorithmes entraînés sur 10M+ de produits pour des recommandations parfaites.</p>
+            </div>
+            <div className="text-center p-6 hover:transform hover:scale-105 transition-all">
+              <div className="text-5xl mb-4">💰</div>
+              <h3 className="text-2xl font-semibold text-gray-900 mb-3">Rentable</h3>
+              <p className="text-gray-600">ROI moyen de 12x en 3 mois. Satisfait ou remboursé.</p>
+            </div>
           </div>
         </div>
       </section>
