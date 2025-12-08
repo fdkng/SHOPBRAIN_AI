@@ -6,12 +6,8 @@ const supabase = createClient(
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpnbXNmYWRheXpiZ3lremFqdm13Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQwODk0NTksImV4cCI6MjA3OTY2NTQ1OX0.sg0O2QGdoKO5Zb6vcRJr5pSu2zlaxU3r7nHtyXb07hg'
 )
 
-// Stripe Checkout Links - Update these with your actual Stripe payment links
-const STRIPE_LINKS = {
-  starter: 'https://buy.stripe.com/YOUR_STARTER_LINK',
-  pro: 'https://buy.stripe.com/YOUR_PRO_LINK',
-  enterprise: 'https://buy.stripe.com/YOUR_ENTERPRISE_LINK'
-}
+// Stripe Checkout - Redirect to Netlify payment page
+const PAYMENT_URL = 'https://agent-691bc09978ef5d16ca1--abonnementshopbrainai.netlify.app/'
 
 const PRICING_PLANS = [
   {
@@ -55,8 +51,8 @@ export default function App() {
   // Ensure magic link redirects to production site, not localhost
   const getRedirectUrl = () => {
     if (import.meta.env.VITE_SITE_URL) return import.meta.env.VITE_SITE_URL
-    if (typeof window !== 'undefined') return window.location.origin
-    return 'https://fdkng.github.io/shopBrain_AI'
+    if (typeof window !== 'undefined') return window.location.origin + window.location.pathname
+    return 'https://fdkng.github.io/SHOPBRAIN_AI/'
   }
 
   const handleLogin = async (e) => {
@@ -75,13 +71,8 @@ export default function App() {
     }
   }
 
-  const handleStripeCheckout = (planId) => {
-    const link = STRIPE_LINKS[planId]
-    if (link && !link.includes('YOUR_')) {
-      window.location.href = link
-    } else {
-      alert('Lien Stripe non configuré pour ce plan. Veuillez contacter support.')
-    }
+  const handleStripeCheckout = () => {
+    window.location.href = PAYMENT_URL
   }
 
   return (
@@ -291,29 +282,16 @@ export default function App() {
                     </li>
                   ))}
                 </ul>
-                {plan.plan_id === 'enterprise' ? (
-                  <button
-                    onClick={() => setShowAuthModal(true)}
-                    className={`w-full py-3 rounded-full text-sm font-medium transition-all hover:scale-105 ${
-                      plan.popular
-                        ? 'bg-blue-600 text-white hover:bg-blue-700'
-                        : 'bg-white text-gray-900 border border-gray-300 hover:border-blue-600'
-                    }`}
-                  >
-                    {plan.cta}
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => handleStripeCheckout(plan.plan_id)}
-                    className={`w-full py-3 rounded-full text-sm font-medium transition-all hover:scale-105 ${
-                      plan.popular
-                        ? 'bg-blue-600 text-white hover:bg-blue-700'
-                        : 'bg-white text-gray-900 border border-gray-300 hover:border-blue-600'
-                    }`}
-                  >
-                    {plan.cta}
-                  </button>
-                )}
+                <button
+                  onClick={handleStripeCheckout}
+                  className={`w-full py-3 rounded-full text-sm font-medium transition-all hover:scale-105 ${
+                    plan.popular
+                      ? 'bg-blue-600 text-white hover:bg-blue-700'
+                      : 'bg-white text-gray-900 border border-gray-300 hover:border-blue-600'
+                  }`}
+                >
+                  {plan.cta}
+                </button>
               </div>
             ))}
           </div>
