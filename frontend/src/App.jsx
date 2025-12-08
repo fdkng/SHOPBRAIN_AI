@@ -11,14 +11,20 @@ export default function App() {
   const [email, setEmail] = useState('')
   const [authMessage, setAuthMessage] = useState('')
 
+  // Ensure magic link redirects to production site, not localhost
+  const getRedirectUrl = () => {
+    if (import.meta.env.VITE_SITE_URL) return import.meta.env.VITE_SITE_URL
+    if (typeof window !== 'undefined') return window.location.origin
+    return 'https://fdkng.github.io/shopBrain_AI'
+  }
+
   const handleLogin = async (e) => {
     e.preventDefault()
     try {
+      const redirectTo = getRedirectUrl()
       const { error } = await supabase.auth.signInWithOtp({
         email,
-        options: {
-          emailRedirectTo: window.location.origin,
-        },
+        options: { emailRedirectTo: redirectTo },
       })
       if (error) throw error
       setAuthMessage('✅ Email envoyé ! Vérifiez votre boîte de réception.')
