@@ -6,8 +6,8 @@ const supabase = createClient(
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpnbXNmYWRheXpiZ3lremFqdm13Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQwODk0NTksImV4cCI6MjA3OTY2NTQ1OX0.sg0O2QGdoKO5Zb6vcRJr5pSu2zlaxU3r7nHtyXb07hg'
 )
 
-// Stripe Checkout - Redirect to Netlify payment page
-const PAYMENT_URL = 'https://agent-691bc09978ef5d16ca1--abonnementshopbrainai.netlify.app/'
+// Stripe Checkout - Redirect to stable Netlify payment page
+const PAYMENT_URL = 'https://abonnementshopbrainai.netlify.app/'
 
 const PRICING_PLANS = [
   {
