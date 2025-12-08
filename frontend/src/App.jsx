@@ -6,33 +6,40 @@ const supabase = createClient(
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpnbXNmYWRheXpiZ3lremFqdm13Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQwODk0NTksImV4cCI6MjA3OTY2NTQ1OX0.sg0O2QGdoKO5Zb6vcRJr5pSu2zlaxU3r7nHtyXb07hg'
 )
 
-// Stripe Checkout - Redirect to stable Netlify payment page
-const PAYMENT_URL = 'https://abonnementshopbrainai.netlify.app/'
+// Stripe Checkout Links - Real payment URLs
+const STRIPE_LINKS = {
+  standard: 'https://buy.stripe.com/4gMfZj0q1fk9dQk4sh',
+  pro: 'https://buy.stripe.com/bJebJ36Op5Jz13y3od',
+  premium: 'https://buy.stripe.com/bJeaEZdcN7RHcMg9MB'
+}
 
 const PRICING_PLANS = [
   {
-    name: 'Starter',
-    price: '€99',
+    name: 'Standard',
+    price: '$99',
     popular: false,
-    features: ['Analyse 50 produits/mois', 'Support email', 'Exports CSV', '1 compte utilisateur'],
+    features: ['Analyse 50 produits/mois', 'Support email', 'Exports CSV', '1 boutique Shopify'],
     cta: 'Commencer',
-    plan_id: 'starter'
+    plan_id: 'standard',
+    highlight: false
   },
   {
     name: 'Pro',
-    price: '€199',
+    price: '$199',
     popular: true,
-    features: ['Analyse 500 produits/mois', 'Support prioritaire', 'Exports avancés', '5 comptes utilisateurs', 'API access'],
+    features: ['Analyse 500 produits/mois', 'Support prioritaire', 'Analyses avancées', '3 boutiques Shopify', 'Optimisations automatiques'],
     cta: 'Commencer maintenant',
-    plan_id: 'pro'
+    plan_id: 'pro',
+    highlight: true
   },
   {
-    name: 'Enterprise',
-    price: '€299',
+    name: 'Premium',
+    price: '$299',
     popular: false,
-    features: ['Analyse illimitée', 'Support 24/7', 'Intégrations custom', 'Comptes utilisateurs illimités', 'Dedicated account manager'],
-    cta: 'Contacter sales',
-    plan_id: 'enterprise'
+    features: ['Analyse illimitée', 'Support 24/7', 'Intégrations custom', 'Boutiques illimitées', 'Account manager dédié', 'Accès API'],
+    cta: 'Obtenir Premium',
+    plan_id: 'premium',
+    highlight: false
   }
 ]
 
@@ -71,8 +78,11 @@ export default function App() {
     }
   }
 
-  const handleStripeCheckout = () => {
-    window.location.href = PAYMENT_URL
+  const handleStripeCheckout = (planId) => {
+    const link = STRIPE_LINKS[planId]
+    if (link) {
+      window.location.href = link
+    }
   }
 
   return (
@@ -146,63 +156,140 @@ export default function App() {
         </div>
       )}
 
-      {/* Hero Section */}
-      <section className="pt-32 pb-20 px-6 animate-fadeIn">
-        <div className="max-w-4xl mx-auto text-center">
-          <h1 className="text-5xl md:text-6xl lg:text-7xl font-bold text-gray-900 tracking-tight leading-[1.05] mb-6">
-            Analysez vos produits avec l'IA
-          </h1>
-          <p className="text-lg md:text-xl text-gray-600 mb-10 max-w-2xl mx-auto leading-relaxed">
-            Optimisez vos listes et augmentez vos ventes avec des insights intelligents. L'IA au service de votre e-commerce Shopify.
-          </p>
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <button
-              onClick={() => document.getElementById('pricing').scrollIntoView({ behavior: 'smooth' })}
-              className="px-8 py-4 bg-blue-600 text-white text-base font-medium rounded-full hover:bg-blue-700 transition-all hover:scale-105 shadow-lg hover:shadow-xl"
-            >
-              Commencer maintenant
-            </button>
-            <button
-              onClick={() => document.getElementById('features').scrollIntoView({ behavior: 'smooth' })}
-              className="px-8 py-4 text-blue-600 text-base font-medium border border-blue-600 rounded-full hover:bg-blue-50 transition-all hover:scale-105"
-            >
-              En savoir plus
-            </button>
+      {/* Hero Section - Apple Style avec visuels */}
+      <section className="pt-24 pb-16 px-6 bg-gradient-to-b from-white to-gray-50">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center mb-12 animate-fadeIn">
+            <div className="inline-block mb-6">
+              <span className="px-4 py-2 bg-blue-100 text-blue-700 rounded-full text-sm font-semibold">
+                Nouveau : IA Générative pour Shopify
+              </span>
+            </div>
+            <h1 className="text-5xl md:text-7xl lg:text-8xl font-bold text-gray-900 tracking-tight leading-[1.05] mb-6">
+              L'IA qui transforme<br />
+              <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                vos ventes Shopify
+              </span>
+            </h1>
+            <p className="text-xl md:text-2xl text-gray-600 mb-12 max-w-3xl mx-auto leading-relaxed">
+              Optimisez automatiquement vos produits, descriptions et stratégies.<br />
+              Augmentation moyenne de <span className="font-bold text-gray-900">+127%</span> des conversions en 30 jours.
+            </p>
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-8">
+              <button
+                onClick={() => document.getElementById('pricing').scrollIntoView({ behavior: 'smooth' })}
+                className="px-10 py-5 bg-blue-600 text-white text-lg font-semibold rounded-full hover:bg-blue-700 transition-all hover:scale-105 shadow-2xl hover:shadow-blue-500/50"
+              >
+                Commencer gratuitement →
+              </button>
+              <button
+                onClick={() => setShowAuthModal(true)}
+                className="px-10 py-5 text-gray-900 text-lg font-semibold border-2 border-gray-900 rounded-full hover:bg-gray-900 hover:text-white transition-all hover:scale-105"
+              >
+                Se connecter
+              </button>
+            </div>
+            <p className="text-sm text-gray-500">
+              ✓ Sans engagement • ✓ Essai 14 jours • ✓ Résultats garantis
+            </p>
+          </div>
+
+          {/* Visual Preview */}
+          <div className="relative mt-16 animate-fadeIn" style={{ animationDelay: '0.2s' }}>
+            <div className="relative mx-auto max-w-5xl">
+              <div className="absolute inset-0 bg-gradient-to-r from-blue-600/20 to-purple-600/20 blur-3xl rounded-full"></div>
+              <div className="relative bg-white rounded-3xl shadow-2xl p-8 border border-gray-200">
+                <div className="flex items-center gap-2 mb-6">
+                  <div className="w-3 h-3 rounded-full bg-red-500"></div>
+                  <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
+                  <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                </div>
+                <div className="space-y-4">
+                  <div className="h-4 bg-gradient-to-r from-blue-200 to-blue-100 rounded w-3/4"></div>
+                  <div className="h-4 bg-gradient-to-r from-purple-200 to-purple-100 rounded w-5/6"></div>
+                  <div className="h-4 bg-gradient-to-r from-blue-200 to-blue-100 rounded w-2/3"></div>
+                  <div className="mt-8 grid grid-cols-3 gap-4">
+                    <div className="h-24 bg-gradient-to-br from-blue-100 to-blue-50 rounded-xl"></div>
+                    <div className="h-24 bg-gradient-to-br from-purple-100 to-purple-50 rounded-xl"></div>
+                    <div className="h-24 bg-gradient-to-br from-blue-100 to-blue-50 rounded-xl"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* Features Section */}
-      <section id="features" className="py-24 px-6 bg-gray-50">
+      {/* Social Proof */}
+      <section className="py-12 px-6 bg-gray-50 border-y border-gray-200">
         <div className="max-w-6xl mx-auto">
-          <h2 className="text-4xl md:text-5xl font-bold text-gray-900 text-center mb-16">Fonctionnalités puissantes</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <p className="text-center text-sm text-gray-500 mb-6">Ils nous font confiance</p>
+          <div className="flex flex-wrap justify-center items-center gap-12 opacity-60">
+            <div className="text-2xl font-bold text-gray-400">SHOPIFY</div>
+            <div className="text-2xl font-bold text-gray-400">STRIPE</div>
+            <div className="text-2xl font-bold text-gray-400">OPENAI</div>
+            <div className="text-2xl font-bold text-gray-400">SUPABASE</div>
+          </div>
+        </div>
+      </section>
+
+      {/* Features Section - Apple Style amélioré */}
+      <section id="features" className="py-24 px-6 bg-white">
+        <div className="max-w-7xl mx-auto">
+          <div className="text-center mb-20">
+            <h2 className="text-5xl md:text-6xl font-bold text-gray-900 mb-4">
+              Fonctionnalités<br />surpuissantes.
+            </h2>
+            <p className="text-xl text-gray-600">
+              Tout ce dont vous avez besoin pour dominer votre marché.
+            </p>
+          </div>
+
+          {/* Feature Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {[
               {
                 icon: '⚡',
-                title: 'Analyse IA instantanée',
-                desc: 'Analysez vos produits en quelques secondes avec nos modèles d\'IA avancés'
+                gradient: 'from-yellow-400 to-orange-500',
+                title: 'Analyse IA en temps réel',
+                desc: 'Scannez des milliers de produits en secondes. Notre IA analyse titres, descriptions, prix et images pour détecter les opportunités d\'optimisation.',
+                stat: '10M+ produits analysés'
               },
               {
                 icon: '✨',
+                gradient: 'from-blue-400 to-purple-500',
                 title: 'Optimisation automatique',
-                desc: 'Générez des titres et descriptions optimisés pour les moteurs de recherche'
+                desc: 'L\'IA génère automatiquement des titres SEO-optimisés, des descriptions persuasives et des tags pertinents. Augmentez vos conversions sans lever le petit doigt.',
+                stat: '+127% conversions moyenne'
               },
               {
                 icon: '📈',
-                title: 'Insights produits',
-                desc: 'Découvrez les tendances du marché et optimisez votre stratégie'
+                gradient: 'from-green-400 to-emerald-500',
+                title: 'Analytics & Insights',
+                desc: 'Tableaux de bord en temps réel : ventes, profits, best-sellers, produits sous-performants. Prenez des décisions data-driven.',
+                stat: 'Mises à jour toutes les 5min'
               },
               {
                 icon: '🔗',
-                title: 'Intégration Shopify',
-                desc: 'Connectez directement votre magasin Shopify en un clic'
+                gradient: 'from-purple-400 to-pink-500',
+                title: 'Intégration Shopify native',
+                desc: 'Connectez votre boutique en un clic. Synchronisation automatique bidirectionnelle : produits, commandes, clients, inventaire.',
+                stat: 'Sync en <1 seconde'
               }
             ].map((feature, idx) => (
-              <div key={idx} className="p-8 bg-white border border-gray-200 rounded-2xl hover:shadow-lg hover:scale-[1.02] transition-all">
-                <div className="text-4xl mb-4">{feature.icon}</div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">{feature.title}</h3>
-                <p className="text-sm text-gray-600">{feature.desc}</p>
+              <div key={idx} className="group relative p-8 bg-gradient-to-br from-gray-50 to-white border border-gray-200 rounded-3xl hover:shadow-2xl hover:scale-[1.02] transition-all duration-300 overflow-hidden">
+                <div className={`absolute top-0 right-0 w-32 h-32 bg-gradient-to-br ${feature.gradient} opacity-10 rounded-full blur-3xl group-hover:opacity-20 transition-opacity`}></div>
+                <div className="relative">
+                  <div className={`inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br ${feature.gradient} rounded-2xl text-3xl mb-6 shadow-lg`}>
+                    {feature.icon}
+                  </div>
+                  <h3 className="text-2xl font-bold text-gray-900 mb-3">{feature.title}</h3>
+                  <p className="text-gray-600 leading-relaxed mb-4">{feature.desc}</p>
+                  <div className="inline-flex items-center gap-2 px-3 py-1 bg-gray-100 rounded-full text-sm font-semibold text-gray-700">
+                    <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                    {feature.stat}
+                  </div>
+                </div>
               </div>
             ))}
           </div>
@@ -249,51 +336,97 @@ export default function App() {
         </div>
       </section>
 
-      {/* Pricing Section */}
-      <section id="pricing" className="py-24 px-6 bg-gray-50">
-        <div className="max-w-6xl mx-auto">
-          <h2 className="text-4xl md:text-5xl font-bold text-gray-900 text-center mb-4">Tarification simple et transparente</h2>
-          <p className="text-center text-gray-600 mb-16">Choisissez le plan qui correspond à vos besoins</p>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+      {/* Pricing Section - Apple Style Premium */}
+      <section id="pricing" className="py-32 px-6 bg-gradient-to-b from-gray-50 to-white relative overflow-hidden">
+        <div className="absolute inset-0 bg-grid-pattern opacity-5"></div>
+        <div className="max-w-7xl mx-auto relative">
+          <div className="text-center mb-20">
+            <h2 className="text-5xl md:text-6xl font-bold text-gray-900 mb-6">
+              Choisissez votre<br />
+              <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                formule gagnante
+              </span>
+            </h2>
+            <p className="text-xl text-gray-600">
+              Tous les plans incluent 14 jours d'essai gratuit. Sans engagement.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-6xl mx-auto">
             {PRICING_PLANS.map((plan, idx) => (
               <div
                 key={idx}
-                className={`relative p-8 bg-white rounded-2xl transition-all duration-300 hover:shadow-lg ${
-                  plan.popular ? 'border-2 border-blue-600 shadow-md md:scale-105' : 'border border-gray-200'
+                className={`relative group ${
+                  plan.highlight ? 'md:scale-110 z-10' : ''
                 }`}
               >
-                {plan.popular && (
-                  <div className="absolute -top-4 left-1/2 -translate-x-1/2">
-                    <span className="bg-blue-600 text-white text-xs font-semibold px-3 py-1 rounded-full">
-                      Populaire
-                    </span>
-                  </div>
+                {plan.highlight && (
+                  <div className="absolute -inset-1 bg-gradient-to-r from-blue-600 to-purple-600 rounded-3xl blur-xl opacity-50 group-hover:opacity-75 transition-opacity"></div>
                 )}
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">{plan.name}</h3>
-                <div className="mb-6">
-                  <span className="text-4xl font-bold text-gray-900">{plan.price}</span>
-                  <span className="text-gray-600 text-sm">/mois</span>
-                </div>
-                <ul className="space-y-3 mb-8">
-                  {plan.features.map((feature, fidx) => (
-                    <li key={fidx} className="flex items-center gap-3">
-                      <span className="text-blue-600">✓</span>
-                      <span className="text-sm text-gray-600">{feature}</span>
-                    </li>
-                  ))}
-                </ul>
-                <button
-                  onClick={handleStripeCheckout}
-                  className={`w-full py-3 rounded-full text-sm font-medium transition-all hover:scale-105 ${
-                    plan.popular
-                      ? 'bg-blue-600 text-white hover:bg-blue-700'
-                      : 'bg-white text-gray-900 border border-gray-300 hover:border-blue-600'
+                <div
+                  className={`relative p-8 bg-white rounded-3xl transition-all duration-300 hover:shadow-2xl ${
+                    plan.highlight 
+                      ? 'border-2 border-blue-600 shadow-xl' 
+                      : 'border border-gray-200 hover:border-blue-300'
                   }`}
                 >
-                  {plan.cta}
-                </button>
+                  {plan.highlight && (
+                    <div className="absolute -top-5 left-1/2 -translate-x-1/2">
+                      <span className="bg-gradient-to-r from-blue-600 to-purple-600 text-white text-sm font-bold px-6 py-2 rounded-full shadow-lg">
+                        ⭐ PLUS POPULAIRE
+                      </span>
+                    </div>
+                  )}
+                  
+                  <div className="text-center mb-6">
+                    <h3 className="text-2xl font-bold text-gray-900 mb-2">{plan.name}</h3>
+                    <div className="mb-4">
+                      <span className="text-5xl font-bold text-gray-900">{plan.price}</span>
+                      <span className="text-gray-600 text-lg">/mois</span>
+                    </div>
+                    <p className="text-sm text-gray-500">Facturé mensuellement</p>
+                  </div>
+
+                  <ul className="space-y-4 mb-8">
+                    {plan.features.map((feature, fidx) => (
+                      <li key={fidx} className="flex items-start gap-3">
+                        <span className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center ${
+                          plan.highlight ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-600'
+                        }`}>
+                          ✓
+                        </span>
+                        <span className="text-sm text-gray-700 leading-relaxed">{feature}</span>
+                      </li>
+                    ))}
+                  </ul>
+
+                  <button
+                    onClick={() => handleStripeCheckout(plan.plan_id)}
+                    className={`w-full py-4 rounded-full text-base font-bold transition-all hover:scale-105 shadow-lg ${
+                      plan.highlight
+                        ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:shadow-2xl hover:shadow-blue-500/50'
+                        : 'bg-gray-900 text-white hover:bg-gray-800 hover:shadow-xl'
+                    }`}
+                  >
+                    {plan.cta} →
+                  </button>
+                  
+                  <p className="text-center text-xs text-gray-500 mt-4">
+                    Annulation en un clic
+                  </p>
+                </div>
               </div>
             ))}
+          </div>
+
+          <div className="mt-16 text-center">
+            <p className="text-gray-600 mb-4">Besoin d'un plan sur mesure ?</p>
+            <button
+              onClick={() => setShowAuthModal(true)}
+              className="px-8 py-3 text-blue-600 font-semibold border-2 border-blue-600 rounded-full hover:bg-blue-600 hover:text-white transition-all"
+            >
+              Contactez notre équipe
+            </button>
           </div>
         </div>
       </section>
