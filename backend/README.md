@@ -17,7 +17,7 @@ See `.env.example`:
 - `SUPABASE_URL` — Supabase project URL
 - `SUPABASE_KEY` — Supabase service role key (for server-side operations)
 - `SUPABASE_JWT_SECRET` — Supabase JWT secret (for verifying tokens from frontend)
-- `FRONTEND_ORIGIN` — frontend origin for CORS + redirects (default `http://localhost:5173`)
+- `FRONTEND_ORIGIN` — frontend origin for CORS + redirects (use `https://shopbrainai.netlify.app` in production)
 - `PORT` — server port (default 8000)
 
 ## Local Setup
