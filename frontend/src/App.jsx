@@ -104,40 +104,83 @@ export default function App() {
 
   const handleSignup = async (e) => {
     e.preventDefault()
+    setAuthMessage('')
+    
+    // Validation
+    if (formData.password.length < 6) {
+      setAuthMessage('❌ Le mot de passe doit contenir au moins 6 caractères')
+      return
+    }
+    
     try {
-      const { error } = await supabase.auth.signUp({
+      // Inscription avec confirmation automatique (pas d'email requis)
+      const { data, error } = await supabase.auth.signUp({
         email: formData.email,
         password: formData.password,
         options: {
-          emailRedirectTo: getRedirectUrl() + '#/pricing',
           data: {
             first_name: formData.firstName,
             last_name: formData.lastName,
             username: formData.username,
             full_name: `${formData.firstName} ${formData.lastName}`
-          }
+          },
+          emailRedirectTo: getRedirectUrl()
         }
       })
-      if (error) throw error
-      setAuthMessage('✅ Email de confirmation envoyé ! Vérifie ta boîte de réception pour activer ton compte.')
+      
+      if (error) {
+        if (error.message.includes('already registered')) {
+          setAuthMessage('❌ Cet email est déjà utilisé. Connecte-toi ou utilise un autre email.')
+        } else {
+          setAuthMessage('❌ ' + error.message)
+        }
+        return
+      }
+      
+      // Compte créé et connecté automatiquement
+      setUser(data.user)
+      setShowAuthModal(false)
+      setAuthMessage('')
       setFormData({ firstName: '', lastName: '', username: '', email: '', password: '' })
+      
+      // Scroll vers les tarifs
+      setTimeout(() => {
+        document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' })
+      }, 500)
+      
     } catch (error) {
-      setAuthMessage('❌ Erreur : ' + error.message)
+      setAuthMessage('❌ Une erreur est survenue. Réessaie.')
+      console.error(error)
     }
   }
 
   const handleLogin = async (e) => {
     e.preventDefault()
+    setAuthMessage('')
+    
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email: formData.email,
         password: formData.password
       })
-      if (error) throw error
-      setAuthMessage('✅ Connexion réussie !')
+      
+      if (error) {
+        if (error.message.includes('Invalid login credentials')) {
+          setAuthMessage('❌ Email ou mot de passe incorrect')
+        } else {
+          setAuthMessage('❌ ' + error.message)
+        }
+        return
+      }
+      
+      setUser(data.user)
       setShowAuthModal(false)
+      setAuthMessage('')
+      setFormData({ firstName: '', lastName: '', username: '', email: '', password: '' })
+      
     } catch (error) {
-      setAuthMessage('❌ Erreur : ' + error.message)
+      setAuthMessage('❌ Une erreur est survenue. Réessaie.')
+      console.error(error)
     }
   }
 
