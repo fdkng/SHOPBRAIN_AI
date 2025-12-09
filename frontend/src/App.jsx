@@ -46,7 +46,14 @@ const PRICING_PLANS = [
 
 export default function App() {
   const [showAuthModal, setShowAuthModal] = useState(false)
-  const [email, setEmail] = useState('')
+  const [authMode, setAuthMode] = useState('signup') // 'signup' or 'login'
+  const [formData, setFormData] = useState({
+    firstName: '',
+    lastName: '',
+    username: '',
+    email: '',
+    password: ''
+  })
   const [authMessage, setAuthMessage] = useState('')
   const [scrolled, setScrolled] = useState(false)
   const [currentView, setCurrentView] = useState('landing')
@@ -63,7 +70,12 @@ export default function App() {
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_IN' && session) {
         setUser(session.user)
-        setCurrentView('dashboard')
+        // After email confirmation, redirect to pricing
+        if (!window.location.hash.includes('pricing')) {
+          window.location.hash = '#pricing'
+        }
+        setCurrentView('landing')
+        setShowAuthModal(false)
       } else if (event === 'SIGNED_OUT') {
         setUser(null)
         setCurrentView('landing')
@@ -80,36 +92,71 @@ export default function App() {
     const { data: { session } } = await supabase.auth.getSession()
     if (session) {
       setUser(session.user)
-      // Check if URL hash indicates dashboard
+      // Check if user has paid (has subscription)
       if (window.location.hash.includes('dashboard') || window.location.hash.includes('shopify')) {
         setCurrentView('dashboard')
       }
     }
   }
 
-  // Always redirect magic-link to production (GitHub Pages)
+  // Always redirect to production after email confirmation
   const getRedirectUrl = () => 'https://fdkng.github.io/SHOPBRAIN_AI'
+
+  const handleSignup = async (e) => {
+    e.preventDefault()
+    try {
+      const { error } = await supabase.auth.signUp({
+        email: formData.email,
+        password: formData.password,
+        options: {
+          emailRedirectTo: getRedirectUrl() + '#/pricing',
+          data: {
+            first_name: formData.firstName,
+            last_name: formData.lastName,
+            username: formData.username,
+            full_name: `${formData.firstName} ${formData.lastName}`
+          }
+        }
+      })
+      if (error) throw error
+      setAuthMessage('✅ Email de confirmation envoyé ! Vérifie ta boîte de réception pour activer ton compte.')
+      setFormData({ firstName: '', lastName: '', username: '', email: '', password: '' })
+    } catch (error) {
+      setAuthMessage('❌ Erreur : ' + error.message)
+    }
+  }
 
   const handleLogin = async (e) => {
     e.preventDefault()
     try {
-      const redirectTo = getRedirectUrl() + '#/dashboard'
-      const { error } = await supabase.auth.signInWithOtp({
-        email,
-        options: { emailRedirectTo: redirectTo },
+      const { error } = await supabase.auth.signInWithPassword({
+        email: formData.email,
+        password: formData.password
       })
       if (error) throw error
-      setAuthMessage('✅ Email envoyé ! Vérifiez votre boîte de réception.')
-      setEmail('')
+      setAuthMessage('✅ Connexion réussie !')
+      setShowAuthModal(false)
     } catch (error) {
       setAuthMessage('❌ Erreur : ' + error.message)
     }
   }
 
   const handleStripeCheckout = (planId) => {
+    // Check if user is logged in
+    if (!user) {
+      alert('⚠️ Tu dois d\'abord créer un compte avant de t\'abonner !')
+      setShowAuthModal(true)
+      setAuthMode('signup')
+      return
+    }
+    
     const link = STRIPE_LINKS[planId]
     if (link) {
-      window.location.href = link
+      // Add customer email to Stripe checkout
+      const checkoutUrl = new URL(link)
+      checkoutUrl.searchParams.set('prefilled_email', user.email)
+      checkoutUrl.searchParams.set('client_reference_id', user.id)
+      window.location.href = checkoutUrl.toString()
     }
   }
 
@@ -146,43 +193,178 @@ export default function App() {
               </a>
             </div>
 
-            <button
-              onClick={() => setShowAuthModal(true)}
-              className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-full hover:bg-blue-700 transition-all hover:scale-105 shadow-md"
-            >
-              Se connecter
-            </button>
+            {user ? (
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-green-50 text-green-700 rounded-full text-sm">
+                  <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                  <span className="font-medium">{user.user_metadata?.first_name || 'Connecté'}</span>
+                </div>
+                <button
+                  onClick={async () => {
+                    await supabase.auth.signOut()
+                    setUser(null)
+                    setCurrentView('landing')
+                  }}
+                  className="px-4 py-2 text-gray-600 hover:text-gray-900 text-sm font-medium transition"
+                >
+                  Déconnexion
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowAuthModal(true)}
+                className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-full hover:bg-blue-700 transition-all hover:scale-105 shadow-md"
+              >
+                Se connecter
+              </button>
+            )}
           </div>
         </div>
       </nav>
 
-      {/* Auth Modal */}
+      {/* Auth Modal - Inscription/Connexion */}
       {showAuthModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-6 animate-fadeIn" onClick={() => setShowAuthModal(false)}>
-          <div className="bg-white rounded-3xl max-w-md w-full p-8 shadow-2xl animate-scaleIn" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white rounded-3xl max-w-md w-full p-8 shadow-2xl animate-scaleIn max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-6">
-              <h3 className="text-2xl font-semibold text-gray-900">Se connecter</h3>
+              <h3 className="text-2xl font-semibold text-gray-900">
+                {authMode === 'signup' ? 'Créer un compte' : 'Se connecter'}
+              </h3>
               <button onClick={() => setShowAuthModal(false)} className="text-gray-400 hover:text-gray-600 text-2xl font-light">×</button>
             </div>
-            <p className="text-gray-600 mb-6 text-sm">Entrez votre email pour recevoir un lien de connexion magique.</p>
-            <form onSubmit={handleLogin} className="space-y-4">
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="votre@email.com"
-                required
-                className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm"
-              />
+
+            {/* Toggle entre Inscription/Connexion */}
+            <div className="flex gap-2 mb-6 bg-gray-100 p-1 rounded-xl">
               <button
-                type="submit"
-                className="w-full px-6 py-3 bg-blue-600 text-white font-medium rounded-xl hover:bg-blue-700 transition-colors text-sm"
+                onClick={() => setAuthMode('signup')}
+                className={`flex-1 py-2 px-4 rounded-lg text-sm font-medium transition ${
+                  authMode === 'signup' ? 'bg-white text-gray-900 shadow' : 'text-gray-600'
+                }`}
               >
-                Envoyer le lien de connexion
+                Inscription
               </button>
-            </form>
+              <button
+                onClick={() => setAuthMode('login')}
+                className={`flex-1 py-2 px-4 rounded-lg text-sm font-medium transition ${
+                  authMode === 'login' ? 'bg-white text-gray-900 shadow' : 'text-gray-600'
+                }`}
+              >
+                Connexion
+              </button>
+            </div>
+
+            {/* Formulaire Inscription */}
+            {authMode === 'signup' && (
+              <form onSubmit={handleSignup} className="space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-2">Prénom *</label>
+                    <input
+                      type="text"
+                      value={formData.firstName}
+                      onChange={(e) => setFormData({...formData, firstName: e.target.value})}
+                      placeholder="Jean"
+                      required
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-2">Nom *</label>
+                    <input
+                      type="text"
+                      value={formData.lastName}
+                      onChange={(e) => setFormData({...formData, lastName: e.target.value})}
+                      placeholder="Dupont"
+                      required
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-2">Nom d'utilisateur *</label>
+                  <input
+                    type="text"
+                    value={formData.username}
+                    onChange={(e) => setFormData({...formData, username: e.target.value})}
+                    placeholder="monpseudo"
+                    required
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-2">Email *</label>
+                  <input
+                    type="email"
+                    value={formData.email}
+                    onChange={(e) => setFormData({...formData, email: e.target.value})}
+                    placeholder="votre@email.com"
+                    required
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-2">Mot de passe *</label>
+                  <input
+                    type="password"
+                    value={formData.password}
+                    onChange={(e) => setFormData({...formData, password: e.target.value})}
+                    placeholder="••••••••"
+                    required
+                    minLength={6}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Minimum 6 caractères</p>
+                </div>
+                <button
+                  type="submit"
+                  className="w-full px-6 py-3 bg-blue-600 text-white font-medium rounded-xl hover:bg-blue-700 transition-colors text-sm"
+                >
+                  Créer mon compte
+                </button>
+                <p className="text-xs text-gray-600 text-center">
+                  Un email de confirmation sera envoyé pour activer ton compte
+                </p>
+              </form>
+            )}
+
+            {/* Formulaire Connexion */}
+            {authMode === 'login' && (
+              <form onSubmit={handleLogin} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-2">Email</label>
+                  <input
+                    type="email"
+                    value={formData.email}
+                    onChange={(e) => setFormData({...formData, email: e.target.value})}
+                    placeholder="votre@email.com"
+                    required
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-2">Mot de passe</label>
+                  <input
+                    type="password"
+                    value={formData.password}
+                    onChange={(e) => setFormData({...formData, password: e.target.value})}
+                    placeholder="••••••••"
+                    required
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="w-full px-6 py-3 bg-blue-600 text-white font-medium rounded-xl hover:bg-blue-700 transition-colors text-sm"
+                >
+                  Se connecter
+                </button>
+              </form>
+            )}
+
             {authMessage && (
-              <div className="mt-4 p-3 bg-gray-100 rounded-xl text-xs text-gray-700">
+              <div className={`mt-4 p-3 rounded-xl text-xs ${
+                authMessage.includes('✅') ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+              }`}>
                 {authMessage}
               </div>
             )}
