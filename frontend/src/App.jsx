@@ -87,12 +87,8 @@ export default function App() {
     }
   }
 
-  // Ensure magic link redirects to production site, not localhost
-  const getRedirectUrl = () => {
-    if (import.meta.env.VITE_SITE_URL) return import.meta.env.VITE_SITE_URL
-    if (typeof window !== 'undefined') return window.location.origin + window.location.pathname
-    return 'https://fdkng.github.io/SHOPBRAIN_AI/'
-  }
+  // Always redirect magic-link to production (GitHub Pages)
+  const getRedirectUrl = () => 'https://fdkng.github.io/SHOPBRAIN_AI'
 
   const handleLogin = async (e) => {
     e.preventDefault()
