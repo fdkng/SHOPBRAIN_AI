@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 import os
 import openai
@@ -7,6 +8,10 @@ import stripe
 from dotenv import load_dotenv
 import jwt
 from functools import lru_cache
+import hmac
+import hashlib
+import requests
+import json
 
 load_dotenv()
 
@@ -15,7 +20,15 @@ STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
+
+# Shopify OAuth credentials
+SHOPIFY_API_KEY = os.getenv("SHOPIFY_API_KEY")
+SHOPIFY_API_SECRET = os.getenv("SHOPIFY_API_SECRET")
+SHOPIFY_ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN")
+SHOPIFY_SCOPES = "read_products,write_products,read_orders,read_customers,read_analytics"
+SHOPIFY_REDIRECT_URI = os.getenv("SHOPIFY_REDIRECT_URI", "https://shopbrain-backend.onrender.com/auth/shopify/callback")
 
 if not OPENAI_API_KEY:
     print("Warning: OPENAI_API_KEY not set. /optimize will fail without it.")
@@ -229,6 +242,207 @@ async def stripe_webhook(request: Request):
                 print(f"Warning: could not persist subscription: {e}")
 
     return {"received": True}
+
+
+# ============== SHOPIFY OAUTH ROUTES ==============
+
+@app.get("/auth/shopify")
+async def shopify_auth(shop: str, user_id: str):
+    """Initiate Shopify OAuth flow.
+    Example: /auth/shopify?shop=mystore.myshopify.com&user_id=abc123
+    """
+    if not SHOPIFY_API_KEY:
+        raise HTTPException(status_code=500, detail="Shopify API key not configured")
+    
+    # Validate shop domain format
+    if not shop or not shop.endswith('.myshopify.com'):
+        raise HTTPException(status_code=400, detail="Invalid shop domain")
+    
+    # Build OAuth authorization URL
+    auth_url = (
+        f"https://{shop}/admin/oauth/authorize?"
+        f"client_id={SHOPIFY_API_KEY}"
+        f"&scope={SHOPIFY_SCOPES}"
+        f"&redirect_uri={SHOPIFY_REDIRECT_URI}"
+        f"&state={user_id}"  # Pass user_id as state for verification
+    )
+    
+    return RedirectResponse(url=auth_url)
+
+
+@app.get("/auth/shopify/callback")
+async def shopify_callback(code: str, shop: str, state: str, hmac: str = None):
+    """Handle Shopify OAuth callback and exchange code for access token."""
+    if not SHOPIFY_API_KEY or not SHOPIFY_API_SECRET:
+        raise HTTPException(status_code=500, detail="Shopify credentials not configured")
+    
+    user_id = state  # Retrieve user_id from state parameter
+    
+    # Exchange authorization code for access token
+    token_url = f"https://{shop}/admin/oauth/access_token"
+    payload = {
+        "client_id": SHOPIFY_API_KEY,
+        "client_secret": SHOPIFY_API_SECRET,
+        "code": code
+    }
+    
+    try:
+        response = requests.post(token_url, json=payload)
+        response.raise_for_status()
+        data = response.json()
+        access_token = data.get("access_token")
+        
+        if not access_token:
+            raise HTTPException(status_code=500, detail="Failed to obtain access token")
+        
+        # Store access token in Supabase for this user
+        if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+            from supabase import create_client
+            supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+            
+            # Check if user already has a Shopify connection
+            existing = supabase.table("shopify_connections").select("*").eq("user_id", user_id).execute()
+            
+            if existing.data:
+                # Update existing connection
+                supabase.table("shopify_connections").update({
+                    "shop_domain": shop,
+                    "access_token": access_token,
+                    "updated_at": "now()"
+                }).eq("user_id", user_id).execute()
+            else:
+                # Create new connection
+                supabase.table("shopify_connections").insert({
+                    "user_id": user_id,
+                    "shop_domain": shop,
+                    "access_token": access_token
+                }).execute()
+        
+        # Redirect back to frontend dashboard with success
+        frontend_url = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
+        return RedirectResponse(url=f"{frontend_url}/#/dashboard?shopify=connected")
+        
+    except Exception as e:
+        print(f"Error in Shopify OAuth callback: {e}")
+        raise HTTPException(status_code=500, detail=f"OAuth failed: {str(e)}")
+
+
+@app.get("/api/shopify/products")
+async def get_shopify_products(request: Request, limit: int = 50):
+    """Fetch products from user's connected Shopify store."""
+    user_id = get_user_id(request)
+    
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        raise HTTPException(status_code=500, detail="Supabase not configured")
+    
+    try:
+        from supabase import create_client
+        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        
+        # Get user's Shopify connection
+        connection = supabase.table("shopify_connections").select("*").eq("user_id", user_id).execute()
+        
+        if not connection.data:
+            raise HTTPException(status_code=404, detail="No Shopify store connected")
+        
+        shop_domain = connection.data[0]["shop_domain"]
+        access_token = connection.data[0]["access_token"]
+        
+        # Fetch products from Shopify API
+        products_url = f"https://{shop_domain}/admin/api/2024-10/products.json?limit={limit}"
+        headers = {
+            "X-Shopify-Access-Token": access_token,
+            "Content-Type": "application/json"
+        }
+        
+        response = requests.get(products_url, headers=headers)
+        response.raise_for_status()
+        
+        products_data = response.json()
+        return {"products": products_data.get("products", [])}
+        
+    except Exception as e:
+        print(f"Error fetching Shopify products: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/analyze-product")
+async def analyze_product(payload: dict, request: Request):
+    """Analyze a Shopify product with OpenAI and return optimization suggestions.
+    Expects: {"product_id": "123", "title": "...", "description": "...", "price": "99.99"}
+    """
+    user_id = get_user_id(request)
+    
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OpenAI not configured")
+    
+    product_id = payload.get("product_id")
+    title = payload.get("title", "")
+    description = payload.get("description", "")
+    price = payload.get("price", "")
+    
+    prompt = f"""Tu es un expert en e-commerce et optimisation de fiches produits Shopify.
+
+Produit à analyser:
+- Titre: {title}
+- Description: {description}
+- Prix: {price}
+
+Fournis une analyse complète au format JSON avec ces clés:
+- "optimized_title": Un titre optimisé pour le SEO et les conversions (max 70 caractères)
+- "optimized_description": Une description améliorée et persuasive (2-3 paragraphes)
+- "seo_keywords": Array de 5-8 mots-clés pertinents
+- "cross_sell": Array de 3 suggestions de produits complémentaires
+- "price_recommendation": Analyse du pricing avec suggestion (string)
+- "conversion_tips": Array de 3-5 conseils pour améliorer le taux de conversion
+
+Réponds uniquement avec du JSON valide, sans markdown ni commentaires."""
+
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "Tu es un expert e-commerce spécialisé en optimisation Shopify."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=1000,
+            temperature=0.7
+        )
+        
+        result_text = response.choices[0].message.content.strip()
+        
+        # Parse JSON response
+        try:
+            analysis = json.loads(result_text)
+        except:
+            # Fallback if not valid JSON
+            analysis = {
+                "optimized_title": title,
+                "optimized_description": result_text,
+                "seo_keywords": [],
+                "cross_sell": [],
+                "price_recommendation": "Analyse non disponible",
+                "conversion_tips": []
+            }
+        
+        # Store analysis in Supabase
+        if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+            from supabase import create_client
+            supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+            
+            supabase.table("product_analyses").insert({
+                "user_id": user_id,
+                "shopify_product_id": product_id,
+                "original_title": title,
+                "original_description": description,
+                "analysis_result": analysis
+            }).execute()
+        
+        return {"success": True, "analysis": analysis}
+        
+    except Exception as e:
+        print(f"Error analyzing product: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
