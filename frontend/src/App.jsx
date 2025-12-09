@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { createClient } from '@supabase/supabase-js'
+import Dashboard from './Dashboard'
 
 const supabase = createClient(
   'https://jgmsfadayzbgykzajvmw.supabase.co',
@@ -48,12 +49,43 @@ export default function App() {
   const [email, setEmail] = useState('')
   const [authMessage, setAuthMessage] = useState('')
   const [scrolled, setScrolled] = useState(false)
+  const [currentView, setCurrentView] = useState('landing')
+  const [user, setUser] = useState(null)
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 10)
     window.addEventListener('scroll', handleScroll)
-    return () => window.removeEventListener('scroll', handleScroll)
+    
+    // Check for authenticated user
+    checkUser()
+    
+    // Listen for auth changes
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN' && session) {
+        setUser(session.user)
+        setCurrentView('dashboard')
+      } else if (event === 'SIGNED_OUT') {
+        setUser(null)
+        setCurrentView('landing')
+      }
+    })
+    
+    return () => {
+      window.removeEventListener('scroll', handleScroll)
+      authListener?.subscription?.unsubscribe()
+    }
   }, [])
+
+  const checkUser = async () => {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (session) {
+      setUser(session.user)
+      // Check if URL hash indicates dashboard
+      if (window.location.hash.includes('dashboard') || window.location.hash.includes('shopify')) {
+        setCurrentView('dashboard')
+      }
+    }
+  }
 
   // Ensure magic link redirects to production site, not localhost
   const getRedirectUrl = () => {
@@ -65,7 +97,7 @@ export default function App() {
   const handleLogin = async (e) => {
     e.preventDefault()
     try {
-      const redirectTo = getRedirectUrl()
+      const redirectTo = getRedirectUrl() + '#/dashboard'
       const { error } = await supabase.auth.signInWithOtp({
         email,
         options: { emailRedirectTo: redirectTo },
@@ -85,6 +117,12 @@ export default function App() {
     }
   }
 
+  // If user is logged in and on dashboard view, show Dashboard component
+  if (currentView === 'dashboard' && user) {
+    return <Dashboard />
+  }
+
+  // Otherwise show landing page
   return (
     <div className="min-h-screen bg-white">
       {/* Navigation */}
