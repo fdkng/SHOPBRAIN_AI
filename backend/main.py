@@ -12,6 +12,12 @@ import hmac
 import hashlib
 import requests
 import json
+import sys
+
+# Ajouter le répertoire parent au path pour importer AI_engine
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from AI_engine.shopbrain_ai import ShopBrainAI
 
 load_dotenv()
 
@@ -643,6 +649,242 @@ Réponds uniquement avec du JSON valide, sans markdown ni commentaires."""
         
     except Exception as e:
         print(f"Error analyzing product: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# NOUVEAUX ENDPOINTS - MOTEUR IA SHOPBRAIN
+# ============================================================================
+
+# Initialize AI Engine
+ai_engine = None
+
+def get_ai_engine():
+    """Lazy load AI engine avec config Shopify si disponible"""
+    global ai_engine
+    if ai_engine is None:
+        shopify_config = None
+        if SHOPIFY_ACCESS_TOKEN:
+            # Format: shop-name.myshopify.com
+            shopify_config = {
+                'shop_url': os.getenv('SHOPIFY_SHOP_URL', ''),
+                'access_token': SHOPIFY_ACCESS_TOKEN
+            }
+        ai_engine = ShopBrainAI(OPENAI_API_KEY, shopify_config)
+    return ai_engine
+
+
+class AnalyzeStoreRequest(BaseModel):
+    products: list
+    analytics: dict
+    tier: str  # standard, pro, premium
+
+
+@app.post("/api/ai/analyze-store")
+async def analyze_store_endpoint(req: AnalyzeStoreRequest, request: Request):
+    """
+    🧠 Analyse complète de la boutique avec toutes les fonctionnalités IA
+    selon le tier de l'abonnement
+    """
+    try:
+        user_id = get_user_id(request)
+        engine = get_ai_engine()
+        
+        # Limite de produits selon tier
+        limits = {'standard': 50, 'pro': 500, 'premium': None}
+        limit = limits.get(req.tier, 50)
+        products = req.products[:limit] if limit else req.products
+        
+        analysis = engine.analyze_store(products, req.analytics, req.tier)
+        
+        return {
+            "success": True,
+            "tier": req.tier,
+            "products_analyzed": len(products),
+            "analysis": analysis
+        }
+    
+    except Exception as e:
+        print(f"Error in analyze_store: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class OptimizeContentRequest(BaseModel):
+    product: dict
+    tier: str
+
+
+@app.post("/api/ai/optimize-content")
+async def optimize_content_endpoint(req: OptimizeContentRequest, request: Request):
+    """
+    📝 Optimise le contenu d'un produit (titre, description, SEO)
+    Standard: Titre uniquement
+    Pro/Premium: Titre + Description + SEO
+    """
+    try:
+        user_id = get_user_id(request)
+        engine = get_ai_engine()
+        
+        result = {
+            "product_id": req.product.get('id'),
+            "tier": req.tier
+        }
+        
+        # Tous les tiers: nouveau titre
+        result['new_title'] = engine.content_gen.generate_title(req.product, req.tier)
+        
+        # Pro et Premium: description
+        if req.tier in ['pro', 'premium']:
+            result['new_description'] = engine.content_gen.generate_description(req.product, req.tier)
+        
+        # Premium: SEO metadata
+        if req.tier == 'premium':
+            result['seo_metadata'] = engine.content_gen.generate_seo_metadata(req.product)
+        
+        return {"success": True, "optimization": result}
+    
+    except Exception as e:
+        print(f"Error optimizing content: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class OptimizePriceRequest(BaseModel):
+    product: dict
+    analytics: dict
+    tier: str
+
+
+@app.post("/api/ai/optimize-price")
+async def optimize_price_endpoint(req: OptimizePriceRequest, request: Request):
+    """
+    💰 Suggère un prix optimal pour un produit
+    Standard: Suggestions simples
+    Pro: Optimisation avancée
+    Premium: IA prédictive
+    """
+    try:
+        user_id = get_user_id(request)
+        engine = get_ai_engine()
+        
+        recommendation = engine.price_opt.suggest_price_adjustment(
+            req.product, req.analytics, req.tier
+        )
+        
+        return {"success": True, "price_recommendation": recommendation}
+    
+    except Exception as e:
+        print(f"Error optimizing price: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class RecommendationsRequest(BaseModel):
+    product: dict
+    all_products: list
+    tier: str
+
+
+@app.post("/api/ai/recommendations")
+async def get_recommendations_endpoint(req: RecommendationsRequest, request: Request):
+    """
+    🛒 Génère des recommandations Cross-sell & Upsell
+    Pro et Premium uniquement
+    """
+    try:
+        user_id = get_user_id(request)
+        
+        if req.tier not in ['pro', 'premium']:
+            raise HTTPException(status_code=403, detail="Fonctionnalité disponible à partir du plan Pro")
+        
+        engine = get_ai_engine()
+        
+        cross_sell = engine.recommender.generate_cross_sell(
+            req.product, req.all_products, req.tier
+        )
+        upsell = engine.recommender.generate_upsell(
+            req.product, req.all_products, req.tier
+        )
+        
+        return {
+            "success": True,
+            "product_id": req.product.get('id'),
+            "cross_sell": cross_sell,
+            "upsell": upsell
+        }
+    
+    except Exception as e:
+        print(f"Error generating recommendations: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class ExecuteActionsRequest(BaseModel):
+    optimization_plan: list
+    tier: str
+
+
+@app.post("/api/ai/execute-actions")
+async def execute_actions_endpoint(req: ExecuteActionsRequest, request: Request):
+    """
+    ⚡ Exécute automatiquement les optimisations (Premium uniquement)
+    Change prix, images, contenu, stock
+    """
+    try:
+        user_id = get_user_id(request)
+        
+        if req.tier != 'premium':
+            raise HTTPException(status_code=403, detail="Actions automatiques disponibles uniquement pour Premium")
+        
+        engine = get_ai_engine()
+        result = engine.execute_optimizations(req.optimization_plan, req.tier)
+        
+        return {"success": True, "execution_result": result}
+    
+    except Exception as e:
+        print(f"Error executing actions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class GenerateReportRequest(BaseModel):
+    analytics_data: dict
+    tier: str
+    report_type: str = "weekly"  # weekly, daily, monthly
+
+
+@app.post("/api/ai/generate-report")
+async def generate_report_endpoint(req: GenerateReportRequest, request: Request):
+    """
+    📊 Génère un rapport d'analyse
+    Pro: Rapports hebdomadaires
+    Premium: Rapports quotidiens + PDF/Email
+    """
+    try:
+        user_id = get_user_id(request)
+        
+        engine = get_ai_engine()
+        report = engine.generate_report(req.analytics_data, req.tier, req.report_type)
+        
+        return {"success": True, "report": report}
+    
+    except Exception as e:
+        print(f"Error generating report: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/ai/capabilities/{tier}")
+async def get_capabilities_endpoint(tier: str):
+    """
+    ℹ️ Retourne les capacités disponibles pour un tier
+    """
+    try:
+        engine = get_ai_engine()
+        capabilities = engine.get_tier_capabilities(tier)
+        
+        return {
+            "success": True,
+            "tier": tier,
+            "capabilities": capabilities
+        }
+    
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
