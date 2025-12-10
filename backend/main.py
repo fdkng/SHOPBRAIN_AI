@@ -168,7 +168,7 @@ async def get_products(request: Request):
 @app.get("/health")
 async def health():
     """Health check endpoint for Render"""
-    return {"status": "ok", "version": "1.2"}
+    return {"status": "ok", "version": "1.3", "cors": "fixed"}
 
 
 @app.post("/api/stripe/payment-link")
