@@ -157,6 +157,86 @@ async def get_products(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/stripe/payment-link")
+async def create_payment_link(payload: dict, request: Request):
+    """Create a Stripe Payment Link for a subscription plan.
+    Expects JSON: {"plan": "standard" | "pro" | "premium", "email": "customer@example.com"}
+    """
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(status_code=500, detail="Stripe not configured")
+
+    plan = payload.get("plan", "").lower()
+    customer_email = payload.get("email")
+    
+    # Plan pricing configuration
+    plan_config = {
+        "standard": {
+            "name": "ShopBrain AI - Standard",
+            "description": "Analyse 50 produits/mois",
+            "amount": 9900,  # $99.00
+        },
+        "pro": {
+            "name": "ShopBrain AI - Pro",
+            "description": "Analyse 500 produits/mois + Support prioritaire",
+            "amount": 19900,  # $199.00
+        },
+        "premium": {
+            "name": "ShopBrain AI - Premium",
+            "description": "Analyse illimitée + Support 24/7",
+            "amount": 29900,  # $299.00
+        }
+    }
+    
+    if plan not in plan_config:
+        raise HTTPException(status_code=400, detail="Invalid plan. Must be: standard, pro, or premium")
+    
+    config = plan_config[plan]
+    
+    try:
+        # Create payment link (one-time checkout for subscription)
+        link = stripe.PaymentLink.create(
+            line_items=[
+                {
+                    "price_data": {
+                        "currency": "usd",
+                        "product_data": {
+                            "name": config["name"],
+                            "description": config["description"],
+                        },
+                        "unit_amount": config["amount"],
+                        "recurring": {
+                            "interval": "month",
+                            "interval_count": 1,
+                        },
+                    },
+                    "quantity": 1,
+                }
+            ],
+            after_completion={
+                "type": "redirect",
+                "redirect": {
+                    "url": os.getenv("FRONTEND_ORIGIN", "http://localhost:5173") + "/#dashboard?payment=success"
+                }
+            },
+            billing_address_collection="auto",
+            customer_email=customer_email if customer_email else None,
+            metadata={
+                "plan": plan,
+                "email": customer_email if customer_email else "unknown"
+            }
+        )
+        
+        return {
+            "success": True,
+            "url": link.url,
+            "plan": plan,
+            "amount": config["amount"]
+        }
+    except Exception as e:
+        print(f"Stripe Error: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Failed to create payment link: {str(e)}")
+
+
 @app.post("/create-checkout-session")
 async def create_checkout(payload: dict, request: Request):
     """Create a Stripe Checkout Session for subscription plans.
@@ -244,9 +324,117 @@ async def stripe_webhook(request: Request):
     return {"received": True}
 
 
-# ============== SHOPIFY OAUTH ROUTES ==============
+# ============== AUTH & PROFILE ROUTES ==============
 
-@app.get("/auth/shopify")
+@app.post("/api/auth/check-username")
+async def check_username(payload: dict):
+    """Vérifie si un username est disponible"""
+    username = payload.get("username", "").lower().strip()
+    
+    if not username or len(username) < 3:
+        return {"available": False, "message": "Username doit avoir au moins 3 caractères"}
+    
+    if not username.replace("_", "").replace("-", "").isalnum():
+        return {"available": False, "message": "Username doit contenir seulement lettres, chiffres, - et _"}
+    
+    try:
+        from supabase import create_client
+        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        
+        # Vérifier si username existe déjà
+        result = supabase.table("user_profiles").select("id").eq("username", username).execute()
+        
+        if result.data:
+            return {"available": False, "message": "Ce username est déjà pris"}
+        
+        return {"available": True, "message": "Username disponible"}
+        
+    except Exception as e:
+        print(f"Error checking username: {e}")
+        return {"available": False, "message": "Erreur lors de la vérification"}
+
+
+@app.post("/api/auth/check-email")
+async def check_email(payload: dict):
+    """Vérifie si un email est disponible"""
+    email = payload.get("email", "").lower().strip()
+    
+    try:
+        from supabase import create_client
+        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        
+        # Vérifier si email existe déjà dans auth.users
+        result = supabase.table("user_profiles").select("id").eq("email", email).execute()
+        
+        if result.data:
+            return {"available": False, "message": "Cet email est déjà utilisé"}
+        
+        return {"available": True, "message": "Email disponible"}
+        
+    except Exception as e:
+        print(f"Error checking email: {e}")
+        return {"available": False, "message": "Erreur lors de la vérification"}
+
+
+@app.get("/api/auth/profile")
+async def get_profile(request: Request):
+    """Récupère le profil complet de l'utilisateur connecté"""
+    user_id = get_user_id(request)
+    
+    try:
+        from supabase import create_client
+        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        
+        result = supabase.table("user_profiles").select("*").eq("id", user_id).execute()
+        
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Profil non trouvé")
+        
+        profile = result.data[0]
+        return {
+            "id": profile["id"],
+            "email": profile["email"],
+            "first_name": profile["first_name"],
+            "last_name": profile["last_name"],
+            "username": profile["username"],
+            "full_name": f"{profile['first_name']} {profile['last_name']}",
+            "subscription_plan": profile["subscription_plan"],
+            "subscription_status": profile["subscription_status"],
+            "created_at": profile["created_at"]
+        }
+        
+    except Exception as e:
+        print(f"Error fetching profile: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/auth/profile")
+async def update_profile(payload: dict, request: Request):
+    """Met à jour le profil de l'utilisateur"""
+    user_id = get_user_id(request)
+    
+    allowed_fields = ["first_name", "last_name", "bio", "avatar_url"]
+    update_data = {k: v for k, v in payload.items() if k in allowed_fields}
+    
+    if not update_data:
+        raise HTTPException(status_code=400, detail="Aucun champ à mettre à jour")
+    
+    try:
+        from supabase import create_client
+        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        
+        result = supabase.table("user_profiles").update(update_data).eq("id", user_id).execute()
+        
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Profil non trouvé")
+        
+        return {"success": True, "message": "Profil mis à jour avec succès"}
+        
+    except Exception as e:
+        print(f"Error updating profile: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 async def shopify_auth(shop: str, user_id: str):
     """Initiate Shopify OAuth flow.
     Example: /auth/shopify?shop=mystore.myshopify.com&user_id=abc123

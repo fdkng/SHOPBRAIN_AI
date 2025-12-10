@@ -7,12 +7,8 @@ const supabase = createClient(
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpnbXNmYWRheXpiZ3lremFqdm13Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQwODk0NTksImV4cCI6MjA3OTY2NTQ1OX0.sg0O2QGdoKO5Zb6vcRJr5pSu2zlaxU3r7nHtyXb07hg'
 )
 
-// Stripe Checkout Links - Real payment URLs
-const STRIPE_LINKS = {
-  standard: 'https://buy.stripe.com/4gMfZj0q1fk9dQk4sh',
-  pro: 'https://buy.stripe.com/bJebJ36Op5Jz13y3od',
-  premium: 'https://buy.stripe.com/bJeaEZdcN7RHcMg9MB'
-}
+// Stripe Payment Links are created dynamically via backend API
+// No static links needed - backend generates them on demand
 
 const PRICING_PLANS = [
   {
@@ -184,7 +180,7 @@ export default function App() {
     }
   }
 
-  const handleStripeCheckout = (planId) => {
+  const handleStripeCheckout = async (planId) => {
     // Check if user is logged in
     if (!user) {
       alert('⚠️ Tu dois d\'abord créer un compte avant de t\'abonner !')
@@ -193,13 +189,42 @@ export default function App() {
       return
     }
     
-    const link = STRIPE_LINKS[planId]
-    if (link) {
-      // Add customer email to Stripe checkout
-      const checkoutUrl = new URL(link)
-      checkoutUrl.searchParams.set('prefilled_email', user.email)
-      checkoutUrl.searchParams.set('client_reference_id', user.id)
-      window.location.href = checkoutUrl.toString()
+    try {
+      // Get auth session
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        alert('Erreur: Session non trouvée')
+        return
+      }
+
+      // Call backend to create payment link
+      const response = await fetch(
+        'https://shopbrain-backend.onrender.com/api/stripe/payment-link',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`
+          },
+          body: JSON.stringify({
+            plan: planId,
+            email: user.email
+          })
+        }
+      )
+
+      const data = await response.json()
+      
+      if (data.success && data.url) {
+        // Redirect to Stripe payment link
+        window.location.href = data.url
+      } else {
+        alert('Erreur: Impossible de créer le lien de paiement')
+        console.error('Payment link error:', data)
+      }
+    } catch (error) {
+      alert('Erreur de connexion au serveur de paiement')
+      console.error('Stripe checkout error:', error)
     }
   }
 
