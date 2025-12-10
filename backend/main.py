@@ -157,6 +157,12 @@ async def get_products(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/health")
+async def health():
+    """Health check endpoint for Render"""
+    return {"status": "ok", "version": "1.2"}
+
+
 @app.post("/api/stripe/payment-link")
 async def create_payment_link(payload: dict, request: Request):
     """Create a Stripe Payment Link for a subscription plan.
