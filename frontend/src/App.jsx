@@ -203,8 +203,7 @@ export default function App() {
         {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session.access_token}`
+            'Content-Type': 'application/json'
           },
           body: JSON.stringify({
             plan: planId,
@@ -212,6 +211,13 @@ export default function App() {
           })
         }
       )
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        alert(`Erreur: ${errorData.detail || 'Impossible de créer le lien de paiement'}`)
+        console.error('Payment link error:', errorData)
+        return
+      }
 
       const data = await response.json()
       
@@ -223,7 +229,7 @@ export default function App() {
         console.error('Payment link error:', data)
       }
     } catch (error) {
-      alert('Erreur de connexion au serveur de paiement')
+      alert(`Erreur de connexion: ${error.message}`)
       console.error('Stripe checkout error:', error)
     }
   }
