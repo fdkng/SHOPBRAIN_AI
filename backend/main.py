@@ -221,7 +221,7 @@ async def create_payment_link(payload: dict, request: Request):
             after_completion={
                 "type": "redirect",
                 "redirect": {
-                    "url": os.getenv("FRONTEND_ORIGIN", "http://localhost:5173") + "/#dashboard?payment=success"
+                    "url": "https://fdkng.github.io/SHOPBRAIN_AI/?payment=success"
                 }
             },
             billing_address_collection="auto",
