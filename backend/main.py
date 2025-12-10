@@ -221,7 +221,7 @@ async def create_payment_link(payload: dict, request: Request):
             after_completion={
                 "type": "redirect",
                 "redirect": {
-                    "url": "https://fdkng.github.io/SHOPBRAIN_AI/?payment=success"
+                    "url": "https://buy.stripe.com"
                 }
             },
             billing_address_collection="auto",
