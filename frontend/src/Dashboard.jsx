@@ -5,14 +5,14 @@ const API_BASE = 'https://shopbrain-backend.onrender.com';
 
 export default function Dashboard() {
   const [user, setUser] = useState(null);
-  const [profile, setProfile] = useState({ full_name: '', username: '' });
-  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [shopDomain, setShopDomain] = useState('');
   const [products, setProducts] = useState([]);
   const [analyzing, setAnalyzing] = useState({});
   const [analyses, setAnalyses] = useState({});
   const [shopifyConnected, setShopifyConnected] = useState(false);
+  const [activeTab, setActiveTab] = useState('products');
 
   useEffect(() => {
     checkUser();
@@ -31,35 +31,28 @@ export default function Dashboard() {
       window.location.href = '/#';
       return;
     }
-    const { data: { user } } = await supabase.auth.getUser();
-    setUser(user);
+    setUser(session.user);
 
-    const full_name = user.user_metadata?.full_name || '';
-    const username = user.user_metadata?.username || '';
-    setProfile({ full_name, username });
-    if (!full_name || !username) {
-      setShowProfileModal(true);
+    // Récupérer le profil complet depuis le backend
+    try {
+      const response = await fetch(`${API_BASE}/api/auth/profile`, {
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (response.ok) {
+        const profileData = await response.json();
+        setProfile(profileData);
+      }
+    } catch (error) {
+      console.error('Error fetching profile:', error);
     }
+
     setLoading(false);
   };
 
-  const saveProfile = async (e) => {
-    e.preventDefault();
-    try {
-      const { error, data } = await supabase.auth.updateUser({
-        data: {
-          full_name: profile.full_name,
-          username: profile.username,
-        },
-      });
-      if (error) throw error;
-      setUser(data.user);
-      setShowProfileModal(false);
-    } catch (err) {
-      alert('Erreur lors de la sauvegarde du profil');
-      console.error(err);
-    }
-  };
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -151,55 +144,6 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
-      {/* Profile completion modal */}
-      {showProfileModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-white/10 rounded-2xl p-6 w-full max-w-lg shadow-2xl">
-            <h2 className="text-2xl font-bold text-white mb-4">Complète ton profil</h2>
-            <p className="text-white/70 mb-6">Entre ton nom complet et un nom d'utilisateur pour finaliser la création de ton compte.</p>
-            <form className="space-y-4" onSubmit={saveProfile}>
-              <div>
-                <label className="block text-sm text-white/70 mb-2">Nom complet</label>
-                <input
-                  type="text"
-                  value={profile.full_name}
-                  onChange={(e) => setProfile((p) => ({ ...p, full_name: e.target.value }))}
-                  required
-                  className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/50 focus:outline-none focus:border-purple-500"
-                  placeholder="Jean Dupont"
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-white/70 mb-2">Nom d'utilisateur</label>
-                <input
-                  type="text"
-                  value={profile.username}
-                  onChange={(e) => setProfile((p) => ({ ...p, username: e.target.value }))}
-                  required
-                  className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/50 focus:outline-none focus:border-purple-500"
-                  placeholder="monpseudo"
-                />
-              </div>
-              <div className="flex justify-end gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowProfileModal(false)}
-                  className="px-4 py-2 text-white/80 hover:text-white"
-                >
-                  Plus tard
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white font-semibold rounded-xl hover:shadow-lg hover:shadow-purple-500/50 transition"
-                >
-                  Enregistrer
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
       {/* Header */}
       <header className="bg-black/20 backdrop-blur-xl border-b border-white/10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
@@ -211,10 +155,12 @@ export default function Dashboard() {
               <h1 className="text-2xl font-bold text-white">ShopBrain AI</h1>
             </div>
             <div className="flex items-center gap-4">
-              <div className="text-right">
-                <div className="text-white font-semibold">{user?.user_metadata?.full_name || 'Mon compte'}</div>
-                <div className="text-white/70 text-sm">{user?.email}</div>
-              </div>
+              {profile && (
+                <div className="text-right">
+                  <div className="text-white font-semibold">{profile.full_name}</div>
+                  <div className="text-white/70 text-sm">@{profile.username}</div>
+                </div>
+              )}
               <button
                 onClick={handleLogout}
                 className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition"
@@ -226,9 +172,121 @@ export default function Dashboard() {
         </div>
       </header>
 
+      {/* Navigation Tabs */}
+      <div className="bg-black/20 backdrop-blur-xl border-b border-white/10 sticky top-0 z-40">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex gap-8">
+            <button
+              onClick={() => setActiveTab('products')}
+              className={`py-4 px-2 font-semibold transition border-b-2 ${
+                activeTab === 'products'
+                  ? 'text-purple-400 border-purple-400'
+                  : 'text-white/70 hover:text-white border-transparent'
+              }`}
+            >
+              📦 Mes Produits
+            </button>
+            <button
+              onClick={() => setActiveTab('profile')}
+              className={`py-4 px-2 font-semibold transition border-b-2 ${
+                activeTab === 'profile'
+                  ? 'text-purple-400 border-purple-400'
+                  : 'text-white/70 hover:text-white border-transparent'
+              }`}
+            >
+              👤 Mon Profil
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        {/* Connect Shopify Section */}
+        {/* Profile Tab */}
+        {activeTab === 'profile' && profile && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            {/* Profile Card */}
+            <div className="md:col-span-1">
+              <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-6 border border-white/20">
+                <div className="text-center">
+                  <div className="w-20 h-20 mx-auto mb-4 bg-gradient-to-br from-purple-500 to-pink-500 rounded-full flex items-center justify-center">
+                    <span className="text-white font-bold text-3xl">{profile.full_name.charAt(0).toUpperCase()}</span>
+                  </div>
+                  <h2 className="text-2xl font-bold text-white mb-2">{profile.full_name}</h2>
+                  <p className="text-purple-400 font-semibold mb-4">@{profile.username}</p>
+                  <div className="space-y-3 text-sm">
+                    <div className="bg-white/5 rounded-lg p-3">
+                      <div className="text-white/70 mb-1">Email</div>
+                      <div className="text-white font-semibold break-all">{profile.email}</div>
+                    </div>
+                    <div className="bg-white/5 rounded-lg p-3">
+                      <div className="text-white/70 mb-1">Plan</div>
+                      <div className="text-white font-semibold capitalize">{profile.subscription_plan}</div>
+                    </div>
+                    <div className="bg-white/5 rounded-lg p-3">
+                      <div className="text-white/70 mb-1">Statut</div>
+                      <div className={`font-semibold capitalize ${
+                        profile.subscription_status === 'active' 
+                          ? 'text-green-400' 
+                          : 'text-yellow-400'
+                      }`}>
+                        {profile.subscription_status}
+                      </div>
+                    </div>
+                    <div className="bg-white/5 rounded-lg p-3">
+                      <div className="text-white/70 mb-1">Inscrit depuis</div>
+                      <div className="text-white font-semibold">
+                        {new Date(profile.created_at).toLocaleDateString('fr-FR')}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Account Info */}
+            <div className="md:col-span-2">
+              <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-6 border border-white/20">
+                <h3 className="text-2xl font-bold text-white mb-6">Informations du compte</h3>
+                <div className="space-y-6">
+                  <div>
+                    <label className="block text-sm text-white/70 mb-2">Prénom</label>
+                    <div className="px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white">
+                      {profile.first_name}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-white/70 mb-2">Nom</label>
+                    <div className="px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white">
+                      {profile.last_name}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-white/70 mb-2">Nom d'utilisateur (unique)</label>
+                    <div className="px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white flex items-center gap-2">
+                      @{profile.username}
+                      <span className="text-green-400 text-sm">✓ Réservé</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-white/70 mb-2">Email (unique)</label>
+                    <div className="px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white flex items-center gap-2">
+                      {profile.email}
+                      <span className="text-green-400 text-sm">✓ Vérifié</span>
+                    </div>
+                  </div>
+                  <div className="bg-purple-500/20 border border-purple-500/50 rounded-xl p-4 text-purple-200 text-sm">
+                    ℹ️ Ton compte est sécurisé et réservé à toi seul. Les usernames et emails sont uniques et ne peuvent pas être modifiés.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Products Tab */}
+        {activeTab === 'products' && (
+          <>
         {!shopifyConnected && (
           <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-8 border border-white/20 mb-8">
             <h2 className="text-3xl font-bold text-white mb-4">🛍️ Connecte ta boutique Shopify</h2>
@@ -422,6 +480,8 @@ export default function Dashboard() {
                 ))}
               </div>
             )}
+          </>
+        )}
           </>
         )}
       </main>
