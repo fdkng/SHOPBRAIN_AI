@@ -15,7 +15,14 @@ const PRICING_PLANS = [
     name: 'Standard',
     price: '$99',
     popular: false,
-    features: ['Analyse 50 produits/mois', 'Support email', 'Exports CSV', '1 boutique Shopify'],
+    features: [
+      'Détection des produits sous-performants',
+      'Réécriture automatique des titres',
+      'Suggestions d\'optimisation de prix',
+      'Analyse 50 produits/mois',
+      '1 boutique Shopify',
+      'Rapport mensuel'
+    ],
     cta: 'Commencer',
     plan_id: 'standard',
     highlight: false
@@ -24,7 +31,16 @@ const PRICING_PLANS = [
     name: 'Pro',
     price: '$199',
     popular: true,
-    features: ['Analyse 500 produits/mois', 'Support prioritaire', 'Analyses avancées', '3 boutiques Shopify', 'Optimisations automatiques'],
+    features: [
+      'Détection avancée des produits faibles',
+      'Réécriture intelligente titres + descriptions',
+      'Optimisation automatique des prix',
+      'Recommandations d\'images stratégiques',
+      'Cross-sell & Upsell personnalisés',
+      'Analyse 500 produits/mois',
+      '3 boutiques Shopify',
+      'Rapports hebdomadaires automatisés'
+    ],
     cta: 'Commencer maintenant',
     plan_id: 'pro',
     highlight: true
@@ -33,7 +49,17 @@ const PRICING_PLANS = [
     name: 'Premium',
     price: '$299',
     popular: false,
-    features: ['Analyse illimitée', 'Support 24/7', 'Intégrations custom', 'Boutiques illimitées', 'Account manager dédié', 'Accès API'],
+    features: [
+      'IA prédictive des tendances de vente',
+      'Génération complète de contenu optimisé',
+      'Actions automatiques (prix, images, stock)',
+      'Stratégies Cross-sell & Upsell avancées',
+      'Rapports quotidiens personnalisés (PDF/Email)',
+      'Analyse illimitée de produits',
+      'Boutiques Shopify illimitées',
+      'Account manager dédié',
+      'Accès API complet'
+    ],
     cta: 'Obtenir Premium',
     plan_id: 'premium',
     highlight: false
