@@ -40,9 +40,17 @@ if STRIPE_SECRET_KEY:
 
 app = FastAPI()
 
+# Allow CORS from GitHub Pages and local development
+allowed_origins = [
+    "https://fdkng.github.io",
+    "http://localhost:5173",
+    "http://localhost:3000",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")],
+    allow_origins=allowed_origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
