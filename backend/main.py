@@ -13,6 +13,8 @@ import hashlib
 import requests
 import json
 import sys
+from datetime import datetime, timedelta
+from supabase import create_client
 
 # Ajouter le répertoire parent au path pour importer AI_engine
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -885,6 +887,198 @@ async def get_capabilities_endpoint(tier: str):
         }
     
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# SUBSCRIPTION & USER MANAGEMENT
+# ============================================================================
+
+class CheckSubscriptionRequest(BaseModel):
+    user_id: str
+
+
+@app.post("/api/subscription/status")
+async def check_subscription_status(request: Request):
+    """✅ Vérifie le statut d'abonnement de l'utilisateur"""
+    try:
+        user_id = get_user_id(request)
+        
+        if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+            supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+            
+            response = supabase.table("user_subscriptions").select("*").eq(
+                "user_id", user_id
+            ).eq("status", "active").order("created_at", desc=True).limit(1).execute()
+            
+            if response.data:
+                subscription = response.data[0]
+                plan = subscription['plan']
+                
+                capabilities = {
+                    'standard': {
+                        'product_limit': 50,
+                        'features': ['product_analysis', 'title_optimization', 'price_suggestions']
+                    },
+                    'pro': {
+                        'product_limit': 500,
+                        'features': ['product_analysis', 'content_generation', 'cross_sell', 'reports']
+                    },
+                    'premium': {
+                        'product_limit': None,
+                        'features': ['product_analysis', 'content_generation', 'cross_sell', 'automated_actions', 'reports', 'predictions']
+                    }
+                }
+                
+                return {
+                    'success': True,
+                    'has_subscription': True,
+                    'plan': plan,
+                    'status': subscription['status'],
+                    'started_at': subscription['started_at'],
+                    'capabilities': capabilities.get(plan, {})
+                }
+            
+            return {
+                'success': True,
+                'has_subscription': False,
+                'plan': 'free'
+            }
+    
+    except Exception as e:
+        print(f"Error checking subscription: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class CreateCheckoutSessionRequest(BaseModel):
+    plan: str
+    email: str
+
+
+@app.post("/api/subscription/create-session")
+async def create_checkout_session(req: CreateCheckoutSessionRequest, request: Request):
+    """Crée une session Stripe checkout"""
+    try:
+        user_id = get_user_id(request)
+        plan = req.plan
+        email = req.email
+        
+        if plan not in STRIPE_PLANS:
+            raise HTTPException(status_code=400, detail="Plan invalide")
+        
+        price_id = STRIPE_PLANS[plan]
+        frontend_url = "https://fdkng.github.io/SHOPBRAIN_AI"
+        
+        session = stripe.checkout.Session.create(
+            payment_method_types=["card"],
+            mode="subscription",
+            line_items=[{"price": price_id, "quantity": 1}],
+            success_url=f"{frontend_url}/#dashboard?session_id={{CHECKOUT_SESSION_ID}}&success=true",
+            cancel_url=f"{frontend_url}/#pricing",
+            customer_email=email,
+            metadata={
+                "user_id": user_id,
+                "plan": plan
+            }
+        )
+        
+        return {
+            "success": True,
+            "session_id": session.id,
+            "url": session.url
+        }
+    
+    except Exception as e:
+        print(f"Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class VerifyCheckoutRequest(BaseModel):
+    session_id: str
+
+
+@app.post("/api/subscription/verify-session")
+async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
+    """✅ Vérifie le paiement et crée l'abonnement"""
+    try:
+        user_id = get_user_id(request)
+        
+        session = stripe.checkout.Session.retrieve(req.session_id)
+        
+        if session.payment_status != "paid":
+            return {
+                "success": False,
+                "message": "Paiement non confirmé"
+            }
+        
+        subscription = stripe.Subscription.retrieve(session.subscription)
+        
+        if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+            supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+            
+            plan = session.metadata.get("plan", "pro") if session.metadata else "pro"
+            
+            supabase.table("user_subscriptions").insert({
+                "user_id": user_id,
+                "plan": plan,
+                "status": "active",
+                "stripe_session_id": session.id,
+                "stripe_customer_id": session.customer,
+                "amount_paid": session.amount_total,
+                "currency": session.currency,
+                "started_at": datetime.utcnow().isoformat()
+            }).execute()
+            
+            supabase.table("user_profiles").upsert({
+                "id": user_id,
+                "subscription_tier": plan,
+                "updated_at": datetime.utcnow().isoformat()
+            }).execute()
+        
+        return {
+            "success": True,
+            "plan": plan,
+            "message": f"✅ Abonnement {plan.upper()} activé!"
+        }
+    
+    except Exception as e:
+        print(f"Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/user/profile")
+async def get_user_profile(request: Request):
+    """📋 Récupère le profil et l'abonnement"""
+    try:
+        user_id = get_user_id(request)
+        
+        if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+            supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+            
+            profile_response = supabase.table("user_profiles").select("*").eq(
+                "id", user_id
+            ).execute()
+            
+            subscription_response = supabase.table("user_subscriptions").select("*").eq(
+                "user_id", user_id
+            ).eq("status", "active").order("created_at", desc=True).limit(1).execute()
+            
+            profile = profile_response.data[0] if profile_response.data else {}
+            subscription = subscription_response.data[0] if subscription_response.data else None
+            
+            return {
+                "success": True,
+                "profile": {
+                    "user_id": user_id,
+                    "email": profile.get("email"),
+                    "full_name": profile.get("full_name")
+                },
+                "subscription": subscription,
+                "has_active_subscription": bool(subscription)
+            }
+    
+    except Exception as e:
+        print(f"Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

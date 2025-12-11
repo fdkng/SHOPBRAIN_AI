@@ -92,8 +92,11 @@ export default function App() {
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_IN' && session) {
         setUser(session.user)
-        // After email confirmation, redirect to pricing
-        if (!window.location.hash.includes('pricing')) {
+        // Si on revient avec session_id, redirection dashboard
+        const params = new URLSearchParams(window.location.hash.substring(1))
+        if (params.get('session_id')) {
+          window.location.hash = '#dashboard'
+        } else if (!window.location.hash.includes('pricing')) {
           window.location.hash = '#pricing'
         }
         setCurrentView('landing')

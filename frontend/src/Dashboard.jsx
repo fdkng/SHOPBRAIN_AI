@@ -1,490 +1,331 @@
-import { useState, useEffect } from 'react';
-import { supabase } from './supabaseClient';
+import React, { useState, useEffect } from 'react'
+import { createClient } from '@supabase/supabase-js'
 
-const API_BASE = 'https://shopbrain-backend.onrender.com';
+const supabase = createClient(
+  'https://jgmsfadayzbgykzajvmw.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpnbXNmYWRheXpiZ3lremFqdm13Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQwODk0NTksImV4cCI6MjA3OTY2NTQ1OX0.sg0O2QGdoKO5Zb6vcRJr5pSu2zlaxU3r7nHtyXb07hg'
+)
+
+const API_URL = 'https://shopbrain-backend.onrender.com'
 
 export default function Dashboard() {
-  const [user, setUser] = useState(null);
-  const [profile, setProfile] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [shopDomain, setShopDomain] = useState('');
-  const [products, setProducts] = useState([]);
-  const [analyzing, setAnalyzing] = useState({});
-  const [analyses, setAnalyses] = useState({});
-  const [shopifyConnected, setShopifyConnected] = useState(false);
-  const [activeTab, setActiveTab] = useState('products');
+  const [user, setUser] = useState(null)
+  const [subscription, setSubscription] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [activeTab, setActiveTab] = useState('overview')
+  const [shopifyUrl, setShopifyUrl] = useState('')
+  const [shopifyToken, setShopifyToken] = useState('')
+  const [products, setProducts] = useState(null)
+  const [error, setError] = useState('')
 
   useEffect(() => {
-    checkUser();
-    
-    // Check if returning from Shopify OAuth
-    const params = new URLSearchParams(window.location.hash.substring(1));
-    if (params.get('shopify') === 'connected') {
-      setShopifyConnected(true);
-      setTimeout(() => loadProducts(), 1000);
-    }
-  }, []);
+    initializeUser()
+  }, [])
 
-  const checkUser = async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      window.location.href = '/#';
-      return;
-    }
-    setUser(session.user);
-
-    // Récupérer le profil complet depuis le backend
+  const initializeUser = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/auth/profile`, {
+      const { data: { session } } = await supabase.auth.getSession()
+      
+      if (!session) {
+        window.location.hash = '#/'
+        return
+      }
+      
+      setUser(session.user)
+      
+      // Vérifie l'abonnement
+      const response = await fetch(`${API_URL}/api/subscription/status`, {
+        method: 'POST',
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
           'Content-Type': 'application/json'
-        }
-      });
-
-      if (response.ok) {
-        const profileData = await response.json();
-        setProfile(profileData);
+        },
+        body: JSON.stringify({ user_id: session.user.id })
+      })
+      
+      const data = await response.json()
+      
+      if (data.success && data.has_subscription) {
+        setSubscription(data)
+      } else {
+        // Pas d'abonnement - redirige vers pricing
+        window.location.hash = '#pricing'
       }
-    } catch (error) {
-      console.error('Error fetching profile:', error);
+      
+      setLoading(false)
+    } catch (err) {
+      console.error('Error:', err)
+      setError('Erreur d\'authentification')
+      setLoading(false)
     }
-
-    setLoading(false);
-  };
-
+  }
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
-    window.location.href = '/#';
-  };
+    await supabase.auth.signOut()
+    window.location.hash = '#/'
+  }
 
-  const connectShopify = () => {
-    if (!shopDomain) {
-      alert('Entre ton domaine Shopify (ex: monstore.myshopify.com)');
-      return;
+  const connectShopify = async () => {
+    if (!shopifyUrl || !shopifyToken) {
+      alert('Complète les champs')
+      return
     }
     
-    // Validate domain format
-    if (!shopDomain.endsWith('.myshopify.com')) {
-      alert('Le domaine doit finir par .myshopify.com');
-      return;
-    }
-
-    // Redirect to backend OAuth
-    window.location.href = `${API_BASE}/auth/shopify?shop=${shopDomain}&user_id=${user.id}`;
-  };
-
-  const loadProducts = async () => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session.access_token;
-
-      const response = await fetch(`${API_BASE}/api/shopify/products?limit=50`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setProducts(data.products || []);
-        setShopifyConnected(true);
-      } else {
-        console.error('Failed to load products');
-      }
-    } catch (error) {
-      console.error('Error loading products:', error);
-    }
-  };
-
-  const analyzeProduct = async (product) => {
-    setAnalyzing(prev => ({ ...prev, [product.id]: true }));
-
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session.access_token;
-
-      const response = await fetch(`${API_BASE}/api/analyze-product`, {
+      const { data: { session } } = await supabase.auth.getSession()
+      
+      const response = await fetch(`${API_URL}/api/user/profile/update`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
+          'Authorization': `Bearer ${session.access_token}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          product_id: product.id.toString(),
-          title: product.title,
-          description: product.body_html || '',
-          price: product.variants?.[0]?.price || '0'
+          shopify_shop_url: shopifyUrl,
+          shopify_access_token: shopifyToken
         })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setAnalyses(prev => ({ ...prev, [product.id]: data.analysis }));
-      } else {
-        alert('Erreur lors de l\'analyse');
+      })
+      
+      const data = await response.json()
+      if (data.success) {
+        alert('✅ Shopify connecté!')
+        loadProducts()
       }
-    } catch (error) {
-      console.error('Error analyzing product:', error);
-      alert('Erreur lors de l\'analyse');
-    } finally {
-      setAnalyzing(prev => ({ ...prev, [product.id]: false }));
+    } catch (err) {
+      alert('Erreur: ' + err.message)
     }
-  };
+  }
 
-  if (loading) {
+  const loadProducts = async () => {
+    if (!shopifyUrl || !shopifyToken) return
+    
+    try {
+      setLoading(true)
+      const response = await fetch(
+        `https://${shopifyUrl}/admin/api/2024-01/products.json?limit=10`,
+        {
+          headers: {
+            'X-Shopify-Access-Token': shopifyToken
+          }
+        }
+      )
+      
+      const data = await response.json()
+      setProducts(data.products || [])
+    } catch (err) {
+      setError('Erreur Shopify: ' + err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const analyzeProducts = async () => {
+    if (!products || products.length === 0) {
+      alert('Charge tes produits d\'abord')
+      return
+    }
+    
+    try {
+      setLoading(true)
+      const { data: { session } } = await supabase.auth.getSession()
+      
+      const response = await fetch(`${API_URL}/api/ai/analyze-store`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          products: products,
+          analytics: {},
+          tier: subscription.plan
+        })
+      })
+      
+      const data = await response.json()
+      
+      if (data.success) {
+        alert('✅ Analyse terminée! Voir les résultats IA')
+        setActiveTab('results')
+      }
+    } catch (err) {
+      alert('Erreur analyse: ' + err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (loading && !user) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-blue-900 to-purple-900 flex items-center justify-center">
         <div className="text-white text-xl">Chargement...</div>
       </div>
-    );
+    )
+  }
+
+  if (!user || !subscription) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-900 to-purple-900 flex items-center justify-center">
+        <div className="text-white text-xl">Erreur: Pas d'abonnement actif</div>
+      </div>
+    )
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+    <div className="min-h-screen bg-gray-900">
       {/* Header */}
-      <header className="bg-black/20 backdrop-blur-xl border-b border-white/10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-500 rounded-xl flex items-center justify-center">
-                <span className="text-white font-bold text-xl">S</span>
-              </div>
-              <h1 className="text-2xl font-bold text-white">ShopBrain AI</h1>
-            </div>
-            <div className="flex items-center gap-4">
-              {profile && (
-                <div className="text-right">
-                  <div className="text-white font-semibold">{profile.full_name}</div>
-                  <div className="text-white/70 text-sm">@{profile.username}</div>
-                </div>
-              )}
-              <button
-                onClick={handleLogout}
-                className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition"
-              >
-                Déconnexion
-              </button>
-            </div>
+      <div className="bg-gradient-to-r from-blue-900 to-purple-900 text-white p-6 shadow-lg">
+        <div className="max-w-7xl mx-auto flex justify-between items-center">
+          <div>
+            <h1 className="text-3xl font-bold">🤖 ShopBrain AI Dashboard</h1>
+            <p className="text-gray-300">Plan: <span className="font-bold text-yellow-400">{subscription?.plan.toUpperCase()}</span></p>
           </div>
-        </div>
-      </header>
-
-      {/* Navigation Tabs */}
-      <div className="bg-black/20 backdrop-blur-xl border-b border-white/10 sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex gap-8">
+          <div className="text-right">
+            <p className="text-gray-300">{user.email}</p>
             <button
-              onClick={() => setActiveTab('products')}
-              className={`py-4 px-2 font-semibold transition border-b-2 ${
-                activeTab === 'products'
-                  ? 'text-purple-400 border-purple-400'
-                  : 'text-white/70 hover:text-white border-transparent'
-              }`}
+              onClick={handleLogout}
+              className="mt-2 bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg"
             >
-              📦 Mes Produits
-            </button>
-            <button
-              onClick={() => setActiveTab('profile')}
-              className={`py-4 px-2 font-semibold transition border-b-2 ${
-                activeTab === 'profile'
-                  ? 'text-purple-400 border-purple-400'
-                  : 'text-white/70 hover:text-white border-transparent'
-              }`}
-            >
-              👤 Mon Profil
+              Déconnexion
             </button>
           </div>
         </div>
       </div>
 
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        {/* Profile Tab */}
-        {activeTab === 'profile' && profile && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            {/* Profile Card */}
-            <div className="md:col-span-1">
-              <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-6 border border-white/20">
-                <div className="text-center">
-                  <div className="w-20 h-20 mx-auto mb-4 bg-gradient-to-br from-purple-500 to-pink-500 rounded-full flex items-center justify-center">
-                    <span className="text-white font-bold text-3xl">{profile.full_name.charAt(0).toUpperCase()}</span>
-                  </div>
-                  <h2 className="text-2xl font-bold text-white mb-2">{profile.full_name}</h2>
-                  <p className="text-purple-400 font-semibold mb-4">@{profile.username}</p>
-                  <div className="space-y-3 text-sm">
-                    <div className="bg-white/5 rounded-lg p-3">
-                      <div className="text-white/70 mb-1">Email</div>
-                      <div className="text-white font-semibold break-all">{profile.email}</div>
-                    </div>
-                    <div className="bg-white/5 rounded-lg p-3">
-                      <div className="text-white/70 mb-1">Plan</div>
-                      <div className="text-white font-semibold capitalize">{profile.subscription_plan}</div>
-                    </div>
-                    <div className="bg-white/5 rounded-lg p-3">
-                      <div className="text-white/70 mb-1">Statut</div>
-                      <div className={`font-semibold capitalize ${
-                        profile.subscription_status === 'active' 
-                          ? 'text-green-400' 
-                          : 'text-yellow-400'
-                      }`}>
-                        {profile.subscription_status}
-                      </div>
-                    </div>
-                    <div className="bg-white/5 rounded-lg p-3">
-                      <div className="text-white/70 mb-1">Inscrit depuis</div>
-                      <div className="text-white font-semibold">
-                        {new Date(profile.created_at).toLocaleDateString('fr-FR')}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
+      {/* Tabs */}
+      <div className="max-w-7xl mx-auto p-6">
+        <div className="flex gap-4 mb-6 border-b border-gray-700">
+          {['overview', 'shopify', 'ai'].map(t => (
+            <button
+              key={t}
+              onClick={() => setActiveTab(t)}
+              className={`px-4 py-2 font-semibold transition ${
+                activeTab === t
+                  ? 'text-blue-400 border-b-2 border-blue-400'
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              {t === 'overview' && '📊 Vue d\'ensemble'}
+              {t === 'shopify' && '🛒 Shopify'}
+              {t === 'ai' && '✨ IA'}
+            </button>
+          ))}
+        </div>
 
-            {/* Account Info */}
-            <div className="md:col-span-2">
-              <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-6 border border-white/20">
-                <h3 className="text-2xl font-bold text-white mb-6">Informations du compte</h3>
-                <div className="space-y-6">
-                  <div>
-                    <label className="block text-sm text-white/70 mb-2">Prénom</label>
-                    <div className="px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white">
-                      {profile.first_name}
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-sm text-white/70 mb-2">Nom</label>
-                    <div className="px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white">
-                      {profile.last_name}
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-sm text-white/70 mb-2">Nom d'utilisateur (unique)</label>
-                    <div className="px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white flex items-center gap-2">
-                      @{profile.username}
-                      <span className="text-green-400 text-sm">✓ Réservé</span>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-sm text-white/70 mb-2">Email (unique)</label>
-                    <div className="px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white flex items-center gap-2">
-                      {profile.email}
-                      <span className="text-green-400 text-sm">✓ Vérifié</span>
-                    </div>
-                  </div>
-                  <div className="bg-purple-500/20 border border-purple-500/50 rounded-xl p-4 text-purple-200 text-sm">
-                    ℹ️ Ton compte est sécurisé et réservé à toi seul. Les usernames et emails sont uniques et ne peuvent pas être modifiés.
-                  </div>
-                </div>
-              </div>
+        {error && (
+          <div className="bg-red-900 border border-red-700 text-red-200 p-4 rounded-lg mb-6">
+            {error}
+          </div>
+        )}
+
+        {/* Overview Tab */}
+        {activeTab === 'overview' && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+              <h3 className="text-gray-400 text-sm uppercase mb-2">Plan Actif</h3>
+              <p className="text-white text-2xl font-bold">{subscription?.plan.toUpperCase()}</p>
+              <p className="text-gray-400 text-sm mt-2">Depuis: {new Date(subscription?.started_at).toLocaleDateString('fr-FR')}</p>
+            </div>
+            
+            <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+              <h3 className="text-gray-400 text-sm uppercase mb-2">Produits</h3>
+              <p className="text-white text-2xl font-bold">{subscription?.capabilities?.product_limit === null ? '∞' : subscription?.capabilities?.product_limit}</p>
+              <p className="text-gray-400 text-sm mt-2">Limite mensuelle</p>
+            </div>
+            
+            <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+              <h3 className="text-gray-400 text-sm uppercase mb-2">Fonctionnalités</h3>
+              <ul className="text-sm space-y-1">
+                {subscription?.capabilities?.features?.map((f, i) => (
+                  <li key={i} className="text-gray-300">✓ {f}</li>
+                ))}
+              </ul>
             </div>
           </div>
         )}
 
-        {/* Products Tab */}
-        {activeTab === 'products' && (
-          <>
-        {!shopifyConnected && (
-          <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-8 border border-white/20 mb-8">
-            <h2 className="text-3xl font-bold text-white mb-4">🛍️ Connecte ta boutique Shopify</h2>
-            <p className="text-white/70 mb-6">
-              Entre ton domaine Shopify pour analyser tes produits avec l'IA
-            </p>
-            <div className="flex gap-4">
-              <input
-                type="text"
-                placeholder="monstore.myshopify.com"
-                value={shopDomain}
-                onChange={(e) => setShopDomain(e.target.value)}
-                className="flex-1 px-4 py-3 bg-white/10 border border-white/20 rounded-xl text-white placeholder-white/50 focus:outline-none focus:border-purple-500"
-              />
+        {/* Shopify Tab */}
+        {activeTab === 'shopify' && (
+          <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+            <h2 className="text-white text-xl font-bold mb-4">🛒 Connecter Shopify</h2>
+            
+            <div className="space-y-4 max-w-md">
+              <div>
+                <label className="block text-gray-400 text-sm mb-2">URL de boutique</label>
+                <input
+                  type="text"
+                  placeholder="ma-boutique.myshopify.com"
+                  value={shopifyUrl}
+                  onChange={(e) => setShopifyUrl(e.target.value)}
+                  className="w-full bg-gray-700 text-white px-4 py-2 rounded-lg border border-gray-600"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-gray-400 text-sm mb-2">Token d'accès</label>
+                <input
+                  type="password"
+                  placeholder="shpat_..."
+                  value={shopifyToken}
+                  onChange={(e) => setShopifyToken(e.target.value)}
+                  className="w-full bg-gray-700 text-white px-4 py-2 rounded-lg border border-gray-600"
+                />
+              </div>
+              
               <button
                 onClick={connectShopify}
-                className="px-8 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white font-semibold rounded-xl hover:shadow-lg hover:shadow-purple-500/50 transition"
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg"
               >
-                Connecter
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Products List */}
-        {shopifyConnected && (
-          <>
-            <div className="flex justify-between items-center mb-8">
-              <h2 className="text-3xl font-bold text-white">📦 Mes Produits</h2>
-              <button
-                onClick={loadProducts}
-                className="px-6 py-3 bg-white/10 hover:bg-white/20 text-white rounded-xl transition"
-              >
-                🔄 Actualiser
+                ✅ Connecter
               </button>
             </div>
 
-            {products.length === 0 ? (
-              <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-12 border border-white/20 text-center">
-                <p className="text-white/70 text-lg">Aucun produit trouvé. Clique sur Actualiser.</p>
+            {shopifyUrl && !loading && (
+              <div className="mt-6">
+                <button
+                  onClick={loadProducts}
+                  className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg"
+                >
+                  📦 Charger mes produits ({products?.length || 0})
+                </button>
               </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {products.map((product) => (
-                  <div
-                    key={product.id}
-                    className="bg-white/10 backdrop-blur-xl rounded-2xl border border-white/20 overflow-hidden hover:shadow-xl hover:shadow-purple-500/20 transition group"
-                  >
-                    {/* Product Image */}
-                    {product.image && (
-                      <div className="aspect-square bg-white/5 overflow-hidden">
-                        <img
-                          src={product.image.src}
-                          alt={product.title}
-                          className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
-                        />
-                      </div>
-                    )}
+            )}
 
-                    {/* Product Info */}
-                    <div className="p-6">
-                      <h3 className="text-xl font-bold text-white mb-2 line-clamp-2">
-                        {product.title}
-                      </h3>
-                      <p className="text-purple-300 font-semibold mb-4">
-                        {product.variants?.[0]?.price} {product.variants?.[0]?.currency || 'CAD'}
-                      </p>
-
-                      {/* Analyze Button */}
-                      <button
-                        onClick={() => analyzeProduct(product)}
-                        disabled={analyzing[product.id]}
-                        className="w-full px-4 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white font-semibold rounded-xl hover:shadow-lg hover:shadow-purple-500/50 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {analyzing[product.id] ? '🔄 Analyse en cours...' : '✨ Analyser avec IA'}
-                      </button>
-
-                      {/* Analysis Results */}
-                      {analyses[product.id] && (
-                        <div className="mt-4 space-y-3 text-sm">
-                          {/* Optimized Title */}
-                          <div className="bg-white/5 rounded-lg p-3">
-                            <div className="font-semibold text-purple-300 mb-1">📝 Titre optimisé:</div>
-                            <div className="text-white/90">{analyses[product.id].optimized_title}</div>
-                          </div>
-
-                          {/* SEO Keywords */}
-                          {analyses[product.id].seo_keywords?.length > 0 && (
-                            <div className="bg-white/5 rounded-lg p-3">
-                              <div className="font-semibold text-purple-300 mb-2">🔑 Mots-clés SEO:</div>
-                              <div className="flex flex-wrap gap-2">
-                                {analyses[product.id].seo_keywords.map((keyword, i) => (
-                                  <span
-                                    key={i}
-                                    className="px-2 py-1 bg-purple-500/20 text-purple-200 rounded text-xs"
-                                  >
-                                    {keyword}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Price Recommendation */}
-                          {analyses[product.id].price_recommendation && (
-                            <div className="bg-white/5 rounded-lg p-3">
-                              <div className="font-semibold text-purple-300 mb-1">💰 Prix:</div>
-                              <div className="text-white/90 text-xs">
-                                {analyses[product.id].price_recommendation}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Cross-sell */}
-                          {analyses[product.id].cross_sell?.length > 0 && (
-                            <div className="bg-white/5 rounded-lg p-3">
-                              <div className="font-semibold text-purple-300 mb-1">🛒 Cross-sell:</div>
-                              <ul className="text-white/90 text-xs space-y-1">
-                                {analyses[product.id].cross_sell.map((item, i) => (
-                                  <li key={i}>• {item}</li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-
-                          {/* View Full Analysis */}
-                          <button
-                            onClick={() => {
-                              const modal = document.getElementById(`modal-${product.id}`);
-                              modal.classList.remove('hidden');
-                            }}
-                            className="w-full px-3 py-2 bg-white/10 hover:bg-white/20 text-white text-sm rounded-lg transition"
-                          >
-                            📊 Voir l'analyse complète
-                          </button>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Full Analysis Modal */}
-                    {analyses[product.id] && (
-                      <div
-                        id={`modal-${product.id}`}
-                        className="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-                        onClick={(e) => {
-                          if (e.target.id === `modal-${product.id}`) {
-                            e.target.classList.add('hidden');
-                          }
-                        }}
-                      >
-                        <div className="bg-slate-900 rounded-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto border border-white/20">
-                          <div className="sticky top-0 bg-slate-900 border-b border-white/20 p-6 flex justify-between items-center">
-                            <h3 className="text-2xl font-bold text-white">Analyse complète</h3>
-                            <button
-                              onClick={() => {
-                                document.getElementById(`modal-${product.id}`).classList.add('hidden');
-                              }}
-                              className="text-white/70 hover:text-white text-2xl"
-                            >
-                              ×
-                            </button>
-                          </div>
-                          <div className="p-6 space-y-6">
-                            {/* Full Description */}
-                            <div>
-                              <h4 className="text-xl font-bold text-purple-300 mb-3">📝 Description optimisée</h4>
-                              <p className="text-white/90 leading-relaxed whitespace-pre-wrap">
-                                {analyses[product.id].optimized_description}
-                              </p>
-                            </div>
-
-                            {/* Conversion Tips */}
-                            {analyses[product.id].conversion_tips?.length > 0 && (
-                              <div>
-                                <h4 className="text-xl font-bold text-purple-300 mb-3">📈 Conseils conversion</h4>
-                                <ul className="space-y-2">
-                                  {analyses[product.id].conversion_tips.map((tip, i) => (
-                                    <li key={i} className="text-white/90 flex gap-3">
-                                      <span className="text-purple-400">•</span>
-                                      <span>{tip}</span>
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    )}
+            {products && (
+              <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4">
+                {products.map(p => (
+                  <div key={p.id} className="bg-gray-700 p-3 rounded-lg">
+                    <p className="text-white font-semibold text-sm truncate">{p.title}</p>
+                    <p className="text-gray-400 text-xs">${p.variants[0]?.price}</p>
                   </div>
                 ))}
               </div>
             )}
-          </>
+          </div>
         )}
-          </>
+
+        {/* AI Tab */}
+        {activeTab === 'ai' && (
+          <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+            <h2 className="text-white text-xl font-bold mb-4">✨ Analyser avec l'IA</h2>
+            
+            {products && products.length > 0 ? (
+              <div>
+                <p className="text-gray-400 mb-4">{products.length} produits à analyser</p>
+                <button
+                  onClick={analyzeProducts}
+                  disabled={loading}
+                  className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
+                >
+                  {loading ? '⏳ Analyse en cours...' : '🚀 Lancer l\'analyse IA'}
+                </button>
+              </div>
+            ) : (
+              <p className="text-gray-400">Charge tes produits Shopify d'abord</p>
+            )}
+          </div>
         )}
-      </main>
+      </div>
     </div>
-  );
+  )
 }
