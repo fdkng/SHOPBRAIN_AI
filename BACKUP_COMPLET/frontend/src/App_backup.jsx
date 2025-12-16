@@ -1,0 +1,843 @@
+import React, { useState, useEffect } from 'react'
+import { createClient } from '@supabase/supabase-js'
+import Dashboard from './Dashboard'
+
+const supabase = createClient(
+  'https://jgmsfadayzbgykzajvmw.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpnbXNmYWRheXpiZ3lremFqdm13Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQwODk0NTksImV4cCI6MjA3OTY2NTQ1OX0.sg0O2QGdoKO5Zb6vcRJr5pSu2zlaxU3r7nHtyXb07hg'
+)
+
+// Stripe Payment Links are created dynamically via backend API
+// No static links needed - backend generates them on demand
+
+const PRICING_PLANS = [
+  {
+    name: 'Standard',
+    price: '$99',
+    popular: false,
+    features: [
+      'Détection des produits sous-performants',
+      'Réécriture automatique des titres',
+      'Suggestions d\'optimisation de prix',
+      'Analyse 50 produits/mois',
+      '1 boutique Shopify',
+      'Rapport mensuel'
+    ],
+    cta: 'Commencer',
+    plan_id: 'standard',
+    highlight: false
+  },
+  {
+    name: 'Pro',
+    price: '$199',
+    popular: true,
+    features: [
+      'Détection avancée des produits faibles',
+      'Réécriture intelligente titres + descriptions',
+      'Optimisation automatique des prix',
+      'Recommandations d\'images stratégiques',
+      'Cross-sell & Upsell personnalisés',
+      'Analyse 500 produits/mois',
+      '3 boutiques Shopify',
+      'Rapports hebdomadaires automatisés'
+    ],
+    cta: 'Commencer maintenant',
+    plan_id: 'pro',
+    highlight: true
+  },
+  {
+    name: 'Premium',
+    price: '$299',
+    popular: false,
+    features: [
+      'IA prédictive des tendances de vente',
+      'Génération complète de contenu optimisé',
+      'Actions automatiques (prix, images, stock)',
+      'Stratégies Cross-sell & Upsell avancées',
+      'Rapports quotidiens personnalisés (PDF/Email)',
+      'Analyse illimitée de produits',
+      'Boutiques Shopify illimitées',
+      'Account manager dédié',
+      'Accès API complet'
+    ],
+    cta: 'Obtenir Premium',
+    plan_id: 'premium',
+    highlight: false
+  }
+]
+
+export default function App() {
+  const [showAuthModal, setShowAuthModal] = useState(false)
+  const [authMode, setAuthMode] = useState('signup') // 'signup' or 'login'
+  const [formData, setFormData] = useState({
+    firstName: '',
+    lastName: '',
+    username: '',
+    email: '',
+    password: ''
+  })
+  const [authMessage, setAuthMessage] = useState('')
+  const [scrolled, setScrolled] = useState(false)
+  const [currentView, setCurrentView] = useState('landing')
+  const [user, setUser] = useState(null)
+
+  useEffect(() => {
+    const handleScroll = () => setScrolled(window.scrollY > 10)
+    window.addEventListener('scroll', handleScroll)
+    
+    // Check for authenticated user
+    checkUser()
+    
+    // Listen for auth changes
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN' && session) {
+        setUser(session.user)
+        // Si on revient avec session_id, redirection dashboard
+        const params = new URLSearchParams(window.location.hash.substring(1))
+        if (params.get('session_id')) {
+          window.location.hash = '#dashboard'
+        }
+        setCurrentView('landing')
+        setShowAuthModal(false)
+      } else if (event === 'SIGNED_OUT') {
+        setUser(null)
+        setCurrentView('landing')
+      }
+    })
+    
+    return () => {
+      window.removeEventListener('scroll', handleScroll)
+      authListener?.subscription?.unsubscribe()
+    }
+  }, [])
+
+  const checkUser = async () => {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (session) {
+      setUser(session.user)
+      // Check if user has paid (has subscription)
+      if (window.location.hash.includes('dashboard') || window.location.hash.includes('shopify')) {
+        setCurrentView('dashboard')
+      }
+    }
+  }
+
+  // Always redirect to production after email confirmation
+  const getRedirectUrl = () => 'https://fdkng.github.io/SHOPBRAIN_AI'
+
+  const handleSignup = async (e) => {
+    e.preventDefault()
+    setAuthMessage('')
+    
+    // Validation
+    if (formData.password.length < 6) {
+      setAuthMessage('❌ Le mot de passe doit contenir au moins 6 caractères')
+      return
+    }
+    
+    try {
+      // Inscription avec confirmation automatique (pas d'email requis)
+      const { data, error } = await supabase.auth.signUp({
+        email: formData.email,
+        password: formData.password,
+        options: {
+          data: {
+            first_name: formData.firstName,
+            last_name: formData.lastName,
+            username: formData.username,
+            full_name: `${formData.firstName} ${formData.lastName}`
+          },
+          emailRedirectTo: getRedirectUrl()
+        }
+      })
+      
+      if (error) {
+        if (error.message.includes('already registered')) {
+          setAuthMessage('❌ Cet email est déjà utilisé. Connecte-toi ou utilise un autre email.')
+        } else {
+          setAuthMessage('❌ ' + error.message)
+        }
+        return
+      }
+      
+      // Compte créé et connecté automatiquement
+      setUser(data.user)
+      setShowAuthModal(false)
+      setAuthMessage('')
+      setFormData({ firstName: '', lastName: '', username: '', email: '', password: '' })
+      
+      // Scroll vers les tarifs
+      setTimeout(() => {
+        document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' })
+      }, 500)
+      
+    } catch (error) {
+      setAuthMessage('❌ Une erreur est survenue. Réessaie.')
+      console.error(error)
+    }
+  }
+
+  const handleLogin = async (e) => {
+    e.preventDefault()
+    setAuthMessage('')
+    
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: formData.email,
+        password: formData.password
+      })
+      
+      if (error) {
+        if (error.message.includes('Invalid login credentials')) {
+          setAuthMessage('❌ Email ou mot de passe incorrect')
+        } else {
+          setAuthMessage('❌ ' + error.message)
+        }
+        return
+      }
+      
+      setUser(data.user)
+      setShowAuthModal(false)
+      setAuthMessage('')
+      setFormData({ firstName: '', lastName: '', username: '', email: '', password: '' })
+      
+    } catch (error) {
+      setAuthMessage('❌ Une erreur est survenue. Réessaie.')
+      console.error(error)
+    }
+  }
+
+  const handleStripeCheckout = async (planId) => {
+    // Check if user is logged in
+    if (!user) {
+      alert('⚠️ Tu dois d\'abord créer un compte avant de t\'abonner !')
+      setShowAuthModal(true)
+      setAuthMode('signup')
+      return
+    }
+    
+    try {
+      // Get auth session
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        alert('Erreur: Session non trouvée')
+        return
+      }
+
+      // Call backend to create payment link
+      const response = await fetch(
+        'https://shopbrain-backend.onrender.com/api/stripe/payment-link',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            plan: planId,
+            email: user.email
+          })
+        }
+      )
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        alert(`Erreur: ${errorData.detail || 'Impossible de créer le lien de paiement'}`)
+        console.error('Payment link error:', errorData)
+        return
+      }
+
+      const data = await response.json()
+      
+      if (data.success && data.url) {
+        // Redirect to Stripe payment link
+        window.location.href = data.url
+      } else {
+        alert('Erreur: Impossible de créer le lien de paiement')
+        console.error('Payment link error:', data)
+      }
+    } catch (error) {
+      alert(`Erreur de connexion: ${error.message}`)
+      console.error('Stripe checkout error:', error)
+    }
+  }
+
+  // If user is logged in and on dashboard view, show Dashboard component
+  if (currentView === 'dashboard' && user) {
+    return <Dashboard />
+  }
+
+  // Otherwise show landing page
+  return (
+    <div className="min-h-screen bg-white">
+      {/* Navigation */}
+      <nav className={`fixed top-0 w-full z-50 transition-all duration-300 ${
+        scrolled ? 'bg-white/80 backdrop-blur-md shadow-sm border-b border-gray-200' : 'bg-white border-b border-gray-100'
+      }`}>
+        <div className="max-w-7xl mx-auto px-6 sm:px-8">
+          <div className="flex items-center justify-between h-16">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-blue-700 rounded-lg flex items-center justify-center text-white font-bold text-sm">
+                💡
+              </div>
+              <span className="text-lg sm:text-xl font-semibold text-gray-900">ShopBrain AI</span>
+            </div>
+            
+            <div className="hidden md:flex items-center gap-8">
+              <a href="#features" className="text-sm font-normal text-gray-600 hover:text-gray-900 transition-colors">
+                Fonctionnalités
+              </a>
+              <a href="#how-it-works" className="text-sm font-normal text-gray-600 hover:text-gray-900 transition-colors">
+                Comment ça marche
+              </a>
+              <a href="#pricing" className="text-sm font-normal text-gray-600 hover:text-gray-900 transition-colors">
+                Tarifs
+              </a>
+            </div>
+
+            {user ? (
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-green-50 text-green-700 rounded-full text-sm">
+                  <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                  <span className="font-medium">{user.user_metadata?.first_name || 'Connecté'}</span>
+                </div>
+                <button
+                  onClick={async () => {
+                    await supabase.auth.signOut()
+                    setUser(null)
+                    setCurrentView('landing')
+                  }}
+                  className="px-4 py-2 text-gray-600 hover:text-gray-900 text-sm font-medium transition"
+                >
+                  Déconnexion
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowAuthModal(true)}
+                className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-full hover:bg-blue-700 transition-all hover:scale-105 shadow-md"
+              >
+                Se connecter
+              </button>
+            )}
+          </div>
+        </div>
+      </nav>
+
+      {/* Auth Modal - Inscription/Connexion */}
+      {showAuthModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-6 animate-fadeIn" onClick={() => setShowAuthModal(false)}>
+          <div className="bg-white rounded-3xl max-w-md w-full p-8 shadow-2xl animate-scaleIn max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-2xl font-semibold text-gray-900">
+                {authMode === 'signup' ? 'Créer un compte' : 'Se connecter'}
+              </h3>
+              <button onClick={() => setShowAuthModal(false)} className="text-gray-400 hover:text-gray-600 text-2xl font-light">×</button>
+            </div>
+
+            {/* Toggle entre Inscription/Connexion */}
+            <div className="flex gap-2 mb-6 bg-gray-100 p-1 rounded-xl">
+              <button
+                onClick={() => setAuthMode('signup')}
+                className={`flex-1 py-2 px-4 rounded-lg text-sm font-medium transition ${
+                  authMode === 'signup' ? 'bg-white text-gray-900 shadow' : 'text-gray-600'
+                }`}
+              >
+                Inscription
+              </button>
+              <button
+                onClick={() => setAuthMode('login')}
+                className={`flex-1 py-2 px-4 rounded-lg text-sm font-medium transition ${
+                  authMode === 'login' ? 'bg-white text-gray-900 shadow' : 'text-gray-600'
+                }`}
+              >
+                Connexion
+              </button>
+            </div>
+
+            {/* Formulaire Inscription */}
+            {authMode === 'signup' && (
+              <form onSubmit={handleSignup} className="space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-2">Prénom *</label>
+                    <input
+                      type="text"
+                      value={formData.firstName}
+                      onChange={(e) => setFormData({...formData, firstName: e.target.value})}
+                      placeholder="Jean"
+                      required
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-2">Nom *</label>
+                    <input
+                      type="text"
+                      value={formData.lastName}
+                      onChange={(e) => setFormData({...formData, lastName: e.target.value})}
+                      placeholder="Dupont"
+                      required
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-2">Nom d'utilisateur *</label>
+                  <input
+                    type="text"
+                    value={formData.username}
+                    onChange={(e) => setFormData({...formData, username: e.target.value})}
+                    placeholder="monpseudo"
+                    required
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-2">Email *</label>
+                  <input
+                    type="email"
+                    value={formData.email}
+                    onChange={(e) => setFormData({...formData, email: e.target.value})}
+                    placeholder="votre@email.com"
+                    required
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-2">Mot de passe *</label>
+                  <input
+                    type="password"
+                    value={formData.password}
+                    onChange={(e) => setFormData({...formData, password: e.target.value})}
+                    placeholder="••••••••"
+                    required
+                    minLength={6}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Minimum 6 caractères</p>
+                </div>
+                <button
+                  type="submit"
+                  className="w-full px-6 py-3 bg-blue-600 text-white font-medium rounded-xl hover:bg-blue-700 transition-colors text-sm"
+                >
+                  Créer mon compte
+                </button>
+                <p className="text-xs text-gray-600 text-center">
+                  Un email de confirmation sera envoyé pour activer ton compte
+                </p>
+              </form>
+            )}
+
+            {/* Formulaire Connexion */}
+            {authMode === 'login' && (
+              <form onSubmit={handleLogin} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-2">Email</label>
+                  <input
+                    type="email"
+                    value={formData.email}
+                    onChange={(e) => setFormData({...formData, email: e.target.value})}
+                    placeholder="votre@email.com"
+                    required
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-2">Mot de passe</label>
+                  <input
+                    type="password"
+                    value={formData.password}
+                    onChange={(e) => setFormData({...formData, password: e.target.value})}
+                    placeholder="••••••••"
+                    required
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="w-full px-6 py-3 bg-blue-600 text-white font-medium rounded-xl hover:bg-blue-700 transition-colors text-sm"
+                >
+                  Se connecter
+                </button>
+              </form>
+            )}
+
+            {authMessage && (
+              <div className={`mt-4 p-3 rounded-xl text-xs ${
+                authMessage.includes('✅') ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+              }`}>
+                {authMessage}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Hero Section - Apple Style avec visuels */}
+      <section className="pt-24 pb-16 px-6 bg-gradient-to-b from-white to-gray-50">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center mb-12 animate-fadeIn">
+            <div className="inline-block mb-6">
+              <span className="px-4 py-2 bg-blue-100 text-blue-700 rounded-full text-sm font-semibold">
+                Nouveau : IA Générative pour Shopify
+              </span>
+            </div>
+            <h1 className="text-5xl md:text-7xl lg:text-8xl font-bold text-gray-900 tracking-tight leading-[1.05] mb-6">
+              L'IA qui transforme<br />
+              <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                vos ventes Shopify
+              </span>
+            </h1>
+            <p className="text-xl md:text-2xl text-gray-600 mb-12 max-w-3xl mx-auto leading-relaxed">
+              Optimisez automatiquement vos produits, descriptions et stratégies.<br />
+              Augmentation moyenne de <span className="font-bold text-gray-900">+127%</span> des conversions en 30 jours.
+            </p>
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-8">
+              <button
+                onClick={() => document.getElementById('pricing').scrollIntoView({ behavior: 'smooth' })}
+                className="px-10 py-5 bg-blue-600 text-white text-lg font-semibold rounded-full hover:bg-blue-700 transition-all hover:scale-105 shadow-2xl hover:shadow-blue-500/50"
+              >
+                Commencer gratuitement →
+              </button>
+              <button
+                onClick={() => setShowAuthModal(true)}
+                className="px-10 py-5 text-gray-900 text-lg font-semibold border-2 border-gray-900 rounded-full hover:bg-gray-900 hover:text-white transition-all hover:scale-105"
+              >
+                Se connecter
+              </button>
+            </div>
+            <p className="text-sm text-gray-500">
+              ✓ Sans engagement • ✓ Essai 14 jours • ✓ Résultats garantis
+            </p>
+          </div>
+
+          {/* Visual Preview */}
+          <div className="relative mt-16 animate-fadeIn" style={{ animationDelay: '0.2s' }}>
+            <div className="relative mx-auto max-w-5xl">
+              <div className="absolute inset-0 bg-gradient-to-r from-blue-600/20 to-purple-600/20 blur-3xl rounded-full"></div>
+              <div className="relative bg-white rounded-3xl shadow-2xl p-8 border border-gray-200">
+                <div className="flex items-center gap-2 mb-6">
+                  <div className="w-3 h-3 rounded-full bg-red-500"></div>
+                  <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
+                  <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                </div>
+                <div className="space-y-4">
+                  <div className="h-4 bg-gradient-to-r from-blue-200 to-blue-100 rounded w-3/4"></div>
+                  <div className="h-4 bg-gradient-to-r from-purple-200 to-purple-100 rounded w-5/6"></div>
+                  <div className="h-4 bg-gradient-to-r from-blue-200 to-blue-100 rounded w-2/3"></div>
+                  <div className="mt-8 grid grid-cols-3 gap-4">
+                    <div className="h-24 bg-gradient-to-br from-blue-100 to-blue-50 rounded-xl"></div>
+                    <div className="h-24 bg-gradient-to-br from-purple-100 to-purple-50 rounded-xl"></div>
+                    <div className="h-24 bg-gradient-to-br from-blue-100 to-blue-50 rounded-xl"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Social Proof */}
+      <section className="py-12 px-6 bg-gray-50 border-y border-gray-200">
+        <div className="max-w-6xl mx-auto">
+          <p className="text-center text-sm text-gray-500 mb-6">Ils nous font confiance</p>
+          <div className="flex flex-wrap justify-center items-center gap-12 opacity-60">
+            <div className="text-2xl font-bold text-gray-400">SHOPIFY</div>
+            <div className="text-2xl font-bold text-gray-400">STRIPE</div>
+            <div className="text-2xl font-bold text-gray-400">OPENAI</div>
+            <div className="text-2xl font-bold text-gray-400">SUPABASE</div>
+          </div>
+        </div>
+      </section>
+
+      {/* Features Section - Apple Style amélioré */}
+      <section id="features" className="py-24 px-6 bg-white">
+        <div className="max-w-7xl mx-auto">
+          <div className="text-center mb-20">
+            <h2 className="text-5xl md:text-6xl font-bold text-gray-900 mb-4">
+              Fonctionnalités<br />surpuissantes.
+            </h2>
+            <p className="text-xl text-gray-600">
+              Tout ce dont vous avez besoin pour dominer votre marché.
+            </p>
+          </div>
+
+          {/* Feature Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {[
+              {
+                icon: '⚡',
+                gradient: 'from-yellow-400 to-orange-500',
+                title: 'Analyse IA en temps réel',
+                desc: 'Scannez des milliers de produits en secondes. Notre IA analyse titres, descriptions, prix et images pour détecter les opportunités d\'optimisation.',
+                stat: '10M+ produits analysés'
+              },
+              {
+                icon: '✨',
+                gradient: 'from-blue-400 to-purple-500',
+                title: 'Optimisation automatique',
+                desc: 'L\'IA génère automatiquement des titres SEO-optimisés, des descriptions persuasives et des tags pertinents. Augmentez vos conversions sans lever le petit doigt.',
+                stat: '+127% conversions moyenne'
+              },
+              {
+                icon: '📈',
+                gradient: 'from-green-400 to-emerald-500',
+                title: 'Analytics & Insights',
+                desc: 'Tableaux de bord en temps réel : ventes, profits, best-sellers, produits sous-performants. Prenez des décisions data-driven.',
+                stat: 'Mises à jour toutes les 5min'
+              },
+              {
+                icon: '🔗',
+                gradient: 'from-purple-400 to-pink-500',
+                title: 'Intégration Shopify native',
+                desc: 'Connectez votre boutique en un clic. Synchronisation automatique bidirectionnelle : produits, commandes, clients, inventaire.',
+                stat: 'Sync en <1 seconde'
+              }
+            ].map((feature, idx) => (
+              <div key={idx} className="group relative p-8 bg-gradient-to-br from-gray-50 to-white border border-gray-200 rounded-3xl hover:shadow-2xl hover:scale-[1.02] transition-all duration-300 overflow-hidden">
+                <div className={`absolute top-0 right-0 w-32 h-32 bg-gradient-to-br ${feature.gradient} opacity-10 rounded-full blur-3xl group-hover:opacity-20 transition-opacity`}></div>
+                <div className="relative">
+                  <div className={`inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br ${feature.gradient} rounded-2xl text-3xl mb-6 shadow-lg`}>
+                    {feature.icon}
+                  </div>
+                  <h3 className="text-2xl font-bold text-gray-900 mb-3">{feature.title}</h3>
+                  <p className="text-gray-600 leading-relaxed mb-4">{feature.desc}</p>
+                  <div className="inline-flex items-center gap-2 px-3 py-1 bg-gray-100 rounded-full text-sm font-semibold text-gray-700">
+                    <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                    {feature.stat}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* How It Works Section */}
+      <section id="how-it-works" className="py-24 px-6">
+        <div className="max-w-6xl mx-auto">
+          <h2 className="text-4xl md:text-5xl font-bold text-gray-900 text-center mb-16">Comment ça marche</h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            {[
+              {
+                number: '1',
+                icon: '🔗',
+                title: 'Connectez Shopify',
+                desc: 'Liez votre magasin en toute sécurité'
+              },
+              {
+                number: '2',
+                icon: '👆',
+                title: 'Sélectionnez produits',
+                desc: 'Choisissez les articles à analyser'
+              },
+              {
+                number: '3',
+                icon: '💡',
+                title: 'Recevez insights',
+                desc: 'Obtenez des recommandations personnalisées'
+              }
+            ].map((step, idx) => (
+              <div key={idx} className="text-center">
+                <div className="w-16 h-16 bg-blue-600 text-white rounded-full flex items-center justify-center text-2xl font-bold mx-auto mb-6 shadow-lg">
+                  {step.number}
+                </div>
+                <div className="w-12 h-12 mx-auto bg-gray-100 rounded-xl flex items-center justify-center mb-4 text-2xl">
+                  {step.icon}
+                </div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">{step.title}</h3>
+                <p className="text-sm text-gray-600">{step.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Pricing Section - Apple Style Premium */}
+      <section id="pricing" className="py-32 px-6 bg-gradient-to-b from-gray-50 to-white relative overflow-hidden">
+        <div className="absolute inset-0 bg-grid-pattern opacity-5"></div>
+        <div className="max-w-7xl mx-auto relative">
+          <div className="text-center mb-20">
+            <h2 className="text-5xl md:text-6xl font-bold text-gray-900 mb-6">
+              Choisissez votre<br />
+              <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                formule gagnante
+              </span>
+            </h2>
+            <p className="text-xl text-gray-600">
+              Tous les plans incluent 14 jours d'essai gratuit. Sans engagement.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-6xl mx-auto">
+            {PRICING_PLANS.map((plan, idx) => (
+              <div
+                key={idx}
+                className={`relative group ${
+                  plan.highlight ? 'md:scale-110 z-10' : ''
+                }`}
+              >
+                {plan.highlight && (
+                  <div className="absolute -inset-1 bg-gradient-to-r from-blue-600 to-purple-600 rounded-3xl blur-xl opacity-50 group-hover:opacity-75 transition-opacity"></div>
+                )}
+                <div
+                  className={`relative p-8 bg-white rounded-3xl transition-all duration-300 hover:shadow-2xl ${
+                    plan.highlight 
+                      ? 'border-2 border-blue-600 shadow-xl' 
+                      : 'border border-gray-200 hover:border-blue-300'
+                  }`}
+                >
+                  {plan.highlight && (
+                    <div className="absolute -top-5 left-1/2 -translate-x-1/2">
+                      <span className="bg-gradient-to-r from-blue-600 to-purple-600 text-white text-sm font-bold px-6 py-2 rounded-full shadow-lg">
+                        ⭐ PLUS POPULAIRE
+                      </span>
+                    </div>
+                  )}
+                  
+                  <div className="text-center mb-6">
+                    <h3 className="text-2xl font-bold text-gray-900 mb-2">{plan.name}</h3>
+                    <div className="mb-4">
+                      <span className="text-5xl font-bold text-gray-900">{plan.price}</span>
+                      <span className="text-gray-600 text-lg">/mois</span>
+                    </div>
+                    <p className="text-sm text-gray-500">Facturé mensuellement</p>
+                  </div>
+
+                  <ul className="space-y-4 mb-8">
+                    {plan.features.map((feature, fidx) => (
+                      <li key={fidx} className="flex items-start gap-3">
+                        <span className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center ${
+                          plan.highlight ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-600'
+                        }`}>
+                          ✓
+                        </span>
+                        <span className="text-sm text-gray-700 leading-relaxed">{feature}</span>
+                      </li>
+                    ))}
+                  </ul>
+
+                  <button
+                    onClick={() => handleStripeCheckout(plan.plan_id)}
+                    className={`w-full py-4 rounded-full text-base font-bold transition-all hover:scale-105 shadow-lg ${
+                      plan.highlight
+                        ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:shadow-2xl hover:shadow-blue-500/50'
+                        : 'bg-gray-900 text-white hover:bg-gray-800 hover:shadow-xl'
+                    }`}
+                  >
+                    {plan.cta} →
+                  </button>
+                  
+                  <p className="text-center text-xs text-gray-500 mt-4">
+                    Annulation en un clic
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-16 text-center">
+            <p className="text-gray-600 mb-4">Besoin d'un plan sur mesure ?</p>
+            <button
+              onClick={() => setShowAuthModal(true)}
+              className="px-8 py-3 text-blue-600 font-semibold border-2 border-blue-600 rounded-full hover:bg-blue-600 hover:text-white transition-all"
+            >
+              Contactez notre équipe
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* CTA Section */}
+      <section className="py-24 px-6">
+        <div className="max-w-4xl mx-auto text-center">
+          <h2 className="text-4xl md:text-5xl font-bold text-gray-900 mb-6">
+            Prêt à transformer votre Shopify?
+          </h2>
+          <p className="text-lg text-gray-600 mb-10">
+            Rejoignez des centaines de sellers qui utilisent ShopBrain AI
+          </p>
+          <button
+            onClick={() => document.getElementById('pricing').scrollIntoView({ behavior: 'smooth' })}
+            className="px-8 py-4 bg-blue-600 text-white text-base font-medium rounded-full hover:bg-blue-700 transition-all hover:scale-105 shadow-lg hover:shadow-xl"
+          >
+            Commencer gratuitement
+          </button>
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer className="border-t border-gray-200 py-12 px-6 bg-gray-50">
+        <div className="max-w-6xl mx-auto">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-8">
+            <div>
+              <h4 className="text-xs font-semibold text-gray-900 mb-4 tracking-wide">PRODUIT</h4>
+              <ul className="space-y-3 text-sm text-gray-600">
+                <li><a href="#features" className="hover:text-gray-900 transition-colors">Fonctionnalités</a></li>
+                <li><a href="#pricing" className="hover:text-gray-900 transition-colors">Tarifs</a></li>
+                <li><a href="#how-it-works" className="hover:text-gray-900 transition-colors">Comment ça marche</a></li>
+              </ul>
+            </div>
+            <div>
+              <h4 className="text-xs font-semibold text-gray-900 mb-4 tracking-wide">ENTREPRISE</h4>
+              <ul className="space-y-3 text-sm text-gray-600">
+                <li><a href="#" className="hover:text-gray-900 transition-colors">À propos</a></li>
+                <li><a href="#" className="hover:text-gray-900 transition-colors">Blog</a></li>
+                <li><a href="#" className="hover:text-gray-900 transition-colors">Contact</a></li>
+              </ul>
+            </div>
+            <div>
+              <h4 className="text-xs font-semibold text-gray-900 mb-4 tracking-wide">LÉGAL</h4>
+              <ul className="space-y-3 text-sm text-gray-600">
+                <li><a href="#" className="hover:text-gray-900 transition-colors">Politique de confidentialité</a></li>
+                <li><a href="#" className="hover:text-gray-900 transition-colors">Conditions d'utilisation</a></li>
+              </ul>
+            </div>
+          </div>
+          <div className="border-t border-gray-200 pt-8">
+            <p className="text-center text-sm text-gray-600">© 2025 ShopBrain AI. Tous droits réservés.</p>
+          </div>
+        </div>
+      </footer>
+    </div>
+  )
+}
+
+// Hash router simple
+const AppWithRouter = () => {
+  const [currentHash, setCurrentHash] = React.useState(window.location.hash)
+  const [user, setUser] = React.useState(null)
+
+  React.useEffect(() => {
+    const handleHashChange = () => {
+      setCurrentHash(window.location.hash)
+    }
+    
+    const checkUser = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      setUser(session?.user || null)
+    }
+    
+    window.addEventListener('hashchange', handleHashChange)
+    checkUser()
+    
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      setUser(session?.user || null)
+    })
+    
+    return () => {
+      window.removeEventListener('hashchange', handleHashChange)
+      authListener?.subscription?.unsubscribe()
+    }
+  }, [])
+
+  // Dashboard route
+  if (currentHash.includes('#dashboard')) {
+    return <Dashboard />
+  }
+
+  // Default landing
+  return <App />
+}
+
+export default AppWithRouter
