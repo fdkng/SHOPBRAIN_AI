@@ -254,7 +254,8 @@ export default function App() {
         {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`
           },
           body: JSON.stringify({
             plan: planId,
@@ -540,26 +541,25 @@ export default function App() {
             </p>
           </div>
 
-          {/* Visual Preview */}
-          <div className="relative mt-16 animate-fadeIn" style={{ animationDelay: '0.2s' }}>
-            <div className="relative mx-auto max-w-5xl">
-              <div className="absolute inset-0 bg-gradient-to-r from-blue-600/20 to-purple-600/20 blur-3xl rounded-full"></div>
-              <div className="relative bg-white rounded-3xl shadow-2xl p-12 border border-gray-200">
-                <div className="text-center">
-                  <h3 className="text-2xl font-bold text-gray-900 mb-4">Dashboard ShopBrain AI</h3>
-                  <p className="text-gray-600 mb-8">Optimisez votre boutique en temps réel</p>
-                  <div className="space-y-6">
-                    <div className="h-3 bg-gradient-to-r from-blue-400 to-blue-600 rounded-full w-full"></div>
-                    <div className="h-3 bg-gradient-to-r from-purple-400 to-purple-600 rounded-full w-5/6"></div>
-                    <div className="h-3 bg-gradient-to-r from-pink-400 to-pink-600 rounded-full w-4/5"></div>
-                  </div>
-                  <div className="mt-12 text-sm text-gray-500">
-                    📊 Analyse en temps réel • 🤖 Optimisation IA • 📈 Résultats instantanés
-                  </div>
-                </div>
-              </div>
+          {/* Dashboard Button */}
+          {user && (
+            <div className="mt-16 flex justify-center">
+              <button
+                onClick={() => {
+                  setCurrentView('dashboard')
+                  window.location.hash = '#dashboard'
+                }}
+                className="px-12 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white text-lg font-semibold rounded-full hover:shadow-2xl transition-all hover:scale-105"
+              >
+                Accéder à mon Dashboard →
+              </button>
             </div>
-          </div>
+          )}
+          {!user && (
+            <div className="mt-16 text-center">
+              <p className="text-gray-600 mb-6">Connecte-toi pour accéder à ton dashboard et voir ton IA</p>
+            </div>
+          )}
         </div>
       </section>
 
