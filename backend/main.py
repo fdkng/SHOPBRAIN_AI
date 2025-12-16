@@ -329,22 +329,35 @@ async def stripe_webhook(request: Request):
 
                 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
                 
-                # Extract plan from subscription
+                # Extract plan from subscription - try different sources
                 plan_tier = None
+                
+                # Try from line items if using subscription mode
                 for tier, price_id in STRIPE_PLANS.items():
                     if any(li.get("price") == price_id for li in session.get("line_items", {}).get("data", [])):
                         plan_tier = tier
                         break
                 
-                supabase.table("subscriptions").insert({
+                # If still not found, try to determine from plan name in metadata
+                if not plan_tier and session.get("metadata", {}).get("plan"):
+                    plan_tier = session["metadata"]["plan"]
+                
+                # Default to standard if still no plan found
+                if not plan_tier:
+                    plan_tier = "standard"
+                
+                # Insert to user_subscriptions table
+                supabase.table("user_subscriptions").insert({
                     "user_id": user_id,
                     "email": session.get("customer_email"),
                     "stripe_session_id": session.get("id"),
                     "stripe_subscription_id": session.get("subscription"),
                     "stripe_customer_id": session.get("customer"),
-                    "plan_tier": plan_tier,
+                    "plan": plan_tier,
                     "status": "active",
                 }).execute()
+                
+                print(f"✅ Subscription saved: user_id={user_id}, plan={plan_tier}")
             except Exception as e:
                 print(f"Warning: could not persist subscription: {e}")
 
