@@ -9,17 +9,27 @@ const supabase = createClient(
 const API_URL = 'https://shopbrain-backend.onrender.com'
 
 export default function Dashboard() {
-  const [user, setUser] = useState(null)
-  const [subscription, setSubscription] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState('overview')
-  const [shopifyUrl, setShopifyUrl] = useState('')
-  const [shopifyToken, setShopifyToken] = useState('')
-  const [products, setProducts] = useState(null)
-  const [error, setError] = useState('')
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false)
 
   useEffect(() => {
+    // Check if coming from payment success
+    if (window.location.hash.includes('success=true')) {
+      setIsProcessingPayment(true)
+    }
+    
     initializeUser()
+    
+    // If coming from payment success, check subscription after webhook processes
+    if (window.location.hash.includes('success=true')) {
+      const checkInterval = setInterval(() => {
+        initializeUser()
+      }, 2000) // Check every 2 seconds for up to 10 seconds
+      
+      setTimeout(() => {
+        clearInterval(checkInterval)
+        setIsProcessingPayment(false)
+      }, 10000)
+    }
   }, [])
 
   const initializeUser = async () => {
@@ -159,6 +169,24 @@ export default function Dashboard() {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-900 to-purple-900 flex items-center justify-center">
         <div className="text-white text-xl">Chargement...</div>
+      </div>
+    )
+  }
+
+  if (isProcessingPayment) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-900 to-purple-900 flex items-center justify-center">
+        <div className="text-center text-white">
+          <div className="text-6xl mb-4">✅</div>
+          <h2 className="text-3xl font-bold mb-4">Paiement en cours de traitement...</h2>
+          <p className="text-gray-300 mb-8">Merci! Nous enregistrons ton abonnement.</p>
+          <div className="flex justify-center gap-2 mb-4">
+            <div className="w-3 h-3 bg-white rounded-full animate-bounce"></div>
+            <div className="w-3 h-3 bg-white rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+            <div className="w-3 h-3 bg-white rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
+          </div>
+          <p className="text-sm text-gray-400">Tu seras redirigé automatiquement...</p>
+        </div>
       </div>
     )
   }
