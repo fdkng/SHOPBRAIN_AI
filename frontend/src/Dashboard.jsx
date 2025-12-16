@@ -48,8 +48,8 @@ export default function Dashboard() {
       if (data.success && data.has_subscription) {
         setSubscription(data)
       } else {
-        // Pas d'abonnement - redirige vers pricing
-        window.location.hash = '#pricing'
+        // Pas d'abonnement - redirige vers les plans Stripe
+        window.location.hash = '#stripe-pricing'
       }
       
       setLoading(false)
