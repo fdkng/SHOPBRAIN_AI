@@ -96,8 +96,6 @@ export default function App() {
         const params = new URLSearchParams(window.location.hash.substring(1))
         if (params.get('session_id')) {
           window.location.hash = '#dashboard'
-        } else if (!window.location.hash.includes('pricing')) {
-          window.location.hash = '#pricing'
         }
         setCurrentView('landing')
         setShowAuthModal(false)
@@ -517,20 +515,17 @@ export default function App() {
           <div className="relative mt-16 animate-fadeIn" style={{ animationDelay: '0.2s' }}>
             <div className="relative mx-auto max-w-5xl">
               <div className="absolute inset-0 bg-gradient-to-r from-blue-600/20 to-purple-600/20 blur-3xl rounded-full"></div>
-              <div className="relative bg-white rounded-3xl shadow-2xl p-8 border border-gray-200">
-                <div className="flex items-center gap-2 mb-6">
-                  <div className="w-3 h-3 rounded-full bg-red-500"></div>
-                  <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
-                  <div className="w-3 h-3 rounded-full bg-green-500"></div>
-                </div>
-                <div className="space-y-4">
-                  <div className="h-4 bg-gradient-to-r from-blue-200 to-blue-100 rounded w-3/4"></div>
-                  <div className="h-4 bg-gradient-to-r from-purple-200 to-purple-100 rounded w-5/6"></div>
-                  <div className="h-4 bg-gradient-to-r from-blue-200 to-blue-100 rounded w-2/3"></div>
-                  <div className="mt-8 grid grid-cols-3 gap-4">
-                    <div className="h-24 bg-gradient-to-br from-blue-100 to-blue-50 rounded-xl"></div>
-                    <div className="h-24 bg-gradient-to-br from-purple-100 to-purple-50 rounded-xl"></div>
-                    <div className="h-24 bg-gradient-to-br from-blue-100 to-blue-50 rounded-xl"></div>
+              <div className="relative bg-white rounded-3xl shadow-2xl p-12 border border-gray-200">
+                <div className="text-center">
+                  <h3 className="text-2xl font-bold text-gray-900 mb-4">Dashboard ShopBrain AI</h3>
+                  <p className="text-gray-600 mb-8">Optimisez votre boutique en temps réel</p>
+                  <div className="space-y-6">
+                    <div className="h-3 bg-gradient-to-r from-blue-400 to-blue-600 rounded-full w-full"></div>
+                    <div className="h-3 bg-gradient-to-r from-purple-400 to-purple-600 rounded-full w-5/6"></div>
+                    <div className="h-3 bg-gradient-to-r from-pink-400 to-pink-600 rounded-full w-4/5"></div>
+                  </div>
+                  <div className="mt-12 text-sm text-gray-500">
+                    📊 Analyse en temps réel • 🤖 Optimisation IA • 📈 Résultats instantanés
                   </div>
                 </div>
               </div>
@@ -666,9 +661,10 @@ export default function App() {
                 formule gagnante
               </span>
             </h2>
-            <p className="text-xl text-gray-600">
+            <p className="text-xl text-gray-600 mb-2">
               Tous les plans incluent 14 jours d'essai gratuit. Sans engagement.
             </p>
+            <p className="text-sm text-blue-600 font-semibold">💡 Le plan Pro offre le meilleur rapport qualité-prix</p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-6xl mx-auto">
@@ -690,10 +686,12 @@ export default function App() {
                   }`}
                 >
                   {plan.highlight && (
-                    <div className="absolute -top-5 left-1/2 -translate-x-1/2">
-                      <span className="bg-gradient-to-r from-blue-600 to-purple-600 text-white text-sm font-bold px-6 py-2 rounded-full shadow-lg">
-                        ⭐ PLUS POPULAIRE
-                      </span>
+                    <div className="absolute -top-6 left-1/2 -translate-x-1/2">
+                      <div className="inline-flex items-center gap-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white px-4 py-2 rounded-full shadow-lg font-bold text-sm">
+                        <span>🏆</span>
+                        <span>LE PLUS POPULAIRE</span>
+                      </div>
+                      <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-purple-600 rounded-full blur-lg opacity-30 -z-10"></div>
                     </div>
                   )}
                   
