@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import Dashboard from './Dashboard'
+import StripePricingTable from './PricingTable'
 
 const supabase = createClient(
   'https://jgmsfadayzbgykzajvmw.supabase.co',
@@ -85,6 +86,19 @@ export default function App() {
     const handleScroll = () => setScrolled(window.scrollY > 10)
     window.addEventListener('scroll', handleScroll)
     
+    // Handle hash-based routing
+    const handleHashChange = () => {
+      if (window.location.hash === '#stripe-pricing') {
+        setCurrentView('stripe-pricing')
+      } else if (window.location.hash.includes('dashboard')) {
+        if (user) setCurrentView('dashboard')
+      } else {
+        setCurrentView('landing')
+      }
+    }
+    window.addEventListener('hashchange', handleHashChange)
+    handleHashChange() // Check current hash on mount
+    
     // Check for authenticated user
     checkUser()
     
@@ -107,9 +121,10 @@ export default function App() {
     
     return () => {
       window.removeEventListener('scroll', handleScroll)
+      window.removeEventListener('hashchange', handleHashChange)
       authListener?.subscription?.unsubscribe()
     }
-  }, [])
+  }, [user])
 
   const checkUser = async () => {
     const { data: { session } } = await supabase.auth.getSession()
@@ -264,6 +279,11 @@ export default function App() {
   // If user is logged in and on dashboard view, show Dashboard component
   if (currentView === 'dashboard' && user) {
     return <Dashboard />
+  }
+
+  // If viewing Stripe Pricing Table
+  if (currentView === 'stripe-pricing') {
+    return <StripePricingTable />
   }
 
   // Otherwise show landing page
@@ -738,12 +758,20 @@ export default function App() {
 
           <div className="mt-16 text-center">
             <p className="text-gray-600 mb-4">Besoin d'un plan sur mesure ?</p>
-            <button
-              onClick={() => setShowAuthModal(true)}
-              className="px-8 py-3 text-blue-600 font-semibold border-2 border-blue-600 rounded-full hover:bg-blue-600 hover:text-white transition-all"
-            >
-              Contactez notre équipe
-            </button>
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+              <button
+                onClick={() => window.location.hash = '#stripe-pricing'}
+                className="px-8 py-3 bg-blue-600 text-white font-semibold border-2 border-blue-600 rounded-full hover:bg-blue-700 transition-all"
+              >
+                Voir tous les plans →
+              </button>
+              <button
+                onClick={() => setShowAuthModal(true)}
+                className="px-8 py-3 text-blue-600 font-semibold border-2 border-blue-600 rounded-full hover:bg-blue-600 hover:text-white transition-all"
+              >
+                Contactez notre équipe
+              </button>
+            </div>
           </div>
         </div>
       </section>
