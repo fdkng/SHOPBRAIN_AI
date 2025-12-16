@@ -189,6 +189,7 @@ async def create_payment_link(payload: dict, request: Request):
 
     plan = payload.get("plan", "").lower()
     customer_email = payload.get("email")
+    user_id = get_user_id(request)  # Get user ID from token
     
     # Plan pricing configuration
     plan_config = {
@@ -215,6 +216,9 @@ async def create_payment_link(payload: dict, request: Request):
     config = plan_config[plan]
     
     try:
+        # Get frontend origin for redirect
+        frontend_origin = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
+        
         # Create payment link (one-time checkout for subscription)
         link = stripe.PaymentLink.create(
             line_items=[
@@ -237,13 +241,15 @@ async def create_payment_link(payload: dict, request: Request):
             after_completion={
                 "type": "redirect",
                 "redirect": {
-                    "url": "https://buy.stripe.com"
+                    "url": f"{frontend_origin}/#dashboard?success=true"
                 }
             },
             billing_address_collection="auto",
+            customer_email=customer_email,
             metadata={
                 "plan": plan,
-                "email": customer_email if customer_email else "unknown"
+                "email": customer_email if customer_email else "unknown",
+                "user_id": user_id if user_id else "unknown"
             }
         )
         

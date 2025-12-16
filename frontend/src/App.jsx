@@ -88,6 +88,12 @@ export default function App() {
     
     // Handle hash-based routing
     const handleHashChange = () => {
+      // Check for payment success
+      if (window.location.hash.includes('success=true')) {
+        setCurrentView('dashboard')
+        return
+      }
+      
       if (window.location.hash === '#stripe-pricing') {
         setCurrentView('stripe-pricing')
       } else if (window.location.hash.includes('dashboard')) {
@@ -106,12 +112,15 @@ export default function App() {
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_IN' && session) {
         setUser(session.user)
-        // Si on revient avec session_id, redirection dashboard
-        const params = new URLSearchParams(window.location.hash.substring(1))
-        if (params.get('session_id')) {
-          window.location.hash = '#dashboard'
+        // After login, show dashboard or handle success
+        const hash = window.location.hash
+        if (hash.includes('success=true')) {
+          setCurrentView('dashboard')
+        } else if (hash.includes('dashboard')) {
+          setCurrentView('dashboard')
+        } else {
+          setCurrentView('landing')
         }
-        setCurrentView('landing')
         setShowAuthModal(false)
       } else if (event === 'SIGNED_OUT') {
         setUser(null)
