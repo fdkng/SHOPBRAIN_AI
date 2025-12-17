@@ -9,6 +9,14 @@ const supabase = createClient(
 const API_URL = 'https://shopbrain-backend.onrender.com'
 
 export default function Dashboard() {
+  const [user, setUser] = useState(null)
+  const [subscription, setSubscription] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [activeTab, setActiveTab] = useState('overview')
+  const [shopifyUrl, setShopifyUrl] = useState('')
+  const [shopifyToken, setShopifyToken] = useState('')
+  const [products, setProducts] = useState(null)
+  const [error, setError] = useState('')
   const [isProcessingPayment, setIsProcessingPayment] = useState(false)
 
   useEffect(() => {
