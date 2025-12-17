@@ -926,6 +926,7 @@ async def check_subscription_status(request: Request):
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
             supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
             
+            # Check in database first (from webhook)
             response = supabase.table("user_subscriptions").select("*").eq(
                 "user_id", user_id
             ).eq("status", "active").order("created_at", desc=True).limit(1).execute()
@@ -957,6 +958,50 @@ async def check_subscription_status(request: Request):
                     'started_at': subscription['started_at'],
                     'capabilities': capabilities.get(plan, {})
                 }
+            
+            # If not in database, check recent Stripe sessions with this metadata
+            # This helps if webhook is slow to process
+            if STRIPE_SECRET_KEY:
+                try:
+                    from supabase import create_client as supabase_create
+                    
+                    # Check if there's a recent payment session for this user
+                    # by looking at the Stripe customer email
+                    sessions = stripe.checkout.Session.list(limit=10)
+                    
+                    for session in sessions:
+                        metadata = session.get("metadata", {})
+                        if metadata.get("user_id") == user_id and session.payment_status == "paid":
+                            plan = metadata.get("plan", "standard")
+                            
+                            # Save to database now
+                            supabase.table("user_subscriptions").insert({
+                                "user_id": user_id,
+                                "email": session.get("customer_email"),
+                                "stripe_session_id": session.get("id"),
+                                "stripe_subscription_id": session.get("subscription"),
+                                "stripe_customer_id": session.get("customer"),
+                                "plan": plan,
+                                "status": "active",
+                            }).execute()
+                            
+                            print(f"✅ Found paid session, saving subscription: user_id={user_id}, plan={plan}")
+                            
+                            capabilities = {
+                                'standard': {'product_limit': 50, 'features': ['product_analysis']},
+                                'pro': {'product_limit': 500, 'features': ['product_analysis', 'content_generation']},
+                                'premium': {'product_limit': None, 'features': ['product_analysis', 'content_generation', 'automated_actions']}
+                            }
+                            
+                            return {
+                                'success': True,
+                                'has_subscription': True,
+                                'plan': plan,
+                                'status': 'active',
+                                'capabilities': capabilities.get(plan, {})
+                            }
+                except Exception as stripe_err:
+                    print(f"Info: Could not check Stripe sessions: {stripe_err}")
             
             return {
                 'success': True,
