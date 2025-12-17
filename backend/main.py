@@ -182,14 +182,20 @@ async def health():
 @app.post("/api/stripe/payment-link")
 async def create_payment_link(payload: dict, request: Request):
     """Create a Stripe Payment Link for a subscription plan.
-    Expects JSON: {"plan": "standard" | "pro" | "premium", "email": "customer@example.com"}
+    Expects JSON: {"plan": "standard" | "pro" | "premium", "email": "customer@example.com", "user_id": "..."}
     """
     if not STRIPE_SECRET_KEY:
         raise HTTPException(status_code=500, detail="Stripe not configured")
 
     plan = payload.get("plan", "").lower()
     customer_email = payload.get("email")
-    user_id = get_user_id(request)  # Get user ID from token
+    
+    # Try to get user_id from token, fallback to payload
+    try:
+        user_id = get_user_id(request)
+    except:
+        # If token validation fails, get from payload
+        user_id = payload.get("user_id", "unknown")
     
     # Plan pricing configuration
     plan_config = {

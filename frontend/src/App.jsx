@@ -259,7 +259,8 @@ export default function App() {
           },
           body: JSON.stringify({
             plan: planId,
-            email: user.email
+            email: user.email,
+            user_id: session.user.id
           })
         }
       )
