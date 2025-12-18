@@ -266,51 +266,12 @@ export default function App() {
       return
     }
     
-    try {
-      // Get auth session
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) {
-        alert('Erreur: Session non trouvée')
-        return
-      }
-
-      // Call backend to create payment link
-      const response = await fetch(
-        'https://shopbrain-backend.onrender.com/api/stripe/payment-link',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session.access_token}`
-          },
-          body: JSON.stringify({
-            plan: planId,
-            email: user.email,
-            user_id: session.user.id
-          })
-        }
-      )
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        alert(`Erreur: ${errorData.detail || 'Impossible de créer le lien de paiement'}`)
-        console.error('Payment link error:', errorData)
-        return
-      }
-
-      const data = await response.json()
-      
-      if (data.success && data.url) {
-        // Redirect to Stripe payment link
-        window.location.href = data.url
-      } else {
-        alert('Erreur: Impossible de créer le lien de paiement')
-        console.error('Payment link error:', data)
-      }
-    } catch (error) {
-      alert(`Erreur de connexion: ${error.message}`)
-      console.error('Stripe checkout error:', error)
-    }
+    // Redirect to Stripe Pricing Table which handles everything
+    window.location.hash = '#stripe-pricing'
+    // Scroll to pricing table after redirect
+    setTimeout(() => {
+      document.querySelector('#stripe-pricing-table')?.scrollIntoView({ behavior: 'smooth' })
+    }, 300)
   }
 
   // If user is logged in and on dashboard view, show Dashboard component

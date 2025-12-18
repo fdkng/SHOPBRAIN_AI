@@ -28,10 +28,12 @@ export default function StripePricingTable() {
         </div>
 
         {/* Stripe Pricing Table Embed */}
-        <stripe-pricing-table
-          pricing-table-id="prctbl_1SczvvPSvADOSbOz3kGUkwwZ"
-          publishable-key="pk_live_51REHBEPSvADOSbOzqhf7zqZKxA8T2OWPkMOeNsli4wc1n3GYgmTc7TboQlAL6GeeVSd7i5vfIG1IbkGeXvXqedyB009rEijMRi"
-        ></stripe-pricing-table>
+        <div id="stripe-pricing-table">
+          <stripe-pricing-table
+            pricing-table-id="prctbl_1SczvvPSvADOSbOz3kGUkwwZ"
+            publishable-key="pk_live_51REHBEPSvADOSbOzqhf7zqZKxA8T2OWPkMOeNsli4wc1n3GYgmTc7TboQlAL6GeeVSd7i5vfIG1IbkGeXvXqedyB009rEijMRi"
+          ></stripe-pricing-table>
+        </div>
       </div>
     </div>
   )
