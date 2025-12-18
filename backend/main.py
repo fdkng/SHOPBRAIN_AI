@@ -223,7 +223,7 @@ async def create_payment_link(payload: dict, request: Request):
     
     try:
         # Get frontend origin for redirect
-        frontend_origin = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
+        frontend_origin = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
         
         # Create payment link (one-time checkout for subscription)
         link = stripe.PaymentLink.create(
