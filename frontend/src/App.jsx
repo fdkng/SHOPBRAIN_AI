@@ -287,7 +287,7 @@ export default function App() {
 
   // If viewing Stripe Pricing Table
   if (currentView === 'stripe-pricing') {
-    return <StripePricingTable />
+    return <StripePricingTable userEmail={user?.email} userId={user?.id} />
   }
 
   // Otherwise show landing page

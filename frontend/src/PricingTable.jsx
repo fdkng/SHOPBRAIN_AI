@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react'
 
-export default function StripePricingTable() {
+// Prefill email/client reference so Stripe checkout is smoother
+export default function StripePricingTable({ userEmail, userId }) {
   useEffect(() => {
     // Load Stripe Pricing Table script
     const script = document.createElement('script')
@@ -32,6 +33,8 @@ export default function StripePricingTable() {
           <stripe-pricing-table
             pricing-table-id="prctbl_1SczvvPSvADOSbOz3kGUkwwZ"
             publishable-key="pk_live_51REHBEPSvADOSbOzqhf7zqZKxA8T2OWPkMOeNsli4wc1n3GYgmTc7TboQlAL6GeeVSd7i5vfIG1IbkGeXvXqedyB009rEijMRi"
+            customer-email={userEmail || undefined}
+            client-reference-id={userId || undefined}
           ></stripe-pricing-table>
         </div>
       </div>
