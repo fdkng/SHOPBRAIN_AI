@@ -251,7 +251,7 @@ async def create_payment_link(payload: dict, request: Request):
                 }
             },
             billing_address_collection="auto",
-            customer_email=customer_email,
+            customer_creation="always",
             metadata={
                 "plan": plan,
                 "email": customer_email if customer_email else "unknown",
