@@ -154,8 +154,14 @@ export default function App() {
     }
   }
 
-  // Always redirect to production after email confirmation
-  const getRedirectUrl = () => 'https://fdkng.github.io/SHOPBRAIN_AI'
+  // Compute a safe redirect URL for Supabase OAuth (works locally and on GitHub Pages)
+  const getRedirectUrl = () => {
+    if (typeof window === 'undefined') return 'https://fdkng.github.io/SHOPBRAIN_AI'
+    const url = new URL(window.location.href)
+    // Force the GitHub Pages base path when deployed
+    const basePath = url.pathname.includes('/SHOPBRAIN_AI') ? '/SHOPBRAIN_AI' : ''
+    return `${url.origin}${basePath}/`
+  }
 
   const handleSignup = async (e) => {
     e.preventDefault()
