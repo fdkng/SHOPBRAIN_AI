@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import Dashboard from './Dashboard'
-import StripePricingTable from './PricingTable'
 
 const supabase = createClient(
   'https://jgmsfadayzbgykzajvmw.supabase.co',
@@ -86,33 +85,6 @@ export default function App() {
     const handleScroll = () => setScrolled(window.scrollY > 10)
     window.addEventListener('scroll', handleScroll)
     
-    // Check for payment success in query string
-    const urlParams = new URLSearchParams(window.location.search)
-    if (urlParams.get('payment') === 'success') {
-      // Redirect to dashboard with success flag
-      window.location.href = '/#dashboard?success=true'
-      return
-    }
-    
-    // Handle hash-based routing
-    const handleHashChange = () => {
-      // Check for payment success
-      if (window.location.hash.includes('success=true')) {
-        setCurrentView('dashboard')
-        return
-      }
-      
-      if (window.location.hash === '#stripe-pricing') {
-        setCurrentView('stripe-pricing')
-      } else if (window.location.hash.includes('dashboard')) {
-        if (user) setCurrentView('dashboard')
-      } else {
-        setCurrentView('landing')
-      }
-    }
-    window.addEventListener('hashchange', handleHashChange)
-    handleHashChange() // Check current hash on mount
-    
     // Check for authenticated user
     checkUser()
     
@@ -120,15 +92,12 @@ export default function App() {
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_IN' && session) {
         setUser(session.user)
-        // After login, show dashboard or handle success
-        const hash = window.location.hash
-        if (hash.includes('success=true')) {
-          setCurrentView('dashboard')
-        } else if (hash.includes('dashboard')) {
-          setCurrentView('dashboard')
-        } else {
-          setCurrentView('landing')
+        // Si on revient avec session_id, redirection dashboard
+        const params = new URLSearchParams(window.location.hash.substring(1))
+        if (params.get('session_id')) {
+          window.location.hash = '#dashboard'
         }
+        setCurrentView('landing')
         setShowAuthModal(false)
       } else if (event === 'SIGNED_OUT') {
         setUser(null)
@@ -138,10 +107,9 @@ export default function App() {
     
     return () => {
       window.removeEventListener('scroll', handleScroll)
-      window.removeEventListener('hashchange', handleHashChange)
       authListener?.subscription?.unsubscribe()
     }
-  }, [user])
+  }, [])
 
   const checkUser = async () => {
     const { data: { session } } = await supabase.auth.getSession()
@@ -239,24 +207,6 @@ export default function App() {
     }
   }
 
-  const handleGoogleSignIn = async () => {
-    try {
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: getRedirectUrl()
-        }
-      })
-      
-      if (error) {
-        setAuthMessage('❌ Erreur avec Google Sign-In: ' + error.message)
-      }
-    } catch (error) {
-      setAuthMessage('❌ Une erreur est survenue avec Google.')
-      console.error(error)
-    }
-  }
-
   const handleStripeCheckout = async (planId) => {
     // Check if user is logged in
     if (!user) {
@@ -280,13 +230,11 @@ export default function App() {
         {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session.access_token}`
+            'Content-Type': 'application/json'
           },
           body: JSON.stringify({
             plan: planId,
-            email: user.email,
-            user_id: session.user.id
+            email: user.email
           })
         }
       )
@@ -316,11 +264,6 @@ export default function App() {
   // If user is logged in and on dashboard view, show Dashboard component
   if (currentView === 'dashboard' && user) {
     return <Dashboard />
-  }
-
-  // If viewing Stripe Pricing Table
-  if (currentView === 'stripe-pricing') {
-    return <StripePricingTable />
   }
 
   // Otherwise show landing page
@@ -519,31 +462,6 @@ export default function App() {
               </form>
             )}
 
-            {/* Séparateur OU */}
-            <div className="relative my-6">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-gray-200"></div>
-              </div>
-              <div className="relative flex justify-center text-xs">
-                <span className="px-2 bg-white text-gray-500">OU</span>
-              </div>
-            </div>
-
-            {/* Google Sign-In */}
-            <button
-              onClick={handleGoogleSignIn}
-              type="button"
-              className="w-full px-6 py-3 bg-white border-2 border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-colors text-sm flex items-center justify-center gap-3"
-            >
-              <svg className="w-5 h-5" viewBox="0 0 24 24">
-                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-              </svg>
-              Continuer avec Google
-            </button>
-
             {authMessage && (
               <div className={`mt-4 p-3 rounded-xl text-xs ${
                 authMessage.includes('✅') ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
@@ -593,25 +511,29 @@ export default function App() {
             </p>
           </div>
 
-          {/* Dashboard Button */}
-          {user && (
-            <div className="mt-16 flex justify-center">
-              <button
-                onClick={() => {
-                  setCurrentView('dashboard')
-                  window.location.hash = '#dashboard'
-                }}
-                className="px-12 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white text-lg font-semibold rounded-full hover:shadow-2xl transition-all hover:scale-105"
-              >
-                Accéder à mon Dashboard →
-              </button>
+          {/* Visual Preview */}
+          <div className="relative mt-16 animate-fadeIn" style={{ animationDelay: '0.2s' }}>
+            <div className="relative mx-auto max-w-5xl">
+              <div className="absolute inset-0 bg-gradient-to-r from-blue-600/20 to-purple-600/20 blur-3xl rounded-full"></div>
+              <div className="relative bg-white rounded-3xl shadow-2xl p-8 border border-gray-200">
+                <div className="flex items-center gap-2 mb-6">
+                  <div className="w-3 h-3 rounded-full bg-red-500"></div>
+                  <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
+                  <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                </div>
+                <div className="space-y-4">
+                  <div className="h-4 bg-gradient-to-r from-blue-200 to-blue-100 rounded w-3/4"></div>
+                  <div className="h-4 bg-gradient-to-r from-purple-200 to-purple-100 rounded w-5/6"></div>
+                  <div className="h-4 bg-gradient-to-r from-blue-200 to-blue-100 rounded w-2/3"></div>
+                  <div className="mt-8 grid grid-cols-3 gap-4">
+                    <div className="h-24 bg-gradient-to-br from-blue-100 to-blue-50 rounded-xl"></div>
+                    <div className="h-24 bg-gradient-to-br from-purple-100 to-purple-50 rounded-xl"></div>
+                    <div className="h-24 bg-gradient-to-br from-blue-100 to-blue-50 rounded-xl"></div>
+                  </div>
+                </div>
+              </div>
             </div>
-          )}
-          {!user && (
-            <div className="mt-16 text-center">
-              <p className="text-gray-600 mb-6">Connecte-toi pour accéder à ton dashboard et voir ton IA</p>
-            </div>
-          )}
+          </div>
         </div>
       </section>
 
@@ -742,10 +664,9 @@ export default function App() {
                 formule gagnante
               </span>
             </h2>
-            <p className="text-xl text-gray-600 mb-2">
+            <p className="text-xl text-gray-600">
               Tous les plans incluent 14 jours d'essai gratuit. Sans engagement.
             </p>
-            <p className="text-sm text-blue-600 font-semibold">💡 Le plan Pro offre le meilleur rapport qualité-prix</p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-6xl mx-auto">
@@ -767,12 +688,10 @@ export default function App() {
                   }`}
                 >
                   {plan.highlight && (
-                    <div className="absolute -top-6 left-1/2 -translate-x-1/2">
-                      <div className="inline-flex items-center gap-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white px-4 py-2 rounded-full shadow-lg font-bold text-sm">
-                        <span>🏆</span>
-                        <span>LE PLUS POPULAIRE</span>
-                      </div>
-                      <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-purple-600 rounded-full blur-lg opacity-30 -z-10"></div>
+                    <div className="absolute -top-5 left-1/2 -translate-x-1/2">
+                      <span className="bg-gradient-to-r from-blue-600 to-purple-600 text-white text-sm font-bold px-6 py-2 rounded-full shadow-lg">
+                        ⭐ PLUS POPULAIRE
+                      </span>
                     </div>
                   )}
                   
@@ -819,20 +738,12 @@ export default function App() {
 
           <div className="mt-16 text-center">
             <p className="text-gray-600 mb-4">Besoin d'un plan sur mesure ?</p>
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-              <button
-                onClick={() => window.location.hash = '#stripe-pricing'}
-                className="px-8 py-3 bg-blue-600 text-white font-semibold border-2 border-blue-600 rounded-full hover:bg-blue-700 transition-all"
-              >
-                Voir tous les plans →
-              </button>
-              <button
-                onClick={() => setShowAuthModal(true)}
-                className="px-8 py-3 text-blue-600 font-semibold border-2 border-blue-600 rounded-full hover:bg-blue-600 hover:text-white transition-all"
-              >
-                Contactez notre équipe
-              </button>
-            </div>
+            <button
+              onClick={() => setShowAuthModal(true)}
+              className="px-8 py-3 text-blue-600 font-semibold border-2 border-blue-600 rounded-full hover:bg-blue-600 hover:text-white transition-all"
+            >
+              Contactez notre équipe
+            </button>
           </div>
         </div>
       </section>
@@ -891,3 +802,42 @@ export default function App() {
     </div>
   )
 }
+
+// Hash router simple
+const AppWithRouter = () => {
+  const [currentHash, setCurrentHash] = React.useState(window.location.hash)
+  const [user, setUser] = React.useState(null)
+
+  React.useEffect(() => {
+    const handleHashChange = () => {
+      setCurrentHash(window.location.hash)
+    }
+    
+    const checkUser = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      setUser(session?.user || null)
+    }
+    
+    window.addEventListener('hashchange', handleHashChange)
+    checkUser()
+    
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      setUser(session?.user || null)
+    })
+    
+    return () => {
+      window.removeEventListener('hashchange', handleHashChange)
+      authListener?.subscription?.unsubscribe()
+    }
+  }, [])
+
+  // Dashboard route
+  if (currentHash.includes('#dashboard')) {
+    return <Dashboard />
+  }
+
+  // Default landing
+  return <App />
+}
+
+export default AppWithRouter

@@ -247,7 +247,7 @@ async def create_payment_link(payload: dict, request: Request):
             after_completion={
                 "type": "redirect",
                 "redirect": {
-                    "url": f"{frontend_origin}/#dashboard?success=true"
+                    "url": f"{frontend_origin}/?payment=success"
                 }
             },
             billing_address_collection="auto",
