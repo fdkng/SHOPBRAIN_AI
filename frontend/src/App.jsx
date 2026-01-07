@@ -321,13 +321,21 @@ export default function App() {
       // Get auth session
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) {
-        alert('Erreur: Session non trouvée')
+        alert('Erreur: Session non trouvée. Reconnecte-toi.')
+        return
+      }
+
+      if (!session.access_token) {
+        alert('Erreur: Token d\'accès manquant. Reconnecte-toi.')
+        console.error('Missing access_token in session:', session)
         return
       }
 
       // Map UI plan to backend plan keys (Stripe price mapping)
       const planMap = { standard: '99', pro: '199', premium: '299' }
       const planKey = planMap[planId] || planId
+
+      console.log('Checkout request:', { planKey, email: user.email, token: session.access_token.substring(0, 20) + '...' })
 
       // Call backend to create checkout session
       const response = await fetch(
@@ -345,14 +353,17 @@ export default function App() {
         }
       )
 
+      console.log('Checkout response status:', response.status)
+
       if (!response.ok) {
-        const errorData = await response.json()
-        alert(`Erreur: ${errorData.detail || 'Impossible de créer la session de paiement'}`)
+        const errorData = await response.json().catch(() => ({}))
+        alert(`Erreur: ${errorData.detail || response.statusText || 'Impossible de créer la session de paiement'}`)
         console.error('Checkout session error:', errorData)
         return
       }
 
       const data = await response.json()
+      console.log('Checkout URL received:', data.url)
       if (data.url) {
         window.location.href = data.url
       } else {

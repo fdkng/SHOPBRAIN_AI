@@ -76,14 +76,20 @@ STRIPE_PLANS = {
 def get_user_id(request: Request) -> str:
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
+        print(f"❌ Missing Bearer token. Headers: {dict(request.headers)}")
         raise HTTPException(status_code=401, detail="Missing or invalid token")
     
     token = auth_header[7:]
     try:
-        payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=["HS256"])
-        return payload.get("sub")
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        if not SUPABASE_JWT_SECRET:
+            print(f"⚠️ SUPABASE_JWT_SECRET not set! Trying to decode anyway...")
+        payload = jwt.decode(token, SUPABASE_JWT_SECRET or "your-secret-key", algorithms=["HS256"])
+        user_id = payload.get("sub")
+        print(f"✅ JWT decoded. User ID: {user_id}")
+        return user_id
+    except Exception as e:
+        print(f"❌ JWT decode error: {e}")
+        raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
 
 
 class OptimizeRequest(BaseModel):
@@ -278,13 +284,18 @@ async def create_checkout(payload: dict, request: Request):
     """Create a Stripe Checkout Session for subscription plans.
     Expects JSON: {"plan": "99" | "199" | "299", "email": "customer@example.com"}
     """
+    print(f"📋 Checkout request received. Payload: {payload}")
+    
     user_id = get_user_id(request)
+    print(f"✅ User authenticated: {user_id}")
     
     if not STRIPE_SECRET_KEY:
         raise HTTPException(status_code=500, detail="Stripe not configured")
 
     plan = payload.get("plan")
     customer_email = payload.get("email")
+    
+    print(f"📊 Plan: {plan}, Email: {customer_email}")
     
     if plan not in STRIPE_PLANS:
         raise HTTPException(status_code=400, detail="Invalid plan")
@@ -304,8 +315,10 @@ async def create_checkout(payload: dict, request: Request):
                 "metadata": {"user_id": user_id},
             },
         )
+        print(f"✅ Checkout session created: {session.id}")
         return {"url": session.url}
     except Exception as e:
+        print(f"❌ Checkout error: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
 
 
