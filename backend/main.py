@@ -294,8 +294,8 @@ async def create_checkout(payload: dict, request: Request):
             payment_method_types=["card"],
             mode="subscription",
             line_items=[{"price": price_id, "quantity": 1}],
-            success_url=os.getenv("FRONTEND_ORIGIN", "http://localhost:5173") + "?session_id={CHECKOUT_SESSION_ID}",
-            cancel_url=os.getenv("FRONTEND_ORIGIN", "http://localhost:5173") + "/cancel",
+            success_url=os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI") + "?payment=success&session_id={CHECKOUT_SESSION_ID}",
+            cancel_url=os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI") + "#pricing",
             customer_email=customer_email,
             subscription_data={
                 "trial_period_days": 14,

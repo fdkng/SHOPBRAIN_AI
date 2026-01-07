@@ -81,6 +81,8 @@ export default function App() {
   const [scrolled, setScrolled] = useState(false)
   const [currentView, setCurrentView] = useState('landing')
   const [user, setUser] = useState(null)
+  const [hasSubscription, setHasSubscription] = useState(false)
+  const [paymentSuccess, setPaymentSuccess] = useState(false)
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 10)
@@ -88,9 +90,10 @@ export default function App() {
     
     // Check for payment success in query string
     const urlParams = new URLSearchParams(window.location.search)
-    if (urlParams.get('payment') === 'success') {
-      // Redirect to dashboard with success flag
-      window.location.href = '/#dashboard?success=true'
+    if (urlParams.get('payment') === 'success' || urlParams.has('session_id') || urlParams.get('checkout') === 'success') {
+      // Stay on landing, mark success and check subscription
+      setPaymentSuccess(true)
+      checkSubscription()
       return
     }
     
@@ -105,7 +108,7 @@ export default function App() {
       if (window.location.hash === '#stripe-pricing') {
         setCurrentView('stripe-pricing')
       } else if (window.location.hash.includes('dashboard')) {
-        if (user) setCurrentView('dashboard')
+        if (user && hasSubscription) setCurrentView('dashboard')
       } else {
         setCurrentView('landing')
       }
@@ -113,13 +116,15 @@ export default function App() {
     window.addEventListener('hashchange', handleHashChange)
     handleHashChange() // Check current hash on mount
     
-    // Check for authenticated user
+    // Check for authenticated user then subscription
     checkUser()
+    checkSubscription()
     
     // Listen for auth changes
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_IN' && session) {
         setUser(session.user)
+        checkSubscription()
         // After login, show dashboard or handle success
         const hash = window.location.hash
         if (hash.includes('success=true')) {
@@ -132,6 +137,7 @@ export default function App() {
         setShowAuthModal(false)
       } else if (event === 'SIGNED_OUT') {
         setUser(null)
+        setHasSubscription(false)
         setCurrentView('landing')
       }
     })
@@ -141,7 +147,7 @@ export default function App() {
       window.removeEventListener('hashchange', handleHashChange)
       authListener?.subscription?.unsubscribe()
     }
-  }, [user])
+  }, [user, hasSubscription])
 
   const checkUser = async () => {
     const { data: { session } } = await supabase.auth.getSession()
@@ -151,6 +157,29 @@ export default function App() {
       if (window.location.hash.includes('dashboard') || window.location.hash.includes('shopify')) {
         setCurrentView('dashboard')
       }
+    }
+  }
+
+  const checkSubscription = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session || !session.user) {
+        setHasSubscription(false)
+        return
+      }
+      const resp = await fetch('https://shopbrain-backend.onrender.com/api/subscription/status', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ user_id: session.user.id })
+      })
+      const data = await resp.json()
+      setHasSubscription(Boolean(data?.success && data?.has_subscription))
+    } catch (e) {
+      setHasSubscription(false)
+      console.error('Subscription check error:', e)
     }
   }
 
@@ -272,12 +301,52 @@ export default function App() {
       return
     }
     
-    // Redirect to Stripe Pricing Table which handles everything
-    window.location.hash = '#stripe-pricing'
-    // Scroll to pricing table after redirect
-    setTimeout(() => {
-      document.querySelector('#stripe-pricing-table')?.scrollIntoView({ behavior: 'smooth' })
-    }, 300)
+    try {
+      // Get auth session
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        alert('Erreur: Session non trouvée')
+        return
+      }
+
+      // Map UI plan to backend plan keys (Stripe price mapping)
+      const planMap = { standard: '99', pro: '199', premium: '299' }
+      const planKey = planMap[planId] || planId
+
+      // Call backend to create checkout session
+      const response = await fetch(
+        'https://shopbrain-backend.onrender.com/create-checkout-session',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`
+          },
+          body: JSON.stringify({
+            plan: planKey,
+            email: user.email
+          })
+        }
+      )
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        alert(`Erreur: ${errorData.detail || 'Impossible de créer la session de paiement'}`)
+        console.error('Checkout session error:', errorData)
+        return
+      }
+
+      const data = await response.json()
+      if (data.url) {
+        window.location.href = data.url
+      } else {
+        alert('Erreur: URL de checkout manquante')
+        console.error('Checkout response:', data)
+      }
+    } catch (error) {
+      alert(`Erreur de connexion: ${error.message}`)
+      console.error('Stripe checkout error:', error)
+    }
   }
 
   // If user is logged in and on dashboard view, show Dashboard component
@@ -325,6 +394,21 @@ export default function App() {
                   <span className="font-medium">{user.user_metadata?.first_name || 'Connecté'}</span>
                 </div>
                 <button
+                  onClick={() => {
+                    if (hasSubscription) {
+                      setCurrentView('dashboard')
+                    } else {
+                      alert('Abonnement requis pour accéder au dashboard')
+                      window.location.hash = '#pricing'
+                    }
+                  }}
+                  className={`px-4 py-2 rounded-full text-sm font-medium transition ${
+                    hasSubscription ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-200 text-gray-600 cursor-not-allowed'
+                  }`}
+                >
+                  Dashboard
+                </button>
+                <button
                   onClick={async () => {
                     await supabase.auth.signOut()
                     setUser(null)
@@ -346,6 +430,29 @@ export default function App() {
           </div>
         </div>
       </nav>
+
+      {paymentSuccess && (
+        <div className="mt-20 mx-auto max-w-7xl px-6 mb-6">
+          <div className="bg-green-50 border border-green-200 text-green-800 rounded-2xl p-6 flex items-center justify-between shadow-sm">
+            <div className="flex items-center gap-4">
+              <span className="text-4xl">✅</span>
+              <div>
+                <div className="font-semibold text-lg">Paiement réussi!</div>
+                <div className="text-sm text-green-700">Ton abonnement est actif. Tu peux maintenant accéder à tous les outils ShopBrain AI.</div>
+              </div>
+            </div>
+            <button
+              onClick={() => setCurrentView('dashboard')}
+              disabled={!hasSubscription}
+              className={`px-6 py-2 rounded-full text-sm font-semibold whitespace-nowrap ${
+                hasSubscription ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-200 text-gray-600 cursor-not-allowed'
+              }`}
+            >
+              Accéder au dashboard →
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Auth Modal - Inscription/Connexion */}
       {showAuthModal && (
@@ -565,10 +672,20 @@ export default function App() {
             <div className="mt-16 flex justify-center">
               <button
                 onClick={() => {
-                  setCurrentView('dashboard')
-                  window.location.hash = '#dashboard'
+                  if (hasSubscription) {
+                    setCurrentView('dashboard')
+                    window.location.hash = '#dashboard'
+                  } else {
+                    alert('Abonnement requis pour accéder au dashboard')
+                    document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' })
+                  }
                 }}
-                className="px-12 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white text-lg font-semibold rounded-full hover:shadow-2xl transition-all hover:scale-105"
+                disabled={!hasSubscription}
+                className={`px-12 py-4 text-white text-lg font-semibold rounded-full transition-all hover:scale-105 ${
+                  hasSubscription
+                    ? 'bg-gradient-to-r from-blue-600 to-purple-600 hover:shadow-2xl hover:shadow-blue-500/50'
+                    : 'bg-gray-300 cursor-not-allowed'
+                }`}
               >
                 Accéder à mon Dashboard →
               </button>
