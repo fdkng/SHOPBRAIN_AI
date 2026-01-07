@@ -30,6 +30,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
+FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
 
 # Shopify OAuth credentials
 SHOPIFY_API_KEY = os.getenv("SHOPIFY_API_KEY")
@@ -51,6 +52,7 @@ app = FastAPI()
 # Allow CORS from GitHub Pages and local development
 allowed_origins = [
     "https://fdkng.github.io",
+    "https://fdkng.github.io/SHOPBRAIN_AI",
     "http://localhost:5173",
     "http://localhost:3000",
 ]
@@ -294,8 +296,8 @@ async def create_checkout(payload: dict, request: Request):
             payment_method_types=["card"],
             mode="subscription",
             line_items=[{"price": price_id, "quantity": 1}],
-            success_url=os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI") + "?payment=success&session_id={CHECKOUT_SESSION_ID}",
-            cancel_url=os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI") + "#pricing",
+            success_url=FRONTEND_ORIGIN + "?payment=success&session_id={CHECKOUT_SESSION_ID}",
+            cancel_url=FRONTEND_ORIGIN + "#pricing",
             customer_email=customer_email,
             subscription_data={
                 "trial_period_days": 14,
@@ -970,42 +972,67 @@ async def check_subscription_status(request: Request):
             # This helps if webhook is slow to process
             if STRIPE_SECRET_KEY:
                 try:
-                    from supabase import create_client as supabase_create
-                    
-                    # Check if there's a recent payment session for this user
-                    # by looking at the Stripe customer email
-                    sessions = stripe.checkout.Session.list(limit=10)
+                    # List checkout sessions and find ones matching this user
+                    sessions = stripe.checkout.Session.list(limit=50)
                     
                     for session in sessions:
                         metadata = session.get("metadata", {})
                         if metadata.get("user_id") == user_id and session.payment_status == "paid":
-                            plan = metadata.get("plan", "standard")
+                            # Determine plan from line items (more reliable than metadata)
+                            plan_tier = None
+                            try:
+                                for tier, price_id in STRIPE_PLANS.items():
+                                    # Check if this session has line items with the plan price
+                                    line_items = stripe.checkout.Session.list_line_items(session.id, limit=10)
+                                    for li in line_items.data:
+                                        if li.get("price", {}).get("id") == price_id:
+                                            plan_tier = tier
+                                            break
+                                    if plan_tier:
+                                        break
+                            except:
+                                pass
+                            
+                            if not plan_tier:
+                                plan_tier = metadata.get("plan", "standard")
                             
                             # Save to database now
-                            supabase.table("user_subscriptions").insert({
-                                "user_id": user_id,
-                                "email": session.get("customer_email"),
-                                "stripe_session_id": session.get("id"),
-                                "stripe_subscription_id": session.get("subscription"),
-                                "stripe_customer_id": session.get("customer"),
-                                "plan": plan,
-                                "status": "active",
-                            }).execute()
+                            try:
+                                supabase.table("user_subscriptions").insert({
+                                    "user_id": user_id,
+                                    "email": session.get("customer_email"),
+                                    "stripe_session_id": session.get("id"),
+                                    "stripe_subscription_id": session.get("subscription"),
+                                    "stripe_customer_id": session.get("customer"),
+                                    "plan": plan_tier,
+                                    "status": "active",
+                                }).execute()
+                            except:
+                                pass  # May already exist
                             
-                            print(f"✅ Found paid session, saving subscription: user_id={user_id}, plan={plan}")
+                            print(f"✅ Found paid session, saving subscription: user_id={user_id}, plan={plan_tier}")
                             
                             capabilities = {
-                                'standard': {'product_limit': 50, 'features': ['product_analysis']},
-                                'pro': {'product_limit': 500, 'features': ['product_analysis', 'content_generation']},
-                                'premium': {'product_limit': None, 'features': ['product_analysis', 'content_generation', 'automated_actions']}
+                                'standard': {
+                                    'product_limit': 50,
+                                    'features': ['product_analysis', 'title_optimization', 'price_suggestions']
+                                },
+                                'pro': {
+                                    'product_limit': 500,
+                                    'features': ['product_analysis', 'content_generation', 'cross_sell', 'reports']
+                                },
+                                'premium': {
+                                    'product_limit': None,
+                                    'features': ['product_analysis', 'content_generation', 'cross_sell', 'automated_actions', 'reports', 'predictions']
+                                }
                             }
                             
                             return {
                                 'success': True,
                                 'has_subscription': True,
-                                'plan': plan,
+                                'plan': plan_tier,
                                 'status': 'active',
-                                'capabilities': capabilities.get(plan, {})
+                                'capabilities': capabilities.get(plan_tier, {})
                             }
                 except Exception as stripe_err:
                     print(f"Info: Could not check Stripe sessions: {stripe_err}")

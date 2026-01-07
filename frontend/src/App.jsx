@@ -90,11 +90,21 @@ export default function App() {
     
     // Check for payment success in query string
     const urlParams = new URLSearchParams(window.location.search)
-    if (urlParams.get('payment') === 'success' || urlParams.has('session_id') || urlParams.get('checkout') === 'success') {
-      // Stay on landing, mark success and check subscription
+    const isPaymentSuccess = urlParams.get('payment') === 'success' || urlParams.has('session_id') || urlParams.get('checkout') === 'success'
+    
+    if (isPaymentSuccess) {
+      // Stay on landing, mark success and poll for subscription
       setPaymentSuccess(true)
-      checkSubscription()
-      return
+      // Poll subscription status for up to 15 seconds (webhook + processing time)
+      let pollCount = 0
+      const pollInterval = setInterval(() => {
+        checkSubscription()
+        pollCount++
+        if (pollCount >= 15) {
+          clearInterval(pollInterval)
+        }
+      }, 1000)
+      return () => clearInterval(pollInterval)
     }
     
     // Handle hash-based routing
@@ -175,7 +185,13 @@ export default function App() {
         },
         body: JSON.stringify({ user_id: session.user.id })
       })
+      if (!resp.ok) {
+        console.error('Subscription check failed:', resp.status, resp.statusText)
+        setHasSubscription(false)
+        return
+      }
       const data = await resp.json()
+      console.log('Subscription check response:', data)
       setHasSubscription(Boolean(data?.success && data?.has_subscription))
     } catch (e) {
       setHasSubscription(false)
