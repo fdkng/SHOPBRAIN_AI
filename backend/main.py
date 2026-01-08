@@ -368,14 +368,14 @@ async def stripe_webhook(request: Request):
                 if not plan_tier:
                     plan_tier = "standard"
                 
-                # Insert to user_subscriptions table
-                supabase.table("user_subscriptions").insert({
+                # Insert to subscriptions table
+                supabase.table("subscriptions").insert({
                     "user_id": user_id,
                     "email": session.get("customer_email"),
                     "stripe_session_id": session.get("id"),
                     "stripe_subscription_id": session.get("subscription"),
                     "stripe_customer_id": session.get("customer"),
-                    "plan": plan_tier,
+                    "plan_tier": plan_tier,
                     "status": "active",
                 }).execute()
                 
@@ -949,13 +949,13 @@ async def check_subscription_status(request: Request):
             supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
             
             # Check in database first (from webhook)
-            response = supabase.table("user_subscriptions").select("*").eq(
+            response = supabase.table("subscriptions").select("*").eq(
                 "user_id", user_id
             ).eq("status", "active").order("created_at", desc=True).limit(1).execute()
             
             if response.data:
                 subscription = response.data[0]
-                plan = subscription['plan']
+                plan = subscription['plan_tier']
                 
                 capabilities = {
                     'standard': {
@@ -1011,13 +1011,13 @@ async def check_subscription_status(request: Request):
                             
                             # Save to database now
                             try:
-                                supabase.table("user_subscriptions").insert({
+                                supabase.table("subscriptions").insert({
                                     "user_id": user_id,
                                     "email": session.get("customer_email"),
                                     "stripe_session_id": session.get("id"),
                                     "stripe_subscription_id": session.get("subscription"),
                                     "stripe_customer_id": session.get("customer"),
-                                    "plan": plan_tier,
+                                    "plan_tier": plan_tier,
                                     "status": "active",
                                 }).execute()
                             except:
@@ -1129,15 +1129,13 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
             
             plan = session.metadata.get("plan", "pro") if session.metadata else "pro"
             
-            supabase.table("user_subscriptions").insert({
+            supabase.table("subscriptions").insert({
                 "user_id": user_id,
-                "plan": plan,
+                "plan_tier": plan,
                 "status": "active",
                 "stripe_session_id": session.id,
                 "stripe_customer_id": session.customer,
-                "amount_paid": session.amount_total,
-                "currency": session.currency,
-                "started_at": datetime.utcnow().isoformat()
+                "email": session.customer_email
             }).execute()
             
             supabase.table("user_profiles").upsert({
@@ -1170,7 +1168,7 @@ async def get_user_profile(request: Request):
                 "id", user_id
             ).execute()
             
-            subscription_response = supabase.table("user_subscriptions").select("*").eq(
+            subscription_response = supabase.table("subscriptions").select("*").eq(
                 "user_id", user_id
             ).eq("status", "active").order("created_at", desc=True).limit(1).execute()
             
