@@ -159,6 +159,14 @@ export default function App() {
     }
   }, [user, hasSubscription])
 
+  // Auto-route to dashboard when payment succeeded and subscription detected
+  useEffect(() => {
+    if (paymentSuccess && hasSubscription && user) {
+      setCurrentView('dashboard')
+      window.location.hash = '#dashboard'
+    }
+  }, [paymentSuccess, hasSubscription, user])
+
   const checkUser = async () => {
     const { data: { session } } = await supabase.auth.getSession()
     if (session) {
@@ -909,16 +917,10 @@ export default function App() {
                     ))}
                   </ul>
 
-                  <button
-                    onClick={() => handleStripeCheckout(plan.plan_id)}
-                    className={`w-full py-4 rounded-full text-base font-bold transition-all hover:scale-105 shadow-lg ${
-                      plan.highlight
-                        ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:shadow-2xl hover:shadow-blue-500/50'
-                        : 'bg-gray-900 text-white hover:bg-gray-800 hover:shadow-xl'
-                    }`}
-                  >
-                    {plan.cta} →
-                  </button>
+                  {/* CTA removed; selection via Stripe Pricing Table */}
+                  <div className="w-full py-4 rounded-2xl text-base font-semibold text-center border border-gray-200 bg-gray-50 text-gray-600">
+                    Sélectionnez votre plan via « Voir tous les plans »
+                  </div>
                   
                   <p className="text-center text-xs text-gray-500 mt-4">
                     Annulation en un clic
