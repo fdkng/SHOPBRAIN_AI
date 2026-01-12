@@ -95,12 +95,12 @@ export default function App() {
     if (isPaymentSuccess) {
       // Stay on landing, mark success and poll for subscription
       setPaymentSuccess(true)
-      // Poll subscription status for up to 15 seconds (webhook + processing time)
+      // Poll subscription status for up to 30 seconds (webhook + processing time)
       let pollCount = 0
       const pollInterval = setInterval(() => {
         checkSubscription()
         pollCount++
-        if (pollCount >= 15) {
+        if (pollCount >= 30) {
           clearInterval(pollInterval)
         }
       }, 1000)
@@ -685,10 +685,10 @@ export default function App() {
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-8">
               <button
-                onClick={() => document.getElementById('pricing').scrollIntoView({ behavior: 'smooth' })}
+                onClick={() => window.location.hash = '#stripe-pricing'}
                 className="px-10 py-5 bg-blue-600 text-white text-lg font-semibold rounded-full hover:bg-blue-700 transition-all hover:scale-105 shadow-2xl hover:shadow-blue-500/50"
               >
-                Commencer gratuitement →
+                Voir tous les plans →
               </button>
               <button
                 onClick={() => setShowAuthModal(true)}
@@ -960,10 +960,10 @@ export default function App() {
             Rejoignez des centaines de sellers qui utilisent ShopBrain AI
           </p>
           <button
-            onClick={() => document.getElementById('pricing').scrollIntoView({ behavior: 'smooth' })}
+            onClick={() => window.location.hash = '#stripe-pricing'}
             className="px-8 py-4 bg-blue-600 text-white text-base font-medium rounded-full hover:bg-blue-700 transition-all hover:scale-105 shadow-lg hover:shadow-xl"
           >
-            Commencer gratuitement
+            Voir tous les plans →
           </button>
         </div>
       </section>
