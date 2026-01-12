@@ -95,6 +95,42 @@ export default function App() {
     if (isPaymentSuccess) {
       // Stay on landing, mark success and poll for subscription
       setPaymentSuccess(true)
+
+      // If Stripe returned a session_id, call verify-session endpoint to force-persist subscription
+      const sessionId = urlParams.get('session_id')
+      if (sessionId) {
+        ;(async () => {
+          try {
+            const { data: { session } } = await supabase.auth.getSession()
+            if (session && session.access_token) {
+              const resp = await fetch('https://shopbrain-backend.onrender.com/api/subscription/verify-session', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${session.access_token}`
+                },
+                body: JSON.stringify({ session_id: sessionId })
+              })
+
+              if (resp.ok) {
+                const data = await resp.json().catch(() => ({}))
+                console.log('verify-session response:', data)
+                if (data?.success) {
+                  setHasSubscription(true)
+                  setCurrentView('dashboard')
+                  window.location.hash = '#dashboard'
+                  return
+                }
+              } else {
+                console.warn('verify-session failed:', resp.status, resp.statusText)
+              }
+            }
+          } catch (e) {
+            console.error('Error calling verify-session:', e)
+          }
+        })()
+      }
+
       // Poll subscription status for up to 30 seconds (webhook + processing time)
       let pollCount = 0
       const pollInterval = setInterval(() => {
