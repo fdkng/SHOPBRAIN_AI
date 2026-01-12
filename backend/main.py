@@ -322,6 +322,69 @@ async def create_checkout(payload: dict, request: Request):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+    @app.post("/dev/verify-session")
+    async def dev_verify_session(payload: dict):
+        """
+        DEV helper: verify a Stripe checkout session and persist subscription without requiring user JWT.
+        Enabled only when environment variable `DEV_ALLOW_UNAUTH_VERIFY` is set to 'true'.
+        Body: { "session_id": "cs_...", "user_id": "..." (optional) }
+        """
+        allow = os.getenv("DEV_ALLOW_UNAUTH_VERIFY", "false").lower() == "true"
+        if not allow:
+            raise HTTPException(status_code=403, detail="Dev verify disabled")
+
+        session_id = payload.get("session_id")
+        if not session_id:
+            raise HTTPException(status_code=400, detail="session_id required")
+
+        try:
+            session = stripe.checkout.Session.retrieve(session_id)
+            if not session:
+                raise HTTPException(status_code=404, detail="Session not found")
+
+            if session.payment_status != "paid":
+                return {"success": False, "message": "Paiement non confirmé"}
+
+            subscription = None
+            if session.subscription:
+                try:
+                    subscription = stripe.Subscription.retrieve(session.subscription)
+                except Exception:
+                    subscription = None
+
+            # Determine user_id from metadata or payload
+            user_id = (session.metadata or {}).get("user_id") or payload.get("user_id")
+
+            if SUPABASE_URL and SUPABASE_SERVICE_KEY and user_id:
+                supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+                plan = (session.metadata or {}).get("plan") or "standard"
+
+                supabase.table("subscriptions").insert({
+                    "user_id": user_id,
+                    "email": session.get("customer_email"),
+                    "stripe_session_id": session.get("id"),
+                    "stripe_subscription_id": session.get("subscription"),
+                    "stripe_customer_id": session.get("customer"),
+                    "plan_tier": plan,
+                    "status": "active",
+                }).execute()
+
+                supabase.table("user_profiles").upsert({
+                    "id": user_id,
+                    "subscription_tier": plan,
+                }).execute()
+
+                return {"success": True, "message": "Subscription persisted (dev)"}
+
+            return {"success": False, "message": "Supabase not configured or user_id missing"}
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            print(f"Dev verify error: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/webhook")
 async def stripe_webhook(request: Request):
     payload = await request.body()

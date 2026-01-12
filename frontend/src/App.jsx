@@ -83,6 +83,8 @@ export default function App() {
   const [user, setUser] = useState(null)
   const [hasSubscription, setHasSubscription] = useState(false)
   const [paymentSuccess, setPaymentSuccess] = useState(false)
+  const [paymentProcessingState, setPaymentProcessingState] = useState('idle') // 'idle' | 'verifying' | 'verified' | 'failed'
+  const [paymentProcessingMessage, setPaymentProcessingMessage] = useState('')
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 10)
@@ -103,6 +105,9 @@ export default function App() {
           try {
             const { data: { session } } = await supabase.auth.getSession()
             if (session && session.access_token) {
+              setPaymentProcessingState('verifying')
+              setPaymentProcessingMessage('Vérification du paiement en cours...')
+
               const resp = await fetch('https://shopbrain-backend.onrender.com/api/subscription/verify-session', {
                 method: 'POST',
                 headers: {
@@ -117,16 +122,25 @@ export default function App() {
                 console.log('verify-session response:', data)
                 if (data?.success) {
                   setHasSubscription(true)
+                  setPaymentProcessingState('verified')
+                  setPaymentProcessingMessage('Paiement confirmé — abonnement activé')
                   setCurrentView('dashboard')
                   window.location.hash = '#dashboard'
                   return
+                } else {
+                  setPaymentProcessingState('failed')
+                  setPaymentProcessingMessage(data?.message || 'La vérification a échoué')
                 }
               } else {
                 console.warn('verify-session failed:', resp.status, resp.statusText)
+                setPaymentProcessingState('failed')
+                setPaymentProcessingMessage(`Erreur serveur: ${resp.status}`)
               }
             }
           } catch (e) {
             console.error('Error calling verify-session:', e)
+            setPaymentProcessingState('failed')
+            setPaymentProcessingMessage(e.message || 'Erreur lors de la vérification')
           }
         })()
       }
@@ -504,23 +518,31 @@ export default function App() {
 
       {paymentSuccess && (
         <div className="mt-20 mx-auto max-w-7xl px-6 mb-6">
-          <div className="bg-green-50 border border-green-200 text-green-800 rounded-2xl p-6 flex items-center justify-between shadow-sm">
+          <div className={`rounded-2xl p-6 flex items-center justify-between shadow-sm ${paymentProcessingState === 'verified' ? 'bg-green-50 border border-green-200 text-green-800' : paymentProcessingState === 'failed' ? 'bg-red-50 border border-red-200 text-red-700' : 'bg-yellow-50 border border-yellow-200 text-yellow-800'}`}>
             <div className="flex items-center gap-4">
-              <span className="text-4xl">✅</span>
+              <span className="text-4xl">
+                {paymentProcessingState === 'verified' ? '✅' : paymentProcessingState === 'failed' ? '❌' : '⏳'}
+              </span>
               <div>
-                <div className="font-semibold text-lg">Paiement réussi!</div>
-                <div className="text-sm text-green-700">Ton abonnement est actif. Tu peux maintenant accéder à tous les outils ShopBrain AI.</div>
+                <div className="font-semibold text-lg">
+                  {paymentProcessingState === 'verified' ? 'Paiement confirmé!' : paymentProcessingState === 'failed' ? 'Échec du traitement' : 'Traitement du paiement'}
+                </div>
+                <div className="text-sm">
+                  {paymentProcessingMessage || (paymentProcessingState === 'verified' ? 'Ton abonnement est actif. Tu peux maintenant accéder à ton dashboard.' : paymentProcessingState === 'failed' ? 'Le traitement a échoué. Réessaie ou contacte le support.' : 'Vérification en cours — cela peut prendre quelques secondes.')}
+                </div>
               </div>
             </div>
-            <button
-              onClick={() => setCurrentView('dashboard')}
-              disabled={!hasSubscription}
-              className={`px-6 py-2 rounded-full text-sm font-semibold whitespace-nowrap ${
-                hasSubscription ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-200 text-gray-600 cursor-not-allowed'
-              }`}
-            >
-              Accéder au dashboard →
-            </button>
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => setCurrentView('dashboard')}
+                disabled={!hasSubscription}
+                className={`px-6 py-2 rounded-full text-sm font-semibold whitespace-nowrap ${
+                  hasSubscription ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-200 text-gray-600 cursor-not-allowed'
+                }`}
+              >
+                Accéder au dashboard →
+              </button>
+            </div>
           </div>
         </div>
       )}
