@@ -145,7 +145,7 @@ export default function App() {
         })()
       }
 
-      // Poll subscription status for up to 30 seconds (webhook + processing time)
+      // Poll subscription status for up to 60 seconds (2s intervals to avoid resource exhaustion)
       let pollCount = 0
       const pollInterval = setInterval(() => {
         checkSubscription()
@@ -153,7 +153,7 @@ export default function App() {
         if (pollCount >= 30) {
           clearInterval(pollInterval)
         }
-      }, 1000)
+      }, 2000)
       return () => clearInterval(pollInterval)
     }
     
