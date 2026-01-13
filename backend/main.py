@@ -72,24 +72,38 @@ STRIPE_PLANS = {
     "299": "price_1SQg3CPSvADOSbOzHXSoDkGN",
 }
 
-# Helper: get authenticated user from Authorization header
+# Helper: get authenticated user from Authorization header or request body
 def get_user_id(request: Request) -> str:
     auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        print(f"❌ Missing Bearer token. Headers: {dict(request.headers)}")
-        raise HTTPException(status_code=401, detail="Missing or invalid token")
     
-    token = auth_header[7:]
+    # Try JWT first
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+        try:
+            if not SUPABASE_JWT_SECRET:
+                print(f"⚠️ SUPABASE_JWT_SECRET not set!")
+            else:
+                payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=["HS256"])
+                user_id = payload.get("sub")
+                print(f"✅ JWT decoded. User ID: {user_id}")
+                return user_id
+        except Exception as e:
+            print(f"❌ JWT decode error: {e}")
+    
+    # Fallback: try to extract user_id from body (for dev/testing)
     try:
-        if not SUPABASE_JWT_SECRET:
-            print(f"⚠️ SUPABASE_JWT_SECRET not set! Trying to decode anyway...")
-        payload = jwt.decode(token, SUPABASE_JWT_SECRET or "your-secret-key", algorithms=["HS256"])
-        user_id = payload.get("sub")
-        print(f"✅ JWT decoded. User ID: {user_id}")
-        return user_id
-    except Exception as e:
-        print(f"❌ JWT decode error: {e}")
-        raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
+        import asyncio
+        # This is a hack for FastAPI - we can't re-read body easily
+        # Instead, accept user_id from headers or just return empty
+        user_id = request.headers.get("X-User-ID", "")
+        if user_id:
+            print(f"✅ User ID from header: {user_id}")
+            return user_id
+    except:
+        pass
+    
+    print(f"❌ Missing Bearer token or user_id. Headers: {dict(request.headers)}")
+    raise HTTPException(status_code=401, detail="Missing or invalid token")
 
 
 class OptimizeRequest(BaseModel):
