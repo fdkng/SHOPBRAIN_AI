@@ -1029,29 +1029,38 @@ async def check_subscription_status(request: Request):
         user_id = get_user_id(request)
         
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
-            supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-            
             # Check in database first (from webhook)
             subscription = None
             try:
-                # Try chained filters first
-                response = supabase.table("subscriptions").select("*").eq("user_id", user_id).eq("status", "active").order("created_at", desc=True).limit(1).execute()
-                if response.data:
-                    subscription = response.data[0]
+                # Use HTTP directly to avoid SDK parsing issues with UUID filters
+                import urllib.parse
+                filter_str = f'user_id=eq.{user_id}&status=eq.active'
+                query = urllib.parse.quote(filter_str)
+                
+                headers = {
+                    'Authorization': f'Bearer {SUPABASE_SERVICE_KEY}',
+                    'apikey': SUPABASE_SERVICE_KEY,
+                    'Content-Type': 'application/json',
+                    'Range': '0-0',  # Limit to first row
+                    'Range-Unit': 'items'
+                }
+                
+                resp = requests.get(
+                    f'{SUPABASE_URL}/rest/v1/subscriptions?{filter_str}&order=created_at.desc',
+                    headers=headers,
+                    timeout=5
+                )
+                
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if isinstance(data, list) and len(data) > 0:
+                        subscription = data[0]
+                        print(f"✅ Found subscription via HTTP query: {subscription.get('id')}")
+                else:
+                    print(f"HTTP query error: {resp.status_code} - {resp.text}")
             except Exception as e:
-                print(f"Query error (chained filters): {e}")
-                # Fallback: query all subscriptions and filter in Python
-                try:
-                    response = supabase.table("subscriptions").select("*").execute()
-                    if response.data:
-                        # Filter by user_id and status in Python
-                        active_subs = [r for r in response.data if r.get("user_id") == user_id and r.get("status") == "active"]
-                        if active_subs:
-                            # Sort by created_at descending and get the first one
-                            subscription = sorted(active_subs, key=lambda x: x.get("created_at", ""), reverse=True)[0]
-                except Exception as e2:
-                    print(f"Query error (fallback - select all): {e2}")
-                    subscription = None
+                print(f"Query error (HTTP): {e}")
+                subscription = None
             
             if subscription:
                 plan = subscription['plan_tier']
