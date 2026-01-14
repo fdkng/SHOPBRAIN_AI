@@ -85,6 +85,9 @@ export default function App() {
   const [paymentSuccess, setPaymentSuccess] = useState(false)
   const [paymentProcessingState, setPaymentProcessingState] = useState('idle') // 'idle' | 'verifying' | 'verified' | 'failed'
   const [paymentProcessingMessage, setPaymentProcessingMessage] = useState('')
+  
+  // Prevent simultaneous subscription checks
+  const subscriptionCheckInProgressRef = React.useRef(false)
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 10)
@@ -229,6 +232,13 @@ export default function App() {
   }
 
   const checkSubscription = async () => {
+    // Skip if already checking to prevent stacking requests
+    if (subscriptionCheckInProgressRef.current) {
+      console.log('Subscription check already in progress, skipping...')
+      return
+    }
+    
+    subscriptionCheckInProgressRef.current = true
     try {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session || !session.user) {
@@ -254,6 +264,8 @@ export default function App() {
     } catch (e) {
       setHasSubscription(false)
       console.error('Subscription check error:', e)
+    } finally {
+      subscriptionCheckInProgressRef.current = false
     }
   }
 
