@@ -83,18 +83,24 @@ def get_user_id(request: Request) -> str:
             if not SUPABASE_JWT_SECRET:
                 print(f"⚠️ SUPABASE_JWT_SECRET not set!")
             else:
-                payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=["HS256"])
+                # Decode with audience validation for Supabase tokens
+                # Supabase sets aud="authenticated" by default
+                payload = jwt.decode(
+                    token, 
+                    SUPABASE_JWT_SECRET, 
+                    algorithms=["HS256"],
+                    audience="authenticated"  # Match Supabase token audience
+                )
                 user_id = payload.get("sub")
                 print(f"✅ JWT decoded. User ID: {user_id}")
                 return user_id
+        except jwt.InvalidAudienceError as e:
+            print(f"❌ JWT audience validation failed: {e}")
         except Exception as e:
             print(f"❌ JWT decode error: {e}")
     
-    # Fallback: try to extract user_id from body (for dev/testing)
+    # Fallback: try to extract user_id from header (for dev/testing)
     try:
-        import asyncio
-        # This is a hack for FastAPI - we can't re-read body easily
-        # Instead, accept user_id from headers or just return empty
         user_id = request.headers.get("X-User-ID", "")
         if user_id:
             print(f"✅ User ID from header: {user_id}")
