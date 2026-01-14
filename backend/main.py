@@ -1032,22 +1032,28 @@ async def check_subscription_status(request: Request):
             supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
             
             # Check in database first (from webhook)
+            subscription = None
             try:
+                # Try chained filters first
                 response = supabase.table("subscriptions").select("*").eq("user_id", user_id).eq("status", "active").order("created_at", desc=True).limit(1).execute()
+                if response.data:
+                    subscription = response.data[0]
             except Exception as e:
                 print(f"Query error (chained filters): {e}")
-                # Fallback: query with just user_id, filter status in Python
+                # Fallback: query all subscriptions and filter in Python
                 try:
-                    response = supabase.table("subscriptions").select("*").eq("user_id", user_id).execute()
+                    response = supabase.table("subscriptions").select("*").execute()
                     if response.data:
-                        response.data = [r for r in response.data if r.get("status") == "active"]
-                        response.data = sorted(response.data, key=lambda x: x.get("created_at", ""), reverse=True)[:1]
+                        # Filter by user_id and status in Python
+                        active_subs = [r for r in response.data if r.get("user_id") == user_id and r.get("status") == "active"]
+                        if active_subs:
+                            # Sort by created_at descending and get the first one
+                            subscription = sorted(active_subs, key=lambda x: x.get("created_at", ""), reverse=True)[0]
                 except Exception as e2:
-                    print(f"Query error (fallback): {e2}")
-                    response.data = []
+                    print(f"Query error (fallback - select all): {e2}")
+                    subscription = None
             
-            if response.data:
-                subscription = response.data[0]
+            if subscription:
                 plan = subscription['plan_tier']
                 
                 capabilities = {
