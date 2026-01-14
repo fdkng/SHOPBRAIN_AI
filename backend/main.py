@@ -428,11 +428,11 @@ async def stripe_webhook(request: Request):
         user_id = session.get("metadata", {}).get("user_id")
         
         # Persist subscription to Supabase if configured (best-effort)
-        if SUPABASE_URL and SUPABASE_KEY and user_id:
+        if SUPABASE_URL and SUPABASE_SERVICE_KEY and user_id:
             try:
                 from supabase import create_client
 
-                supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+                supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
                 
                 # Extract plan from subscription - try different sources
                 plan_tier = None
