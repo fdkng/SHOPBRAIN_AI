@@ -239,6 +239,11 @@ export default function App() {
     }
     
     subscriptionCheckInProgressRef.current = true
+    const timeoutId = setTimeout(() => {
+      console.warn('Subscription check timeout (10s), releasing lock')
+      subscriptionCheckInProgressRef.current = false
+    }, 10000)
+    
     try {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session || !session.user) {
@@ -251,7 +256,8 @@ export default function App() {
           'Authorization': `Bearer ${session.access_token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ user_id: session.user.id })
+        body: JSON.stringify({ user_id: session.user.id }),
+        signal: AbortSignal.timeout(9000) // 9s fetch timeout
       })
       if (!resp.ok) {
         console.error('Subscription check failed:', resp.status, resp.statusText)
@@ -265,6 +271,7 @@ export default function App() {
       setHasSubscription(false)
       console.error('Subscription check error:', e)
     } finally {
+      clearTimeout(timeoutId)
       subscriptionCheckInProgressRef.current = false
     }
   }
