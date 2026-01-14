@@ -431,6 +431,64 @@ async def dev_check_db(user_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/dev/simulate-webhook")
+async def dev_simulate_webhook(session_id: str):
+    """
+    DEV ONLY: Simulate a Stripe webhook event for testing.
+    This mimics what happens when Stripe sends checkout.session.completed event.
+    """
+    allow = os.getenv("DEV_ALLOW_UNAUTH_VERIFY", "false").lower() == "true"
+    if not allow:
+        raise HTTPException(status_code=403, detail="Dev verify disabled")
+
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id required")
+
+    try:
+        # Fetch session from Stripe
+        session = stripe.checkout.Session.retrieve(session_id)
+        
+        if session.payment_status != "paid":
+            return {"success": False, "message": f"Payment not confirmed: {session.payment_status}"}
+
+        user_id = session.get("metadata", {}).get("user_id") if session.metadata else None
+        
+        if not user_id:
+            return {"success": False, "message": "user_id not in session metadata"}
+
+        # Persist subscription (same as webhook does)
+        if SUPABASE_URL and SUPABASE_SERVICE_KEY and user_id:
+            supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+            
+            plan_tier = session.get("metadata", {}).get("plan") if session.metadata else "standard"
+            if not plan_tier:
+                plan_tier = "standard"
+            
+            supabase.table("subscriptions").insert({
+                "user_id": user_id,
+                "email": session.get("customer_email"),
+                "stripe_session_id": session.get("id"),
+                "stripe_subscription_id": session.get("subscription"),
+                "stripe_customer_id": session.get("customer"),
+                "plan_tier": plan_tier,
+                "status": "active",
+            }).execute()
+            
+            print(f"✅ [DEV Webhook Simulation] Subscription saved: user_id={user_id}, plan={plan_tier}")
+            return {
+                "success": True,
+                "message": "Subscription persisted via webhook simulation",
+                "user_id": user_id,
+                "plan": plan_tier
+            }
+
+        return {"success": False, "message": "Supabase not configured or user_id missing"}
+
+    except Exception as e:
+        print(f"Dev simulate-webhook error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/dev/verify-session")
     async def dev_verify_session(payload: dict):
         """
