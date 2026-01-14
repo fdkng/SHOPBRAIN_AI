@@ -1025,8 +1025,10 @@ class CheckSubscriptionRequest(BaseModel):
 @app.post("/api/subscription/status")
 async def check_subscription_status(request: Request):
     """✅ Vérifie le statut d'abonnement de l'utilisateur"""
+    print(f"🔍 [v5b2f458] check_subscription_status called")
     try:
         user_id = get_user_id(request)
+        print(f"🔍 User ID extracted: {user_id}")
         
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
             # Check in database first (from webhook)
