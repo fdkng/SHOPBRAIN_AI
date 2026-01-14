@@ -1089,75 +1089,8 @@ async def check_subscription_status(request: Request):
                     'capabilities': capabilities.get(plan, {})
                 }
             
-            # If not in database, check recent Stripe sessions with this metadata
-            # This helps if webhook is slow to process
-            if STRIPE_SECRET_KEY:
-                try:
-                    # List checkout sessions and find ones matching this user
-                    sessions = stripe.checkout.Session.list(limit=50)
-                    
-                    for session in sessions:
-                        metadata = session.get("metadata", {})
-                        if metadata.get("user_id") == user_id and session.payment_status == "paid":
-                            # Determine plan from line items (more reliable than metadata)
-                            plan_tier = None
-                            try:
-                                for tier, price_id in STRIPE_PLANS.items():
-                                    # Check if this session has line items with the plan price
-                                    line_items = stripe.checkout.Session.list_line_items(session.id, limit=10)
-                                    for li in line_items.data:
-                                        if li.get("price", {}).get("id") == price_id:
-                                            plan_tier = tier
-                                            break
-                                    if plan_tier:
-                                        break
-                            except:
-                                pass
-                            
-                            if not plan_tier:
-                                plan_tier = metadata.get("plan", "standard")
-                            
-                            # Save to database now
-                            try:
-                                supabase.table("subscriptions").insert({
-                                    "user_id": user_id,
-                                    "email": session.get("customer_email"),
-                                    "stripe_session_id": session.get("id"),
-                                    "stripe_subscription_id": session.get("subscription"),
-                                    "stripe_customer_id": session.get("customer"),
-                                    "plan_tier": plan_tier,
-                                    "status": "active",
-                                }).execute()
-                            except:
-                                pass  # May already exist
-                            
-                            print(f"✅ Found paid session, saving subscription: user_id={user_id}, plan={plan_tier}")
-                            
-                            capabilities = {
-                                'standard': {
-                                    'product_limit': 50,
-                                    'features': ['product_analysis', 'title_optimization', 'price_suggestions']
-                                },
-                                'pro': {
-                                    'product_limit': 500,
-                                    'features': ['product_analysis', 'content_generation', 'cross_sell', 'reports']
-                                },
-                                'premium': {
-                                    'product_limit': None,
-                                    'features': ['product_analysis', 'content_generation', 'cross_sell', 'automated_actions', 'reports', 'predictions']
-                                }
-                            }
-                            
-                            return {
-                                'success': True,
-                                'has_subscription': True,
-                                'plan': plan_tier,
-                                'status': 'active',
-                                'capabilities': capabilities.get(plan_tier, {})
-                            }
-                except Exception as stripe_err:
-                    print(f"Info: Could not check Stripe sessions: {stripe_err}")
-            
+            # Not found in database - return immediately (don't check Stripe, it's too slow)
+            print(f"ℹ️ No active subscription found for user {user_id}")
             return {
                 'success': True,
                 'has_subscription': False,
