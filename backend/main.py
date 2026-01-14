@@ -386,6 +386,51 @@ async def dev_force_persist(session_id: str, user_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/dev/check-db")
+async def dev_check_db(user_id: str):
+    """
+    DEV ONLY: Check what's in the database for a user.
+    """
+    allow = os.getenv("DEV_ALLOW_UNAUTH_VERIFY", "false").lower() == "true"
+    if not allow:
+        raise HTTPException(status_code=403, detail="Dev verify disabled")
+
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id required")
+
+    try:
+        if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+            import urllib.parse
+            filter_str = f'user_id=eq.{user_id}'
+            
+            headers = {
+                'Authorization': f'Bearer {SUPABASE_SERVICE_KEY}',
+                'apikey': SUPABASE_SERVICE_KEY,
+                'Content-Type': 'application/json',
+            }
+            
+            resp = requests.get(
+                f'{SUPABASE_URL}/rest/v1/subscriptions?{filter_str}',
+                headers=headers,
+                timeout=5
+            )
+            
+            data = resp.json() if resp.status_code == 200 else None
+            
+            return {
+                "user_id": user_id,
+                "found": bool(data and len(data) > 0),
+                "count": len(data) if data else 0,
+                "subscriptions": data or []
+            }
+
+        return {"error": "Supabase not configured"}
+
+    except Exception as e:
+        print(f"Dev check-db error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/dev/verify-session")
     async def dev_verify_session(payload: dict):
         """
