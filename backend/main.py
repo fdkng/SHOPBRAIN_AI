@@ -342,7 +342,51 @@ async def create_checkout(payload: dict, request: Request):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-    @app.post("/dev/verify-session")
+@app.get("/dev/force-persist")
+async def dev_force_persist(session_id: str, user_id: str):
+    """
+    DEV ONLY: Force persist a subscription from Stripe session.
+    Example: GET /dev/force-persist?session_id=cs_...&user_id=uuid
+    """
+    allow = os.getenv("DEV_ALLOW_UNAUTH_VERIFY", "false").lower() == "true"
+    if not allow:
+        raise HTTPException(status_code=403, detail="Dev verify disabled")
+
+    if not session_id or not user_id:
+        raise HTTPException(status_code=400, detail="session_id and user_id required")
+
+    try:
+        session = stripe.checkout.Session.retrieve(session_id)
+        
+        if session.payment_status != "paid":
+            return {"success": False, "message": "Payment not confirmed"}
+
+        # Persist to Supabase
+        if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+            supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+            plan = (session.metadata or {}).get("plan") or "standard"
+
+            supabase.table("subscriptions").insert({
+                "user_id": user_id,
+                "email": session.get("customer_email"),
+                "stripe_session_id": session.get("id"),
+                "stripe_subscription_id": session.get("subscription"),
+                "stripe_customer_id": session.get("customer"),
+                "plan_tier": plan,
+                "status": "active",
+            }).execute()
+
+            print(f"✅ [DEV] Subscription forced: user_id={user_id}, plan={plan}")
+            return {"success": True, "message": "Subscription persisted"}
+
+        return {"success": False, "message": "Supabase not configured"}
+
+    except Exception as e:
+        print(f"Dev force-persist error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/dev/verify-session")
     async def dev_verify_session(payload: dict):
         """
         DEV helper: verify a Stripe checkout session and persist subscription without requiring user JWT.
