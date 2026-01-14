@@ -1032,9 +1032,7 @@ async def check_subscription_status(request: Request):
             supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
             
             # Check in database first (from webhook)
-            response = supabase.table("subscriptions").select("*").eq(
-                "user_id", user_id
-            ).eq("status", "active").order("created_at", desc=True).limit(1).execute()
+            response = supabase.table("subscriptions").select("*").eq("user_id", user_id).eq("status", "active").order("created_at", desc=True).limit(1).execute()
             
             if response.data:
                 subscription = response.data[0]
