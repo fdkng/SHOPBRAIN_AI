@@ -361,12 +361,12 @@ async def dev_force_persist(session_id: str, user_id: str):
         if session.payment_status != "paid":
             return {"success": False, "message": "Payment not confirmed"}
 
-        # Persist to Supabase
+        # Persist to Supabase (upsert on stripe_subscription_id to avoid duplicates)
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
             supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
             plan = (session.metadata or {}).get("plan") or "standard"
 
-            supabase.table("subscriptions").insert({
+            upsert_payload = {
                 "user_id": user_id,
                 "email": session.get("customer_email"),
                 "stripe_session_id": session.get("id"),
@@ -374,7 +374,13 @@ async def dev_force_persist(session_id: str, user_id: str):
                 "stripe_customer_id": session.get("customer"),
                 "plan_tier": plan,
                 "status": "active",
-            }).execute()
+            }
+
+            try:
+                supabase.table("subscriptions").upsert(upsert_payload, on_conflict="stripe_subscription_id").execute()
+            except Exception as dup_err:
+                print(f"Info: upsert failed, attempting update on stripe_subscription_id: {dup_err}")
+                supabase.table("subscriptions").update(upsert_payload).eq("stripe_subscription_id", session.get("subscription")).execute()
 
             print(f"✅ [DEV] Subscription forced: user_id={user_id}, plan={plan}")
             return {"success": True, "message": "Subscription persisted"}
@@ -464,7 +470,7 @@ async def dev_simulate_webhook(session_id: str):
             if not plan_tier:
                 plan_tier = "standard"
             
-            supabase.table("subscriptions").insert({
+            upsert_payload = {
                 "user_id": user_id,
                 "email": session.get("customer_email"),
                 "stripe_session_id": session.get("id"),
@@ -472,7 +478,13 @@ async def dev_simulate_webhook(session_id: str):
                 "stripe_customer_id": session.get("customer"),
                 "plan_tier": plan_tier,
                 "status": "active",
-            }).execute()
+            }
+
+            try:
+                supabase.table("subscriptions").upsert(upsert_payload, on_conflict="stripe_subscription_id").execute()
+            except Exception as dup_err:
+                print(f"Info: upsert failed, attempting update on stripe_subscription_id: {dup_err}")
+                supabase.table("subscriptions").update(upsert_payload).eq("stripe_subscription_id", session.get("subscription")).execute()
             
             print(f"✅ [DEV Webhook Simulation] Subscription saved: user_id={user_id}, plan={plan_tier}")
             return {
