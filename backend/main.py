@@ -1032,7 +1032,19 @@ async def check_subscription_status(request: Request):
             supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
             
             # Check in database first (from webhook)
-            response = supabase.table("subscriptions").select("*").eq("user_id", user_id).eq("status", "active").order("created_at", desc=True).limit(1).execute()
+            try:
+                response = supabase.table("subscriptions").select("*").eq("user_id", user_id).eq("status", "active").order("created_at", desc=True).limit(1).execute()
+            except Exception as e:
+                print(f"Query error (chained filters): {e}")
+                # Fallback: query with just user_id, filter status in Python
+                try:
+                    response = supabase.table("subscriptions").select("*").eq("user_id", user_id).execute()
+                    if response.data:
+                        response.data = [r for r in response.data if r.get("status") == "active"]
+                        response.data = sorted(response.data, key=lambda x: x.get("created_at", ""), reverse=True)[:1]
+                except Exception as e2:
+                    print(f"Query error (fallback): {e2}")
+                    response.data = []
             
             if response.data:
                 subscription = response.data[0]
