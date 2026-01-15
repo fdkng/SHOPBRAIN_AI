@@ -1301,7 +1301,7 @@ async def check_subscription_status(request: Request):
                     'has_subscription': True,
                     'plan': plan,
                     'status': subscription['status'],
-                    'started_at': subscription['started_at'],
+                    'started_at': subscription.get('created_at'),
                     'capabilities': capabilities.get(plan, {})
                 }
             
