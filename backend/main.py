@@ -361,9 +361,8 @@ async def dev_force_persist(session_id: str, user_id: str):
         if session.payment_status != "paid":
             return {"success": False, "message": "Payment not confirmed"}
 
-        # Persist to Supabase (check if exists, then update or insert)
+        # Persist to Supabase (use HTTP directly to avoid SDK UUID parsing issues)
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
-            supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
             plan = (session.metadata or {}).get("plan") or "standard"
 
             subscription_payload = {
@@ -376,16 +375,40 @@ async def dev_force_persist(session_id: str, user_id: str):
                 "status": "active",
             }
 
-            # Check if subscription exists with this user_id
-            existing = supabase.table("subscriptions").select("id").eq("user_id", user_id).execute()
+            headers = {
+                'Authorization': f'Bearer {SUPABASE_SERVICE_KEY}',
+                'apikey': SUPABASE_SERVICE_KEY,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=representation'
+            }
+
+            # Check if subscription exists with this user_id (HTTP GET)
+            filter_str = f'user_id=eq.{user_id}'
+            resp = requests.get(
+                f'{SUPABASE_URL}/rest/v1/subscriptions?{filter_str}&select=id',
+                headers=headers,
+                timeout=5
+            )
             
-            if existing.data and len(existing.data) > 0:
-                # Update existing
-                supabase.table("subscriptions").update(subscription_payload).eq("user_id", user_id).execute()
+            existing_data = resp.json() if resp.status_code == 200 else []
+            
+            if existing_data and len(existing_data) > 0:
+                # Update existing (HTTP PATCH)
+                resp = requests.patch(
+                    f'{SUPABASE_URL}/rest/v1/subscriptions?{filter_str}',
+                    headers=headers,
+                    json=subscription_payload,
+                    timeout=5
+                )
                 print(f"✅ [DEV] Subscription updated: user_id={user_id}, plan={plan}")
             else:
-                # Insert new
-                supabase.table("subscriptions").insert(subscription_payload).execute()
+                # Insert new (HTTP POST)
+                resp = requests.post(
+                    f'{SUPABASE_URL}/rest/v1/subscriptions',
+                    headers=headers,
+                    json=subscription_payload,
+                    timeout=5
+                )
                 print(f"✅ [DEV] Subscription inserted: user_id={user_id}, plan={plan}")
 
             return {"success": True, "message": "Subscription persisted"}
@@ -467,10 +490,8 @@ async def dev_simulate_webhook(session_id: str):
         if not user_id:
             return {"success": False, "message": "user_id not in session metadata"}
 
-        # Persist subscription (same as webhook does)
+        # Persist subscription (use HTTP directly to avoid SDK UUID parsing issues)
         if SUPABASE_URL and SUPABASE_SERVICE_KEY and user_id:
-            supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-            
             plan_tier = session.get("metadata", {}).get("plan") if session.metadata else "standard"
             if not plan_tier:
                 plan_tier = "standard"
@@ -485,16 +506,40 @@ async def dev_simulate_webhook(session_id: str):
                 "status": "active",
             }
 
-            # Check if subscription exists with this user_id
-            existing = supabase.table("subscriptions").select("id").eq("user_id", user_id).execute()
+            headers = {
+                'Authorization': f'Bearer {SUPABASE_SERVICE_KEY}',
+                'apikey': SUPABASE_SERVICE_KEY,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=representation'
+            }
+
+            # Check if subscription exists with this user_id (HTTP GET)
+            filter_str = f'user_id=eq.{user_id}'
+            resp = requests.get(
+                f'{SUPABASE_URL}/rest/v1/subscriptions?{filter_str}&select=id',
+                headers=headers,
+                timeout=5
+            )
             
-            if existing.data and len(existing.data) > 0:
-                # Update existing
-                supabase.table("subscriptions").update(subscription_payload).eq("user_id", user_id).execute()
+            existing_data = resp.json() if resp.status_code == 200 else []
+            
+            if existing_data and len(existing_data) > 0:
+                # Update existing (HTTP PATCH)
+                resp = requests.patch(
+                    f'{SUPABASE_URL}/rest/v1/subscriptions?{filter_str}',
+                    headers=headers,
+                    json=subscription_payload,
+                    timeout=5
+                )
                 print(f"✅ [DEV Webhook Simulation] Subscription updated: user_id={user_id}, plan={plan_tier}")
             else:
-                # Insert new
-                supabase.table("subscriptions").insert(subscription_payload).execute()
+                # Insert new (HTTP POST)
+                resp = requests.post(
+                    f'{SUPABASE_URL}/rest/v1/subscriptions',
+                    headers=headers,
+                    json=subscription_payload,
+                    timeout=5
+                )
                 print(f"✅ [DEV Webhook Simulation] Subscription inserted: user_id={user_id}, plan={plan_tier}")
             
             return {
