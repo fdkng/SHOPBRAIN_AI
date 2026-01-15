@@ -1241,7 +1241,15 @@ async def check_subscription_status(request: Request):
     """✅ Vérifie le statut d'abonnement de l'utilisateur"""
     print(f"🔍 [v5b2f458] check_subscription_status called")
     try:
-        user_id = get_user_id(request)
+        try:
+            user_id = get_user_id(request)
+        except HTTPException as http_err:
+            print(f"❌ get_user_id failed with HTTPException: {http_err.detail}")
+            raise http_err
+        except Exception as auth_err:
+            print(f"❌ get_user_id failed with exception: {auth_err}")
+            raise HTTPException(status_code=401, detail=f"Auth failed: {str(auth_err)}")
+            
         print(f"🔍 User ID extracted: {user_id}")
         
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
@@ -1313,9 +1321,13 @@ async def check_subscription_status(request: Request):
                 'plan': 'free'
             }
     
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions
     except Exception as e:
-        print(f"Error checking subscription: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"❌ Error checking subscription: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
 
 class CreateCheckoutSessionRequest(BaseModel):
