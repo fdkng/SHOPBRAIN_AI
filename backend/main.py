@@ -361,12 +361,12 @@ async def dev_force_persist(session_id: str, user_id: str):
         if session.payment_status != "paid":
             return {"success": False, "message": "Payment not confirmed"}
 
-        # Persist to Supabase (upsert on stripe_subscription_id to avoid duplicates)
+        # Persist to Supabase (check if exists, then update or insert)
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
             supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
             plan = (session.metadata or {}).get("plan") or "standard"
 
-            upsert_payload = {
+            subscription_payload = {
                 "user_id": user_id,
                 "email": session.get("customer_email"),
                 "stripe_session_id": session.get("id"),
@@ -376,13 +376,18 @@ async def dev_force_persist(session_id: str, user_id: str):
                 "status": "active",
             }
 
-            try:
-                supabase.table("subscriptions").upsert(upsert_payload, on_conflict="stripe_subscription_id").execute()
-            except Exception as dup_err:
-                print(f"Info: upsert failed, attempting update on stripe_subscription_id: {dup_err}")
-                supabase.table("subscriptions").update(upsert_payload).eq("stripe_subscription_id", session.get("subscription")).execute()
+            # Check if subscription exists with this user_id
+            existing = supabase.table("subscriptions").select("id").eq("user_id", user_id).execute()
+            
+            if existing.data and len(existing.data) > 0:
+                # Update existing
+                supabase.table("subscriptions").update(subscription_payload).eq("user_id", user_id).execute()
+                print(f"✅ [DEV] Subscription updated: user_id={user_id}, plan={plan}")
+            else:
+                # Insert new
+                supabase.table("subscriptions").insert(subscription_payload).execute()
+                print(f"✅ [DEV] Subscription inserted: user_id={user_id}, plan={plan}")
 
-            print(f"✅ [DEV] Subscription forced: user_id={user_id}, plan={plan}")
             return {"success": True, "message": "Subscription persisted"}
 
         return {"success": False, "message": "Supabase not configured"}
@@ -470,7 +475,7 @@ async def dev_simulate_webhook(session_id: str):
             if not plan_tier:
                 plan_tier = "standard"
             
-            upsert_payload = {
+            subscription_payload = {
                 "user_id": user_id,
                 "email": session.get("customer_email"),
                 "stripe_session_id": session.get("id"),
@@ -480,13 +485,18 @@ async def dev_simulate_webhook(session_id: str):
                 "status": "active",
             }
 
-            try:
-                supabase.table("subscriptions").upsert(upsert_payload, on_conflict="stripe_subscription_id").execute()
-            except Exception as dup_err:
-                print(f"Info: upsert failed, attempting update on stripe_subscription_id: {dup_err}")
-                supabase.table("subscriptions").update(upsert_payload).eq("stripe_subscription_id", session.get("subscription")).execute()
+            # Check if subscription exists with this user_id
+            existing = supabase.table("subscriptions").select("id").eq("user_id", user_id).execute()
             
-            print(f"✅ [DEV Webhook Simulation] Subscription saved: user_id={user_id}, plan={plan_tier}")
+            if existing.data and len(existing.data) > 0:
+                # Update existing
+                supabase.table("subscriptions").update(subscription_payload).eq("user_id", user_id).execute()
+                print(f"✅ [DEV Webhook Simulation] Subscription updated: user_id={user_id}, plan={plan_tier}")
+            else:
+                # Insert new
+                supabase.table("subscriptions").insert(subscription_payload).execute()
+                print(f"✅ [DEV Webhook Simulation] Subscription inserted: user_id={user_id}, plan={plan_tier}")
+            
             return {
                 "success": True,
                 "message": "Subscription persisted via webhook simulation",
