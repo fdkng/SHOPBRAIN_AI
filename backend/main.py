@@ -794,6 +794,50 @@ async def update_profile(payload: dict, request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/user/profile/update")
+async def update_user_shopify(payload: dict, request: Request):
+    """Met à jour les credentials Shopify de l'utilisateur"""
+    user_id = get_user_id(request)
+    
+    shopify_url = payload.get("shopify_shop_url", "").strip()
+    shopify_token = payload.get("shopify_access_token", "").strip()
+    
+    if not shopify_url or not shopify_token:
+        raise HTTPException(status_code=400, detail="Shop URL et Access Token requis")
+    
+    # Valider le format du shop URL
+    if not shopify_url.endswith('.myshopify.com'):
+        raise HTTPException(status_code=400, detail="URL invalide. Format attendu: boutique.myshopify.com")
+    
+    try:
+        from supabase import create_client
+        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        
+        # Vérifier si une connexion existe déjà
+        existing = supabase.table("shopify_connections").select("*").eq("user_id", user_id).execute()
+        
+        if existing.data:
+            # Mettre à jour
+            supabase.table("shopify_connections").update({
+                "shop_domain": shopify_url,
+                "access_token": shopify_token,
+                "updated_at": "now()"
+            }).eq("user_id", user_id).execute()
+        else:
+            # Créer
+            supabase.table("shopify_connections").insert({
+                "user_id": user_id,
+                "shop_domain": shopify_url,
+                "access_token": shopify_token
+            }).execute()
+        
+        return {"success": True, "message": "Shopify connecté avec succès"}
+        
+    except Exception as e:
+        print(f"Error saving Shopify credentials: {e}")
+        raise HTTPException(status_code=500, detail=f"Erreur Shopify: {str(e)}")
+
+
 async def shopify_auth(shop: str, user_id: str):
     """Initiate Shopify OAuth flow.
     Example: /auth/shopify?shop=mystore.myshopify.com&user_id=abc123
