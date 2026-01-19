@@ -18,6 +18,11 @@ export default function Dashboard() {
   const [products, setProducts] = useState(null)
   const [error, setError] = useState('')
   const [isProcessingPayment, setIsProcessingPayment] = useState(false)
+  const [chatMessages, setChatMessages] = useState([
+    { role: 'assistant', text: '👋 Bonjour! Je suis ton assistant IA e-commerce. Tu peux me poser des questions sur tes produits, tes stratégies de vente, ou tout ce qui concerne ton e-commerce.' }
+  ])
+  const [chatInput, setChatInput] = useState('')
+  const [chatLoading, setChatLoading] = useState(false)
 
   useEffect(() => {
     // Check if coming from payment success
@@ -81,6 +86,51 @@ export default function Dashboard() {
   const handleLogout = async () => {
     await supabase.auth.signOut()
     window.location.hash = '#/'
+  }
+
+  const sendChatMessage = async () => {
+    if (!chatInput.trim()) return
+    
+    try {
+      setChatLoading(true)
+      
+      // Ajouter le message utilisateur
+      const userMessage = chatInput.trim()
+      setChatMessages(prev => [...prev, { role: 'user', text: userMessage }])
+      setChatInput('')
+      
+      // Envoyer au backend
+      const { data: { session } } = await supabase.auth.getSession()
+      const response = await fetch(`${API_URL}/api/ai/chat`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          message: userMessage,
+          context: shopifyUrl ? `Boutique connectée: ${shopifyUrl}` : ''
+        })
+      })
+      
+      const data = await response.json()
+      
+      if (data.success) {
+        setChatMessages(prev => [...prev, { role: 'assistant', text: data.message }])
+      } else {
+        setChatMessages(prev => [...prev, { 
+          role: 'assistant', 
+          text: '❌ Erreur: ' + (data.detail || 'Erreur inconnue') 
+        }])
+      }
+    } catch (err) {
+      setChatMessages(prev => [...prev, { 
+        role: 'assistant', 
+        text: '❌ Erreur de connexion: ' + err.message 
+      }])
+    } finally {
+      setChatLoading(false)
+    }
   }
 
   const connectShopify = async () => {
@@ -230,12 +280,12 @@ export default function Dashboard() {
 
       {/* Tabs */}
       <div className="max-w-7xl mx-auto p-6">
-        <div className="flex gap-4 mb-6 border-b border-gray-700">
-          {['overview', 'shopify', 'ai'].map(t => (
+        <div className="flex gap-4 mb-6 border-b border-gray-700 overflow-x-auto">
+          {['overview', 'shopify', 'assistant', 'ai'].map(t => (
             <button
               key={t}
               onClick={() => setActiveTab(t)}
-              className={`px-4 py-2 font-semibold transition ${
+              className={`px-4 py-2 font-semibold transition whitespace-nowrap ${
                 activeTab === t
                   ? 'text-blue-400 border-b-2 border-blue-400'
                   : 'text-gray-400 hover:text-white'
@@ -243,7 +293,8 @@ export default function Dashboard() {
             >
               {t === 'overview' && '📊 Vue d\'ensemble'}
               {t === 'shopify' && '🛒 Shopify'}
-              {t === 'ai' && '✨ IA'}
+              {t === 'assistant' && '💬 Assistant IA'}
+              {t === 'ai' && '✨ Analyse IA'}
             </button>
           ))}
         </div>
@@ -340,7 +391,60 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* AI Tab */}
+        {/* AI Assistant Tab */}
+        {activeTab === 'assistant' && (
+          <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 h-96 flex flex-col">
+            <h2 className="text-white text-xl font-bold mb-4">💬 Assistant IA</h2>
+            
+            {/* Messages Container */}
+            <div className="flex-1 overflow-y-auto mb-4 space-y-4 bg-gray-900 rounded-lg p-4">
+              {chatMessages.map((msg, idx) => (
+                <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
+                    msg.role === 'user' 
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-gray-700 text-gray-200'
+                  }`}>
+                    {msg.text}
+                  </div>
+                </div>
+              ))}
+              {chatLoading && (
+                <div className="flex justify-start">
+                  <div className="bg-gray-700 text-gray-200 px-4 py-2 rounded-lg">
+                    ⏳ L'IA réfléchit...
+                  </div>
+                </div>
+              )}
+            </div>
+            
+            {/* Input */}
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="Pose une question à l'IA..."
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyPress={(e) => {
+                  if (e.key === 'Enter' && !chatLoading) {
+                    sendChatMessage()
+                  }
+                }}
+                disabled={chatLoading}
+                className="flex-1 bg-gray-700 text-white px-4 py-2 rounded-lg border border-gray-600 disabled:opacity-50"
+              />
+              <button
+                onClick={sendChatMessage}
+                disabled={chatLoading || !chatInput.trim()}
+                className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-lg disabled:opacity-50"
+              >
+                {chatLoading ? '⏳' : '📤'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* AI Analysis Tab */}
         {activeTab === 'ai' && (
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
             <h2 className="text-white text-xl font-bold mb-4">✨ Analyser avec l'IA</h2>

@@ -1036,6 +1036,69 @@ Réponds uniquement avec du JSON valide, sans markdown ni commentaires."""
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class ChatRequest(BaseModel):
+    message: str
+    context: str = None  # Optionnel: contexte (ex: product_id, store info)
+
+
+@app.post("/api/ai/chat")
+async def chat_with_ai(req: ChatRequest, request: Request):
+    """💬 Chat avec l'IA - Réponses à des questions sur e-commerce, produits, etc."""
+    user_id = get_user_id(request)
+    
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OpenAI not configured")
+    
+    message = req.message.strip()
+    context = req.context or ""
+    
+    if not message:
+        raise HTTPException(status_code=400, detail="Message vide")
+    
+    # Limiter à 500 caractères pour éviter les abus
+    if len(message) > 500:
+        raise HTTPException(status_code=400, detail="Message trop long (max 500 caractères)")
+    
+    system_prompt = """Tu es un assistant IA spécialisé en e-commerce et optimisation de boutiques Shopify.
+Tu aides les propriétaires de boutiques à:
+- Optimiser leurs produits
+- Analyser leurs performances
+- Générer des stratégies de vente
+- Répondre à des questions sur Shopify
+- Suggérer des améliorations marketing
+
+Sois professionnel, concis et pratique dans tes réponses.
+Si on te demande quelque chose hors de ton domaine, dis poliment que ce n'est pas ton domaine d'expertise."""
+
+    try:
+        # Construire le prompt avec contexte si fourni
+        full_message = message
+        if context:
+            full_message = f"Contexte: {context}\n\nQuestion: {message}"
+        
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": full_message}
+            ],
+            max_tokens=500,
+            temperature=0.7
+        )
+        
+        assistant_message = response.choices[0].message.content.strip()
+        
+        return {
+            "success": True,
+            "message": assistant_message,
+            "user_id": user_id
+        }
+        
+    except Exception as e:
+        print(f"Error in chat: {e}")
+        raise HTTPException(status_code=500, detail=f"Erreur IA: {str(e)}")
+
+
 # ============================================================================
 # NOUVEAUX ENDPOINTS - MOTEUR IA SHOPBRAIN
 # ============================================================================
