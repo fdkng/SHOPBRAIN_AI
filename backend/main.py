@@ -123,7 +123,7 @@ async def optimize(req: OptimizeRequest, request: Request):
     """Receive product name+description, call OpenAI GPT-4 to generate improved title, description and 3 cross-sell suggestions."""
     user_id = get_user_id(request)
     
-    if not openai.api_key:
+    if not OPENAI_API_KEY:
         raise HTTPException(status_code=500, detail="OpenAI key not configured")
 
     prompt = f"""
@@ -136,7 +136,9 @@ Keep outputs concise and use French language if inputs are French.
 """
 
     try:
-        response = openai.ChatCompletion.create(
+        # OpenAI 1.0+ API
+        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        response = client.chat.completions.create(
             model="gpt-4",
             messages=[
                 {"role": "system", "content": "Tu es un copywriter produit expert."},
@@ -990,7 +992,9 @@ Fournis une analyse complète au format JSON avec ces clés:
 Réponds uniquement avec du JSON valide, sans markdown ni commentaires."""
 
     try:
-        response = openai.ChatCompletion.create(
+        # OpenAI 1.0+ API
+        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        response = client.chat.completions.create(
             model="gpt-4",
             messages=[
                 {"role": "system", "content": "Tu es un expert e-commerce spécialisé en optimisation Shopify."},
@@ -1076,7 +1080,9 @@ Si on te demande quelque chose hors de ton domaine, dis poliment que ce n'est pa
         if context:
             full_message = f"Contexte: {context}\n\nQuestion: {message}"
         
-        response = openai.ChatCompletion.create(
+        # OpenAI 1.0+ API - utiliser le client
+        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        response = client.chat.completions.create(
             model="gpt-4",
             messages=[
                 {"role": "system", "content": system_prompt},
