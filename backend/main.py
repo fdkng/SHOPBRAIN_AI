@@ -1051,6 +1051,7 @@ async def chat_with_ai(req: ChatRequest, request: Request):
     user_id = get_user_id(request)
     
     if not OPENAI_API_KEY:
+        print(f"❌ OPENAI_API_KEY not set!")
         raise HTTPException(status_code=500, detail="OpenAI not configured")
     
     message = req.message.strip()
@@ -1081,7 +1082,9 @@ Si on te demande quelque chose hors de ton domaine, dis poliment que ce n'est pa
             full_message = f"Contexte: {context}\n\nQuestion: {message}"
         
         # OpenAI 1.0+ API - utiliser le client
+        print(f"🔍 Creating OpenAI client with API key starting with: {OPENAI_API_KEY[:10]}...")
         client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        print(f"✅ OpenAI client created")
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[
@@ -1092,6 +1095,7 @@ Si on te demande quelque chose hors de ton domaine, dis poliment que ce n'est pa
             temperature=0.7
         )
         
+        print(f"✅ OpenAI response received")
         assistant_message = response.choices[0].message.content.strip()
         
         return {
@@ -1101,7 +1105,9 @@ Si on te demande quelque chose hors de ton domaine, dis poliment que ce n'est pa
         }
         
     except Exception as e:
-        print(f"Error in chat: {e}")
+        print(f"❌ Error in chat: {type(e).__name__}: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Erreur IA: {str(e)}")
 
 
