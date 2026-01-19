@@ -1049,6 +1049,7 @@ class ChatRequest(BaseModel):
 async def chat_with_ai(req: ChatRequest, request: Request):
     """💬 Chat avec l'IA - Réponses à des questions sur e-commerce, produits, etc."""
     user_id = get_user_id(request)
+    print(f"🔔 /api/ai/chat called. user_id={user_id}")
     
     if not OPENAI_API_KEY:
         print(f"❌ OPENAI_API_KEY not set!")
@@ -1113,6 +1114,43 @@ Si on te demande quelque chose hors de ton domaine, dis poliment que ce n'est pa
 
 # ============================================================================
 # NOUVEAUX ENDPOINTS - MOTEUR IA SHOPBRAIN
+@app.get("/api/ai/ping")
+async def ai_ping():
+    """Diagnostic léger pour vérifier la connectivité OpenAI et la configuration.
+    Ne nécessite pas d'authentification. Retourne des infos basiques sans secrets."""
+    status = {
+        "has_env_key": bool(OPENAI_API_KEY),
+    }
+    if not OPENAI_API_KEY:
+        print("❌ AI ping: OPENAI_API_KEY missing")
+        status["ok"] = False
+        status["error"] = "OPENAI_API_KEY missing"
+        return status
+
+    try:
+        print(f"🔍 AI ping: creating client with key prefix {OPENAI_API_KEY[:10]}...")
+        # Prefer explicit import for clarity with v1 client
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=OPENAI_API_KEY)
+        except Exception:
+            # Fallback to module attribute if needed
+            client = openai.OpenAI(api_key=OPENAI_API_KEY)
+
+        # Simple request to validate connectivity/authorization
+        models = client.models.list()
+        count = len(getattr(models, "data", []) or [])
+        print(f"✅ AI ping success. models_count={count}")
+        status["ok"] = True
+        status["models_count"] = count
+        return status
+    except Exception as e:
+        print(f"❌ AI ping error: {type(e).__name__}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        status["ok"] = False
+        status["error"] = f"{type(e).__name__}: {str(e)}"
+        return status
 # ============================================================================
 
 # Initialize AI Engine
