@@ -1163,6 +1163,24 @@ Si on te demande quelque chose hors de ton domaine, dis poliment que ce n'est pa
 
 
 # ============================================================================
+@app.get("/api/ai/diag")
+async def ai_diag():
+    """Detailed diagnostics for OpenAI key and header construction."""
+    key_after_sanitize = OPENAI_API_KEY
+    header_value = f"Bearer {key_after_sanitize}"
+    
+    return {
+        "raw_env_var_len": len(OPENAI_API_KEY_RAW or ""),
+        "after_regex_len": len(key_after_sanitize),
+        "key_starts_with": key_after_sanitize[:10] if key_after_sanitize else "EMPTY",
+        "key_ends_with": key_after_sanitize[-10:] if key_after_sanitize else "EMPTY",
+        "header_starts": header_value[:30],
+        "header_ends": repr(header_value[-30:]),  # repr to show any hidden chars
+        "header_contains_newline": "\n" in header_value,
+        "header_contains_carriage_return": "\r" in header_value,
+        "header_byte_check": repr(header_value.encode('utf-8')[-30:])  # Show bytes at end
+    }
+
 # NOUVEAUX ENDPOINTS - MOTEUR IA SHOPBRAIN
 @app.get("/api/ai/ping")
 async def ai_ping():
