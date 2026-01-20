@@ -1169,6 +1169,12 @@ async def ai_ping():
                 status["http_probe_body"] = resp.text[:200]
         except Exception as pe:
             status["http_probe_error"] = f"{type(pe).__name__}: {str(pe)}"
+        # Generic egress probe (Google)
+        try:
+            g = requests.get("https://www.google.com", timeout=10)
+            status["google_probe_status"] = g.status_code
+        except Exception as ge:
+            status["google_probe_error"] = f"{type(ge).__name__}: {str(ge)}"
         return status
 # ============================================================================
 
