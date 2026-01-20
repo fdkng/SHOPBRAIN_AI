@@ -1166,6 +1166,9 @@ async def ai_ping():
         "has_env_key": bool(OPENAI_API_KEY),
         "key_len": len(OPENAI_API_KEY or ""),
         "has_newline": ("\n" in (OPENAI_API_KEY or "")) or ("\r" in (OPENAI_API_KEY or "")),
+        # Minimal, non-sensitive diagnostics to help identify trailing characters
+        "key_tail_preview": repr((OPENAI_API_KEY or "")[-5:]) if OPENAI_API_KEY else None,
+        "key_tail_ord": ord((OPENAI_API_KEY or "")[ -1 ]) if OPENAI_API_KEY else None,
     }
     if not OPENAI_API_KEY:
         print("❌ AI ping: OPENAI_API_KEY missing")
