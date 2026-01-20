@@ -27,7 +27,11 @@ from AI_engine.shopbrain_ai import ShopBrainAI
 
 load_dotenv()
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# Load and sanitize OpenAI API key (strip whitespace/newlines)
+OPENAI_API_KEY_RAW = os.getenv("OPENAI_API_KEY")
+OPENAI_API_KEY = (OPENAI_API_KEY_RAW or "").strip()
+if OPENAI_API_KEY_RAW and OPENAI_API_KEY_RAW != OPENAI_API_KEY:
+    print("⚠️ OPENAI_API_KEY contained trailing whitespace/newline; sanitized.")
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
