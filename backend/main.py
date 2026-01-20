@@ -28,14 +28,10 @@ from AI_engine.shopbrain_ai import ShopBrainAI
 
 load_dotenv()
 
-# Load and sanitize OpenAI API key (strip whitespace/newlines + literal \n strings + non-allowed chars)
+# Load and sanitize OpenAI API key (strip whitespace/newlines)
 OPENAI_API_KEY_RAW = os.getenv("OPENAI_API_KEY", "")
-# Remove literal backslash-n/\r strings
-OPENAI_API_KEY_TEMP = OPENAI_API_KEY_RAW.replace("\\n", "").replace("\\r", "")
-# Remove any whitespace (spaces, tabs, CR/LF)
-OPENAI_API_KEY_TEMP = "".join(OPENAI_API_KEY_TEMP.split())
-# Finally, hard-filter to allowed characters (alphanum, dash, underscore)
-OPENAI_API_KEY = re.sub(r"[^A-Za-z0-9_\-]", "", OPENAI_API_KEY_TEMP)
+# Strip all leading/trailing whitespace (spaces, tabs, newlines, etc.) - the simplest and most effective fix
+OPENAI_API_KEY = OPENAI_API_KEY_RAW.strip() if OPENAI_API_KEY_RAW else ""
 if OPENAI_API_KEY_RAW and OPENAI_API_KEY_RAW != OPENAI_API_KEY:
     print(f"⚠️ OPENAI_API_KEY sanitized. raw_len={len(OPENAI_API_KEY_RAW)} sanitized_len={len(OPENAI_API_KEY)}")
 print(f"🔑 OPENAI_API_KEY loaded: {len(OPENAI_API_KEY)} chars, starts with '{OPENAI_API_KEY[:15] if OPENAI_API_KEY else 'EMPTY'}...'")
@@ -153,7 +149,7 @@ Keep outputs concise and use French language if inputs are French.
 
     try:
         # OpenAI 1.0+ API
-        client = (OpenAI(api_key=(OPENAI_API_KEY or "").strip()) if OpenAI else openai.OpenAI(api_key=(OPENAI_API_KEY or "").strip()))
+        client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[
@@ -1009,7 +1005,7 @@ Réponds uniquement avec du JSON valide, sans markdown ni commentaires."""
 
     try:
         # OpenAI 1.0+ API
-        client = (OpenAI(api_key=(OPENAI_API_KEY or "").strip()) if OpenAI else openai.OpenAI(api_key=(OPENAI_API_KEY or "").strip()))
+        client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -1100,7 +1096,7 @@ Si on te demande quelque chose hors de ton domaine, dis poliment que ce n'est pa
         
         # OpenAI 1.0+ API - utiliser le client
         print(f"🔍 Creating OpenAI client with API key starting with: {OPENAI_API_KEY[:10]}...")
-        client = (OpenAI(api_key=(OPENAI_API_KEY or "").strip()) if OpenAI else openai.OpenAI(api_key=(OPENAI_API_KEY or "").strip()))
+        client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
         print(f"✅ OpenAI client created")
         try:
             response = client.chat.completions.create(
@@ -1129,7 +1125,7 @@ Si on te demande quelque chose hors de ton domaine, dis poliment que ce n'est pa
                 r = requests.post(
                     "https://api.openai.com/v1/chat/completions",
                     headers={
-                        "Authorization": f"Bearer {(OPENAI_API_KEY or '').strip()}",
+                        "Authorization": f"Bearer {OPENAI_API_KEY}",
                         "Content-Type": "application/json"
                     },
                     data=json.dumps(payload),
@@ -1181,10 +1177,10 @@ async def ai_ping():
         # Prefer explicit import for clarity with v1 client
         try:
             from openai import OpenAI
-            client = OpenAI(api_key=(OPENAI_API_KEY or "").strip())
+            client = OpenAI(api_key=OPENAI_API_KEY)
         except Exception:
             # Fallback to module attribute if needed
-            client = openai.OpenAI(api_key=(OPENAI_API_KEY or "").strip())
+            client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
         # Simple request to validate connectivity/authorization
         models = client.models.list()
@@ -1203,7 +1199,7 @@ async def ai_ping():
         try:
             resp = requests.get(
                 "https://api.openai.com/v1/models",
-                headers={"Authorization": f"Bearer {(OPENAI_API_KEY or '').strip()}"},
+                headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
                 timeout=10,
             )
             status["http_probe_status"] = resp.status_code
