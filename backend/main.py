@@ -28,17 +28,12 @@ from AI_engine.shopbrain_ai import ShopBrainAI
 
 load_dotenv()
 
-# Load and sanitize OpenAI API key (aggressive cleaning for newlines anywhere)
+# Load and sanitize OpenAI API key (nuclear option: keep ONLY valid key characters)
 OPENAI_API_KEY_RAW = os.getenv("OPENAI_API_KEY", "")
 if OPENAI_API_KEY_RAW:
-    # Step 1: Strip all leading/trailing whitespace
-    temp = OPENAI_API_KEY_RAW.strip()
-    # Step 2: Remove ALL whitespace chars (including newlines, tabs, spaces, CR, LF)
-    temp = ''.join(temp.split())
-    # Step 3: Remove literal \n and \r escape sequences
-    temp = temp.replace("\\n", "").replace("\\r", "").replace("\\t", "")
-    # Step 4: Remove any remaining control characters (ASCII 0-31)
-    OPENAI_API_KEY = ''.join(ch for ch in temp if ord(ch) >= 32)
+    # Nuclear approach: keep ONLY alphanumeric, dash, underscore (valid in OpenAI keys)
+    # This will strip ANY newline, space, or other junk
+    OPENAI_API_KEY = re.sub(r'[^A-Za-z0-9_\-]', '', OPENAI_API_KEY_RAW)
 else:
     OPENAI_API_KEY = ""
     
