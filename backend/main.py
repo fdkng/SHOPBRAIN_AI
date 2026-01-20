@@ -1158,6 +1158,8 @@ async def ai_ping():
     Ne nécessite pas d'authentification. Retourne des infos basiques sans secrets."""
     status = {
         "has_env_key": bool(OPENAI_API_KEY),
+        "key_len": len(OPENAI_API_KEY or ""),
+        "has_newline": ("\n" in (OPENAI_API_KEY or "")) or ("\r" in (OPENAI_API_KEY or "")),
     }
     if not OPENAI_API_KEY:
         print("❌ AI ping: OPENAI_API_KEY missing")
