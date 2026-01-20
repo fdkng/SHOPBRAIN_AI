@@ -153,7 +153,7 @@ Keep outputs concise and use French language if inputs are French.
 
     try:
         # OpenAI 1.0+ API
-        client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
+        client = (OpenAI(api_key=(OPENAI_API_KEY or "").strip()) if OpenAI else openai.OpenAI(api_key=(OPENAI_API_KEY or "").strip()))
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[
@@ -1009,7 +1009,7 @@ Réponds uniquement avec du JSON valide, sans markdown ni commentaires."""
 
     try:
         # OpenAI 1.0+ API
-        client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
+        client = (OpenAI(api_key=(OPENAI_API_KEY or "").strip()) if OpenAI else openai.OpenAI(api_key=(OPENAI_API_KEY or "").strip()))
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -1100,7 +1100,7 @@ Si on te demande quelque chose hors de ton domaine, dis poliment que ce n'est pa
         
         # OpenAI 1.0+ API - utiliser le client
         print(f"🔍 Creating OpenAI client with API key starting with: {OPENAI_API_KEY[:10]}...")
-        client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
+        client = (OpenAI(api_key=(OPENAI_API_KEY or "").strip()) if OpenAI else openai.OpenAI(api_key=(OPENAI_API_KEY or "").strip()))
         print(f"✅ OpenAI client created")
         try:
             response = client.chat.completions.create(
@@ -1129,7 +1129,7 @@ Si on te demande quelque chose hors de ton domaine, dis poliment que ce n'est pa
                 r = requests.post(
                     "https://api.openai.com/v1/chat/completions",
                     headers={
-                        "Authorization": f"Bearer {OPENAI_API_KEY}",
+                        "Authorization": f"Bearer {(OPENAI_API_KEY or '').strip()}",
                         "Content-Type": "application/json"
                     },
                     data=json.dumps(payload),
@@ -1181,10 +1181,10 @@ async def ai_ping():
         # Prefer explicit import for clarity with v1 client
         try:
             from openai import OpenAI
-            client = OpenAI(api_key=OPENAI_API_KEY)
+            client = OpenAI(api_key=(OPENAI_API_KEY or "").strip())
         except Exception:
             # Fallback to module attribute if needed
-            client = openai.OpenAI(api_key=OPENAI_API_KEY)
+            client = openai.OpenAI(api_key=(OPENAI_API_KEY or "").strip())
 
         # Simple request to validate connectivity/authorization
         models = client.models.list()
@@ -1203,7 +1203,7 @@ async def ai_ping():
         try:
             resp = requests.get(
                 "https://api.openai.com/v1/models",
-                headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+                headers={"Authorization": f"Bearer {(OPENAI_API_KEY or '').strip()}"},
                 timeout=10,
             )
             status["http_probe_status"] = resp.status_code
