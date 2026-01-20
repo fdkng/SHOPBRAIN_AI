@@ -25,6 +25,7 @@ from supabase import create_client
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from AI_engine.shopbrain_ai import ShopBrainAI
+from shopbrain_system_prompt import SHOPBRAIN_SYSTEM_PROMPT
 
 load_dotenv()
 
@@ -1096,16 +1097,7 @@ async def chat_with_ai(req: ChatRequest, request: Request):
     if len(message) > 500:
         raise HTTPException(status_code=400, detail="Message trop long (max 500 caractères)")
     
-    system_prompt = """Tu es un assistant IA spécialisé en e-commerce et optimisation de boutiques Shopify.
-Tu aides les propriétaires de boutiques à:
-- Optimiser leurs produits
-- Analyser leurs performances
-- Générer des stratégies de vente
-- Répondre à des questions sur Shopify
-- Suggérer des améliorations marketing
-
-Sois professionnel, concis et pratique dans tes réponses.
-Si on te demande quelque chose hors de ton domaine, dis poliment que ce n'est pas ton domaine d'expertise."""
+    system_prompt = SHOPBRAIN_SYSTEM_PROMPT
 
     try:
         # Construire le prompt avec contexte si fourni
