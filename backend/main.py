@@ -27,12 +27,15 @@ from AI_engine.shopbrain_ai import ShopBrainAI
 
 load_dotenv()
 
-# Load and sanitize OpenAI API key (strip whitespace/newlines)
-OPENAI_API_KEY_RAW = os.getenv("OPENAI_API_KEY")
+# Load and sanitize OpenAI API key (strip whitespace/newlines + literal \n strings)
+OPENAI_API_KEY_RAW = os.getenv("OPENAI_API_KEY", "")
+# Remove literal backslash-n strings that Render might store
+OPENAI_API_KEY_TEMP = OPENAI_API_KEY_RAW.replace("\\n", "").replace("\\r", "")
 # Aggressively sanitize: remove any whitespace characters anywhere (spaces, tabs, CR/LF)
-OPENAI_API_KEY = "".join((OPENAI_API_KEY_RAW or "").split())
+OPENAI_API_KEY = "".join(OPENAI_API_KEY_TEMP.split())
 if OPENAI_API_KEY_RAW and OPENAI_API_KEY_RAW != OPENAI_API_KEY:
     print(f"⚠️ OPENAI_API_KEY sanitized. raw_len={len(OPENAI_API_KEY_RAW)} sanitized_len={len(OPENAI_API_KEY)}")
+print(f"🔑 OPENAI_API_KEY loaded: {len(OPENAI_API_KEY)} chars, starts with '{OPENAI_API_KEY[:15] if OPENAI_API_KEY else 'EMPTY'}...'")
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
