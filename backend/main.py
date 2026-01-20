@@ -1091,18 +1091,46 @@ Si on te demande quelque chose hors de ton domaine, dis poliment que ce n'est pa
         print(f"🔍 Creating OpenAI client with API key starting with: {OPENAI_API_KEY[:10]}...")
         client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
         print(f"✅ OpenAI client created")
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": full_message}
-            ],
-            max_tokens=500,
-            temperature=0.7
-        )
-        
-        print(f"✅ OpenAI response received")
-        assistant_message = response.choices[0].message.content.strip()
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": full_message}
+                ],
+                max_tokens=500,
+                temperature=0.7
+            )
+            print(f"✅ OpenAI response received")
+            assistant_message = response.choices[0].message.content.strip()
+        except Exception as ce:
+            print(f"⚠️ OpenAI client call failed: {type(ce).__name__}: {str(ce)}. Trying direct HTTP fallback...")
+            try:
+                payload = {
+                    "model": "gpt-4o-mini",
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": full_message}
+                    ],
+                    "max_tokens": 500,
+                    "temperature": 0.7
+                }
+                r = requests.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {OPENAI_API_KEY}",
+                        "Content-Type": "application/json"
+                    },
+                    data=json.dumps(payload),
+                    timeout=20,
+                )
+                if r.status_code == 200:
+                    resp_json = r.json()
+                    assistant_message = resp_json["choices"][0]["message"]["content"].strip()
+                    print("✅ Fallback HTTP call succeeded")
+                else:
+                    print(f"❌ Fallback HTTP error: status={r.status_code} body={r.text[:200]}")
+                    raise HTTPException(status_code=500, detail="Erreur IA: OpenAI HTTP fallback failed")
         
         return {
             "success": True,
