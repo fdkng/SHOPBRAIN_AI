@@ -947,12 +947,276 @@ async def shopify_callback(code: str, shop: str, state: str, hmac: str = None):
         raise HTTPException(status_code=500, detail=f"OAuth failed: {str(e)}")
 
 
-@app.get("/api/shopify/products")
-async def get_shopify_products(request: Request, limit: int = 50):
-    """Fetch products from user's connected Shopify store."""
+@app.post("/api/shopify/test-connection")
+async def test_shopify_connection(payload: dict, request: Request):
+    """🧪 TEST: Valide la connexion Shopify AVANT de l'utiliser
+    
+    Cette fonction teste:
+    1. Format du shop URL
+    2. Validité du token (connexion API)
+    3. Permissions du token
+    4. Nombre de produits disponibles
+    5. Structure des données
+    """
     user_id = get_user_id(request)
     
+    shop_url = payload.get("shopify_shop_url", "").strip()
+    access_token = payload.get("shopify_access_token", "").strip()
+    
+    print(f"🔍 [SHOPIFY TEST] Testing connection for user {user_id}")
+    print(f"   Shop: {shop_url}")
+    print(f"   Token: {access_token[:10]}...{access_token[-5:]}")
+    
+    # ========================================================================
+    # TEST 1: Validation du format
+    # ========================================================================
+    
+    test_results = {
+        "user_id": user_id,
+        "shop_url": shop_url,
+        "tests": {}
+    }
+    
+    if not shop_url or not access_token:
+        print(f"❌ TEST 1 FAILED: Shop URL ou Token vide")
+        test_results["tests"]["format_validation"] = {
+            "status": "failed",
+            "error": "Shop URL et Access Token requis"
+        }
+        raise HTTPException(status_code=400, detail="Shop URL et Access Token requis")
+    
+    if not shop_url.endswith('.myshopify.com'):
+        print(f"❌ TEST 1 FAILED: Format invalide - {shop_url}")
+        test_results["tests"]["format_validation"] = {
+            "status": "failed",
+            "error": f"Format invalide. Attendu: something.myshopify.com, reçu: {shop_url}"
+        }
+        raise HTTPException(status_code=400, detail=f"Format URL invalide: {shop_url}")
+    
+    print(f"✅ TEST 1 PASSED: Format validé")
+    test_results["tests"]["format_validation"] = {"status": "passed"}
+    
+    # ========================================================================
+    # TEST 2: Validation du Token (essayer de récupérer des produits)
+    # ========================================================================
+    
+    print(f"🔐 TEST 2: Validation du token...")
+    
+    try:
+        products_url = f"https://{shop_url}/admin/api/2024-10/products.json?limit=1"
+        headers = {
+            "X-Shopify-Access-Token": access_token,
+            "Content-Type": "application/json"
+        }
+        
+        response = requests.get(products_url, headers=headers, timeout=15)
+        print(f"   Status: {response.status_code}")
+        
+        if response.status_code == 401:
+            print(f"❌ TEST 2 FAILED: Token invalide ou expiré")
+            test_results["tests"]["token_validation"] = {
+                "status": "failed",
+                "error": "Token invalide, expiré ou révoqué",
+                "http_status": 401
+            }
+            raise HTTPException(status_code=401, detail="Token Shopify invalide ou expiré")
+        
+        elif response.status_code == 404:
+            print(f"❌ TEST 2 FAILED: Shop non trouvé")
+            test_results["tests"]["token_validation"] = {
+                "status": "failed",
+                "error": f"Boutique {shop_url} non trouvée",
+                "http_status": 404
+            }
+            raise HTTPException(status_code=404, detail=f"Boutique Shopify non trouvée: {shop_url}")
+        
+        elif response.status_code != 200:
+            print(f"❌ TEST 2 FAILED: Erreur API {response.status_code}")
+            error_text = response.text[:200]
+            test_results["tests"]["token_validation"] = {
+                "status": "failed",
+                "error": f"Erreur Shopify API: {error_text}",
+                "http_status": response.status_code
+            }
+            raise HTTPException(status_code=response.status_code, detail=f"Erreur Shopify: {error_text}")
+        
+        print(f"✅ TEST 2 PASSED: Token valide et actif")
+        test_results["tests"]["token_validation"] = {"status": "passed"}
+        
+    except requests.exceptions.Timeout:
+        print(f"❌ TEST 2 FAILED: Timeout")
+        test_results["tests"]["token_validation"] = {
+            "status": "failed",
+            "error": "Timeout - la boutique prend trop longtemps à répondre"
+        }
+        raise HTTPException(status_code=408, detail="Timeout Shopify API")
+    except requests.exceptions.ConnectionError as ce:
+        print(f"❌ TEST 2 FAILED: Connexion impossible - {ce}")
+        test_results["tests"]["token_validation"] = {
+            "status": "failed",
+            "error": f"Impossible de se connecter à Shopify: {str(ce)}"
+        }
+        raise HTTPException(status_code=503, detail="Impossible de se connecter à Shopify")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ TEST 2 FAILED: Exception - {e}")
+        test_results["tests"]["token_validation"] = {
+            "status": "failed",
+            "error": str(e)
+        }
+        raise HTTPException(status_code=500, detail=f"Erreur validation token: {str(e)}")
+    
+    # ========================================================================
+    # TEST 3: Vérifier les permissions du token
+    # ========================================================================
+    
+    print(f"🔒 TEST 3: Vérification des permissions...")
+    
+    try:
+        # Essayer de récupérer les informations du shop
+        shop_info_url = f"https://{shop_url}/admin/api/2024-10/shop.json"
+        response = requests.get(shop_info_url, headers=headers, timeout=15)
+        
+        if response.status_code == 200:
+            shop_info = response.json().get("shop", {})
+            print(f"✅ TEST 3 PASSED: Token a accès aux infos du shop")
+            print(f"   Shop name: {shop_info.get('name')}")
+            print(f"   Plan: {shop_info.get('plan_name')}")
+            test_results["tests"]["permissions"] = {
+                "status": "passed",
+                "shop_name": shop_info.get('name'),
+                "plan": shop_info.get('plan_name')
+            }
+        else:
+            print(f"⚠️ TEST 3 WARNING: Permissions limitées (status {response.status_code})")
+            test_results["tests"]["permissions"] = {
+                "status": "warning",
+                "message": "Token a accès aux produits mais pas aux infos du shop"
+            }
+    
+    except Exception as e:
+        print(f"⚠️ TEST 3 WARNING: Impossible de vérifier permissions - {e}")
+        test_results["tests"]["permissions"] = {
+            "status": "warning",
+            "message": str(e)
+        }
+    
+    # ========================================================================
+    # TEST 4: Récupérer et analyser les produits
+    # ========================================================================
+    
+    print(f"📦 TEST 4: Récupération des produits...")
+    
+    try:
+        products_url_all = f"https://{shop_url}/admin/api/2024-10/products.json?limit=250"
+        response = requests.get(products_url_all, headers=headers, timeout=15)
+        
+        if response.status_code != 200:
+            print(f"❌ TEST 4 FAILED: Impossible de récupérer les produits")
+            test_results["tests"]["products_fetch"] = {
+                "status": "failed",
+                "error": f"HTTP {response.status_code}",
+                "http_status": response.status_code
+            }
+            raise HTTPException(status_code=response.status_code, detail="Impossible de récupérer les produits")
+        
+        products_data = response.json()
+        products = products_data.get("products", [])
+        
+        total_variants = sum(len(p.get("variants", [])) for p in products)
+        total_images = sum(len(p.get("images", [])) for p in products)
+        
+        print(f"✅ TEST 4 PASSED: {len(products)} produit(s) trouvé(s)")
+        print(f"   Variantes totales: {total_variants}")
+        print(f"   Images totales: {total_images}")
+        
+        test_results["tests"]["products_fetch"] = {
+            "status": "passed",
+            "product_count": len(products),
+            "total_variants": total_variants,
+            "total_images": total_images
+        }
+        
+        # Afficher quelques produits
+        sample_products = []
+        for p in products[:3]:
+            sample_products.append({
+                "id": p.get("id"),
+                "title": p.get("title"),
+                "variants_count": len(p.get("variants", [])),
+                "price": p.get("variants", [{}])[0].get("price") if p.get("variants") else None
+            })
+        
+        test_results["tests"]["products_fetch"]["sample_products"] = sample_products
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ TEST 4 FAILED: {e}")
+        test_results["tests"]["products_fetch"] = {
+            "status": "failed",
+            "error": str(e)
+        }
+        raise HTTPException(status_code=500, detail=f"Erreur récupération produits: {str(e)}")
+    
+    # ========================================================================
+    # TEST 5: Vérifier la structure des données
+    # ========================================================================
+    
+    print(f"📊 TEST 5: Vérification de la structure...")
+    
+    data_checks = {
+        "tous_produits_ont_titre": all(p.get('title') for p in products),
+        "tous_produits_ont_variantes": all(len(p.get('variants', [])) > 0 for p in products),
+        "tous_produits_ont_prix": all(
+            any(v.get('price') for v in p.get('variants', [])) 
+            for p in products
+        ) if products else False,
+        "produits_ont_description": sum(1 for p in products if p.get('body_html')) / len(products) if products else 0,
+    }
+    
+    print(f"✅ TEST 5 PASSED: Vérification des données complétée")
+    for check, result in data_checks.items():
+        print(f"   • {check}: {result}")
+    
+    test_results["tests"]["data_structure"] = {
+        "status": "passed",
+        "checks": data_checks
+    }
+    
+    # ========================================================================
+    # RÉSULTAT FINAL
+    # ========================================================================
+    
+    print(f"")
+    print(f"=" * 60)
+    print(f"✅ TOUS LES TESTS RÉUSSIS!")
+    print(f"=" * 60)
+    
+    test_results["status"] = "success"
+    test_results["message"] = f"Connexion Shopify valide! {len(products)} produit(s) accessible."
+    test_results["ready_to_save"] = True
+    
+    return test_results
+
+
+@app.get("/api/shopify/products")
+async def get_shopify_products(request: Request, limit: int = 250):
+    """📦 Récupère les produits de la boutique Shopify connectée
+    
+    Cette fonction:
+    1. Vérifie que l'utilisateur a une boutique connectée
+    2. Récupère les produits avec TOUS les détails
+    3. Les organise de manière facile à utiliser
+    4. Inclut les infos d'optimisation possibles
+    """
+    user_id = get_user_id(request)
+    
+    print(f"📦 [GET PRODUCTS] User {user_id} requesting products (limit={limit})")
+    
     if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        print(f"❌ Supabase not configured")
         raise HTTPException(status_code=500, detail="Supabase not configured")
     
     try:
@@ -960,13 +1224,17 @@ async def get_shopify_products(request: Request, limit: int = 50):
         supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
         
         # Get user's Shopify connection
+        print(f"🔍 Fetching Shopify connection for user {user_id}...")
         connection = supabase.table("shopify_connections").select("*").eq("user_id", user_id).execute()
         
         if not connection.data:
-            raise HTTPException(status_code=404, detail="No Shopify store connected")
+            print(f"❌ No Shopify connection found for user {user_id}")
+            raise HTTPException(status_code=404, detail="Aucune boutique Shopify connectée. Veuillez vous connecter d'abord.")
         
         shop_domain = connection.data[0]["shop_domain"]
         access_token = connection.data[0]["access_token"]
+        
+        print(f"✅ Found connection: {shop_domain}")
         
         # Fetch products from Shopify API
         products_url = f"https://{shop_domain}/admin/api/2024-10/products.json?limit={limit}"
@@ -975,15 +1243,114 @@ async def get_shopify_products(request: Request, limit: int = 50):
             "Content-Type": "application/json"
         }
         
-        response = requests.get(products_url, headers=headers)
-        response.raise_for_status()
+        print(f"📡 Fetching from: {products_url}")
+        response = requests.get(products_url, headers=headers, timeout=30)
+        
+        # Better error handling
+        if response.status_code == 401:
+            print(f"❌ Token invalid or expired")
+            raise HTTPException(status_code=401, detail="Token Shopify expiré ou invalide. Reconnectez-vous.")
+        
+        elif response.status_code == 404:
+            print(f"❌ Shop not found: {shop_domain}")
+            raise HTTPException(status_code=404, detail=f"Boutique Shopify non trouvée: {shop_domain}")
+        
+        elif response.status_code != 200:
+            error_text = response.text[:300]
+            print(f"❌ Shopify API error: {response.status_code} - {error_text}")
+            raise HTTPException(status_code=response.status_code, detail=f"Erreur Shopify: {error_text}")
         
         products_data = response.json()
-        return {"products": products_data.get("products", [])}
+        products = products_data.get("products", [])
         
+        print(f"✅ Retrieved {len(products)} products")
+        
+        # Transform products to be more useful for optimization
+        transformed_products = []
+        for p in products:
+            variants = p.get("variants", [])
+            images = p.get("images", [])
+            
+            # Get first variant's price as "main price"
+            main_price = variants[0].get("price") if variants else None
+            
+            transformed = {
+                "id": p.get("id"),
+                "title": p.get("title"),
+                "handle": p.get("handle"),
+                "body_html": p.get("body_html", ""),
+                "product_type": p.get("product_type", ""),
+                "vendor": p.get("vendor", ""),
+                "created_at": p.get("created_at"),
+                "published_at": p.get("published_at"),
+                "main_price": main_price,
+                "variants_count": len(variants),
+                "images_count": len(images),
+                "featured_image": p.get("featured_image", {}).get("src") if p.get("featured_image") else None,
+                "status": "published" if p.get("published_at") else "draft",
+                
+                # Include full details for optimization
+                "variants": [
+                    {
+                        "id": v.get("id"),
+                        "title": v.get("title"),
+                        "sku": v.get("sku"),
+                        "price": v.get("price"),
+                        "compare_at_price": v.get("compare_at_price"),
+                        "inventory_quantity": v.get("inventory_quantity"),
+                        "weight": v.get("weight")
+                    }
+                    for v in variants
+                ],
+                "images": [
+                    {
+                        "id": img.get("id"),
+                        "src": img.get("src"),
+                        "alt": img.get("alt")
+                    }
+                    for img in images[:5]  # Limit to 5 images per product
+                ]
+            }
+            
+            transformed_products.append(transformed)
+        
+        # Calculate statistics
+        total_variants = sum(p["variants_count"] for p in transformed_products)
+        total_images = sum(p["images_count"] for p in transformed_products)
+        published_count = sum(1 for p in transformed_products if p["status"] == "published")
+        
+        print(f"📊 Stats: {len(transformed_products)} products, {total_variants} variants, {total_images} images")
+        
+        return {
+            "success": True,
+            "shop": shop_domain,
+            "product_count": len(transformed_products),
+            "statistics": {
+                "total_products": len(transformed_products),
+                "published_products": published_count,
+                "draft_products": len(transformed_products) - published_count,
+                "total_variants": total_variants,
+                "total_images": total_images,
+                "average_variants_per_product": total_variants / len(transformed_products) if transformed_products else 0,
+                "average_images_per_product": total_images / len(transformed_products) if transformed_products else 0,
+            },
+            "products": transformed_products
+        }
+        
+    except HTTPException:
+        raise
+    except requests.exceptions.Timeout:
+        print(f"❌ Timeout: Shopify API took too long")
+        raise HTTPException(status_code=408, detail="Timeout - Shopify API prend trop longtemps à répondre")
+    except requests.exceptions.ConnectionError:
+        print(f"❌ Connection error: Cannot reach Shopify")
+        raise HTTPException(status_code=503, detail="Impossible de se connecter à Shopify")
     except Exception as e:
-        print(f"Error fetching Shopify products: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Erreur: {str(e)}")
+
 
 
 @app.post("/api/analyze-product")
