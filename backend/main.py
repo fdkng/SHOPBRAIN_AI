@@ -28,17 +28,19 @@ from AI_engine.shopbrain_ai import ShopBrainAI
 
 load_dotenv()
 
-# Load and sanitize OpenAI API key (strip whitespace/newlines + remove embedded newlines)
+# Load and sanitize OpenAI API key (remove actual + literal newlines)
 OPENAI_API_KEY_RAW = os.getenv("OPENAI_API_KEY", "")
-# First strip leading/trailing whitespace
+# Strip leading/trailing whitespace first
 OPENAI_API_KEY_STRIPPED = OPENAI_API_KEY_RAW.strip() if OPENAI_API_KEY_RAW else ""
-# Then remove any embedded newlines/carriage returns anywhere in the string
-OPENAI_API_KEY = OPENAI_API_KEY_STRIPPED.replace("\n", "").replace("\r", "") if OPENAI_API_KEY_STRIPPED else ""
+# Remove actual newlines/carriage returns
+OPENAI_API_KEY_TEMP = OPENAI_API_KEY_STRIPPED.replace("\n", "").replace("\r", "") if OPENAI_API_KEY_STRIPPED else ""
+# Also remove literal backslash-n and backslash-r sequences (as text)
+OPENAI_API_KEY_TEMP = OPENAI_API_KEY_TEMP.replace("\\n", "").replace("\\r", "")
+# Final sanitized key
+OPENAI_API_KEY = OPENAI_API_KEY_TEMP
 if OPENAI_API_KEY_RAW and OPENAI_API_KEY_RAW != OPENAI_API_KEY:
     print(f"⚠️ OPENAI_API_KEY sanitized. raw_len={len(OPENAI_API_KEY_RAW)} sanitized_len={len(OPENAI_API_KEY)}")
-    print(f"   raw has newline: {chr(10) in OPENAI_API_KEY_RAW}, raw has carriage return: {chr(13) in OPENAI_API_KEY_RAW}")
 print(f"🔑 OPENAI_API_KEY loaded: {len(OPENAI_API_KEY)} chars, starts with '{OPENAI_API_KEY[:15] if OPENAI_API_KEY else 'EMPTY'}...'")
-print(f"   final key has newline: {chr(10) in OPENAI_API_KEY}, has carriage return: {chr(13) in OPENAI_API_KEY}")
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
