@@ -70,6 +70,10 @@ export default function Dashboard() {
       
       if (data.success && data.has_subscription) {
         setSubscription(data)
+        
+        // Charger les produits Shopify si déjà connecté
+        console.log('✅ Subscription active, checking for Shopify connection...')
+        loadProducts() // Ceci va charger les produits si déjà connecté
       } else {
         // Pas d'abonnement - redirige vers les plans Stripe
         window.location.hash = '#stripe-pricing'
@@ -135,14 +139,31 @@ export default function Dashboard() {
 
   const connectShopify = async () => {
     if (!shopifyUrl || !shopifyToken) {
-      alert('Complète les champs')
+      alert('⚠️ Veuillez remplir l\'URL et le token')
+      return
+    }
+    
+    // Valider le format de l'URL
+    if (!shopifyUrl.endsWith('.myshopify.com')) {
+      alert('⚠️ Format URL invalide. Utilisez: votre-boutique.myshopify.com')
       return
     }
     
     try {
+      setLoading(true)
+      setError('')
+      
       const { data: { session } } = await supabase.auth.getSession()
       
-      const response = await fetch(`${API_URL}/api/user/profile/update`, {
+      if (!session) {
+        alert('❌ Session expirée, reconnectez-vous')
+        return
+      }
+      
+      console.log('🔍 Testing Shopify connection...')
+      
+      // D'abord, tester la connexion
+      const testResponse = await fetch(`${API_URL}/api/shopify/test-connection`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
@@ -154,34 +175,103 @@ export default function Dashboard() {
         })
       })
       
-      const data = await response.json()
-      if (data.success) {
-        alert('✅ Shopify connecté!')
-        loadProducts()
+      if (!testResponse.ok) {
+        const errorData = await testResponse.json()
+        throw new Error(errorData.detail || 'Test de connexion échoué')
+      }
+      
+      const testData = await testResponse.json()
+      console.log('✅ Test passed:', testData)
+      
+      if (!testData.ready_to_save) {
+        alert('❌ La connexion a échoué. Vérifiez vos credentials.')
+        return
+      }
+      
+      // Si test OK, sauvegarder
+      console.log('💾 Saving connection...')
+      
+      const saveResponse = await fetch(`${API_URL}/api/user/profile/update`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          shopify_shop_url: shopifyUrl,
+          shopify_access_token: shopifyToken
+        })
+      })
+      
+      if (!saveResponse.ok) {
+        const errorData = await saveResponse.json()
+        throw new Error(errorData.detail || 'Sauvegarde échouée')
+      }
+      
+      const saveData = await saveResponse.json()
+      
+      if (saveData.success) {
+        alert(`✅ Shopify connecté! ${testData.tests?.products_fetch?.product_count || 0} produits trouvés.`)
+        console.log('✅ Connection saved, loading products...')
+        
+        // Charger les produits
+        await loadProducts()
+      } else {
+        throw new Error('Sauvegarde échouée')
       }
     } catch (err) {
-      alert('Erreur: ' + err.message)
+      console.error('❌ Error:', err)
+      alert('❌ Erreur: ' + err.message)
+      setError(err.message)
+    } finally {
+      setLoading(false)
     }
   }
 
   const loadProducts = async () => {
-    if (!shopifyUrl || !shopifyToken) return
-    
     try {
       setLoading(true)
-      const response = await fetch(
-        `https://${shopifyUrl}/admin/api/2024-01/products.json?limit=10`,
-        {
-          headers: {
-            'X-Shopify-Access-Token': shopifyToken
-          }
+      setError('')
+      
+      const { data: { session } } = await supabase.auth.getSession()
+      
+      if (!session) {
+        setError('Session expirée, reconnectez-vous')
+        return
+      }
+      
+      console.log('🔍 Loading products from backend...')
+      
+      const response = await fetch(`${API_URL}/api/shopify/products`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
         }
-      )
+      })
+      
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.detail || `HTTP ${response.status}`)
+      }
       
       const data = await response.json()
-      setProducts(data.products || [])
+      console.log('✅ Products loaded:', data.product_count)
+      
+      if (data.success && data.products) {
+        setProducts(data.products)
+        // Afficher les statistiques
+        if (data.statistics) {
+          console.log('📊 Stats:', data.statistics)
+        }
+      } else {
+        setProducts([])
+        setError('Aucun produit trouvé. Connectez votre boutique Shopify d\'abord.')
+      }
     } catch (err) {
-      setError('Erreur Shopify: ' + err.message)
+      console.error('❌ Error loading products:', err)
+      setError('Erreur: ' + err.message)
+      setProducts([])
     } finally {
       setLoading(false)
     }
