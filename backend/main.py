@@ -28,18 +28,27 @@ from AI_engine.shopbrain_ai import ShopBrainAI
 
 load_dotenv()
 
-# Load and sanitize OpenAI API key (nuclear option: keep ONLY valid key characters)
-OPENAI_API_KEY_RAW = os.getenv("OPENAI_API_KEY", "")
-if OPENAI_API_KEY_RAW:
-    # Nuclear approach: keep ONLY alphanumeric, dash, underscore (valid in OpenAI keys)
-    # This will strip ANY newline, space, or other junk
-    OPENAI_API_KEY = re.sub(r'[^A-Za-z0-9_\-]', '', OPENAI_API_KEY_RAW)
-else:
-    OPENAI_API_KEY = ""
-    
+# Load and sanitize OpenAI API key.
+# Priority: OPENAI_API_KEY_CLEAN > OPENAI_API_KEY_ALT > OPENAI_API_KEY
+OPENAI_API_KEY_RAW = (
+    os.getenv("OPENAI_API_KEY_CLEAN")
+    or os.getenv("OPENAI_API_KEY_ALT")
+    or os.getenv("OPENAI_API_KEY", "")
+)
+
+def _sanitize_key(raw: str) -> str:
+    # Keep ONLY alphanumeric, dash, underscore (valid in OpenAI keys). Removes newlines/spaces/control chars.
+    return re.sub(r'[^A-Za-z0-9_\-]', '', raw)
+
+OPENAI_API_KEY = _sanitize_key(OPENAI_API_KEY_RAW) if OPENAI_API_KEY_RAW else ""
+
 if OPENAI_API_KEY_RAW and OPENAI_API_KEY_RAW != OPENAI_API_KEY:
-    print(f"⚠️ OPENAI_API_KEY sanitized. raw_len={len(OPENAI_API_KEY_RAW)} sanitized_len={len(OPENAI_API_KEY)}")
-print(f"🔑 OPENAI_API_KEY loaded: {len(OPENAI_API_KEY)} chars, starts with '{OPENAI_API_KEY[:15] if OPENAI_API_KEY else 'EMPTY'}...'")
+    print(
+        f"⚠️ OPENAI_API_KEY sanitized. raw_len={len(OPENAI_API_KEY_RAW)} sanitized_len={len(OPENAI_API_KEY)}"
+    )
+print(
+    f"🔑 OPENAI_API_KEY loaded: {len(OPENAI_API_KEY)} chars, starts with '{OPENAI_API_KEY[:15] if OPENAI_API_KEY else 'EMPTY'}...'"
+)
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
