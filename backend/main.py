@@ -29,9 +29,10 @@ load_dotenv()
 
 # Load and sanitize OpenAI API key (strip whitespace/newlines)
 OPENAI_API_KEY_RAW = os.getenv("OPENAI_API_KEY")
-OPENAI_API_KEY = (OPENAI_API_KEY_RAW or "").strip()
+# Aggressively sanitize: remove all CR/LF and trim spaces
+OPENAI_API_KEY = (OPENAI_API_KEY_RAW or "").replace("\r", "").replace("\n", "").strip()
 if OPENAI_API_KEY_RAW and OPENAI_API_KEY_RAW != OPENAI_API_KEY:
-    print("⚠️ OPENAI_API_KEY contained trailing whitespace/newline; sanitized.")
+    print("⚠️ OPENAI_API_KEY contained whitespace/newline; sanitized.")
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
