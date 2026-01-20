@@ -10,6 +10,7 @@ except Exception:
     OpenAI = None
 import stripe
 from dotenv import load_dotenv
+import re
 import jwt
 from functools import lru_cache
 import hmac
@@ -27,12 +28,14 @@ from AI_engine.shopbrain_ai import ShopBrainAI
 
 load_dotenv()
 
-# Load and sanitize OpenAI API key (strip whitespace/newlines + literal \n strings)
+# Load and sanitize OpenAI API key (strip whitespace/newlines + literal \n strings + non-allowed chars)
 OPENAI_API_KEY_RAW = os.getenv("OPENAI_API_KEY", "")
-# Remove literal backslash-n strings that Render might store
+# Remove literal backslash-n/\r strings
 OPENAI_API_KEY_TEMP = OPENAI_API_KEY_RAW.replace("\\n", "").replace("\\r", "")
-# Aggressively sanitize: remove any whitespace characters anywhere (spaces, tabs, CR/LF)
-OPENAI_API_KEY = "".join(OPENAI_API_KEY_TEMP.split())
+# Remove any whitespace (spaces, tabs, CR/LF)
+OPENAI_API_KEY_TEMP = "".join(OPENAI_API_KEY_TEMP.split())
+# Finally, hard-filter to allowed characters (alphanum, dash, underscore)
+OPENAI_API_KEY = re.sub(r"[^A-Za-z0-9_\-]", "", OPENAI_API_KEY_TEMP)
 if OPENAI_API_KEY_RAW and OPENAI_API_KEY_RAW != OPENAI_API_KEY:
     print(f"⚠️ OPENAI_API_KEY sanitized. raw_len={len(OPENAI_API_KEY_RAW)} sanitized_len={len(OPENAI_API_KEY)}")
 print(f"🔑 OPENAI_API_KEY loaded: {len(OPENAI_API_KEY)} chars, starts with '{OPENAI_API_KEY[:15] if OPENAI_API_KEY else 'EMPTY'}...'")
