@@ -1155,6 +1155,20 @@ async def ai_ping():
         traceback.print_exc()
         status["ok"] = False
         status["error"] = f"{type(e).__name__}: {str(e)}"
+        # Secondary probe via direct HTTP to detect TLS/DNS issues
+        try:
+            resp = requests.get(
+                "https://api.openai.com/v1/models",
+                headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+                timeout=10,
+            )
+            status["http_probe_status"] = resp.status_code
+            try:
+                status["http_probe_body"] = resp.json()
+            except Exception:
+                status["http_probe_body"] = resp.text[:200]
+        except Exception as pe:
+            status["http_probe_error"] = f"{type(pe).__name__}: {str(pe)}"
         return status
 # ============================================================================
 
