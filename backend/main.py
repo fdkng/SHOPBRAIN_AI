@@ -1157,6 +1157,9 @@ Si on te demande quelque chose hors de ton domaine, dis poliment que ce n'est pa
                 else:
                     print(f"❌ Fallback HTTP error: status={r.status_code} body={r.text[:200]}")
                     raise HTTPException(status_code=500, detail="Erreur IA: OpenAI HTTP fallback failed")
+            except Exception as he:
+                print(f"❌ Fallback HTTP exception: {type(he).__name__}: {str(he)}")
+                raise HTTPException(status_code=500, detail="Erreur IA: OpenAI HTTP fallback exception")
         
         return {
             "success": True,
