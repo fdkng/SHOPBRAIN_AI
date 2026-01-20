@@ -28,16 +28,20 @@ from AI_engine.shopbrain_ai import ShopBrainAI
 
 load_dotenv()
 
-# Load and sanitize OpenAI API key (remove actual + literal newlines)
+# Load and sanitize OpenAI API key (aggressive cleaning for newlines anywhere)
 OPENAI_API_KEY_RAW = os.getenv("OPENAI_API_KEY", "")
-# Strip leading/trailing whitespace first
-OPENAI_API_KEY_STRIPPED = OPENAI_API_KEY_RAW.strip() if OPENAI_API_KEY_RAW else ""
-# Remove actual newlines/carriage returns
-OPENAI_API_KEY_TEMP = OPENAI_API_KEY_STRIPPED.replace("\n", "").replace("\r", "") if OPENAI_API_KEY_STRIPPED else ""
-# Also remove literal backslash-n and backslash-r sequences (as text)
-OPENAI_API_KEY_TEMP = OPENAI_API_KEY_TEMP.replace("\\n", "").replace("\\r", "")
-# Final sanitized key
-OPENAI_API_KEY = OPENAI_API_KEY_TEMP
+if OPENAI_API_KEY_RAW:
+    # Step 1: Strip all leading/trailing whitespace
+    temp = OPENAI_API_KEY_RAW.strip()
+    # Step 2: Remove ALL whitespace chars (including newlines, tabs, spaces, CR, LF)
+    temp = ''.join(temp.split())
+    # Step 3: Remove literal \n and \r escape sequences
+    temp = temp.replace("\\n", "").replace("\\r", "").replace("\\t", "")
+    # Step 4: Remove any remaining control characters (ASCII 0-31)
+    OPENAI_API_KEY = ''.join(ch for ch in temp if ord(ch) >= 32)
+else:
+    OPENAI_API_KEY = ""
+    
 if OPENAI_API_KEY_RAW and OPENAI_API_KEY_RAW != OPENAI_API_KEY:
     print(f"⚠️ OPENAI_API_KEY sanitized. raw_len={len(OPENAI_API_KEY_RAW)} sanitized_len={len(OPENAI_API_KEY)}")
 print(f"🔑 OPENAI_API_KEY loaded: {len(OPENAI_API_KEY)} chars, starts with '{OPENAI_API_KEY[:15] if OPENAI_API_KEY else 'EMPTY'}...'")
@@ -1072,6 +1076,11 @@ async def chat_with_ai(req: ChatRequest, request: Request):
     if not OPENAI_API_KEY:
         print(f"❌ OPENAI_API_KEY not set!")
         raise HTTPException(status_code=500, detail="OpenAI not configured")
+    
+    # Sanity check: ensure no control characters in key
+    if any(ord(ch) < 32 for ch in OPENAI_API_KEY):
+        print(f"❌ OPENAI_API_KEY contains control characters! Aborting.")
+        raise HTTPException(status_code=500, detail="OpenAI key configuration error")
     
     message = req.message.strip()
     context = req.context or ""
