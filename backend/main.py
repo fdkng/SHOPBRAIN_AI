@@ -4,6 +4,10 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 import os
 import openai
+try:
+    from openai import OpenAI
+except Exception:
+    OpenAI = None
 import stripe
 from dotenv import load_dotenv
 import jwt
@@ -42,6 +46,7 @@ SHOPIFY_REDIRECT_URI = os.getenv("SHOPIFY_REDIRECT_URI", "https://shopbrain-back
 if not OPENAI_API_KEY:
     print("Warning: OPENAI_API_KEY not set. /optimize will fail without it.")
 else:
+    # Keep legacy api_key for compatibility; client class will use explicit key.
     openai.api_key = OPENAI_API_KEY
 
 if STRIPE_SECRET_KEY:
@@ -137,7 +142,7 @@ Keep outputs concise and use French language if inputs are French.
 
     try:
         # OpenAI 1.0+ API
-        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[
@@ -993,9 +998,9 @@ Réponds uniquement avec du JSON valide, sans markdown ni commentaires."""
 
     try:
         # OpenAI 1.0+ API
-        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
         response = client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "Tu es un expert e-commerce spécialisé en optimisation Shopify."},
                 {"role": "user", "content": prompt}
@@ -1084,10 +1089,10 @@ Si on te demande quelque chose hors de ton domaine, dis poliment que ce n'est pa
         
         # OpenAI 1.0+ API - utiliser le client
         print(f"🔍 Creating OpenAI client with API key starting with: {OPENAI_API_KEY[:10]}...")
-        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
         print(f"✅ OpenAI client created")
         response = client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": full_message}
