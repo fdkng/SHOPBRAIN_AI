@@ -18,6 +18,7 @@ export default function Dashboard() {
   const [products, setProducts] = useState(null)
   const [error, setError] = useState('')
   const [isProcessingPayment, setIsProcessingPayment] = useState(false)
+  const [showPlanMenu, setShowPlanMenu] = useState(false)
   const [analysisResults, setAnalysisResults] = useState(null)
   const [chatMessages, setChatMessages] = useState([
     { role: 'assistant', text: '👋 Bonjour! Je suis ton assistant IA e-commerce. Tu peux me poser des questions sur tes produits, tes stratégies de vente, ou tout ce qui concerne ton e-commerce.' }
@@ -126,6 +127,38 @@ export default function Dashboard() {
     } catch (e) {
       console.error('Upgrade error:', e)
       alert('Une erreur est survenue pour l\'upgrade')
+    }
+  }
+
+  const handleChangePlan = async (targetPlan) => {
+    try {
+      if (!targetPlan || targetPlan === subscription?.plan) return
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        alert('Session expirée, reconnecte-toi.')
+        return
+      }
+
+      const resp = await fetch(`${API_URL}/api/subscription/create-session`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ plan: targetPlan, email: user?.email || '' })
+      })
+
+      const data = await resp.json()
+      if (data?.success && data?.url) {
+        window.location.href = data.url
+      } else {
+        alert('Erreur lors de la création de la session Stripe')
+      }
+    } catch (e) {
+      console.error('Change plan error:', e)
+      alert('Une erreur est survenue')
+    } finally {
+      setShowPlanMenu(false)
     }
   }
 
@@ -398,14 +431,63 @@ export default function Dashboard() {
             <h1 className="text-3xl font-bold">🤖 ShopBrain AI Dashboard</h1>
             <p className="text-gray-300">Plan: <span className="font-bold text-yellow-400">{subscription?.plan.toUpperCase()}</span></p>
           </div>
-          <div className="text-right">
+          <div className="text-right relative">
             <p className="text-gray-300">{user.email}</p>
-            <button
-              onClick={handleLogout}
-              className="mt-2 bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg"
-            >
-              Déconnexion
-            </button>
+            <div className="mt-2 flex items-center gap-2 justify-end">
+              <button
+                onClick={() => setShowPlanMenu((v) => !v)}
+                className="bg-yellow-600 hover:bg-yellow-700 px-4 py-2 rounded-lg text-white font-semibold"
+              >
+                Changer de plan ▾
+              </button>
+              <button
+                onClick={handleLogout}
+                className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg text-white"
+              >
+                Déconnexion
+              </button>
+            </div>
+            {showPlanMenu && (
+              <div className="absolute right-0 mt-2 w-56 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-10">
+                <div className="p-2">
+                  {subscription?.plan === 'standard' && (
+                    <>
+                      <button
+                        onClick={() => handleChangePlan('pro')}
+                        className="w-full text-left px-3 py-2 rounded hover:bg-gray-700 text-white"
+                      >
+                        Passer à PRO
+                      </button>
+                      <button
+                        onClick={() => handleChangePlan('premium')}
+                        className="w-full text-left px-3 py-2 rounded hover:bg-gray-700 text-white"
+                      >
+                        Passer à PREMIUM
+                      </button>
+                    </>
+                  )}
+                  {subscription?.plan === 'pro' && (
+                    <button
+                      onClick={() => handleChangePlan('premium')}
+                      className="w-full text-left px-3 py-2 rounded hover:bg-gray-700 text-white"
+                    >
+                      Passer à PREMIUM
+                    </button>
+                  )}
+                  {subscription?.plan === 'premium' && (
+                    <div className="px-3 py-2 text-sm text-gray-400">Tu es déjà en PREMIUM</div>
+                  )}
+                  <div className="border-t border-gray-700 mt-2 pt-2">
+                    <button
+                      onClick={() => { setShowPlanMenu(false); window.location.hash = '#stripe-pricing' }}
+                      className="w-full text-left px-3 py-2 rounded hover:bg-gray-700 text-blue-300"
+                    >
+                      Voir la page Tarifs
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
