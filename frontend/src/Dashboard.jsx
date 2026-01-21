@@ -18,6 +18,7 @@ export default function Dashboard() {
   const [products, setProducts] = useState(null)
   const [error, setError] = useState('')
   const [isProcessingPayment, setIsProcessingPayment] = useState(false)
+  const [analysisResults, setAnalysisResults] = useState(null)
   const [chatMessages, setChatMessages] = useState([
     { role: 'assistant', text: '👋 Bonjour! Je suis ton assistant IA e-commerce. Tu peux me poser des questions sur tes produits, tes stratégies de vente, ou tout ce qui concerne ton e-commerce.' }
   ])
@@ -285,6 +286,7 @@ export default function Dashboard() {
     
     try {
       setLoading(true)
+      console.log('🔍 Lancement de l\'analyse IA...')
       const { data: { session } } = await supabase.auth.getSession()
       
       const response = await fetch(`${API_URL}/api/ai/analyze-store`, {
@@ -303,10 +305,14 @@ export default function Dashboard() {
       const data = await response.json()
       
       if (data.success) {
-        alert('✅ Analyse terminée! Voir les résultats IA')
-        setActiveTab('results')
+        console.log('✅ Analyse terminée:', data.analysis)
+        setAnalysisResults(data.analysis)
+        setActiveTab('analysis')
+      } else {
+        alert('❌ Erreur lors de l\'analyse: ' + (data.detail || 'Erreur inconnue'))
       }
     } catch (err) {
+      console.error('Erreur analyse:', err)
       alert('Erreur analyse: ' + err.message)
     } finally {
       setLoading(false)
@@ -371,7 +377,7 @@ export default function Dashboard() {
       {/* Tabs */}
       <div className="max-w-7xl mx-auto p-6">
         <div className="flex gap-4 mb-6 border-b border-gray-700 overflow-x-auto">
-          {['overview', 'shopify', 'assistant', 'ai'].map(t => (
+          {['overview', 'shopify', 'assistant', 'ai', 'analysis'].map(t => (
             <button
               key={t}
               onClick={() => setActiveTab(t)}
@@ -385,6 +391,7 @@ export default function Dashboard() {
               {t === 'shopify' && '🛒 Shopify'}
               {t === 'assistant' && '💬 Assistant IA'}
               {t === 'ai' && '✨ Analyse IA'}
+              {t === 'analysis' && '📈 Résultats'}
             </button>
           ))}
         </div>
@@ -552,6 +559,372 @@ export default function Dashboard() {
               </div>
             ) : (
               <p className="text-gray-400">Charge tes produits Shopify d'abord</p>
+            )}
+          </div>
+        )}
+
+        {/* Analysis Results Tab */}
+        {activeTab === 'analysis' && (
+          <div className="space-y-6">
+            {analysisResults ? (
+              <>
+                {/* Vue d'ensemble */}
+                <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                  <h2 className="text-white text-2xl font-bold mb-4">📊 Vue d'ensemble de votre boutique</h2>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="bg-gray-700 p-4 rounded-lg">
+                      <p className="text-gray-400 text-sm">Produits totaux</p>
+                      <p className="text-white text-2xl font-bold">{analysisResults.overview?.total_products}</p>
+                    </div>
+                    <div className="bg-gray-700 p-4 rounded-lg">
+                      <p className="text-gray-400 text-sm">Publiés</p>
+                      <p className="text-green-400 text-2xl font-bold">{analysisResults.overview?.published}</p>
+                    </div>
+                    <div className="bg-gray-700 p-4 rounded-lg">
+                      <p className="text-gray-400 text-sm">Variantes</p>
+                      <p className="text-blue-400 text-2xl font-bold">{analysisResults.overview?.total_variants}</p>
+                    </div>
+                    <div className="bg-gray-700 p-4 rounded-lg">
+                      <p className="text-gray-400 text-sm">Prix moyen</p>
+                      <p className="text-yellow-400 text-2xl font-bold">{analysisResults.overview?.price_range?.average?.toFixed(2)}$</p>
+                    </div>
+                  </div>
+                  <div className="mt-4 bg-gray-700 p-4 rounded-lg">
+                    <p className="text-gray-400 text-sm">Santé du catalogue</p>
+                    <p className="text-white text-xl font-bold">{analysisResults.overview?.catalog_health}</p>
+                  </div>
+                </div>
+
+                {/* Points critiques */}
+                {analysisResults.critical_issues && analysisResults.critical_issues.length > 0 && (
+                  <div className="bg-red-900 border-2 border-red-600 rounded-lg p-6">
+                    <h2 className="text-white text-2xl font-bold mb-4">⚠️ Points critiques à corriger MAINTENANT</h2>
+                    <div className="space-y-4">
+                      {analysisResults.critical_issues.map((issue, idx) => (
+                        <div key={idx} className="bg-red-800 p-4 rounded-lg">
+                          <div className="flex items-start gap-3">
+                            <span className="text-2xl">🚨</span>
+                            <div className="flex-1">
+                              <p className="text-red-300 font-bold text-sm mb-1">SÉVÉRITÉ: {issue.severity}</p>
+                              <p className="text-white font-bold mb-2">{issue.issue}</p>
+                              <p className="text-red-200 text-sm mb-2">{issue.impact}</p>
+                              <div className="bg-red-900 p-3 rounded mt-2">
+                                <p className="text-white font-bold text-sm">✅ Action immédiate:</p>
+                                <p className="text-red-100 text-sm mt-1">{issue.action}</p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Actions immédiates */}
+                <div className="bg-gradient-to-r from-green-900 to-emerald-900 border-2 border-green-600 rounded-lg p-6">
+                  <h2 className="text-white text-2xl font-bold mb-4">🎯 Actions à faire MAINTENANT</h2>
+                  <div className="space-y-4">
+                    {analysisResults.immediate_actions?.map((action, idx) => (
+                      <div key={idx} className="bg-green-800 bg-opacity-50 p-5 rounded-lg">
+                        <div className="flex items-center gap-2 mb-3">
+                          <span className="bg-green-600 text-white font-bold px-3 py-1 rounded-full text-sm">PRIORITÉ {action.priority}</span>
+                          <h3 className="text-white font-bold text-lg">{action.action}</h3>
+                        </div>
+                        <div className="space-y-2 mb-3">
+                          {action.steps?.map((step, sidx) => (
+                            <p key={sidx} className="text-green-100 pl-4">{step}</p>
+                          ))}
+                        </div>
+                        <div className="flex gap-4 text-sm">
+                          <span className="text-green-300">⏱️ Temps: {action.time_required}</span>
+                          <span className="text-yellow-300">📈 Impact: {action.expected_impact}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Recommandations stratégiques */}
+                <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                  <h2 className="text-white text-2xl font-bold mb-4">🎯 Recommandations stratégiques</h2>
+                  <p className="text-gray-400 mb-4">
+                    {analysisResults.strategic_recommendations?.total_recommendations} recommandations trouvées 
+                    ({analysisResults.strategic_recommendations?.high_priority} haute priorité)
+                  </p>
+                  <div className="space-y-4">
+                    {analysisResults.strategic_recommendations?.recommendations?.map((rec, idx) => (
+                      <div key={idx} className="bg-gray-700 p-5 rounded-lg border-l-4 border-blue-500">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className={`px-2 py-1 rounded text-xs font-bold ${
+                            rec.priority === 'HAUTE' ? 'bg-red-600' : 
+                            rec.priority === 'MOYENNE' ? 'bg-yellow-600' : 'bg-green-600'
+                          }`}>
+                            {rec.priority}
+                          </span>
+                          <span className="text-blue-400 font-bold">{rec.category}</span>
+                        </div>
+                        <h3 className="text-white font-bold mb-2">{rec.issue}</h3>
+                        <p className="text-gray-300 mb-3">{rec.recommendation}</p>
+                        <div className="bg-gray-800 p-3 rounded">
+                          <p className="text-green-400 text-sm font-bold">💰 Impact attendu:</p>
+                          <p className="text-green-300 text-sm">{rec.impact}</p>
+                        </div>
+                        <div className="bg-blue-900 bg-opacity-30 p-3 rounded mt-2">
+                          <p className="text-blue-400 text-sm font-bold">✅ Action:</p>
+                          <p className="text-blue-200 text-sm">{rec.action}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Stratégie de prix */}
+                <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                  <h2 className="text-white text-2xl font-bold mb-4">💰 Optimisation des prix</h2>
+                  <div className="space-y-4">
+                    <div className="bg-gray-700 p-4 rounded-lg">
+                      <h3 className="text-white font-bold mb-2">Stratégie actuelle</h3>
+                      <p className="text-gray-300">{analysisResults.pricing_strategy?.current_strategy}</p>
+                    </div>
+                    
+                    <h3 className="text-white font-bold mt-4">Optimisations suggérées (Top 5 produits):</h3>
+                    <div className="space-y-3">
+                      {analysisResults.pricing_strategy?.optimizations?.map((opt, idx) => (
+                        <div key={idx} className="bg-gray-700 p-4 rounded-lg">
+                          <div className="flex justify-between items-start mb-2">
+                            <p className="text-white font-bold">{opt.product}</p>
+                            <span className="bg-green-600 text-white px-3 py-1 rounded-full text-sm font-bold">
+                              +{opt.increase}$
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-4 mb-2">
+                            <div>
+                              <p className="text-gray-400 text-sm">Prix actuel</p>
+                              <p className="text-white text-lg font-bold">{opt.current_price}$</p>
+                            </div>
+                            <div>
+                              <p className="text-gray-400 text-sm">Prix suggéré</p>
+                              <p className="text-green-400 text-lg font-bold">{opt.suggested_price}$</p>
+                            </div>
+                          </div>
+                          <p className="text-gray-300 text-sm mb-2">{opt.reason}</p>
+                          <p className="text-green-400 text-sm font-bold">{opt.expected_impact}</p>
+                        </div>
+                      ))}
+                    </div>
+
+                    <h3 className="text-white font-bold mt-4">Opportunités de pricing:</h3>
+                    <div className="space-y-3">
+                      {analysisResults.pricing_strategy?.opportunities?.map((opp, idx) => (
+                        <div key={idx} className="bg-blue-900 bg-opacity-30 p-4 rounded-lg">
+                          <h4 className="text-blue-400 font-bold mb-2">{opp.strategy}</h4>
+                          <p className="text-gray-300 text-sm mb-2">{opp.description}</p>
+                          <p className="text-green-400 text-sm font-bold">📈 {opp.expected_impact}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Qualité du contenu */}
+                <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                  <h2 className="text-white text-2xl font-bold mb-4">📝 Qualité du contenu</h2>
+                  <div className="bg-gray-700 p-4 rounded-lg mb-4">
+                    <p className="text-gray-400 text-sm mb-2">Score global</p>
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 bg-gray-600 rounded-full h-4">
+                        <div 
+                          className={`h-4 rounded-full ${
+                            analysisResults.content_improvements?.overall_score >= 80 ? 'bg-green-500' :
+                            analysisResults.content_improvements?.overall_score >= 60 ? 'bg-yellow-500' : 'bg-red-500'
+                          }`}
+                          style={{width: `${analysisResults.content_improvements?.overall_score}%`}}
+                        />
+                      </div>
+                      <span className="text-white font-bold text-xl">{analysisResults.content_improvements?.overall_score}/100</span>
+                    </div>
+                  </div>
+
+                  {analysisResults.content_improvements?.issues_found?.length > 0 && (
+                    <>
+                      <h3 className="text-white font-bold mb-3">Problèmes détectés:</h3>
+                      <div className="space-y-3 mb-4">
+                        {analysisResults.content_improvements.issues_found.map((issue, idx) => (
+                          <div key={idx} className="bg-yellow-900 bg-opacity-30 p-4 rounded-lg">
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className={`px-2 py-1 rounded text-xs font-bold ${
+                                issue.priority === 'CRITIQUE' ? 'bg-red-600' : 
+                                issue.priority === 'HAUTE' ? 'bg-orange-600' : 'bg-yellow-600'
+                              }`}>
+                                {issue.priority}
+                              </span>
+                              <p className="text-yellow-300 font-bold">{issue.issue}</p>
+                            </div>
+                            <p className="text-gray-300 text-sm">💡 Solution: {issue.fix}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+
+                  <h3 className="text-white font-bold mb-3">Quick Wins (résultats rapides):</h3>
+                  <div className="space-y-3">
+                    {analysisResults.content_improvements?.quick_wins?.map((win, idx) => (
+                      <div key={idx} className="bg-green-900 bg-opacity-30 p-4 rounded-lg">
+                        <p className="text-green-400 font-bold mb-2">{win.action}</p>
+                        {win.example && <p className="text-gray-300 text-sm mb-2">Exemple: {win.example}</p>}
+                        <p className="text-green-300 text-sm">📈 {win.impact}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Stratégies de vente */}
+                <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                  <h2 className="text-white text-2xl font-bold mb-4">🛒 Stratégies Upsell & Cross-sell</h2>
+                  
+                  {analysisResults.sales_strategies?.upsell_opportunities?.length > 0 && (
+                    <>
+                      <h3 className="text-white font-bold mb-3">Opportunités d'Upsell:</h3>
+                      <div className="space-y-3 mb-6">
+                        {analysisResults.sales_strategies.upsell_opportunities.map((upsell, idx) => (
+                          <div key={idx} className="bg-purple-900 bg-opacity-30 p-4 rounded-lg">
+                            <h4 className="text-purple-400 font-bold mb-2">{upsell.strategy}</h4>
+                            <p className="text-gray-300 text-sm mb-2">{upsell.description}</p>
+                            {upsell.example && <p className="text-purple-200 text-sm mb-2">💡 Exemple: {upsell.example}</p>}
+                            <p className="text-green-400 text-sm font-bold">📈 {upsell.expected_impact}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+
+                  {analysisResults.sales_strategies?.cross_sell_bundles?.length > 0 && (
+                    <>
+                      <h3 className="text-white font-bold mb-3">Bundles suggérés:</h3>
+                      <div className="space-y-3 mb-6">
+                        {analysisResults.sales_strategies.cross_sell_bundles.map((bundle, idx) => (
+                          <div key={idx} className="bg-blue-900 bg-opacity-30 p-4 rounded-lg">
+                            <h4 className="text-blue-400 font-bold mb-2">{bundle.bundle_name} (-{bundle.discount})</h4>
+                            <div className="mb-2">
+                              <p className="text-gray-400 text-sm mb-1">Produits inclus:</p>
+                              <ul className="list-disc list-inside text-gray-300 text-sm">
+                                {bundle.products?.map((p, pidx) => (
+                                  <li key={pidx}>{p}</li>
+                                ))}
+                              </ul>
+                            </div>
+                            <p className="text-gray-300 text-sm mb-2">{bundle.positioning}</p>
+                            <p className="text-green-400 text-sm font-bold">📈 {bundle.expected_impact}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+
+                  <h3 className="text-white font-bold mb-3">Triggers psychologiques:</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    {analysisResults.sales_strategies?.psychological_triggers?.map((trigger, idx) => (
+                      <div key={idx} className="bg-gray-700 p-4 rounded-lg">
+                        <p className="text-yellow-400 font-bold mb-2">{trigger.trigger}</p>
+                        <p className="text-gray-300 text-sm mb-2">{trigger.tactic}</p>
+                        <p className="text-green-400 text-sm font-bold">{trigger.impact}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Opportunités de croissance */}
+                <div className="bg-gradient-to-r from-purple-900 to-pink-900 rounded-lg p-6 border border-purple-600">
+                  <h2 className="text-white text-2xl font-bold mb-4">🚀 Opportunités de croissance</h2>
+                  <div className="space-y-4">
+                    {analysisResults.growth_opportunities?.map((opp, idx) => (
+                      <div key={idx} className="bg-black bg-opacity-30 p-5 rounded-lg">
+                        <div className="flex items-center gap-2 mb-3">
+                          <span className="text-2xl">{opp.category.split(' ')[0]}</span>
+                          <h3 className="text-white font-bold text-lg">{opp.opportunity}</h3>
+                        </div>
+                        <p className="text-gray-200 mb-4">{opp.description}</p>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+                          <div className="bg-gray-800 p-3 rounded">
+                            <p className="text-gray-400 text-xs mb-1">Investissement</p>
+                            <p className="text-white font-bold">{opp.investment}</p>
+                          </div>
+                          <div className="bg-gray-800 p-3 rounded">
+                            <p className="text-gray-400 text-xs mb-1">Retour attendu</p>
+                            <p className="text-green-400 font-bold">{opp.expected_return}</p>
+                          </div>
+                          <div className="bg-gray-800 p-3 rounded">
+                            <p className="text-gray-400 text-xs mb-1">Difficulté</p>
+                            <p className="text-yellow-400 font-bold">{opp.difficulty}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Recommandations par produit */}
+                <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                  <h2 className="text-white text-2xl font-bold mb-4">🎨 Recommandations par produit (Top 10)</h2>
+                  <div className="space-y-4">
+                    {analysisResults.product_recommendations?.map((rec, idx) => (
+                      <div key={idx} className="bg-gray-700 p-5 rounded-lg">
+                        <div className="flex items-center gap-3 mb-3">
+                          <span className="bg-blue-600 text-white font-bold px-3 py-1 rounded-full">#{rec.rank}</span>
+                          <h3 className="text-white font-bold text-lg">{rec.product_name}</h3>
+                          <span className={`ml-auto px-2 py-1 rounded text-xs font-bold ${
+                            rec.current_status === 'active' ? 'bg-green-600' : 'bg-yellow-600'
+                          }`}>
+                            {rec.current_status}
+                          </span>
+                        </div>
+                        {rec.recommendations?.length > 0 ? (
+                          <div className="space-y-2">
+                            {rec.recommendations.map((recItem, ridx) => (
+                              <div key={ridx} className="bg-gray-800 p-3 rounded">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className={`px-2 py-1 rounded text-xs font-bold ${
+                                    recItem.priority === 'Critique' ? 'bg-red-600' :
+                                    recItem.priority === 'Haute' ? 'bg-orange-600' : 'bg-yellow-600'
+                                  }`}>
+                                    {recItem.priority}
+                                  </span>
+                                  <span className="text-blue-400 font-bold text-sm">{recItem.type}</span>
+                                </div>
+                                <p className="text-gray-300 text-sm mb-1">{recItem.issue}</p>
+                                <p className="text-green-300 text-sm">✅ {recItem.suggestion}</p>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-green-400">✅ Aucune amélioration critique nécessaire</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Bouton retour */}
+                <div className="flex justify-center">
+                  <button
+                    onClick={() => setActiveTab('ai')}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-lg"
+                  >
+                    🔄 Lancer une nouvelle analyse
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 text-center">
+                <p className="text-gray-400 mb-4">Aucune analyse disponible</p>
+                <button
+                  onClick={() => setActiveTab('ai')}
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg"
+                >
+                  Lancer une analyse
+                </button>
+              </div>
             )}
           </div>
         )}
