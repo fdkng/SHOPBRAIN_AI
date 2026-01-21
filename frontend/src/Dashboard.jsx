@@ -93,6 +93,42 @@ export default function Dashboard() {
     window.location.hash = '#/'
   }
 
+  const handleUpgrade = async () => {
+    try {
+      const currentPlan = subscription?.plan
+      const nextPlan = currentPlan === 'standard' ? 'pro' : currentPlan === 'pro' ? 'premium' : null
+      if (!nextPlan) {
+        alert('Tu es déjà au plan PREMIUM avec toutes les fonctionnalités.')
+        return
+      }
+
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        alert('Session expirée, reconnecte-toi.')
+        return
+      }
+
+      const resp = await fetch(`${API_URL}/api/subscription/create-session`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ plan: nextPlan, email: user?.email || '' })
+      })
+
+      const data = await resp.json()
+      if (data?.success && data?.url) {
+        window.location.href = data.url
+      } else {
+        alert('Erreur lors de la création de la session d\'upgrade')
+      }
+    } catch (e) {
+      console.error('Upgrade error:', e)
+      alert('Une erreur est survenue pour l\'upgrade')
+    }
+  }
+
   const sendChatMessage = async () => {
     if (!chatInput.trim()) return
     
@@ -374,7 +410,33 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Tabs */}
+        {/* Post-payment success banner */}
+        {typeof window !== 'undefined' && (window.location.hash.includes('success=true') || new URLSearchParams(window.location.search).has('session_id')) && (
+          <div className="max-w-7xl mx-auto px-6 mb-4">
+            <div className="bg-green-800 border border-green-600 text-green-100 p-4 rounded-lg flex items-center justify-between">
+              <div>
+                <p className="font-bold">✅ Paiement confirmé — abonnement activé</p>
+                <p className="text-sm opacity-90">Ton plan est appliqué et disponible dans le dashboard.</p>
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => { window.location.hash = '#/' }}
+                  className="bg-green-600 hover:bg-green-700 text-white font-semibold px-4 py-2 rounded-lg"
+                >
+                  ↩️ Retour à l'accueil
+                </button>
+                <button
+                  onClick={() => { window.location.hash = '#dashboard' }}
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg"
+                >
+                  📊 Aller au dashboard
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Tabs */}
       <div className="max-w-7xl mx-auto p-6">
         <div className="flex gap-4 mb-6 border-b border-gray-700 overflow-x-auto">
           {['overview', 'shopify', 'assistant', 'ai', 'analysis'].map(t => (
@@ -407,8 +469,24 @@ export default function Dashboard() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
               <h3 className="text-gray-400 text-sm uppercase mb-2">Plan Actif</h3>
-              <p className="text-white text-2xl font-bold">{subscription?.plan.toUpperCase()}</p>
+              <div className="flex items-center justify-between">
+                <p className="text-white text-2xl font-bold">{subscription?.plan.toUpperCase()}</p>
+                {subscription?.plan !== 'premium' && (
+                  <button
+                    onClick={handleUpgrade}
+                    className="ml-4 bg-yellow-600 hover:bg-yellow-700 text-white text-sm font-bold px-3 py-1 rounded-lg"
+                  >
+                    Upgrade
+                  </button>
+                )}
+              </div>
               <p className="text-gray-400 text-sm mt-2">Depuis: {new Date(subscription?.started_at).toLocaleDateString('fr-FR')}</p>
+              {subscription?.plan === 'standard' && (
+                <p className="text-gray-400 text-xs mt-1">Fonctionnalités limitées — Upgrade vers PRO pour plus.</p>
+              )}
+              {subscription?.plan === 'pro' && (
+                <p className="text-gray-400 text-xs mt-1">Bon choix — Upgrade vers PREMIUM pour tout débloquer.</p>
+              )}
             </div>
             
             <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
