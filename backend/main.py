@@ -92,11 +92,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Stripe price IDs
+# Stripe price IDs - Mapping tier names to price IDs
 STRIPE_PLANS = {
-    "99": "price_1SQfzmPSvADOSbOzpxoK8hG3",
-    "199": "price_1SQg0xPSvADOSbOzrZbOGs06",
-    "299": "price_1SQg3CPSvADOSbOzHXSoDkGN",
+    "standard": "price_1SQfzmPSvADOSbOzpxoK8hG3",
+    "pro": "price_1SQg0xPSvADOSbOzrZbOGs06",
+    "premium": "price_1SQg3CPSvADOSbOzHXSoDkGN",
+}
+
+# Reverse mapping: price_id -> tier
+PRICE_TO_TIER = {
+    "price_1SQfzmPSvADOSbOzpxoK8hG3": "standard",
+    "price_1SQg0xPSvADOSbOzrZbOGs06": "pro",
+    "price_1SQg3CPSvADOSbOzHXSoDkGN": "premium",
 }
 
 # Helper: get authenticated user from Authorization header or request body
@@ -680,19 +687,35 @@ async def stripe_webhook(request: Request):
                 # Extract plan from subscription - try different sources
                 plan_tier = None
                 
-                # Try from line items if using subscription mode
-                for tier, price_id in STRIPE_PLANS.items():
-                    if any(li.get("price") == price_id for li in session.get("line_items", {}).get("data", [])):
-                        plan_tier = tier
-                        break
-                
-                # If still not found, try to determine from plan name in metadata
-                if not plan_tier and session.get("metadata", {}).get("plan"):
+                # 1. Try from metadata (most reliable)
+                if session.get("metadata", {}).get("plan"):
                     plan_tier = session["metadata"]["plan"]
+                    print(f"📋 Plan from metadata: {plan_tier}")
+                
+                # 2. Try to get subscription and check price_id
+                if not plan_tier and session.get("subscription"):
+                    try:
+                        subscription = stripe.Subscription.retrieve(session["subscription"])
+                        if subscription and subscription.get("items", {}).get("data"):
+                            price_id = subscription["items"]["data"][0].get("price", {}).get("id")
+                            plan_tier = PRICE_TO_TIER.get(price_id)
+                            print(f"💰 Plan from subscription price_id {price_id}: {plan_tier}")
+                    except Exception as e:
+                        print(f"Could not retrieve subscription: {e}")
+                
+                # 3. Try from line items
+                if not plan_tier:
+                    for li in session.get("line_items", {}).get("data", []):
+                        price_id = li.get("price", {}).get("id")
+                        if price_id in PRICE_TO_TIER:
+                            plan_tier = PRICE_TO_TIER[price_id]
+                            print(f"🛒 Plan from line items price_id {price_id}: {plan_tier}")
+                            break
                 
                 # Default to standard if still no plan found
                 if not plan_tier:
                     plan_tier = "standard"
+                    print(f"⚠️ Using default plan: {plan_tier}")
                 
                 # Insert to subscriptions table
                 supabase.table("subscriptions").insert({
