@@ -2000,6 +2000,7 @@ async def create_checkout_session(req: CreateCheckoutSessionRequest, request: Re
             success_url=f"{frontend_url}/#dashboard?session_id={{CHECKOUT_SESSION_ID}}&success=true",
             cancel_url=f"{frontend_url}/#pricing",
             customer_email=email,
+            allow_promotion_codes=True,  # ✅ Active les codes promo
             metadata={
                 "user_id": user_id,
                 "plan": plan
