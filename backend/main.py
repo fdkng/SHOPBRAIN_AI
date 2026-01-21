@@ -687,6 +687,18 @@ async def stripe_webhook(request: Request):
                 # Extract plan from subscription - try different sources
                 plan_tier = None
                 
+                # Helper to map by amount if price_id unknown
+                def tier_from_amount(amount_cents: int):
+                    if amount_cents is None:
+                        return None
+                    if amount_cents >= 29900:
+                        return "premium"
+                    if amount_cents >= 19900:
+                        return "pro"
+                    if amount_cents >= 9900:
+                        return "standard"
+                    return None
+
                 # 1. Try from metadata (most reliable)
                 if session.get("metadata", {}).get("plan"):
                     plan_tier = session["metadata"]["plan"]
@@ -699,7 +711,10 @@ async def stripe_webhook(request: Request):
                         if subscription and subscription.get("items", {}).get("data"):
                             price_id = subscription["items"]["data"][0].get("price", {}).get("id")
                             plan_tier = PRICE_TO_TIER.get(price_id)
-                            print(f"💰 Plan from subscription price_id {price_id}: {plan_tier}")
+                            amount = subscription["items"]["data"][0].get("price", {}).get("unit_amount")
+                            if not plan_tier:
+                                plan_tier = tier_from_amount(amount)
+                            print(f"💰 Plan from subscription price_id {price_id}, amount {amount}: {plan_tier}")
                     except Exception as e:
                         print(f"Could not retrieve subscription: {e}")
                 
@@ -707,10 +722,16 @@ async def stripe_webhook(request: Request):
                 if not plan_tier:
                     for li in session.get("line_items", {}).get("data", []):
                         price_id = li.get("price", {}).get("id")
+                        amount = li.get("price", {}).get("unit_amount")
                         if price_id in PRICE_TO_TIER:
                             plan_tier = PRICE_TO_TIER[price_id]
                             print(f"🛒 Plan from line items price_id {price_id}: {plan_tier}")
                             break
+                        if not plan_tier:
+                            plan_tier = tier_from_amount(amount)
+                            if plan_tier:
+                                print(f"🛒 Plan inferred from amount {amount}: {plan_tier}")
+                                break
                 
                 # Default to standard if still no plan found
                 if not plan_tier:
@@ -2041,7 +2062,14 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
             supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
             
-            plan = session.metadata.get("plan", "pro") if session.metadata else "pro"
+            # Determine plan from metadata or subscription amount fallback
+            plan = session.metadata.get("plan") if session.metadata else None
+            if not plan and subscription:
+                amount = subscription.get("items", {}).get("data", [{}])[0].get("price", {}).get("unit_amount")
+                if amount is not None:
+                    plan = "premium" if amount >= 29900 else "pro" if amount >= 19900 else "standard"
+            if not plan:
+                plan = "pro"  # default fallback
             
             supabase.table("subscriptions").upsert({
                 "user_id": user_id,
