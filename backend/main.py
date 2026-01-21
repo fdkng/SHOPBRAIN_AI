@@ -718,15 +718,15 @@ async def stripe_webhook(request: Request):
                     print(f"⚠️ Using default plan: {plan_tier}")
                 
                 # Insert to subscriptions table
-                supabase.table("subscriptions").insert({
+                supabase.table("subscriptions").upsert({
                     "user_id": user_id,
                     "email": session.get("customer_email"),
                     "stripe_session_id": session.get("id"),
                     "stripe_subscription_id": session.get("subscription"),
                     "stripe_customer_id": session.get("customer"),
                     "plan_tier": plan_tier,
-                    "status": "active",
-                }).execute()
+                    "status": subscription.status if 'subscription' in locals() and subscription else "active",
+                }, on_conflict="user_id").execute()
                 
                 print(f"✅ Subscription saved: user_id={user_id}, plan={plan_tier}")
             except Exception as e:
@@ -1902,8 +1902,8 @@ async def check_subscription_status(request: Request):
             try:
                 # Use HTTP directly to avoid SDK parsing issues with UUID filters
                 import urllib.parse
-                filter_str = f'user_id=eq.{user_id}&status=eq.active'
-                query = urllib.parse.quote(filter_str)
+                # Inclure active ou trialing pour les nouveaux abonnements Stripe
+                filter_str = f'user_id=eq.{user_id}&status=in.(active,trialing)'
                 
                 headers = {
                     'Authorization': f'Bearer {SUPABASE_SERVICE_KEY}',
@@ -2043,14 +2043,14 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
             
             plan = session.metadata.get("plan", "pro") if session.metadata else "pro"
             
-            supabase.table("subscriptions").insert({
+            supabase.table("subscriptions").upsert({
                 "user_id": user_id,
                 "plan_tier": plan,
-                "status": "active",
+                "status": subscription.status if subscription else "active",
                 "stripe_session_id": session.id,
                 "stripe_customer_id": session.customer,
                 "email": session.customer_email
-            }).execute()
+            }, on_conflict="user_id").execute()
             
             supabase.table("user_profiles").upsert({
                 "id": user_id,
