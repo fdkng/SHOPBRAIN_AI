@@ -1552,7 +1552,7 @@ async def chat_with_ai(req: ChatRequest, request: Request):
     if len(message) > 500:
         raise HTTPException(status_code=400, detail="Message trop long (max 500 caractères)")
     
-    system_prompt = SHOPBRAIN_EXPERT_SYSTEM
+    system_prompt = SHOPBRAIN_EXPERT_SYSTEM or "Tu es un assistant expert en e-commerce Shopify."
 
     try:
         # Construire le prompt avec contexte si fourni
@@ -1712,6 +1712,8 @@ def get_ai_engine():
     """Lazy load AI engine avec config Shopify si disponible"""
     global ai_engine
     if ai_engine is None:
+        if ShopBrainAI is None:
+            raise HTTPException(status_code=500, detail="AI engine not available. ShopBrainAI import failed.")
         shopify_config = None
         if SHOPIFY_ACCESS_TOKEN:
             # Format: shop-name.myshopify.com
