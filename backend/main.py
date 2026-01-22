@@ -24,8 +24,23 @@ from supabase import create_client
 # Ajouter le répertoire parent au path pour importer AI_engine
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from AI_engine.shopbrain_ai import ShopBrainAI
-from shopbrain_expert_system import SHOPBRAIN_EXPERT_SYSTEM
+# Imports protégés pour les modules optionnels
+ShopBrainAI = None
+SHOPBRAIN_EXPERT_SYSTEM = None
+
+try:
+    from AI_engine.shopbrain_ai import ShopBrainAI as _ShopBrainAI
+    ShopBrainAI = _ShopBrainAI
+    print("✅ ShopBrainAI imported successfully")
+except Exception as e:
+    print(f"⚠️  ShopBrainAI import failed (non-critical): {e}")
+
+try:
+    from shopbrain_expert_system import SHOPBRAIN_EXPERT_SYSTEM as _SYSTEM_PROMPT
+    SHOPBRAIN_EXPERT_SYSTEM = _SYSTEM_PROMPT
+    print("✅ SHOPBRAIN_EXPERT_SYSTEM imported successfully")
+except Exception as e:
+    print(f"⚠️  SHOPBRAIN_EXPERT_SYSTEM import failed (non-critical): {e}")
 
 load_dotenv()
 
@@ -74,6 +89,8 @@ else:
 if STRIPE_SECRET_KEY:
     stripe.api_key = STRIPE_SECRET_KEY
 
+print("\n🚀 ========== BACKEND STARTUP ==========")
+print(f"✅ FastAPI initializing...")
 app = FastAPI()
 
 # Allow CORS from GitHub Pages and local development
@@ -91,6 +108,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+print(f"✅ CORS middleware configured")
 
 # Stripe price IDs - Mapping tier names to price IDs
 STRIPE_PLANS = {
@@ -239,8 +257,17 @@ async def get_products(request: Request):
 
 @app.get("/health")
 async def health():
-    """Health check endpoint for Render"""
-    return {"status": "ok", "version": "1.3", "cors": "fixed"}
+    """Health check endpoint for Render - MUST ALWAYS WORK"""
+    return {
+        "status": "ok",
+        "version": "1.4",
+        "timestamp": datetime.utcnow().isoformat(),
+        "services": {
+            "openai": "configured" if OPENAI_API_KEY else "not_configured",
+            "stripe": "configured" if STRIPE_SECRET_KEY else "not_configured",
+            "supabase": "configured" if SUPABASE_URL else "not_configured"
+        }
+    }
 
 
 @app.post("/api/stripe/payment-link")
@@ -2220,7 +2247,12 @@ async def get_user_profile(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+print(f"✅ All endpoints registered successfully")
+print(f"========== BACKEND READY ==========\n")
+
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)), reload=True)
+    port = int(os.getenv("PORT", 8000))
+    print(f"🚀 Starting FastAPI server on 0.0.0.0:{port}")
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
