@@ -675,6 +675,16 @@ async def stripe_webhook(request: Request):
     # Handle the checkout.session.completed event
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
+        # Ensure we have line_items and subscription expanded
+        try:
+            if not session.get("line_items") or not session.get("subscription"):
+                session = stripe.checkout.Session.retrieve(
+                    session["id"],
+                    expand=["line_items", "subscription"]
+                )
+        except Exception as e:
+            print(f"Warning: could not expand session in webhook: {e}")
+
         user_id = session.get("metadata", {}).get("user_id")
         
         # Persist subscription to Supabase if configured (best-effort)
@@ -1923,8 +1933,8 @@ async def check_subscription_status(request: Request):
             try:
                 # Use HTTP directly to avoid SDK parsing issues with UUID filters
                 import urllib.parse
-                # Inclure active ou trialing pour les nouveaux abonnements Stripe
-                filter_str = f'user_id=eq.{user_id}&status=in.(active,trialing)'
+                # Inclure les statuts actifs ou en cours (trialing, past_due, incomplete)
+                filter_str = f'user_id=eq.{user_id}&status=in.(active,trialing,past_due,incomplete,incomplete_expired)'
                 
                 headers = {
                     'Authorization': f'Bearer {SUPABASE_SERVICE_KEY}',
@@ -2049,7 +2059,7 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
     try:
         user_id = get_user_id(request)
         
-        session = stripe.checkout.Session.retrieve(req.session_id)
+        session = stripe.checkout.Session.retrieve(req.session_id, expand=["line_items", "subscription"])
         
         if session.payment_status != "paid":
             return {
