@@ -758,6 +758,13 @@ async def stripe_webhook(request: Request):
                     "plan_tier": plan_tier,
                     "status": subscription.status if 'subscription' in locals() and subscription else "active",
                 }, on_conflict="user_id").execute()
+
+                # Keep user profile in sync so the dashboard always sees the latest tier
+                supabase.table("user_profiles").upsert({
+                    "id": user_id,
+                    "subscription_tier": plan_tier,
+                    "updated_at": datetime.utcnow().isoformat()
+                }, on_conflict="id").execute()
                 
                 print(f"✅ Subscription saved: user_id={user_id}, plan={plan_tier}")
             except Exception as e:
@@ -1962,7 +1969,7 @@ async def check_subscription_status(request: Request):
                 subscription = None
             
             if subscription:
-                plan = subscription['plan_tier']
+                plan = subscription.get('plan_tier') or 'standard'
                 
                 capabilities = {
                     'standard': {
@@ -1983,10 +1990,54 @@ async def check_subscription_status(request: Request):
                     'success': True,
                     'has_subscription': True,
                     'plan': plan,
-                    'status': subscription['status'],
+                    'status': subscription.get('status', 'active'),
                     'started_at': subscription.get('created_at'),
                     'capabilities': capabilities.get(plan, {})
                 }
+
+            # Fallback: use user_profiles if no subscription row found yet (e.g., race condition)
+            try:
+                profile_resp = requests.get(
+                    f"{SUPABASE_URL}/rest/v1/user_profiles?id=eq.{user_id}",
+                    headers={
+                        'Authorization': f'Bearer {SUPABASE_SERVICE_KEY}',
+                        'apikey': SUPABASE_SERVICE_KEY,
+                        'Content-Type': 'application/json',
+                        'Range': '0-0',
+                        'Range-Unit': 'items'
+                    },
+                    timeout=5
+                ) if SUPABASE_URL and SUPABASE_SERVICE_KEY else None
+
+                if profile_resp and profile_resp.status_code == 200:
+                    profile_data = profile_resp.json()
+                    if isinstance(profile_data, list) and len(profile_data) > 0:
+                        profile = profile_data[0]
+                        plan = profile.get('subscription_tier', 'standard')
+                        capabilities = {
+                            'standard': {
+                                'product_limit': 50,
+                                'features': ['product_analysis', 'title_optimization', 'price_suggestions']
+                            },
+                            'pro': {
+                                'product_limit': 500,
+                                'features': ['product_analysis', 'content_generation', 'cross_sell', 'reports']
+                            },
+                            'premium': {
+                                'product_limit': None,
+                                'features': ['product_analysis', 'content_generation', 'cross_sell', 'automated_actions', 'reports', 'predictions']
+                            }
+                        }
+                        return {
+                            'success': True,
+                            'has_subscription': plan is not None,
+                            'plan': plan,
+                            'status': profile.get('subscription_status', 'active'),
+                            'started_at': profile.get('created_at'),
+                            'capabilities': capabilities.get(plan, {})
+                        }
+            except Exception as e:
+                print(f"Profile fallback error: {e}")
             
             # Not found in database - return immediately (don't check Stripe, it's too slow)
             print(f"ℹ️ No active subscription found for user {user_id}")
@@ -2072,14 +2123,40 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
             supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
             
-            # Determine plan from metadata or subscription amount fallback
+            # Determine plan from the most reliable source: metadata -> price_id -> amount
             plan = session.metadata.get("plan") if session.metadata else None
+
+            def tier_from_amount(amount_cents: int | None):
+                if amount_cents is None:
+                    return None
+                if amount_cents >= 29900:
+                    return "premium"
+                if amount_cents >= 19900:
+                    return "pro"
+                if amount_cents >= 9900:
+                    return "standard"
+                return None
+
+            # Try subscription item price_id
             if not plan and subscription:
-                amount = subscription.get("items", {}).get("data", [{}])[0].get("price", {}).get("unit_amount")
-                if amount is not None:
-                    plan = "premium" if amount >= 29900 else "pro" if amount >= 19900 else "standard"
+                items = subscription.get("items", {}).get("data", [])
+                if items:
+                    price_id = items[0].get("price", {}).get("id")
+                    amount = items[0].get("price", {}).get("unit_amount")
+                    plan = PRICE_TO_TIER.get(price_id) or tier_from_amount(amount)
+
+            # Try line_items if still missing
             if not plan:
-                plan = "pro"  # default fallback
+                for li in session.get("line_items", {}).get("data", []):
+                    price_id = li.get("price", {}).get("id")
+                    amount = li.get("price", {}).get("unit_amount")
+                    plan = PRICE_TO_TIER.get(price_id) or tier_from_amount(amount)
+                    if plan:
+                        break
+
+            # Final fallback
+            if not plan:
+                plan = "standard"
             
             supabase.table("subscriptions").upsert({
                 "user_id": user_id,
