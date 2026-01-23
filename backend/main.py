@@ -393,13 +393,21 @@ async def create_checkout(payload: dict, request: Request):
             success_url=FRONTEND_ORIGIN + "?payment=success&session_id={CHECKOUT_SESSION_ID}",
             cancel_url=FRONTEND_ORIGIN + "#pricing",
             customer_email=customer_email,
+            metadata={
+                "user_id": user_id,
+                "plan": plan,
+            },
             subscription_data={
                 "trial_period_days": 14,
-                "metadata": {"user_id": user_id},
+                "metadata": {"user_id": user_id, "plan": plan},
             },
         )
         print(f"✅ Checkout session created: {session.id}")
+        print(f"📝 Metadata: user_id={user_id}, plan={plan}")
         return {"url": session.url}
+    except Exception as e:
+        print(f"❌ Checkout error: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         print(f"❌ Checkout error: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -684,6 +692,7 @@ async def dev_verify_session(payload: dict):
 
 @app.post("/webhook")
 async def stripe_webhook(request: Request):
+    print(f"🔔 [WEBHOOK] Received Stripe webhook event")
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature")
     event = None
@@ -691,31 +700,50 @@ async def stripe_webhook(request: Request):
     if STRIPE_WEBHOOK_SECRET:
         try:
             event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
+            print(f"✅ [WEBHOOK] Signature verified")
         except Exception as e:
+            print(f"❌ [WEBHOOK] Signature verification failed: {e}")
             raise HTTPException(status_code=400, detail=f"Webhook signature verification failed: {e}")
     else:
         # If no webhook secret, try to parse raw
         import json
+        try:
+            event = json.loads(payload)
+            print(f"⚠️  [WEBHOOK] No signature secret, parsed raw event")
+        except Exception as e:
+            print(f"❌ [WEBHOOK] Failed to parse event: {e}")
+            raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
 
-        event = json.loads(payload)
+    event_type = event.get("type", "unknown")
+    print(f"📊 [WEBHOOK] Event type: {event_type}")
 
     # Handle the checkout.session.completed event
-    if event["type"] == "checkout.session.completed":
+    if event_type == "checkout.session.completed":
         session = event["data"]["object"]
+        print(f"🔍 [WEBHOOK] Session ID: {session.get('id')}")
+        print(f"🔍 [WEBHOOK] Metadata: {session.get('metadata', {})}")
+        
         # Ensure we have line_items and subscription expanded
         try:
             if not session.get("line_items") or not session.get("subscription"):
+                print(f"⏳ [WEBHOOK] Retrieving full session with expansions...")
                 session = stripe.checkout.Session.retrieve(
                     session["id"],
                     expand=["line_items", "subscription"]
                 )
+                print(f"✅ [WEBHOOK] Session expanded")
         except Exception as e:
-            print(f"Warning: could not expand session in webhook: {e}")
+            print(f"⚠️  [WEBHOOK] Could not expand session: {e}")
 
         user_id = session.get("metadata", {}).get("user_id")
+        print(f"👤 [WEBHOOK] User ID: {user_id}")
+        
+        if not user_id:
+            print(f"❌ [WEBHOOK] No user_id in metadata! Session details: {session.get('metadata', {})}")
+            return {"received": True, "error": "No user_id found"}
         
         # Persist subscription to Supabase if configured (best-effort)
-        if SUPABASE_URL and SUPABASE_SERVICE_KEY and user_id:
+        if SUPABASE_URL and SUPABASE_SERVICE_KEY:
             try:
                 from supabase import create_client
 
@@ -723,6 +751,7 @@ async def stripe_webhook(request: Request):
                 
                 # Extract plan from subscription - try different sources
                 plan_tier = None
+                subscription_status = "active"
                 
                 # Helper to map by amount if price_id unknown
                 def tier_from_amount(amount_cents: int):
@@ -739,21 +768,22 @@ async def stripe_webhook(request: Request):
                 # 1. Try from metadata (most reliable)
                 if session.get("metadata", {}).get("plan"):
                     plan_tier = session["metadata"]["plan"]
-                    print(f"📋 Plan from metadata: {plan_tier}")
+                    print(f"📋 [WEBHOOK] Plan from metadata: {plan_tier}")
                 
                 # 2. Try to get subscription and check price_id
                 if not plan_tier and session.get("subscription"):
                     try:
                         subscription = stripe.Subscription.retrieve(session["subscription"])
+                        subscription_status = subscription.get("status", "active")
                         if subscription and subscription.get("items", {}).get("data"):
                             price_id = subscription["items"]["data"][0].get("price", {}).get("id")
                             plan_tier = PRICE_TO_TIER.get(price_id)
                             amount = subscription["items"]["data"][0].get("price", {}).get("unit_amount")
                             if not plan_tier:
                                 plan_tier = tier_from_amount(amount)
-                            print(f"💰 Plan from subscription price_id {price_id}, amount {amount}: {plan_tier}")
+                            print(f"💰 [WEBHOOK] Plan from subscription price_id {price_id}, amount {amount}: {plan_tier}")
                     except Exception as e:
-                        print(f"Could not retrieve subscription: {e}")
+                        print(f"⚠️  [WEBHOOK] Could not retrieve subscription: {e}")
                 
                 # 3. Try from line items
                 if not plan_tier:
@@ -762,20 +792,21 @@ async def stripe_webhook(request: Request):
                         amount = li.get("price", {}).get("unit_amount")
                         if price_id in PRICE_TO_TIER:
                             plan_tier = PRICE_TO_TIER[price_id]
-                            print(f"🛒 Plan from line items price_id {price_id}: {plan_tier}")
+                            print(f"🛒 [WEBHOOK] Plan from line items price_id {price_id}: {plan_tier}")
                             break
                         if not plan_tier:
                             plan_tier = tier_from_amount(amount)
                             if plan_tier:
-                                print(f"🛒 Plan inferred from amount {amount}: {plan_tier}")
+                                print(f"🛒 [WEBHOOK] Plan inferred from amount {amount}: {plan_tier}")
                                 break
                 
                 # Default to standard if still no plan found
                 if not plan_tier:
                     plan_tier = "standard"
-                    print(f"⚠️ Using default plan: {plan_tier}")
+                    print(f"⚠️  [WEBHOOK] Using default plan: {plan_tier}")
                 
                 # Insert to subscriptions table
+                print(f"📝 [WEBHOOK] Upserting to subscriptions table...")
                 supabase.table("subscriptions").upsert({
                     "user_id": user_id,
                     "email": session.get("customer_email"),
@@ -783,19 +814,28 @@ async def stripe_webhook(request: Request):
                     "stripe_subscription_id": session.get("subscription"),
                     "stripe_customer_id": session.get("customer"),
                     "plan_tier": plan_tier,
-                    "status": subscription.status if 'subscription' in locals() and subscription else "active",
+                    "status": subscription_status,
                 }, on_conflict="user_id").execute()
+                print(f"✅ [WEBHOOK] Subscriptions table updated")
 
                 # Keep user profile in sync so the dashboard always sees the latest tier
+                print(f"📝 [WEBHOOK] Upserting to user_profiles table...")
                 supabase.table("user_profiles").upsert({
                     "id": user_id,
                     "subscription_tier": plan_tier,
                     "updated_at": datetime.utcnow().isoformat()
                 }, on_conflict="id").execute()
+                print(f"✅ [WEBHOOK] User profile updated with plan: {plan_tier}")
                 
-                print(f"✅ Subscription saved: user_id={user_id}, plan={plan_tier}")
+                print(f"🎉 [WEBHOOK] SUCCESS: Subscription saved: user_id={user_id}, plan={plan_tier}")
             except Exception as e:
-                print(f"Warning: could not persist subscription: {e}")
+                print(f"❌ [WEBHOOK] Failed to persist subscription: {e}")
+                import traceback
+                traceback.print_exc()
+        else:
+            print(f"❌ [WEBHOOK] Supabase not configured")
+    else:
+        print(f"⏭️  [WEBHOOK] Ignoring event type: {event_type}")
 
     return {"received": True}
 
