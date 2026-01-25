@@ -2295,9 +2295,13 @@ print(f"========== BACKEND READY ==========\n")
 @app.on_event("startup")
 async def startup_event():
     """Log when the app actually starts"""
-    print(f"\n🟢 APP STARTUP EVENT FIRED at {datetime.utcnow().isoformat()}")
+    startup_time = datetime.utcnow().isoformat()
+    print(f"\n🟢 APP STARTUP EVENT FIRED at {startup_time}")
     print(f"Environment: STRIPE_SECRET_KEY={'present' if STRIPE_SECRET_KEY else 'MISSING'}")
     print(f"Environment: SUPABASE_URL={'present' if SUPABASE_URL else 'MISSING'}")
+    # Write to stdout with timestamp for Render logs
+    sys.stdout.flush()
+    sys.stderr.flush()
 
 if __name__ == "__main__":
     import uvicorn
