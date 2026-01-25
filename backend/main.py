@@ -677,6 +677,8 @@ async def dev_verify_session(payload: dict):
             supabase.table("user_profiles").upsert({
                 "id": user_id,
                 "subscription_tier": plan,
+                "subscription_plan": plan,
+                "subscription_status": "active"
             }).execute()
 
             return {"success": True, "message": "Subscription persisted (dev)"}
@@ -823,6 +825,8 @@ async def stripe_webhook(request: Request):
                 supabase.table("user_profiles").upsert({
                     "id": user_id,
                     "subscription_tier": plan_tier,
+                    "subscription_plan": plan_tier,
+                    "subscription_status": subscription_status,
                     "updated_at": datetime.utcnow().isoformat()
                 }, on_conflict="id").execute()
                 print(f"✅ [WEBHOOK] User profile updated with plan: {plan_tier}")
@@ -2239,6 +2243,8 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
             supabase.table("user_profiles").upsert({
                 "id": user_id,
                 "subscription_tier": plan,
+                "subscription_plan": plan,
+                "subscription_status": subscription.status if subscription else "active",
                 "updated_at": datetime.utcnow().isoformat()
             }).execute()
         
