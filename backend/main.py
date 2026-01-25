@@ -2292,6 +2292,13 @@ async def get_user_profile(request: Request):
 print(f"✅ All endpoints registered successfully")
 print(f"========== BACKEND READY ==========\n")
 
+@app.on_event("startup")
+async def startup_event():
+    """Log when the app actually starts"""
+    print(f"\n🟢 APP STARTUP EVENT FIRED at {datetime.utcnow().isoformat()}")
+    print(f"Environment: STRIPE_SECRET_KEY={'present' if STRIPE_SECRET_KEY else 'MISSING'}")
+    print(f"Environment: SUPABASE_URL={'present' if SUPABASE_URL else 'MISSING'}")
+
 if __name__ == "__main__":
     import uvicorn
 
