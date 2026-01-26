@@ -2042,7 +2042,18 @@ async def check_subscription_status(request: Request):
                 subscription = None
             
             if subscription:
-                plan = subscription.get('plan_tier') or 'standard'
+                raw_tier = subscription.get('plan_tier') or 'standard'
+                
+                # Map numeric tiers to named plans
+                tier_map = {
+                    '99': 'standard',
+                    '199': 'pro',
+                    '299': 'premium',
+                    'standard': 'standard',
+                    'pro': 'pro',
+                    'premium': 'premium'
+                }
+                plan = tier_map.get(str(raw_tier).lower(), 'standard')
                 
                 capabilities = {
                     'standard': {
