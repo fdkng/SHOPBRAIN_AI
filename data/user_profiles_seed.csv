@@ -1,0 +1,2 @@
+id,email,first_name,last_name,username,avatar_url,subscription_tier
+[REPLACE_WITH_USER_ID],[REPLACE_WITH_EMAIL],[REPLACE_WITH_FIRST_NAME],[REPLACE_WITH_LAST_NAME],[REPLACE_WITH_USERNAME],,[free]

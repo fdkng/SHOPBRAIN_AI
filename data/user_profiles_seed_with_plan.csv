@@ -1,0 +1,2 @@
+id,email,first_name,last_name,username,avatar_url,subscription_tier,subscription_plan,subscription_status
+${USER_ID},${EMAIL},${FIRST_NAME},${LAST_NAME},${USERNAME},${AVATAR_URL},premium,premium,active

@@ -23,6 +23,9 @@ export default function Dashboard() {
   const [showProfileMenu, setShowProfileMenu] = useState(false)
   const [showSettingsModal, setShowSettingsModal] = useState(false)
   const [settingsTab, setSettingsTab] = useState('profile')
+  const [showApplyModal, setShowApplyModal] = useState(false)
+  const [selectedActions, setSelectedActions] = useState([])
+  const [applyingActions, setApplyingActions] = useState(false)
   const [analysisResults, setAnalysisResults] = useState(null)
   const [chatMessages, setChatMessages] = useState([
     { role: 'assistant', text: '👋 Bonjour! Je suis ton assistant IA e-commerce. Tu peux me poser des questions sur tes produits, tes stratégies de vente, ou tout ce qui concerne ton e-commerce.' }
@@ -405,6 +408,82 @@ export default function Dashboard() {
       alert('Erreur analyse: ' + err.message)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const prepareActionsForApply = () => {
+    if (!analysisResults) return
+    
+    const actions = []
+    
+    // Add price optimizations
+    if (analysisResults.pricing_strategy?.optimizations) {
+      analysisResults.pricing_strategy.optimizations.forEach(opt => {
+        actions.push({
+          type: 'price',
+          product: opt.product,
+          current: opt.current_price,
+          new: opt.suggested_price,
+          reason: opt.reason
+        })
+      })
+    }
+    
+    // Add product-specific content improvements
+    if (analysisResults.product_recommendations) {
+      analysisResults.product_recommendations.forEach(rec => {
+        if (rec.recommendations && rec.recommendations.length > 0) {
+          rec.recommendations.forEach(r => {
+            if (r.type === 'Titre' || r.type === 'Description') {
+              actions.push({
+                type: r.type.toLowerCase(),
+                product: rec.product_name,
+                issue: r.issue,
+                suggestion: r.suggestion,
+                priority: r.priority
+              })
+            }
+          })
+        }
+      })
+    }
+    
+    setSelectedActions(actions)
+    setShowApplyModal(true)
+  }
+
+  const handleApplyActions = async () => {
+    try {
+      setApplyingActions(true)
+      const { data: { session } } = await supabase.auth.getSession()
+      
+      const response = await fetch(`${API_URL}/api/ai/execute-actions`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          optimization_plan: selectedActions,
+          tier: subscription.plan
+        })
+      })
+      
+      const data = await response.json()
+      
+      if (data.success) {
+        alert('✅ Modifications appliquées avec succès!')
+        setShowApplyModal(false)
+        // Reload products to see changes
+        await loadProducts()
+      } else {
+        alert('❌ Erreur: ' + (data.detail || 'Erreur lors de l\'application'))
+      }
+    } catch (err) {
+      console.error('Error applying actions:', err)
+      alert('❌ Erreur: ' + err.message)
+    } finally {
+      setApplyingActions(false)
     }
   }
 
@@ -803,6 +882,29 @@ export default function Dashboard() {
           <div className="space-y-6">
             {analysisResults ? (
               <>
+                {/* Auto-Apply Actions Button (Pro/Premium only) */}
+                {(subscription?.plan === 'pro' || subscription?.plan === 'premium') && (
+                  <div className="bg-gradient-to-r from-green-900 to-emerald-900 border-2 border-green-500 rounded-lg p-6 shadow-xl">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-white text-xl font-bold mb-2">🤖 Actions Automatiques IA</h3>
+                        <p className="text-green-200 text-sm">L'IA peut appliquer automatiquement les optimisations recommandées à votre boutique Shopify.</p>
+                        {subscription?.plan === 'premium' && (
+                          <p className="text-yellow-300 text-xs mt-1">⭐ Premium: Modifications automatiques sans limites</p>
+                        )}
+                      </div>
+                      <button
+                        onClick={prepareActionsForApply}
+                        className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition flex items-center gap-2"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                        Appliquer les recommandations
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {/* Vue d'ensemble */}
                 <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
                   <h2 className="text-white text-2xl font-bold mb-4">📊 Vue d'ensemble de votre boutique</h2>
@@ -1164,6 +1266,122 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      {/* Apply Actions Confirmation Modal */}
+      {showApplyModal && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" onClick={() => !applyingActions && setShowApplyModal(false)}>
+          <div className="bg-gray-900 rounded-xl max-w-3xl w-full max-h-[80vh] overflow-hidden border border-green-500 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            {/* Header */}
+            <div className="bg-gradient-to-r from-green-900 to-emerald-900 p-6 flex justify-between items-center">
+              <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+                <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Confirmer les modifications
+              </h2>
+              <button
+                onClick={() => !applyingActions && setShowApplyModal(false)}
+                disabled={applyingActions}
+                className="text-white hover:bg-white/20 p-2 rounded-lg disabled:opacity-50"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 overflow-y-auto max-h-[calc(80vh-200px)]">
+              <div className="bg-yellow-900/30 border border-yellow-600 rounded-lg p-4 mb-6">
+                <p className="text-yellow-300 font-bold mb-2">⚠️ Attention</p>
+                <p className="text-yellow-200 text-sm">L'IA va modifier {selectedActions.length} éléments dans votre boutique Shopify. Cette action est irréversible.</p>
+              </div>
+
+              <h3 className="text-white font-bold mb-4 text-lg">Modifications à appliquer:</h3>
+              
+              <div className="space-y-3">
+                {selectedActions.map((action, idx) => (
+                  <div key={idx} className="bg-gray-800 p-4 rounded-lg border border-gray-700">
+                    <div className="flex items-start gap-3">
+                      <div className={`mt-1 w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
+                        action.type === 'price' ? 'bg-green-600' :
+                        action.type === 'titre' ? 'bg-blue-600' : 'bg-purple-600'
+                      }`}>
+                        {action.type === 'price' ? '💰' : action.type === 'titre' ? '📝' : '📄'}
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-white font-bold mb-1">{action.product}</p>
+                        {action.type === 'price' && (
+                          <>
+                            <p className="text-gray-300 text-sm mb-2">{action.reason}</p>
+                            <div className="flex items-center gap-4 text-sm">
+                              <span className="text-red-400">Prix actuel: {action.current}$</span>
+                              <span className="text-gray-500">→</span>
+                              <span className="text-green-400 font-bold">Nouveau prix: {action.new}$</span>
+                            </div>
+                          </>
+                        )}
+                        {(action.type === 'titre' || action.type === 'description') && (
+                          <>
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className={`px-2 py-1 rounded text-xs font-bold ${
+                                action.priority === 'Critique' ? 'bg-red-600' :
+                                action.priority === 'Haute' ? 'bg-orange-600' : 'bg-yellow-600'
+                              }`}>
+                                {action.priority}
+                              </span>
+                              <span className="text-blue-400 text-sm font-bold">{action.type.toUpperCase()}</span>
+                            </div>
+                            <p className="text-gray-400 text-sm mb-1">Problème: {action.issue}</p>
+                            <p className="text-green-300 text-sm">✅ Solution: {action.suggestion}</p>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {selectedActions.length === 0 && (
+                <div className="text-center text-gray-400 py-8">
+                  <p>Aucune action automatique disponible pour le moment.</p>
+                  <p className="text-sm mt-2">Lance une nouvelle analyse pour obtenir des recommandations.</p>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="bg-gray-800 border-t border-gray-700 p-6 flex justify-between items-center">
+              <button
+                onClick={() => setShowApplyModal(false)}
+                disabled={applyingActions}
+                className="text-gray-400 hover:text-white px-6 py-2 rounded-lg transition disabled:opacity-50"
+              >
+                Annuler
+              </button>
+              <button
+                onClick={handleApplyActions}
+                disabled={applyingActions || selectedActions.length === 0}
+                className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-8 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {applyingActions ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    Application en cours...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    Confirmer et appliquer ({selectedActions.length})
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Settings Modal */}
       {showSettingsModal && (
