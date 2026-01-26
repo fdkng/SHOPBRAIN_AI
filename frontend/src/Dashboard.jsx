@@ -50,24 +50,70 @@ export default function Dashboard() {
   const [twoFAEnabled, setTwoFAEnabled] = useState(profile?.two_factor_enabled || false)
   const [saveLoading, setSaveLoading] = useState(false)
 
-  useEffect(() => {
-    // Check if coming from payment success
-    if (window.location.hash.includes('success=true')) {
-      setIsProcessingPayment(true)
+  const verifyPaymentSession = async (sessionId) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        initializeUser()
+        return
+      }
+
+      const response = await fetch(`${API_URL}/api/subscription/verify-session`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ session_id: sessionId })
+      })
+
+      const data = await response.json()
+      if (data.success) {
+        console.log('✅ Payment session verified and plan updated')
+      }
+      
+      // Always refresh user data after verification attempt
+      initializeUser()
+    } catch (err) {
+      console.error('Payment verification error:', err)
+      initializeUser()
     }
+  }
+
+  useEffect(() => {
+    // Check if coming from Stripe payment redirect
+    const params = new URLSearchParams(window.location.search)
+    const sessionId = params.get('session_id')
     
-    initializeUser()
-    
-    // If coming from payment success, check subscription after webhook processes
-    if (window.location.hash.includes('success=true')) {
+    if (sessionId) {
+      // Payment redirect - verify session first, then initialize
+      setIsProcessingPayment(true)
+      verifyPaymentSession(sessionId)
+      
+      // Cleanup URL after a moment
+      setTimeout(() => {
+        const newUrl = window.location.href.split('?')[0]
+        window.history.replaceState({}, document.title, newUrl)
+        setIsProcessingPayment(false)
+      }, 1000)
+    } else if (window.location.hash.includes('success=true')) {
+      // Fallback for hash-based success detection
+      setIsProcessingPayment(true)
+      initializeUser()
+      
+      // Poll for subscription update from webhook
       const checkInterval = setInterval(() => {
         initializeUser()
-      }, 2000) // Check every 2 seconds for up to 10 seconds
+      }, 2000)
       
       setTimeout(() => {
         clearInterval(checkInterval)
         setIsProcessingPayment(false)
+        window.location.hash = window.location.hash.replace('success=true', '')
       }, 10000)
+    } else {
+      // Normal initialization
+      initializeUser()
     }
   }, [])
 
