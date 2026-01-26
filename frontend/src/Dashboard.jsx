@@ -32,6 +32,23 @@ export default function Dashboard() {
   ])
   const [chatInput, setChatInput] = useState('')
   const [chatLoading, setChatLoading] = useState(false)
+  
+  // Settings form states
+  const [profileFirstName, setProfileFirstName] = useState(profile?.first_name || '')
+  const [profileLastName, setProfileLastName] = useState(profile?.last_name || '')
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [darkMode, setDarkMode] = useState(true)
+  const [language, setLanguage] = useState('fr')
+  const [notifications, setNotifications] = useState({
+    email_notifications: true,
+    analysis_complete: true,
+    weekly_reports: true,
+    billing_updates: true
+  })
+  const [twoFAEnabled, setTwoFAEnabled] = useState(profile?.two_factor_enabled || false)
+  const [saveLoading, setSaveLoading] = useState(false)
 
   useEffect(() => {
     // Check if coming from payment success
@@ -227,6 +244,211 @@ export default function Dashboard() {
       }])
     } finally {
       setChatLoading(false)
+    }
+  }
+
+  // ============ SETTINGS HANDLERS ============
+
+  const handleSaveProfile = async () => {
+    try {
+      setSaveLoading(true)
+      const { data: { session } } = await supabase.auth.getSession()
+      const response = await fetch(`${API_URL}/api/auth/profile`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          first_name: profileFirstName,
+          last_name: profileLastName
+        })
+      })
+      const data = await response.json()
+      if (data.success) {
+        alert('✅ Profil mis à jour')
+        await initializeUser()
+      } else {
+        alert('❌ Erreur: ' + (data.detail || 'Erreur'))
+      }
+    } catch (err) {
+      alert('❌ Erreur: ' + err.message)
+    } finally {
+      setSaveLoading(false)
+    }
+  }
+
+  const handleUpdatePassword = async () => {
+    if (!currentPassword || !newPassword) {
+      alert('Veuillez remplir tous les champs')
+      return
+    }
+    if (newPassword !== confirmPassword) {
+      alert('Les mots de passe ne correspondent pas')
+      return
+    }
+    if (newPassword.length < 8) {
+      alert('Le mot de passe doit avoir au moins 8 caractères')
+      return
+    }
+    try {
+      setSaveLoading(true)
+      const { data: { session } } = await supabase.auth.getSession()
+      const response = await fetch(`${API_URL}/api/settings/password`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          current_password: currentPassword,
+          new_password: newPassword
+        })
+      })
+      const data = await response.json()
+      if (data.success) {
+        alert('✅ Mot de passe mis à jour')
+        setCurrentPassword('')
+        setNewPassword('')
+        setConfirmPassword('')
+      } else {
+        alert('❌ Erreur: ' + (data.detail || 'Erreur'))
+      }
+    } catch (err) {
+      alert('❌ Erreur: ' + err.message)
+    } finally {
+      setSaveLoading(false)
+    }
+  }
+
+  const handleToggle2FA = async () => {
+    try {
+      setSaveLoading(true)
+      const { data: { session } } = await supabase.auth.getSession()
+      const endpoint = twoFAEnabled ? '/api/settings/2fa/disable' : '/api/settings/2fa/enable'
+      const response = await fetch(`${API_URL}${endpoint}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        }
+      })
+      const data = await response.json()
+      if (data.success) {
+        setTwoFAEnabled(!twoFAEnabled)
+        alert('✅ 2FA ' + (twoFAEnabled ? 'désactivée' : 'activée'))
+      } else {
+        alert('❌ Erreur: ' + (data.detail || 'Erreur'))
+      }
+    } catch (err) {
+      alert('❌ Erreur: ' + err.message)
+    } finally {
+      setSaveLoading(false)
+    }
+  }
+
+  const handleSaveInterface = async () => {
+    try {
+      setSaveLoading(true)
+      const { data: { session } } = await supabase.auth.getSession()
+      const response = await fetch(`${API_URL}/api/settings/interface`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          dark_mode: darkMode,
+          language: language
+        })
+      })
+      const data = await response.json()
+      if (data.success) {
+        alert('✅ Paramètres updated')
+        localStorage.setItem('darkMode', darkMode)
+        localStorage.setItem('language', language)
+      } else {
+        alert('❌ Erreur: ' + (data.detail || 'Erreur'))
+      }
+    } catch (err) {
+      alert('❌ Erreur: ' + err.message)
+    } finally {
+      setSaveLoading(false)
+    }
+  }
+
+  const handleSaveNotifications = async () => {
+    try {
+      setSaveLoading(true)
+      const { data: { session } } = await supabase.auth.getSession()
+      const response = await fetch(`${API_URL}/api/settings/notifications`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(notifications)
+      })
+      const data = await response.json()
+      if (data.success) {
+        alert('✅ Préférences mises à jour')
+      } else {
+        alert('❌ Erreur: ' + (data.detail || 'Erreur'))
+      }
+    } catch (err) {
+      alert('❌ Erreur: ' + err.message)
+    } finally {
+      setSaveLoading(false)
+    }
+  }
+
+  const handleCancelSubscription = async () => {
+    if (!confirm('Êtes-vous sûr? Cette action est irréversible.')) return
+    try {
+      setSaveLoading(true)
+      const { data: { session } } = await supabase.auth.getSession()
+      const response = await fetch(`${API_URL}/api/subscription/cancel`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        }
+      })
+      const data = await response.json()
+      if (data.success) {
+        alert('✅ Abonnement annulé')
+        await initializeUser()
+      } else {
+        alert('❌ Erreur: ' + (data.detail || 'Erreur'))
+      }
+    } catch (err) {
+      alert('❌ Erreur: ' + err.message)
+    } finally {
+      setSaveLoading(false)
+    }
+  }
+
+  const handleUpdatePaymentMethod = async () => {
+    try {
+      setSaveLoading(true)
+      const { data: { session } } = await supabase.auth.getSession()
+      const response = await fetch(`${API_URL}/api/subscription/update-payment-method`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        }
+      })
+      const data = await response.json()
+      if (data.success && data.portal_url) {
+        window.location.href = data.portal_url
+      } else {
+        alert('❌ Erreur: ' + (data.detail || 'Erreur'))
+      }
+    } catch (err) {
+      alert('❌ Erreur: ' + err.message)
+    } finally {
+      setSaveLoading(false)
     }
   }
 
@@ -1438,11 +1660,11 @@ export default function Dashboard() {
                         <div className="grid grid-cols-2 gap-4">
                           <div>
                             <label className="block text-sm text-gray-400 mb-2">First Name</label>
-                            <input type="text" defaultValue={profile?.first_name} className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white" />
+                            <input type="text" value={profileFirstName} onChange={(e) => setProfileFirstName(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white" />
                           </div>
                           <div>
                             <label className="block text-sm text-gray-400 mb-2">Last Name</label>
-                            <input type="text" defaultValue={profile?.last_name} className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white" />
+                            <input type="text" value={profileLastName} onChange={(e) => setProfileLastName(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white" />
                           </div>
                         </div>
                         <div>
@@ -1454,8 +1676,8 @@ export default function Dashboard() {
                           <label className="block text-sm text-gray-400 mb-2">Email</label>
                           <input type="email" defaultValue={user?.email} disabled className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-gray-400 cursor-not-allowed" />
                         </div>
-                        <button className="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded-lg text-white font-semibold">
-                          Save Changes
+                        <button onClick={handleSaveProfile} disabled={saveLoading} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold">
+                          {saveLoading ? '⏳ Saving...' : 'Save Changes'}
                         </button>
                       </div>
                     </div>
@@ -1470,27 +1692,28 @@ export default function Dashboard() {
                       <div className="space-y-4">
                         <div>
                           <label className="block text-sm text-gray-400 mb-2">Current Password</label>
-                          <input type="password" className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white" />
+                          <input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white" />
                         </div>
                         <div>
                           <label className="block text-sm text-gray-400 mb-2">New Password</label>
-                          <input type="password" className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white" />
+                          <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white" />
                         </div>
                         <div>
                           <label className="block text-sm text-gray-400 mb-2">Confirm New Password</label>
-                          <input type="password" className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white" />
+                          <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white" />
                         </div>
-                        <button className="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded-lg text-white font-semibold">
-                          Update Password
+                        <button onClick={handleUpdatePassword} disabled={saveLoading} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold">
+                          {saveLoading ? '⏳ Updating...' : 'Update Password'}
                         </button>
                       </div>
                     </div>
                     <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
                       <h4 className="text-lg font-semibold text-white mb-2">Two-Factor Authentication</h4>
                       <p className="text-gray-400 mb-4">Add an extra layer of security to your account</p>
-                      <button className="bg-green-600 hover:bg-green-700 px-6 py-2 rounded-lg text-white font-semibold">
-                        Enable 2FA
+                      <button onClick={handleToggle2FA} disabled={saveLoading} className={`${twoFAEnabled ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'} disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold`}>
+                        {saveLoading ? '⏳...' : (twoFAEnabled ? 'Disable 2FA' : 'Enable 2FA')}
                       </button>
+                      {twoFAEnabled && <p className="text-green-400 text-sm mt-2">✅ 2FA is enabled</p>}
                     </div>
                   </div>
                 )}
@@ -1502,20 +1725,23 @@ export default function Dashboard() {
                       <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 flex justify-between items-center">
                         <div>
                           <h4 className="text-white font-semibold">Dark Mode</h4>
-                          <p className="text-sm text-gray-400">Currently enabled</p>
+                          <p className="text-sm text-gray-400">{darkMode ? 'Enabled' : 'Disabled'}</p>
                         </div>
-                        <div className="bg-blue-600 w-12 h-6 rounded-full p-1 cursor-pointer">
-                          <div className="bg-white w-4 h-4 rounded-full ml-auto"></div>
-                        </div>
+                        <button onClick={() => setDarkMode(!darkMode)} className={`${darkMode ? 'bg-blue-600' : 'bg-gray-600'} w-12 h-6 rounded-full p-1 cursor-pointer transition`}>
+                          <div className={`${darkMode ? 'bg-white ml-auto' : 'bg-white'} w-4 h-4 rounded-full transition`}></div>
+                        </button>
                       </div>
                       <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
                         <h4 className="text-white font-semibold mb-2">Language</h4>
-                        <select className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white">
-                          <option>Français</option>
-                          <option>English</option>
-                          <option>Español</option>
+                        <select value={language} onChange={(e) => setLanguage(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white">
+                          <option value="fr">Français</option>
+                          <option value="en">English</option>
+                          <option value="es">Español</option>
                         </select>
                       </div>
+                      <button onClick={handleSaveInterface} disabled={saveLoading} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold w-full">
+                        {saveLoading ? '⏳ Saving...' : 'Save Interface Settings'}
+                      </button>
                     </div>
                   </div>
                 )}
@@ -1524,14 +1750,22 @@ export default function Dashboard() {
                   <div className="space-y-6">
                     <h3 className="text-xl font-bold text-white mb-4">Notification Preferences</h3>
                     <div className="space-y-4">
-                      {['Email notifications', 'Product analysis complete', 'Weekly reports', 'Billing updates'].map(notif => (
-                        <div key={notif} className="bg-gray-800 rounded-lg p-4 border border-gray-700 flex justify-between items-center">
-                          <span className="text-white">{notif}</span>
-                          <div className="bg-blue-600 w-12 h-6 rounded-full p-1 cursor-pointer">
-                            <div className="bg-white w-4 h-4 rounded-full ml-auto"></div>
-                          </div>
+                      {[
+                        { key: 'email_notifications', label: 'Email notifications' },
+                        { key: 'analysis_complete', label: 'Product analysis complete' },
+                        { key: 'weekly_reports', label: 'Weekly reports' },
+                        { key: 'billing_updates', label: 'Billing updates' }
+                      ].map(item => (
+                        <div key={item.key} className="bg-gray-800 rounded-lg p-4 border border-gray-700 flex justify-between items-center">
+                          <span className="text-white">{item.label}</span>
+                          <button onClick={() => setNotifications(prev => ({...prev, [item.key]: !prev[item.key]}))} className={`${notifications[item.key] ? 'bg-blue-600' : 'bg-gray-600'} w-12 h-6 rounded-full p-1 cursor-pointer transition`}>
+                            <div className={`${notifications[item.key] ? 'bg-white ml-auto' : 'bg-white'} w-4 h-4 rounded-full transition`}></div>
+                          </button>
                         </div>
                       ))}
+                      <button onClick={handleSaveNotifications} disabled={saveLoading} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold w-full mt-4">
+                        {saveLoading ? '⏳ Saving...' : 'Save Notification Settings'}
+                      </button>
                     </div>
                   </div>
                 )}
@@ -1555,8 +1789,8 @@ export default function Dashboard() {
                         <button onClick={() => { setShowSettingsModal(false); setShowPlanMenu(true) }} className="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded-lg text-white font-semibold">
                           Change Plan
                         </button>
-                        <button className="bg-red-600 hover:bg-red-700 px-6 py-2 rounded-lg text-white font-semibold">
-                          Cancel Subscription
+                        <button onClick={handleCancelSubscription} disabled={saveLoading} className="bg-red-600 hover:bg-red-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold">
+                          {saveLoading ? '⏳...' : 'Cancel Subscription'}
                         </button>
                       </div>
                     </div>
@@ -1571,8 +1805,8 @@ export default function Dashboard() {
                           <p className="text-sm text-gray-400">Expires 10/2028</p>
                         </div>
                       </div>
-                      <button className="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded-lg text-white font-semibold">
-                        Update Payment Method
+                      <button onClick={handleUpdatePaymentMethod} disabled={saveLoading} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold">
+                        {saveLoading ? '⏳...' : 'Update Payment Method'}
                       </button>
                     </div>
                   </div>
