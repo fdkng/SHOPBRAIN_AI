@@ -2186,6 +2186,43 @@ async def check_subscription_status(request: Request):
             
             if subscription:
                 raw_tier = subscription.get('plan_tier') or 'standard'
+
+                # Sync plan from Stripe if subscription id is available
+                try:
+                    stripe_sub_id = subscription.get('stripe_subscription_id')
+                    if stripe_sub_id:
+                        stripe_sub = stripe.Subscription.retrieve(stripe_sub_id)
+                        items = stripe_sub.get("items", {}).get("data", [])
+                        if items:
+                            price_id = items[0].get("price", {}).get("id")
+                            amount = items[0].get("price", {}).get("unit_amount")
+
+                            def tier_from_amount(amount_cents: int | None):
+                                if amount_cents is None:
+                                    return None
+                                if amount_cents >= 29900:
+                                    return "premium"
+                                if amount_cents >= 19900:
+                                    return "pro"
+                                if amount_cents >= 9900:
+                                    return "standard"
+                                return None
+
+                            stripe_plan = PRICE_TO_TIER.get(price_id) or tier_from_amount(amount)
+                            if stripe_plan and stripe_plan != raw_tier:
+                                raw_tier = stripe_plan
+                                supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+                                supabase.table("subscriptions").update({
+                                    "plan_tier": stripe_plan,
+                                    "updated_at": datetime.utcnow().isoformat()
+                                }).eq("id", subscription.get("id")).execute()
+                                supabase.table("user_profiles").update({
+                                    "subscription_plan": stripe_plan,
+                                    "subscription_tier": stripe_plan,
+                                    "updated_at": datetime.utcnow().isoformat()
+                                }).eq("id", user_id).execute()
+                except Exception as e:
+                    print(f"Stripe sync warning: {e}")
                 
                 # Map numeric tiers to named plans
                 tier_map = {
