@@ -2187,6 +2187,60 @@ async def check_subscription_status(request: Request):
             if subscription:
                 raw_tier = subscription.get('plan_tier') or 'standard'
 
+                # Try to resolve Stripe customer/subscription by email if IDs are missing
+                try:
+                    stripe_customer_id = subscription.get('stripe_customer_id')
+                    stripe_subscription_id = subscription.get('stripe_subscription_id')
+                    if not stripe_customer_id or not stripe_subscription_id:
+                        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+                        profile_result = supabase.table("user_profiles").select("email").eq("id", user_id).execute()
+                        email = profile_result.data[0].get("email") if profile_result.data else None
+
+                        if email:
+                            customers = stripe.Customer.list(email=email, limit=1)
+                            if customers.data:
+                                stripe_customer_id = customers.data[0].get("id")
+                                subs = stripe.Subscription.list(customer=stripe_customer_id, status="all", limit=5)
+                                latest_sub = None
+                                for sub in subs.get("data", []):
+                                    if sub.get("status") in ["active", "trialing", "past_due", "incomplete"]:
+                                        if not latest_sub or sub.get("created", 0) > latest_sub.get("created", 0):
+                                            latest_sub = sub
+                                if latest_sub:
+                                    stripe_subscription_id = latest_sub.get("id")
+                                    items = latest_sub.get("items", {}).get("data", [])
+                                    if items:
+                                        price_id = items[0].get("price", {}).get("id")
+                                        amount = items[0].get("price", {}).get("unit_amount")
+
+                                        def tier_from_amount(amount_cents: int | None):
+                                            if amount_cents is None:
+                                                return None
+                                            if amount_cents >= 29900:
+                                                return "premium"
+                                            if amount_cents >= 19900:
+                                                return "pro"
+                                            if amount_cents >= 9900:
+                                                return "standard"
+                                            return None
+
+                                        stripe_plan = PRICE_TO_TIER.get(price_id) or tier_from_amount(amount)
+                                        if stripe_plan:
+                                            raw_tier = stripe_plan
+                                    supabase.table("subscriptions").update({
+                                        "stripe_customer_id": stripe_customer_id,
+                                        "stripe_subscription_id": stripe_subscription_id,
+                                        "plan_tier": raw_tier,
+                                        "updated_at": datetime.utcnow().isoformat()
+                                    }).eq("id", subscription.get("id")).execute()
+                                    supabase.table("user_profiles").update({
+                                        "subscription_plan": raw_tier,
+                                        "subscription_tier": raw_tier,
+                                        "updated_at": datetime.utcnow().isoformat()
+                                    }).eq("id", user_id).execute()
+                except Exception as e:
+                    print(f"Stripe email sync warning: {e}")
+
                 # Sync plan from Stripe if subscription id is available
                 try:
                     stripe_sub_id = subscription.get('stripe_subscription_id')
