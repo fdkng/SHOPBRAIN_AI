@@ -13,7 +13,10 @@ export default function Dashboard() {
   const [profile, setProfile] = useState(null)
   const [subscription, setSubscription] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState('overview')
+  const [activeTab, setActiveTab] = useState(() => {
+    if (typeof window === 'undefined') return 'overview'
+    return localStorage.getItem('activeTab') || 'overview'
+  })
   const [shopifyUrl, setShopifyUrl] = useState('')
   const [shopifyToken, setShopifyToken] = useState('')
   const [products, setProducts] = useState(null)
@@ -22,14 +25,28 @@ export default function Dashboard() {
   const [showPlanMenu, setShowPlanMenu] = useState(false)
   const [showProfileMenu, setShowProfileMenu] = useState(false)
   const [showSettingsModal, setShowSettingsModal] = useState(false)
-  const [settingsTab, setSettingsTab] = useState('profile')
+  const [settingsTab, setSettingsTab] = useState(() => {
+    if (typeof window === 'undefined') return 'profile'
+    return localStorage.getItem('settingsTab') || 'profile'
+  })
   const [showApplyModal, setShowApplyModal] = useState(false)
   const [selectedActions, setSelectedActions] = useState([])
   const [applyingActions, setApplyingActions] = useState(false)
   const [analysisResults, setAnalysisResults] = useState(null)
-  const [chatMessages, setChatMessages] = useState([
+  const defaultChatMessages = [
     { role: 'assistant', text: '👋 Bonjour! Je suis ton assistant IA e-commerce. Tu peux me poser des questions sur tes produits, tes stratégies de vente, ou tout ce qui concerne ton e-commerce.' }
-  ])
+  ]
+  const [chatMessages, setChatMessages] = useState(() => {
+    if (typeof window === 'undefined') return defaultChatMessages
+    try {
+      const stored = localStorage.getItem('chatMessages')
+      if (!stored) return defaultChatMessages
+      const parsed = JSON.parse(stored)
+      return Array.isArray(parsed) && parsed.length > 0 ? parsed : defaultChatMessages
+    } catch {
+      return defaultChatMessages
+    }
+  })
   const [chatInput, setChatInput] = useState('')
   const [chatLoading, setChatLoading] = useState(false)
   
@@ -339,6 +356,24 @@ export default function Dashboard() {
     }
   }, [darkMode])
 
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('activeTab', activeTab)
+    }
+  }, [activeTab])
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('settingsTab', settingsTab)
+    }
+  }, [settingsTab])
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('chatMessages', JSON.stringify(chatMessages.slice(-50)))
+    }
+  }, [chatMessages])
+
   const initializeUser = async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession()
@@ -413,6 +448,24 @@ export default function Dashboard() {
         }
       } catch (err) {
         console.warn('Could not load notifications preferences:', err)
+      }
+
+      // Fetch Shopify connection (shop domain) for memory across devices
+      try {
+        const shopResp = await fetch(`${API_URL}/api/shopify/connection`, {
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json'
+          }
+        })
+        if (shopResp.ok) {
+          const shopData = await shopResp.json()
+          if (shopData.success && shopData.connection?.shop_domain) {
+            setShopifyUrl(shopData.connection.shop_domain)
+          }
+        }
+      } catch (err) {
+        console.warn('Could not load Shopify connection:', err)
       }
       
       // Vérifie l'abonnement

@@ -1222,6 +1222,24 @@ async def shopify_callback(code: str, shop: str, state: str, hmac: str = None):
         raise HTTPException(status_code=500, detail=f"OAuth failed: {str(e)}")
 
 
+@app.get("/api/shopify/connection")
+async def get_shopify_connection(request: Request):
+    """Récupère la boutique Shopify connectée (sans exposer le token)"""
+    user_id = get_user_id(request)
+
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        result = supabase.table("shopify_connections").select("shop_domain,created_at,updated_at").eq("user_id", user_id).execute()
+
+        if result.data:
+            return {"success": True, "connection": result.data[0]}
+
+        return {"success": True, "connection": None}
+    except Exception as e:
+        print(f"Error fetching Shopify connection: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/shopify/test-connection")
 async def test_shopify_connection(payload: dict, request: Request):
     """🧪 TEST: Valide la connexion Shopify AVANT de l'utiliser
@@ -2186,11 +2204,15 @@ async def check_subscription_status(request: Request):
             
             if subscription:
                 raw_tier = subscription.get('plan_tier') or 'standard'
+                stripe_customer_id = subscription.get('stripe_customer_id')
+                stripe_subscription_id = subscription.get('stripe_subscription_id')
+
+                # Normalize invalid Stripe subscription IDs
+                if stripe_subscription_id and not str(stripe_subscription_id).startswith("sub_"):
+                    stripe_subscription_id = None
 
                 # Try to resolve Stripe customer/subscription by email if IDs are missing
                 try:
-                    stripe_customer_id = subscription.get('stripe_customer_id')
-                    stripe_subscription_id = subscription.get('stripe_subscription_id')
                     if not stripe_customer_id or not stripe_subscription_id:
                         supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
                         profile_result = supabase.table("user_profiles").select("email").eq("id", user_id).execute()
@@ -2241,9 +2263,53 @@ async def check_subscription_status(request: Request):
                 except Exception as e:
                     print(f"Stripe email sync warning: {e}")
 
+                # Always try to sync latest plan from Stripe customer if available
+                try:
+                    if stripe_customer_id:
+                        subs = stripe.Subscription.list(customer=stripe_customer_id, status="all", limit=5)
+                        latest_sub = None
+                        for sub in subs.get("data", []):
+                            if sub.get("status") in ["active", "trialing", "past_due", "incomplete"]:
+                                if not latest_sub or sub.get("created", 0) > latest_sub.get("created", 0):
+                                    latest_sub = sub
+
+                        if latest_sub:
+                            items = latest_sub.get("items", {}).get("data", [])
+                            price_id = items[0].get("price", {}).get("id") if items else None
+                            amount = items[0].get("price", {}).get("unit_amount") if items else None
+
+                            def tier_from_amount(amount_cents: int | None):
+                                if amount_cents is None:
+                                    return None
+                                if amount_cents >= 29900:
+                                    return "premium"
+                                if amount_cents >= 19900:
+                                    return "pro"
+                                if amount_cents >= 9900:
+                                    return "standard"
+                                return None
+
+                            stripe_plan = PRICE_TO_TIER.get(price_id) or tier_from_amount(amount)
+                            if stripe_plan:
+                                raw_tier = stripe_plan
+                                stripe_subscription_id = latest_sub.get("id")
+                                supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+                                supabase.table("subscriptions").update({
+                                    "stripe_subscription_id": stripe_subscription_id,
+                                    "plan_tier": raw_tier,
+                                    "updated_at": datetime.utcnow().isoformat()
+                                }).eq("id", subscription.get("id")).execute()
+                                supabase.table("user_profiles").update({
+                                    "subscription_plan": raw_tier,
+                                    "subscription_tier": raw_tier,
+                                    "updated_at": datetime.utcnow().isoformat()
+                                }).eq("id", user_id).execute()
+                except Exception as e:
+                    print(f"Stripe customer sync warning: {e}")
+
                 # Sync plan from Stripe if subscription id is available
                 try:
-                    stripe_sub_id = subscription.get('stripe_subscription_id')
+                    stripe_sub_id = stripe_subscription_id or subscription.get('stripe_subscription_id')
                     if stripe_sub_id:
                         stripe_sub = stripe.Subscription.retrieve(stripe_sub_id)
                         items = stripe_sub.get("items", {}).get("data", [])
