@@ -1002,6 +1002,88 @@ async def upload_avatar(request: Request, file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _generate_api_key() -> str:
+    return f"sb_live_{uuid.uuid4().hex}{uuid.uuid4().hex}"
+
+
+@app.get("/api/settings/api-keys")
+async def list_api_keys(request: Request):
+    user_id = get_user_id(request)
+
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        result = supabase.table("api_keys").select("id,name,key_prefix,key_last4,revoked,created_at").eq("user_id", user_id).order("created_at", desc=True).execute()
+        return {"success": True, "keys": result.data or []}
+    except Exception as e:
+        print(f"Error listing api keys: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/settings/api-keys")
+async def create_api_key(payload: dict, request: Request):
+    user_id = get_user_id(request)
+    name = (payload.get("name") or "").strip() or "API Key"
+
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        api_key = _generate_api_key()
+        key_hash = hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+        key_prefix = api_key[:12]
+        key_last4 = api_key[-4:]
+
+        insert_result = supabase.table("api_keys").insert({
+            "user_id": user_id,
+            "name": name,
+            "key_hash": key_hash,
+            "key_prefix": key_prefix,
+            "key_last4": key_last4,
+            "revoked": False
+        }).execute()
+
+        created = insert_result.data[0] if insert_result.data else None
+        if not created:
+            raise HTTPException(status_code=500, detail="Unable to create API key")
+
+        return {
+            "success": True,
+            "api_key": api_key,
+            "key": {
+                "id": created.get("id"),
+                "name": created.get("name"),
+                "key_prefix": created.get("key_prefix"),
+                "key_last4": created.get("key_last4"),
+                "revoked": created.get("revoked"),
+                "created_at": created.get("created_at")
+            }
+        }
+    except Exception as e:
+        print(f"Error creating api key: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/settings/api-keys/revoke")
+async def revoke_api_key(payload: dict, request: Request):
+    user_id = get_user_id(request)
+    key_id = payload.get("key_id")
+    if not key_id:
+        raise HTTPException(status_code=400, detail="key_id requis")
+
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        result = supabase.table("api_keys").update({
+            "revoked": True,
+            "revoked_at": datetime.utcnow().isoformat()
+        }).eq("id", key_id).eq("user_id", user_id).execute()
+
+        if not result.data:
+            raise HTTPException(status_code=404, detail="API key introuvable")
+
+        return {"success": True}
+    except Exception as e:
+        print(f"Error revoking api key: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/user/profile/update")
 async def update_user_shopify(payload: dict, request: Request):
     """Met à jour les credentials Shopify de l'utilisateur"""

@@ -54,6 +54,8 @@ export default function Dashboard() {
   const [saveLoading, setSaveLoading] = useState(false)
   const [avatarUploading, setAvatarUploading] = useState(false)
   const avatarInputRef = useRef(null)
+  const [apiKeys, setApiKeys] = useState([])
+  const [apiLoading, setApiLoading] = useState(false)
 
   const translations = {
     fr: {
@@ -234,6 +236,93 @@ export default function Dashboard() {
       initializeUser()
     }
   }, [])
+
+  useEffect(() => {
+    if (showSettingsModal && settingsTab === 'api') {
+      loadApiKeys()
+    }
+  }, [showSettingsModal, settingsTab])
+
+  const loadApiKeys = async () => {
+    try {
+      setApiLoading(true)
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+
+      const response = await fetch(`${API_URL}/api/settings/api-keys`, {
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`
+        }
+      })
+      const data = await response.json()
+      if (data.success) {
+        setApiKeys(data.keys || [])
+      }
+    } catch (err) {
+      console.error('API keys load error:', err)
+    } finally {
+      setApiLoading(false)
+    }
+  }
+
+  const handleGenerateApiKey = async () => {
+    try {
+      setApiLoading(true)
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+
+      const response = await fetch(`${API_URL}/api/settings/api-keys`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ name: 'Production Key' })
+      })
+      const data = await response.json()
+      if (data.success) {
+        alert(`✅ Nouvelle clé générée:\n${data.api_key}\n\nCopie-la maintenant, elle ne sera plus affichée.`)
+        setApiKeys((prev) => [data.key, ...prev])
+      } else {
+        alert('❌ Erreur: ' + (data.detail || 'Erreur'))
+      }
+    } catch (err) {
+      console.error('API key generate error:', err)
+      alert('❌ Erreur lors de la génération')
+    } finally {
+      setApiLoading(false)
+    }
+  }
+
+  const handleRevokeApiKey = async (keyId) => {
+    if (!window.confirm('Révoquer cette clé ?')) return
+
+    try {
+      setApiLoading(true)
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+
+      const response = await fetch(`${API_URL}/api/settings/api-keys/revoke`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ key_id: keyId })
+      })
+      const data = await response.json()
+      if (data.success) {
+        setApiKeys((prev) => prev.map((k) => k.id === keyId ? { ...k, revoked: true } : k))
+      } else {
+        alert('❌ Erreur: ' + (data.detail || 'Erreur'))
+      }
+    } catch (err) {
+      console.error('API key revoke error:', err)
+      alert('❌ Erreur lors de la révocation')
+    } finally {
+      setApiLoading(false)
+    }
+  }
 
   useEffect(() => {
     const root = document.documentElement
@@ -2061,21 +2150,37 @@ export default function Dashboard() {
                     <div className="bg-yellow-900/20 border border-yellow-700 rounded-lg p-4 mb-4">
                       <p className="text-yellow-400 text-sm">{t('apiWarning')}</p>
                     </div>
-                    <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-                      <div className="flex justify-between items-center mb-4">
-                        <div>
-                          <h4 className="text-white font-semibold">{t('productionApiKey')}</h4>
-                          <p className="text-sm text-gray-400">{t('createdOn')} {new Date().toLocaleDateString()}</p>
+                    {apiLoading && <div className="text-gray-400">Chargement...</div>}
+                    {!apiLoading && apiKeys.length === 0 && (
+                      <div className="text-gray-400">Aucune clé API disponible.</div>
+                    )}
+                    <div className="space-y-4">
+                      {apiKeys.map((keyItem) => (
+                        <div key={keyItem.id} className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                          <div className="flex justify-between items-center mb-4">
+                            <div>
+                              <h4 className="text-white font-semibold">{keyItem.name || t('productionApiKey')}</h4>
+                              <p className="text-sm text-gray-400">{t('createdOn')} {new Date(keyItem.created_at).toLocaleDateString()}</p>
+                            </div>
+                            <button
+                              onClick={() => handleRevokeApiKey(keyItem.id)}
+                              disabled={keyItem.revoked || apiLoading}
+                              className="bg-red-600 hover:bg-red-700 disabled:opacity-50 px-4 py-2 rounded-lg text-white text-sm"
+                            >
+                              {keyItem.revoked ? 'Révoquée' : t('revoke')}
+                            </button>
+                          </div>
+                          <div className="bg-gray-700 rounded p-3 font-mono text-sm text-gray-300">
+                            {keyItem.key_prefix}••••{keyItem.key_last4}
+                          </div>
                         </div>
-                        <button className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg text-white text-sm">
-                          {t('revoke')}
-                        </button>
-                      </div>
-                      <div className="bg-gray-700 rounded p-3 font-mono text-sm text-gray-300">
-                        sk_live_••••••••••••••••••••••••••••
-                      </div>
+                      ))}
                     </div>
-                    <button className="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded-lg text-white font-semibold">
+                    <button
+                      onClick={handleGenerateApiKey}
+                      disabled={apiLoading}
+                      className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold"
+                    >
                       {t('generateKey')}
                     </button>
                   </div>

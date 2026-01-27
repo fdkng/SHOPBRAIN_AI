@@ -33,11 +33,27 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   updated_at TIMESTAMP DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS api_keys (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  name TEXT,
+  key_hash TEXT NOT NULL,
+  key_prefix TEXT NOT NULL,
+  key_last4 TEXT NOT NULL,
+  revoked BOOLEAN DEFAULT FALSE,
+  revoked_at TIMESTAMP,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id);
+CREATE INDEX IF NOT EXISTS idx_api_keys_key_prefix ON api_keys(key_prefix);
+
 CREATE INDEX IF NOT EXISTS idx_subscriptions_user_id ON subscriptions(user_id);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_stripe_subscription_id ON subscriptions(stripe_subscription_id);
 
 ALTER TABLE products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE subscriptions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY;
 
 DO $$
 BEGIN
@@ -103,6 +119,34 @@ BEGIN
   ) THEN
     CREATE POLICY "Users can only update their own subscriptions"
       ON subscriptions FOR UPDATE
+      USING (auth.uid() = user_id);
+  END IF;
+
+  -- API keys policies
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'api_keys' AND policyname = 'Users can only view their own api keys'
+  ) THEN
+    CREATE POLICY "Users can only view their own api keys"
+      ON api_keys FOR SELECT
+      USING (auth.uid() = user_id);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'api_keys' AND policyname = 'Users can only insert their own api keys'
+  ) THEN
+    CREATE POLICY "Users can only insert their own api keys"
+      ON api_keys FOR INSERT
+      WITH CHECK (auth.uid() = user_id);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'api_keys' AND policyname = 'Users can only update their own api keys'
+  ) THEN
+    CREATE POLICY "Users can only update their own api keys"
+      ON api_keys FOR UPDATE
       USING (auth.uid() = user_id);
   END IF;
 END
