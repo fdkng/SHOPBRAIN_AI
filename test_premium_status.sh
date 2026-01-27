@@ -1,7 +1,7 @@
 #!/bin/bash
 # Test script to verify premium subscription status works
 
-BACKEND_URL="https://shopbrain-ai.onrender.com"
+BACKEND_URL="https://shopbrain-backend.onrender.com"
 USER_ID="${1:-550e8400-e29b-41d4-a716-446655440000}"  # Use provided user_id or dummy UUID
 JWT_TOKEN="${2:-dummy_token}"
 
@@ -18,7 +18,7 @@ response=$(curl -s -w "\n%{http_code}" \
   -H "X-User-ID: $USER_ID")
 
 http_code=$(echo "$response" | tail -n1)
-body=$(echo "$response" | head -n-1)
+body=$(echo "$response" | sed '$d')
 
 echo "HTTP Status: $http_code"
 echo "Response:"

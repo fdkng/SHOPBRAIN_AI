@@ -1,7 +1,7 @@
 #!/bin/bash
 # Quick test script to verify backend health
 
-BACKEND_URL="https://shopbrain-ai.onrender.com"
+BACKEND_URL="https://shopbrain-backend.onrender.com"
 TIMEOUT=5
 
 echo "🔍 Testing backend health..."
@@ -9,7 +9,7 @@ echo "URL: $BACKEND_URL/health"
 
 response=$(curl -s -w "\n%{http_code}" -m $TIMEOUT "$BACKEND_URL/health")
 http_code=$(echo "$response" | tail -n1)
-body=$(echo "$response" | head -n-1)
+body=$(echo "$response" | sed '$d')
 
 echo "HTTP Status: $http_code"
 echo "Response Body:"
