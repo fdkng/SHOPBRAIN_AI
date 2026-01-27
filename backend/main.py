@@ -151,6 +151,20 @@ def get_user_id(request: Request) -> str:
             print(f"❌ JWT audience validation failed: {e}")
         except Exception as e:
             print(f"❌ JWT decode error: {e}")
+
+        # Fallback: API key auth (sb_live_...)
+        try:
+            if token.startswith("sb_live_"):
+                supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+                key_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+                result = supabase.table("api_keys").select("user_id,revoked").eq("key_hash", key_hash).limit(1).execute()
+                if result.data:
+                    api_key_row = result.data[0]
+                    if not api_key_row.get("revoked"):
+                        print("✅ API key authenticated")
+                        return api_key_row.get("user_id")
+        except Exception as e:
+            print(f"❌ API key auth error: {e}")
     
     # Fallback: try to extract user_id from header (for dev/testing)
     try:
