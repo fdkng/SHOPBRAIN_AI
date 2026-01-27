@@ -9,21 +9,26 @@ echo "======================="
 # Change to repo root
 cd "$(dirname "$0")"
 
+PYTHON_BIN="python3"
+if [ -x "./.venv/bin/python" ]; then
+    PYTHON_BIN="./.venv/bin/python"
+fi
+
 # Check Python version
 echo "✓ Python version:"
-python3 --version
+"$PYTHON_BIN" --version
 
 # Check if requirements are installed
 echo ""
 echo "✓ Checking main dependencies:"
-python3 -c "import fastapi; print(f'  FastAPI: {fastapi.__version__}')" || echo "  ⚠ FastAPI not installed (install with: pip install -r backend/requirements.txt)"
-python3 -c "import uvicorn; print(f'  Uvicorn: {uvicorn.__version__}')" || echo "  ⚠ Uvicorn not installed"
-python3 -c "import openai; print(f'  OpenAI: {openai.__version__}')" || echo "  ⚠ OpenAI not installed"
+"$PYTHON_BIN" -c "import fastapi; print(f'  FastAPI: {fastapi.__version__}')" || echo "  ⚠ FastAPI not installed (install with: pip install -r backend/requirements.txt)"
+"$PYTHON_BIN" -c "import uvicorn; print(f'  Uvicorn: {uvicorn.__version__}')" || echo "  ⚠ Uvicorn not installed"
+"$PYTHON_BIN" -c "import openai; print(f'  OpenAI: {openai.__version__}')" || echo "  ⚠ OpenAI not installed"
 
 # Check if backend.main can be imported
 echo ""
 echo "✓ Testing backend.main import:"
-python3 -c "from backend.main import app; print('  ✓ Successfully imported backend.main:app')" || {
+"$PYTHON_BIN" -c "from backend.main import app; print('  ✓ Successfully imported backend.main:app')" || {
     echo "  ✗ Failed to import backend.main"
     exit 1
 }
@@ -31,7 +36,7 @@ python3 -c "from backend.main import app; print('  ✓ Successfully imported bac
 # Quick syntax check
 echo ""
 echo "✓ Checking backend/main.py syntax:"
-python3 -m py_compile backend/main.py && echo "  ✓ No syntax errors" || {
+"$PYTHON_BIN" -m py_compile backend/main.py && echo "  ✓ No syntax errors" || {
     echo "  ✗ Syntax errors found"
     exit 1
 }
@@ -39,7 +44,7 @@ python3 -m py_compile backend/main.py && echo "  ✓ No syntax errors" || {
 # Check environment variables
 echo ""
 echo "✓ Environment variables status:"
-python3 << 'EOF'
+"$PYTHON_BIN" << 'EOF'
 import os
 from dotenv import load_dotenv
 
