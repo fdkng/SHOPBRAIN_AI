@@ -2466,12 +2466,10 @@ async def update_password(payload: dict, request: Request):
         raise HTTPException(status_code=400, detail="Le nouveau mot de passe doit avoir au moins 8 caractères")
     
     try:
-        # Use Supabase Auth to update password
-        user = supabase.auth.get_user(session.access_token)
-        
-        # For now, we'll trust the frontend validation
-        # In production, you'd want to verify current_password against stored hash
-        supabase.auth.update_user({"password": new_password})
+        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+        # Use admin API to update password for the authenticated user
+        supabase.auth.admin.update_user_by_id(user_id, {"password": new_password})
         
         return {"success": True, "message": "Mot de passe mis à jour avec succès"}
     except Exception as e:
@@ -2706,7 +2704,7 @@ async def change_plan(payload: dict, request: Request):
                 mode="subscription",
                 line_items=[
                     {
-                        "price": TIER_TO_PRICE.get(new_plan, TIER_TO_PRICE["standard"]),
+                        "price": STRIPE_PLANS.get(new_plan, STRIPE_PLANS["standard"]),
                         "quantity": 1,
                     }
                 ],
