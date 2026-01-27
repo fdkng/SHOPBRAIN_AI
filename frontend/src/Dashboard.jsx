@@ -204,19 +204,25 @@ export default function Dashboard() {
     // Check if coming from Stripe payment redirect
     const params = new URLSearchParams(window.location.search)
     const sessionId = params.get('session_id')
+
+    const hash = window.location.hash || ''
+    const hashQuery = hash.includes('?') ? hash.split('?')[1] : ''
+    const hashParams = new URLSearchParams(hashQuery)
+    const hashSessionId = hashParams.get('session_id')
+    const hasHashSuccess = hash.includes('success=true') || hashParams.get('success') === 'true'
     
-    if (sessionId) {
+    if (sessionId || hashSessionId) {
       // Payment redirect - verify session first, then initialize
       setIsProcessingPayment(true)
-      verifyPaymentSession(sessionId)
+      verifyPaymentSession(sessionId || hashSessionId)
       
       // Cleanup URL after a moment
       setTimeout(() => {
-        const newUrl = window.location.href.split('?')[0]
-        window.history.replaceState({}, document.title, newUrl)
+        const baseUrl = window.location.href.split('?')[0].split('#')[0]
+        window.history.replaceState({}, document.title, baseUrl)
         setIsProcessingPayment(false)
       }, 1000)
-    } else if (window.location.hash.includes('success=true')) {
+    } else if (hasHashSuccess) {
       // Fallback for hash-based success detection
       setIsProcessingPayment(true)
       initializeUser()
