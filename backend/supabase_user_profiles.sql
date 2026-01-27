@@ -8,7 +8,9 @@ CREATE TABLE IF NOT EXISTS user_profiles (
     avatar_url TEXT,
     bio TEXT,
     subscription_plan TEXT, -- 'free', 'standard', 'pro', 'premium'
+    subscription_tier TEXT, -- legacy/alias for plan
     subscription_status TEXT, -- 'active', 'inactive', 'canceled'
+    two_factor_enabled BOOLEAN DEFAULT FALSE,
     subscription_started_at TIMESTAMP WITH TIME ZONE,
     subscription_ends_at TIMESTAMP WITH TIME ZONE,
     stripe_customer_id TEXT UNIQUE,

@@ -361,9 +361,58 @@ export default function Dashboard() {
         if (profileResp.ok) {
           const profileData = await profileResp.json()
           setProfile(profileData)
+          setProfileFirstName(profileData.first_name || '')
+          setProfileLastName(profileData.last_name || '')
+          setTwoFAEnabled(Boolean(profileData.two_factor_enabled))
         }
       } catch (err) {
         console.warn('Could not load profile:', err)
+      }
+
+      // Fetch interface preferences
+      try {
+        const prefsResp = await fetch(`${API_URL}/api/settings/interface`, {
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json'
+          }
+        })
+        if (prefsResp.ok) {
+          const prefsData = await prefsResp.json()
+          if (prefsData.success && prefsData.preferences) {
+            if (typeof prefsData.preferences.dark_mode === 'boolean') {
+              setDarkMode(prefsData.preferences.dark_mode)
+            }
+            if (prefsData.preferences.language) {
+              setLanguage(prefsData.preferences.language)
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Could not load interface preferences:', err)
+      }
+
+      // Fetch notification preferences
+      try {
+        const notifResp = await fetch(`${API_URL}/api/settings/notifications`, {
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json'
+          }
+        })
+        if (notifResp.ok) {
+          const notifData = await notifResp.json()
+          if (notifData.success && notifData.preferences) {
+            setNotifications({
+              email_notifications: Boolean(notifData.preferences.email_notifications),
+              analysis_complete: Boolean(notifData.preferences.analysis_complete),
+              weekly_reports: Boolean(notifData.preferences.weekly_reports),
+              billing_updates: Boolean(notifData.preferences.billing_updates)
+            })
+          }
+        }
+      } catch (err) {
+        console.warn('Could not load notifications preferences:', err)
       }
       
       // Vérifie l'abonnement

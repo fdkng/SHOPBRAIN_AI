@@ -1003,7 +1003,7 @@ async def upload_avatar(request: Request, file: UploadFile = File(...)):
         supabase.storage.from_(bucket_name).upload(
             storage_path,
             content,
-            {"content-type": file.content_type, "upsert": True}
+            {"content-type": file.content_type}
         )
 
         avatar_url = supabase.storage.from_(bucket_name).get_public_url(storage_path)
@@ -2615,6 +2615,24 @@ async def update_interface_settings(payload: dict, request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/settings/interface")
+async def get_interface_settings(request: Request):
+    """Récupère les préférences d'interface"""
+    user_id = get_user_id(request)
+
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        result = supabase.table("user_preferences").select("dark_mode,language").eq("user_id", user_id).execute()
+
+        if result.data:
+            return {"success": True, "preferences": result.data[0]}
+
+        return {"success": True, "preferences": {"dark_mode": True, "language": "fr"}}
+    except Exception as e:
+        print(f"Error fetching interface settings: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/subscription/cancel")
 async def cancel_subscription(request: Request):
     """Annule l'abonnement actuel"""
@@ -2669,7 +2687,16 @@ async def update_payment_method(payload: dict, request: Request):
         
         subscription = result.data[0]
         stripe_customer_id = subscription.get("stripe_customer_id")
-        
+        stripe_subscription_id = subscription.get("stripe_subscription_id")
+
+        if not stripe_customer_id and stripe_subscription_id:
+            stripe_sub = stripe.Subscription.retrieve(stripe_subscription_id)
+            stripe_customer_id = stripe_sub.get("customer")
+            if stripe_customer_id:
+                supabase.table("subscriptions").update({
+                    "stripe_customer_id": stripe_customer_id
+                }).eq("user_id", user_id).execute()
+
         if not stripe_customer_id:
             raise HTTPException(status_code=400, detail="Pas de compte Stripe associé")
         

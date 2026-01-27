@@ -45,6 +45,17 @@ CREATE TABLE IF NOT EXISTS api_keys (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS user_preferences (
+  user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  dark_mode BOOLEAN DEFAULT TRUE,
+  language TEXT DEFAULT 'fr',
+  email_notifications BOOLEAN DEFAULT TRUE,
+  analysis_complete BOOLEAN DEFAULT TRUE,
+  weekly_reports BOOLEAN DEFAULT TRUE,
+  billing_updates BOOLEAN DEFAULT TRUE,
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id);
 CREATE INDEX IF NOT EXISTS idx_api_keys_key_prefix ON api_keys(key_prefix);
 
@@ -54,6 +65,7 @@ CREATE INDEX IF NOT EXISTS idx_subscriptions_stripe_subscription_id ON subscript
 ALTER TABLE products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE subscriptions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_preferences ENABLE ROW LEVEL SECURITY;
 
 DO $$
 BEGIN
@@ -147,6 +159,34 @@ BEGIN
   ) THEN
     CREATE POLICY "Users can only update their own api keys"
       ON api_keys FOR UPDATE
+      USING (auth.uid() = user_id);
+  END IF;
+
+  -- User preferences policies
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'user_preferences' AND policyname = 'Users can view their own preferences'
+  ) THEN
+    CREATE POLICY "Users can view their own preferences"
+      ON user_preferences FOR SELECT
+      USING (auth.uid() = user_id);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'user_preferences' AND policyname = 'Users can insert their own preferences'
+  ) THEN
+    CREATE POLICY "Users can insert their own preferences"
+      ON user_preferences FOR INSERT
+      WITH CHECK (auth.uid() = user_id);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'user_preferences' AND policyname = 'Users can update their own preferences'
+  ) THEN
+    CREATE POLICY "Users can update their own preferences"
+      ON user_preferences FOR UPDATE
       USING (auth.uid() = user_id);
   END IF;
 END
