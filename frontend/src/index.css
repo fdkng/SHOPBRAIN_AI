@@ -88,3 +88,27 @@ html, body, #root {
     linear-gradient(to right, rgba(255, 255, 255, 0.1) 1px, transparent 1px),
     linear-gradient(to bottom, rgba(255, 255, 255, 0.1) 1px, transparent 1px);
 }
+
+.theme-light body,
+.theme-light #root {
+  background-color: #f8fafc;
+  color: #0f172a;
+}
+
+.theme-light .bg-gradient-to-r {
+  background-image: none !important;
+  background-color: #e2e8f0 !important;
+}
+
+.theme-light .bg-gray-900 { background-color: #f8fafc !important; }
+.theme-light .bg-gray-800 { background-color: #f1f5f9 !important; }
+.theme-light .bg-gray-700 { background-color: #e2e8f0 !important; }
+.theme-light .bg-black { background-color: #ffffff !important; }
+
+.theme-light .border-gray-700 { border-color: #e2e8f0 !important; }
+.theme-light .border-gray-600 { border-color: #cbd5e1 !important; }
+
+.theme-light .text-white { color: #0f172a !important; }
+.theme-light .text-gray-300 { color: #475569 !important; }
+.theme-light .text-gray-400 { color: #64748b !important; }
+.theme-light .text-gray-500 { color: #94a3b8 !important; }

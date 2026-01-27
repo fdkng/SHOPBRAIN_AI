@@ -39,8 +39,11 @@ export default function Dashboard() {
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
-  const [darkMode, setDarkMode] = useState(true)
-  const [language, setLanguage] = useState('fr')
+  const [darkMode, setDarkMode] = useState(() => {
+    const stored = localStorage.getItem('darkMode')
+    return stored ? stored === 'true' : true
+  })
+  const [language, setLanguage] = useState(() => localStorage.getItem('language') || 'fr')
   const [notifications, setNotifications] = useState({
     email_notifications: true,
     analysis_complete: true,
@@ -51,6 +54,119 @@ export default function Dashboard() {
   const [saveLoading, setSaveLoading] = useState(false)
   const [avatarUploading, setAvatarUploading] = useState(false)
   const avatarInputRef = useRef(null)
+
+  const translations = {
+    fr: {
+      accountSettings: 'Paramètres du compte',
+      tabProfile: 'Profil',
+      tabSecurity: 'Sécurité',
+      tabInterface: 'Interface',
+      tabNotifications: 'Notifications',
+      tabBilling: 'Facturation',
+      tabApiKeys: 'Clés API',
+      profileInformation: 'Informations du profil',
+      uploadPhoto: 'Importer une photo',
+      firstName: 'Prénom',
+      lastName: 'Nom',
+      username: 'Nom d’utilisateur',
+      usernameCannotChange: 'Le nom d’utilisateur ne peut pas être modifié',
+      email: 'Email',
+      saveChanges: 'Enregistrer',
+      saving: '⏳ Enregistrement...',
+      securitySettings: 'Paramètres de sécurité',
+      changePassword: 'Changer le mot de passe',
+      currentPassword: 'Mot de passe actuel',
+      newPassword: 'Nouveau mot de passe',
+      confirmNewPassword: 'Confirmer le nouveau mot de passe',
+      updatePassword: 'Mettre à jour',
+      updating: '⏳ Mise à jour...',
+      twoFactorAuth: 'Authentification à deux facteurs',
+      twoFactorDesc: 'Ajoute une couche de sécurité supplémentaire',
+      enable2FA: 'Activer 2FA',
+      disable2FA: 'Désactiver 2FA',
+      twoFAEnabled: '✅ 2FA est activée',
+      interfacePreferences: 'Préférences d’interface',
+      darkMode: 'Mode sombre',
+      enabled: 'Activé',
+      disabled: 'Désactivé',
+      language: 'Langue',
+      saveInterface: 'Enregistrer l’interface',
+      notificationPreferences: 'Préférences de notifications',
+      emailNotifications: 'Notifications email',
+      analysisComplete: 'Analyse produit terminée',
+      weeklyReports: 'Rapports hebdomadaires',
+      billingUpdates: 'Mises à jour de facturation',
+      saveNotifications: 'Enregistrer les notifications',
+      billingAndSubscription: 'Facturation et abonnement',
+      activeSince: 'Actif depuis',
+      changePlan: 'Changer de plan',
+      cancelSubscription: 'Annuler l’abonnement',
+      paymentMethod: 'Moyen de paiement',
+      updatePaymentMethod: 'Mettre à jour le paiement',
+      apiKeys: 'Clés API',
+      apiWarning: '⚠️ Garde tes clés API en sécurité. Ne les partage pas.',
+      productionApiKey: 'Clé API de production',
+      createdOn: 'Créée le',
+      revoke: 'Révoquer',
+      generateKey: '+ Générer une nouvelle clé'
+    },
+    en: {
+      accountSettings: 'Account Settings',
+      tabProfile: 'Profile',
+      tabSecurity: 'Security',
+      tabInterface: 'Interface',
+      tabNotifications: 'Notifications',
+      tabBilling: 'Billing',
+      tabApiKeys: 'API Keys',
+      profileInformation: 'Profile Information',
+      uploadPhoto: 'Upload Photo',
+      firstName: 'First Name',
+      lastName: 'Last Name',
+      username: 'Username',
+      usernameCannotChange: 'Username cannot be changed',
+      email: 'Email',
+      saveChanges: 'Save Changes',
+      saving: '⏳ Saving...',
+      securitySettings: 'Security Settings',
+      changePassword: 'Change Password',
+      currentPassword: 'Current Password',
+      newPassword: 'New Password',
+      confirmNewPassword: 'Confirm New Password',
+      updatePassword: 'Update Password',
+      updating: '⏳ Updating...',
+      twoFactorAuth: 'Two-Factor Authentication',
+      twoFactorDesc: 'Add an extra layer of security to your account',
+      enable2FA: 'Enable 2FA',
+      disable2FA: 'Disable 2FA',
+      twoFAEnabled: '✅ 2FA is enabled',
+      interfacePreferences: 'Interface Preferences',
+      darkMode: 'Dark Mode',
+      enabled: 'Enabled',
+      disabled: 'Disabled',
+      language: 'Language',
+      saveInterface: 'Save Interface Settings',
+      notificationPreferences: 'Notification Preferences',
+      emailNotifications: 'Email notifications',
+      analysisComplete: 'Product analysis complete',
+      weeklyReports: 'Weekly reports',
+      billingUpdates: 'Billing updates',
+      saveNotifications: 'Save Notification Settings',
+      billingAndSubscription: 'Billing & Subscription',
+      activeSince: 'Active since',
+      changePlan: 'Change Plan',
+      cancelSubscription: 'Cancel Subscription',
+      paymentMethod: 'Payment Method',
+      updatePaymentMethod: 'Update Payment Method',
+      apiKeys: 'API Keys',
+      apiWarning: '⚠️ Keep your API keys secure. Do not share them publicly.',
+      productionApiKey: 'Production API Key',
+      createdOn: 'Created on',
+      revoke: 'Revoke',
+      generateKey: '+ Generate New Key'
+    }
+  }
+
+  const t = (key) => translations[language]?.[key] || translations.fr[key] || key
 
   const verifyPaymentSession = async (sessionId) => {
     try {
@@ -118,6 +234,15 @@ export default function Dashboard() {
       initializeUser()
     }
   }, [])
+
+  useEffect(() => {
+    const root = document.documentElement
+    if (darkMode) {
+      root.classList.remove('theme-light')
+    } else {
+      root.classList.add('theme-light')
+    }
+  }, [darkMode])
 
   const initializeUser = async () => {
     try {
@@ -888,7 +1013,7 @@ export default function Dashboard() {
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                     </svg>
-                    Account Settings
+                    {t('accountSettings')}
                   </button>
                   <button
                     onClick={() => { setShowProfileMenu(false); setShowPlanMenu(true) }}
@@ -1714,7 +1839,7 @@ export default function Dashboard() {
           <div className="bg-gray-900 rounded-xl max-w-4xl w-full max-h-[90vh] overflow-hidden border border-gray-700 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             {/* Header */}
             <div className="bg-gradient-to-r from-blue-900 to-purple-900 p-6 flex justify-between items-center">
-              <h2 className="text-2xl font-bold text-white">Account Settings</h2>
+              <h2 className="text-2xl font-bold text-white">{t('accountSettings')}</h2>
               <button onClick={() => setShowSettingsModal(false)} className="text-white hover:bg-white/20 p-2 rounded-lg">
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -1734,12 +1859,12 @@ export default function Dashboard() {
                         settingsTab === tab ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'
                       }`}
                     >
-                      {tab === 'profile' && '👤 Profile'}
-                      {tab === 'security' && '🔐 Security'}
-                      {tab === 'interface' && '🎨 Interface'}
-                      {tab === 'notifications' && '🔔 Notifications'}
-                      {tab === 'billing' && '💳 Billing'}
-                      {tab === 'api' && '⚙️ API Keys'}
+                      {tab === 'profile' && `👤 ${t('tabProfile')}`}
+                      {tab === 'security' && `🔐 ${t('tabSecurity')}`}
+                      {tab === 'interface' && `🎨 ${t('tabInterface')}`}
+                      {tab === 'notifications' && `🔔 ${t('tabNotifications')}`}
+                      {tab === 'billing' && `💳 ${t('tabBilling')}`}
+                      {tab === 'api' && `⚙️ ${t('tabApiKeys')}`}
                     </button>
                   ))}
                 </nav>
@@ -1750,7 +1875,7 @@ export default function Dashboard() {
                 {settingsTab === 'profile' && (
                   <div className="space-y-6">
                     <div>
-                      <h3 className="text-xl font-bold text-white mb-4">Profile Information</h3>
+                      <h3 className="text-xl font-bold text-white mb-4">{t('profileInformation')}</h3>
                       <div className="flex items-center gap-6 mb-6">
                         <div className="w-24 h-24 rounded-full bg-gradient-to-br from-yellow-400 to-orange-500 flex items-center justify-center font-bold text-3xl shadow-lg overflow-hidden">
                           {profile?.avatar_url ? (
@@ -1771,31 +1896,31 @@ export default function Dashboard() {
                           disabled={avatarUploading}
                           className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-4 py-2 rounded-lg text-white font-semibold"
                         >
-                          {avatarUploading ? '⏳ Uploading...' : 'Upload Photo'}
+                          {avatarUploading ? t('saving') : t('uploadPhoto')}
                         </button>
                       </div>
                       <div className="space-y-4">
                         <div className="grid grid-cols-2 gap-4">
                           <div>
-                            <label className="block text-sm text-gray-400 mb-2">First Name</label>
+                            <label className="block text-sm text-gray-400 mb-2">{t('firstName')}</label>
                             <input type="text" value={profileFirstName} onChange={(e) => setProfileFirstName(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white" />
                           </div>
                           <div>
-                            <label className="block text-sm text-gray-400 mb-2">Last Name</label>
+                            <label className="block text-sm text-gray-400 mb-2">{t('lastName')}</label>
                             <input type="text" value={profileLastName} onChange={(e) => setProfileLastName(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white" />
                           </div>
                         </div>
                         <div>
-                          <label className="block text-sm text-gray-400 mb-2">Username</label>
+                          <label className="block text-sm text-gray-400 mb-2">{t('username')}</label>
                           <input type="text" defaultValue={profile?.username} disabled className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-gray-400 cursor-not-allowed" />
-                          <p className="text-xs text-gray-500 mt-1">Username cannot be changed</p>
+                          <p className="text-xs text-gray-500 mt-1">{t('usernameCannotChange')}</p>
                         </div>
                         <div>
-                          <label className="block text-sm text-gray-400 mb-2">Email</label>
+                          <label className="block text-sm text-gray-400 mb-2">{t('email')}</label>
                           <input type="email" defaultValue={user?.email} disabled className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-gray-400 cursor-not-allowed" />
                         </div>
                         <button onClick={handleSaveProfile} disabled={saveLoading} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold">
-                          {saveLoading ? '⏳ Saving...' : 'Save Changes'}
+                          {saveLoading ? t('saving') : t('saveChanges')}
                         </button>
                       </div>
                     </div>
@@ -1804,53 +1929,53 @@ export default function Dashboard() {
 
                 {settingsTab === 'security' && (
                   <div className="space-y-6">
-                    <h3 className="text-xl font-bold text-white mb-4">Security Settings</h3>
+                    <h3 className="text-xl font-bold text-white mb-4">{t('securitySettings')}</h3>
                     <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-                      <h4 className="text-lg font-semibold text-white mb-4">Change Password</h4>
+                      <h4 className="text-lg font-semibold text-white mb-4">{t('changePassword')}</h4>
                       <div className="space-y-4">
                         <div>
-                          <label className="block text-sm text-gray-400 mb-2">Current Password</label>
+                          <label className="block text-sm text-gray-400 mb-2">{t('currentPassword')}</label>
                           <input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white" />
                         </div>
                         <div>
-                          <label className="block text-sm text-gray-400 mb-2">New Password</label>
+                          <label className="block text-sm text-gray-400 mb-2">{t('newPassword')}</label>
                           <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white" />
                         </div>
                         <div>
-                          <label className="block text-sm text-gray-400 mb-2">Confirm New Password</label>
+                          <label className="block text-sm text-gray-400 mb-2">{t('confirmNewPassword')}</label>
                           <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white" />
                         </div>
                         <button onClick={handleUpdatePassword} disabled={saveLoading} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold">
-                          {saveLoading ? '⏳ Updating...' : 'Update Password'}
+                          {saveLoading ? t('updating') : t('updatePassword')}
                         </button>
                       </div>
                     </div>
                     <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-                      <h4 className="text-lg font-semibold text-white mb-2">Two-Factor Authentication</h4>
-                      <p className="text-gray-400 mb-4">Add an extra layer of security to your account</p>
+                      <h4 className="text-lg font-semibold text-white mb-2">{t('twoFactorAuth')}</h4>
+                      <p className="text-gray-400 mb-4">{t('twoFactorDesc')}</p>
                       <button onClick={handleToggle2FA} disabled={saveLoading} className={`${twoFAEnabled ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'} disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold`}>
-                        {saveLoading ? '⏳...' : (twoFAEnabled ? 'Disable 2FA' : 'Enable 2FA')}
+                        {saveLoading ? '⏳...' : (twoFAEnabled ? t('disable2FA') : t('enable2FA'))}
                       </button>
-                      {twoFAEnabled && <p className="text-green-400 text-sm mt-2">✅ 2FA is enabled</p>}
+                      {twoFAEnabled && <p className="text-green-400 text-sm mt-2">{t('twoFAEnabled')}</p>}
                     </div>
                   </div>
                 )}
 
                 {settingsTab === 'interface' && (
                   <div className="space-y-6">
-                    <h3 className="text-xl font-bold text-white mb-4">Interface Preferences</h3>
+                    <h3 className="text-xl font-bold text-white mb-4">{t('interfacePreferences')}</h3>
                     <div className="space-y-4">
                       <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 flex justify-between items-center">
                         <div>
-                          <h4 className="text-white font-semibold">Dark Mode</h4>
-                          <p className="text-sm text-gray-400">{darkMode ? 'Enabled' : 'Disabled'}</p>
+                          <h4 className="text-white font-semibold">{t('darkMode')}</h4>
+                          <p className="text-sm text-gray-400">{darkMode ? t('enabled') : t('disabled')}</p>
                         </div>
                         <button onClick={() => setDarkMode(!darkMode)} className={`${darkMode ? 'bg-blue-600' : 'bg-gray-600'} w-12 h-6 rounded-full p-1 cursor-pointer transition`}>
                           <div className={`${darkMode ? 'bg-white ml-auto' : 'bg-white'} w-4 h-4 rounded-full transition`}></div>
                         </button>
                       </div>
                       <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                        <h4 className="text-white font-semibold mb-2">Language</h4>
+                        <h4 className="text-white font-semibold mb-2">{t('language')}</h4>
                         <select value={language} onChange={(e) => setLanguage(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white">
                           <option value="fr">Français</option>
                           <option value="en">English</option>
@@ -1858,7 +1983,7 @@ export default function Dashboard() {
                         </select>
                       </div>
                       <button onClick={handleSaveInterface} disabled={saveLoading} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold w-full">
-                        {saveLoading ? '⏳ Saving...' : 'Save Interface Settings'}
+                        {saveLoading ? t('saving') : t('saveInterface')}
                       </button>
                     </div>
                   </div>
@@ -1866,13 +1991,13 @@ export default function Dashboard() {
 
                 {settingsTab === 'notifications' && (
                   <div className="space-y-6">
-                    <h3 className="text-xl font-bold text-white mb-4">Notification Preferences</h3>
+                    <h3 className="text-xl font-bold text-white mb-4">{t('notificationPreferences')}</h3>
                     <div className="space-y-4">
                       {[
-                        { key: 'email_notifications', label: 'Email notifications' },
-                        { key: 'analysis_complete', label: 'Product analysis complete' },
-                        { key: 'weekly_reports', label: 'Weekly reports' },
-                        { key: 'billing_updates', label: 'Billing updates' }
+                        { key: 'email_notifications', label: t('emailNotifications') },
+                        { key: 'analysis_complete', label: t('analysisComplete') },
+                        { key: 'weekly_reports', label: t('weeklyReports') },
+                        { key: 'billing_updates', label: t('billingUpdates') }
                       ].map(item => (
                         <div key={item.key} className="bg-gray-800 rounded-lg p-4 border border-gray-700 flex justify-between items-center">
                           <span className="text-white">{item.label}</span>
@@ -1882,7 +2007,7 @@ export default function Dashboard() {
                         </div>
                       ))}
                       <button onClick={handleSaveNotifications} disabled={saveLoading} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold w-full mt-4">
-                        {saveLoading ? '⏳ Saving...' : 'Save Notification Settings'}
+                        {saveLoading ? t('saving') : t('saveNotifications')}
                       </button>
                     </div>
                   </div>
@@ -1890,12 +2015,12 @@ export default function Dashboard() {
 
                 {settingsTab === 'billing' && (
                   <div className="space-y-6">
-                    <h3 className="text-xl font-bold text-white mb-4">Billing & Subscription</h3>
+                    <h3 className="text-xl font-bold text-white mb-4">{t('billingAndSubscription')}</h3>
                     <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
                       <div className="flex justify-between items-center mb-4">
                         <div>
                           <h4 className="text-xl font-bold text-white">{subscription?.plan?.toUpperCase()} Plan</h4>
-                          <p className="text-gray-400">Active since {new Date(subscription?.started_at).toLocaleDateString()}</p>
+                          <p className="text-gray-400">{t('activeSince')} {new Date(subscription?.started_at).toLocaleDateString()}</p>
                         </div>
                         <div className="text-right">
                           <div className="text-2xl font-bold text-green-400">
@@ -1905,15 +2030,15 @@ export default function Dashboard() {
                       </div>
                       <div className="flex gap-4">
                         <button onClick={() => { setShowSettingsModal(false); setShowPlanMenu(true) }} className="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded-lg text-white font-semibold">
-                          Change Plan
+                          {t('changePlan')}
                         </button>
                         <button onClick={handleCancelSubscription} disabled={saveLoading} className="bg-red-600 hover:bg-red-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold">
-                          {saveLoading ? '⏳...' : 'Cancel Subscription'}
+                          {saveLoading ? '⏳...' : t('cancelSubscription')}
                         </button>
                       </div>
                     </div>
                     <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-                      <h4 className="text-lg font-semibold text-white mb-4">Payment Method</h4>
+                      <h4 className="text-lg font-semibold text-white mb-4">{t('paymentMethod')}</h4>
                       <div className="flex items-center gap-4 mb-4">
                         <div className="bg-gray-700 p-3 rounded">
                           <span className="text-2xl">💳</span>
@@ -1924,7 +2049,7 @@ export default function Dashboard() {
                         </div>
                       </div>
                       <button onClick={handleUpdatePaymentMethod} disabled={saveLoading} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold">
-                        {saveLoading ? '⏳...' : 'Update Payment Method'}
+                        {saveLoading ? '⏳...' : t('updatePaymentMethod')}
                       </button>
                     </div>
                   </div>
@@ -1932,18 +2057,18 @@ export default function Dashboard() {
 
                 {settingsTab === 'api' && (
                   <div className="space-y-6">
-                    <h3 className="text-xl font-bold text-white mb-4">API Keys</h3>
+                    <h3 className="text-xl font-bold text-white mb-4">{t('apiKeys')}</h3>
                     <div className="bg-yellow-900/20 border border-yellow-700 rounded-lg p-4 mb-4">
-                      <p className="text-yellow-400 text-sm">⚠️ Keep your API keys secure. Do not share them publicly.</p>
+                      <p className="text-yellow-400 text-sm">{t('apiWarning')}</p>
                     </div>
                     <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
                       <div className="flex justify-between items-center mb-4">
                         <div>
-                          <h4 className="text-white font-semibold">Production API Key</h4>
-                          <p className="text-sm text-gray-400">Created on {new Date().toLocaleDateString()}</p>
+                          <h4 className="text-white font-semibold">{t('productionApiKey')}</h4>
+                          <p className="text-sm text-gray-400">{t('createdOn')} {new Date().toLocaleDateString()}</p>
                         </div>
                         <button className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg text-white text-sm">
-                          Revoke
+                          {t('revoke')}
                         </button>
                       </div>
                       <div className="bg-gray-700 rounded p-3 font-mono text-sm text-gray-300">
@@ -1951,7 +2076,7 @@ export default function Dashboard() {
                       </div>
                     </div>
                     <button className="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded-lg text-white font-semibold">
-                      + Generate New Key
+                      {t('generateKey')}
                     </button>
                   </div>
                 )}
