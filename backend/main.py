@@ -2422,11 +2422,22 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
             if not plan:
                 plan = "standard"
             
+            # Cancel any other active subscriptions for this customer
+            try:
+                if session.customer:
+                    active_subs = stripe.Subscription.list(customer=session.customer, status="active", limit=10)
+                    for sub in active_subs.get("data", []):
+                        if sub.get("id") != subscription.get("id"):
+                            stripe.Subscription.cancel(sub.get("id"))
+            except Exception as e:
+                print(f"Stripe cancel old subs warning: {e}")
+
             supabase.table("subscriptions").upsert({
                 "user_id": user_id,
                 "plan_tier": plan,
                 "status": subscription.status if subscription else "active",
                 "stripe_session_id": session.id,
+                "stripe_subscription_id": subscription.id if subscription else None,
                 "stripe_customer_id": session.customer,
                 "email": session.customer_email
             }, on_conflict="user_id").execute()
