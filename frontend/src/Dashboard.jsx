@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { createClient } from '@supabase/supabase-js'
 
 const supabase = createClient(
@@ -49,6 +49,8 @@ export default function Dashboard() {
   })
   const [twoFAEnabled, setTwoFAEnabled] = useState(profile?.two_factor_enabled || false)
   const [saveLoading, setSaveLoading] = useState(false)
+  const [avatarUploading, setAvatarUploading] = useState(false)
+  const avatarInputRef = useRef(null)
 
   const verifyPaymentSession = async (sessionId) => {
     try {
@@ -294,6 +296,57 @@ export default function Dashboard() {
   }
 
   // ============ SETTINGS HANDLERS ============
+
+  const handleAvatarFileChange = async (event) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    if (!file.type.startsWith('image/')) {
+      alert('❌ Format invalide. Choisis une image.')
+      event.target.value = ''
+      return
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      alert('❌ Image trop volumineuse (max 5MB).')
+      event.target.value = ''
+      return
+    }
+
+    try {
+      setAvatarUploading(true)
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        alert('Session expirée, reconnecte-toi.')
+        return
+      }
+
+      const formData = new FormData()
+      formData.append('file', file)
+
+      const response = await fetch(`${API_URL}/api/settings/avatar`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: formData
+      })
+
+      const data = await response.json()
+      if (data.success && data.avatar_url) {
+        setProfile((prev) => prev ? { ...prev, avatar_url: data.avatar_url } : prev)
+        alert('✅ Photo de profil mise à jour')
+      } else {
+        alert('❌ Erreur: ' + (data.detail || 'Erreur inconnue'))
+      }
+    } catch (err) {
+      console.error('Avatar upload error:', err)
+      alert('❌ Erreur lors de l’upload')
+    } finally {
+      setAvatarUploading(false)
+      event.target.value = ''
+    }
+  }
 
   const handleSaveProfile = async () => {
     try {
@@ -801,8 +854,12 @@ export default function Dashboard() {
               className="flex items-center gap-3 hover:bg-white/10 px-3 py-2 rounded-lg transition"
             >
               {/* Avatar */}
-              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-yellow-400 to-orange-500 flex items-center justify-center font-bold text-lg shadow-lg">
-                {profile?.first_name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || '?'}
+              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-yellow-400 to-orange-500 flex items-center justify-center font-bold text-lg shadow-lg overflow-hidden">
+                {profile?.avatar_url ? (
+                  <img src={profile.avatar_url} alt="Avatar" className="w-full h-full object-cover" />
+                ) : (
+                  <span>{profile?.first_name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || '?'}</span>
+                )}
               </div>
               <div className="text-left">
                 <div className="font-semibold text-sm">{profile?.full_name || user?.email}</div>
@@ -1695,11 +1752,26 @@ export default function Dashboard() {
                     <div>
                       <h3 className="text-xl font-bold text-white mb-4">Profile Information</h3>
                       <div className="flex items-center gap-6 mb-6">
-                        <div className="w-24 h-24 rounded-full bg-gradient-to-br from-yellow-400 to-orange-500 flex items-center justify-center font-bold text-3xl shadow-lg">
-                          {profile?.first_name?.[0]?.toUpperCase() || '?'}
+                        <div className="w-24 h-24 rounded-full bg-gradient-to-br from-yellow-400 to-orange-500 flex items-center justify-center font-bold text-3xl shadow-lg overflow-hidden">
+                          {profile?.avatar_url ? (
+                            <img src={profile.avatar_url} alt="Avatar" className="w-full h-full object-cover" />
+                          ) : (
+                            <span>{profile?.first_name?.[0]?.toUpperCase() || '?'}</span>
+                          )}
                         </div>
-                        <button className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-white font-semibold">
-                          Upload Photo
+                        <input
+                          ref={avatarInputRef}
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={handleAvatarFileChange}
+                        />
+                        <button
+                          onClick={() => avatarInputRef.current?.click()}
+                          disabled={avatarUploading}
+                          className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-4 py-2 rounded-lg text-white font-semibold"
+                        >
+                          {avatarUploading ? '⏳ Uploading...' : 'Upload Photo'}
                         </button>
                       </div>
                       <div className="space-y-4">

@@ -1,8 +1,9 @@
-from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi import FastAPI, HTTPException, Request, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 import os
+import uuid
 import openai
 try:
     from openai import OpenAI
@@ -920,7 +921,8 @@ async def get_profile(request: Request):
             "full_name": f"{profile['first_name']} {profile['last_name']}",
             "subscription_plan": profile["subscription_plan"],
             "subscription_status": profile["subscription_status"],
-            "created_at": profile["created_at"]
+            "created_at": profile["created_at"],
+            "avatar_url": profile.get("avatar_url")
         }
         
     except Exception as e:
@@ -952,6 +954,51 @@ async def update_profile(payload: dict, request: Request):
         
     except Exception as e:
         print(f"Error updating profile: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/settings/avatar")
+async def upload_avatar(request: Request, file: UploadFile = File(...)):
+    """Upload avatar and store public URL in profile"""
+    user_id = get_user_id(request)
+
+    if not file or not file.content_type:
+        raise HTTPException(status_code=400, detail="Fichier manquant")
+
+    if not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Format d'image invalide")
+
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Image trop volumineuse (max 5MB)")
+
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        bucket_name = "avatars"
+
+        try:
+            buckets = supabase.storage.list_buckets()
+            if not any(b.get("name") == bucket_name for b in buckets):
+                supabase.storage.create_bucket(bucket_name, options={"public": True})
+        except Exception:
+            pass
+
+        file_ext = os.path.splitext(file.filename or "avatar")[1].lower() or ".png"
+        storage_path = f"{user_id}/{uuid.uuid4().hex}{file_ext}"
+
+        supabase.storage.from_(bucket_name).upload(
+            storage_path,
+            content,
+            {"content-type": file.content_type, "upsert": True}
+        )
+
+        avatar_url = supabase.storage.from_(bucket_name).get_public_url(storage_path)
+
+        supabase.table("user_profiles").update({"avatar_url": avatar_url}).eq("id", user_id).execute()
+
+        return {"success": True, "avatar_url": avatar_url}
+    except Exception as e:
+        print(f"Error uploading avatar: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
