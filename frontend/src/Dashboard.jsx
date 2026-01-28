@@ -29,6 +29,7 @@ export default function Dashboard() {
     if (typeof window === 'undefined') return 'profile'
     return localStorage.getItem('settingsTab') || 'profile'
   })
+  const [subscriptionMissing, setSubscriptionMissing] = useState(false)
   const [showApplyModal, setShowApplyModal] = useState(false)
   const [selectedActions, setSelectedActions] = useState([])
   const [applyingActions, setApplyingActions] = useState(false)
@@ -384,6 +385,7 @@ export default function Dashboard() {
       }
       
       setUser(session.user)
+      setSubscriptionMissing(false)
 
       const authHeaders = {
         'Authorization': `Bearer ${session.access_token}`,
@@ -447,16 +449,30 @@ export default function Dashboard() {
         }
       }
 
-      const data = subResp.ok ? await subResp.json() : { success: false }
-      if (data.success && data.has_subscription) {
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+      let data = subResp.ok ? await subResp.json() : null
+      let attempts = 0
+
+      while ((!data || !data.success || !data.has_subscription) && attempts < 3) {
+        await sleep(1500)
+        const retryResp = await fetch(`${API_URL}/api/subscription/status`, {
+          method: 'POST',
+          headers: authHeaders,
+          body: JSON.stringify({ user_id: session.user.id })
+        })
+        data = retryResp.ok ? await retryResp.json() : null
+        attempts += 1
+      }
+
+      if (data && data.success && data.has_subscription) {
         setSubscription(data)
       } else {
-        window.location.hash = '#stripe-pricing'
+        setSubscriptionMissing(true)
       }
 
       setLoading(false)
 
-      if (data.success && data.has_subscription) {
+      if (data && data.success && data.has_subscription) {
         console.log('✅ Subscription active, loading Shopify products...')
         loadProducts()
       }
@@ -1124,10 +1140,17 @@ export default function Dashboard() {
     )
   }
 
-  if (!user || !subscription) {
+  if (!user || (!subscription && subscriptionMissing)) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-900 to-purple-900 flex items-center justify-center">
-        <div className="text-white text-xl">Erreur: Pas d'abonnement actif</div>
+        <div className="text-center text-white">
+          <div className="text-xl mb-2">Synchronisation de l’abonnement…</div>
+          <div className="text-gray-300 text-sm mb-4">Si tu viens de payer, ça peut prendre quelques secondes.</div>
+          <div className="flex gap-3 justify-center">
+            <button onClick={initializeUser} className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-white">Réessayer</button>
+            <button onClick={() => { window.location.hash = '#stripe-pricing' }} className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-white">Voir les plans</button>
+          </div>
+        </div>
       </div>
     )
   }
