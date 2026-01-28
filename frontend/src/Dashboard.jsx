@@ -384,114 +384,82 @@ export default function Dashboard() {
       }
       
       setUser(session.user)
-      
-      // Fetch user profile
-      try {
-        const profileResp = await fetch(`${API_URL}/api/auth/profile`, {
-          headers: {
-            'Authorization': `Bearer ${session.access_token}`,
-            'Content-Type': 'application/json'
-          }
-        })
-        if (profileResp.ok) {
-          const profileData = await profileResp.json()
-          setProfile(profileData)
-          setProfileFirstName(profileData.first_name || '')
-          setProfileLastName(profileData.last_name || '')
-          setTwoFAEnabled(Boolean(profileData.two_factor_enabled))
-        }
-      } catch (err) {
-        console.warn('Could not load profile:', err)
+
+      const authHeaders = {
+        'Authorization': `Bearer ${session.access_token}`,
+        'Content-Type': 'application/json'
       }
 
-      // Fetch interface preferences
-      try {
-        const prefsResp = await fetch(`${API_URL}/api/settings/interface`, {
-          headers: {
-            'Authorization': `Bearer ${session.access_token}`,
-            'Content-Type': 'application/json'
-          }
-        })
-        if (prefsResp.ok) {
-          const prefsData = await prefsResp.json()
-          if (prefsData.success && prefsData.preferences) {
-            if (typeof prefsData.preferences.dark_mode === 'boolean') {
-              setDarkMode(prefsData.preferences.dark_mode)
-            }
-            if (prefsData.preferences.language) {
-              setLanguage(prefsData.preferences.language)
-            }
-          }
-        }
-      } catch (err) {
-        console.warn('Could not load interface preferences:', err)
-      }
-
-      // Fetch notification preferences
-      try {
-        const notifResp = await fetch(`${API_URL}/api/settings/notifications`, {
-          headers: {
-            'Authorization': `Bearer ${session.access_token}`,
-            'Content-Type': 'application/json'
-          }
-        })
-        if (notifResp.ok) {
-          const notifData = await notifResp.json()
-          if (notifData.success && notifData.preferences) {
-            setNotifications({
-              email_notifications: Boolean(notifData.preferences.email_notifications),
-              analysis_complete: Boolean(notifData.preferences.analysis_complete),
-              weekly_reports: Boolean(notifData.preferences.weekly_reports),
-              billing_updates: Boolean(notifData.preferences.billing_updates)
-            })
-          }
-        }
-      } catch (err) {
-        console.warn('Could not load notifications preferences:', err)
-      }
-
-      // Fetch Shopify connection (shop domain) for memory across devices
-      try {
-        const shopResp = await fetch(`${API_URL}/api/shopify/connection`, {
-          headers: {
-            'Authorization': `Bearer ${session.access_token}`,
-            'Content-Type': 'application/json'
-          }
-        })
-        if (shopResp.ok) {
-          const shopData = await shopResp.json()
-          if (shopData.success && shopData.connection?.shop_domain) {
-            setShopifyUrl(shopData.connection.shop_domain)
-          }
-        }
-      } catch (err) {
-        console.warn('Could not load Shopify connection:', err)
-      }
-      
-      // Vérifie l'abonnement
-      const response = await fetch(`${API_URL}/api/subscription/status`, {
+      const profilePromise = fetch(`${API_URL}/api/auth/profile`, { headers: authHeaders })
+      const prefsPromise = fetch(`${API_URL}/api/settings/interface`, { headers: authHeaders })
+      const notifPromise = fetch(`${API_URL}/api/settings/notifications`, { headers: authHeaders })
+      const shopPromise = fetch(`${API_URL}/api/shopify/connection`, { headers: authHeaders })
+      const subPromise = fetch(`${API_URL}/api/subscription/status`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json'
-        },
+        headers: authHeaders,
         body: JSON.stringify({ user_id: session.user.id })
       })
-      
-      const data = await response.json()
-      
+
+      const [profileResp, prefsResp, notifResp, shopResp, subResp] = await Promise.all([
+        profilePromise,
+        prefsPromise,
+        notifPromise,
+        shopPromise,
+        subPromise
+      ])
+
+      if (profileResp.ok) {
+        const profileData = await profileResp.json()
+        setProfile(profileData)
+        setProfileFirstName(profileData.first_name || '')
+        setProfileLastName(profileData.last_name || '')
+        setTwoFAEnabled(Boolean(profileData.two_factor_enabled))
+      }
+
+      if (prefsResp.ok) {
+        const prefsData = await prefsResp.json()
+        if (prefsData.success && prefsData.preferences) {
+          if (typeof prefsData.preferences.dark_mode === 'boolean') {
+            setDarkMode(prefsData.preferences.dark_mode)
+          }
+          if (prefsData.preferences.language) {
+            setLanguage(prefsData.preferences.language)
+          }
+        }
+      }
+
+      if (notifResp.ok) {
+        const notifData = await notifResp.json()
+        if (notifData.success && notifData.preferences) {
+          setNotifications({
+            email_notifications: Boolean(notifData.preferences.email_notifications),
+            analysis_complete: Boolean(notifData.preferences.analysis_complete),
+            weekly_reports: Boolean(notifData.preferences.weekly_reports),
+            billing_updates: Boolean(notifData.preferences.billing_updates)
+          })
+        }
+      }
+
+      if (shopResp.ok) {
+        const shopData = await shopResp.json()
+        if (shopData.success && shopData.connection?.shop_domain) {
+          setShopifyUrl(shopData.connection.shop_domain)
+        }
+      }
+
+      const data = subResp.ok ? await subResp.json() : { success: false }
       if (data.success && data.has_subscription) {
         setSubscription(data)
-        
-        // Charger les produits Shopify si déjà connecté
-        console.log('✅ Subscription active, checking for Shopify connection...')
-        loadProducts() // Ceci va charger les produits si déjà connecté
       } else {
-        // Pas d'abonnement - redirige vers les plans Stripe
         window.location.hash = '#stripe-pricing'
       }
-      
+
       setLoading(false)
+
+      if (data.success && data.has_subscription) {
+        console.log('✅ Subscription active, loading Shopify products...')
+        loadProducts()
+      }
     } catch (err) {
       console.error('Error:', err)
       setError('Erreur d\'authentification')
