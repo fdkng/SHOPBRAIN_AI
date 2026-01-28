@@ -2307,6 +2307,59 @@ async def check_subscription_status(request: Request):
                 except Exception as e:
                     print(f"Stripe customer sync warning: {e}")
 
+                # If still missing or suspicious, try email-based lookup across customers
+                try:
+                    if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+                        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+                        profile_result = supabase.table("user_profiles").select("email").eq("id", user_id).execute()
+                        email = profile_result.data[0].get("email") if profile_result.data else None
+
+                        if email:
+                            customers = stripe.Customer.list(email=email, limit=10)
+                            newest_sub = None
+                            newest_customer_id = None
+
+                            for customer in customers.data:
+                                subs = stripe.Subscription.list(customer=customer.get("id"), status="all", limit=5)
+                                for sub in subs.get("data", []):
+                                    if sub.get("status") in ["active", "trialing", "past_due", "incomplete"]:
+                                        if not newest_sub or sub.get("created", 0) > newest_sub.get("created", 0):
+                                            newest_sub = sub
+                                            newest_customer_id = customer.get("id")
+
+                            if newest_sub:
+                                items = newest_sub.get("items", {}).get("data", [])
+                                price_id = items[0].get("price", {}).get("id") if items else None
+                                amount = items[0].get("price", {}).get("unit_amount") if items else None
+
+                                def tier_from_amount(amount_cents: int | None):
+                                    if amount_cents is None:
+                                        return None
+                                    if amount_cents >= 29900:
+                                        return "premium"
+                                    if amount_cents >= 19900:
+                                        return "pro"
+                                    if amount_cents >= 9900:
+                                        return "standard"
+                                    return None
+
+                                stripe_plan = PRICE_TO_TIER.get(price_id) or tier_from_amount(amount)
+                                if stripe_plan:
+                                    raw_tier = stripe_plan
+                                    supabase.table("subscriptions").update({
+                                        "stripe_customer_id": newest_customer_id,
+                                        "stripe_subscription_id": newest_sub.get("id"),
+                                        "plan_tier": raw_tier,
+                                        "updated_at": datetime.utcnow().isoformat()
+                                    }).eq("id", subscription.get("id")).execute()
+                                    supabase.table("user_profiles").update({
+                                        "subscription_plan": raw_tier,
+                                        "subscription_tier": raw_tier,
+                                        "updated_at": datetime.utcnow().isoformat()
+                                    }).eq("id", user_id).execute()
+                except Exception as e:
+                    print(f"Stripe email customer sync warning: {e}")
+
                 # Sync plan from Stripe if subscription id is available
                 try:
                     stripe_sub_id = stripe_subscription_id or subscription.get('stripe_subscription_id')
@@ -2458,20 +2511,36 @@ async def create_checkout_session(req: CreateCheckoutSessionRequest, request: Re
         
         price_id = STRIPE_PLANS[plan]
         frontend_url = "https://fdkng.github.io/SHOPBRAIN_AI"
+
+        stripe_customer_id = None
+        try:
+            if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+                supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+                sub_res = supabase.table("subscriptions").select("stripe_customer_id").eq("user_id", user_id).order("created_at", desc=True).limit(1).execute()
+                if sub_res.data:
+                    stripe_customer_id = sub_res.data[0].get("stripe_customer_id")
+        except Exception as e:
+            print(f"Stripe customer lookup warning: {e}")
         
-        session = stripe.checkout.Session.create(
-            payment_method_types=["card"],
-            mode="subscription",
-            line_items=[{"price": price_id, "quantity": 1}],
-            success_url=f"{frontend_url}/#dashboard?session_id={{CHECKOUT_SESSION_ID}}&success=true",
-            cancel_url=f"{frontend_url}/#pricing",
-            customer_email=email,
-            allow_promotion_codes=True,  # ✅ Active les codes promo
-            metadata={
+        session_kwargs = {
+            "payment_method_types": ["card"],
+            "mode": "subscription",
+            "line_items": [{"price": price_id, "quantity": 1}],
+            "success_url": f"{frontend_url}/#dashboard?session_id={{CHECKOUT_SESSION_ID}}&success=true",
+            "cancel_url": f"{frontend_url}/#pricing",
+            "allow_promotion_codes": True,
+            "metadata": {
                 "user_id": user_id,
                 "plan": plan
             }
-        )
+        }
+
+        if stripe_customer_id:
+            session_kwargs["customer"] = stripe_customer_id
+        else:
+            session_kwargs["customer_email"] = email
+
+        session = stripe.checkout.Session.create(**session_kwargs)
         
         return {
             "success": True,
@@ -2900,6 +2969,7 @@ async def change_plan(payload: dict, request: Request):
         
         subscription = result.data[0]
         current_plan = subscription.get("plan_tier")
+        stripe_customer_id = subscription.get("stripe_customer_id")
         
         # If downgrading or switching, create a new checkout session
         if new_plan != current_plan:
@@ -2908,19 +2978,25 @@ async def change_plan(payload: dict, request: Request):
             email = user_result.data[0]["email"] if user_result.data else ""
             
             # Redirect to checkout for the new plan
-            session = stripe.checkout.Session.create(
-                customer_email=email,
-                mode="subscription",
-                line_items=[
+            session_kwargs = {
+                "mode": "subscription",
+                "line_items": [
                     {
                         "price": STRIPE_PLANS.get(new_plan, STRIPE_PLANS["standard"]),
                         "quantity": 1,
                     }
                 ],
-                metadata={"user_id": user_id, "plan": new_plan},
-                success_url=f"https://shopbrain-ai.onrender.com/#dashboard?success=true&session_id={{CHECKOUT_SESSION_ID}}",
-                cancel_url=f"https://shopbrain-ai.onrender.com/#dashboard",
-            )
+                "metadata": {"user_id": user_id, "plan": new_plan},
+                "success_url": f"https://shopbrain-ai.onrender.com/#dashboard?success=true&session_id={{CHECKOUT_SESSION_ID}}",
+                "cancel_url": f"https://shopbrain-ai.onrender.com/#dashboard",
+            }
+
+            if stripe_customer_id:
+                session_kwargs["customer"] = stripe_customer_id
+            else:
+                session_kwargs["customer_email"] = email
+
+            session = stripe.checkout.Session.create(**session_kwargs)
             
             return {"success": True, "url": session.url}
         else:
