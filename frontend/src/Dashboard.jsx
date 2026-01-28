@@ -75,6 +75,21 @@ export default function Dashboard() {
   const [apiKeys, setApiKeys] = useState([])
   const [apiLoading, setApiLoading] = useState(false)
 
+  const formatDate = (value) => {
+    if (!value) return '—'
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return '—'
+    return date.toLocaleDateString('fr-FR')
+  }
+
+  const formatPlan = (plan) => {
+    const normalized = String(plan || '').toLowerCase()
+    if (normalized === 'standard') return 'STANDARD'
+    if (normalized === 'pro') return 'PRO'
+    if (normalized === 'premium') return 'PREMIUM'
+    return 'STANDARD'
+  }
+
   const translations = {
     fr: {
       accountSettings: 'Paramètres du compte',
@@ -1230,7 +1245,7 @@ export default function Dashboard() {
           {/* Right: Plan Badge */}
           <div className="text-right relative">
             <div className="text-xs text-gray-300 mb-1">Current Plan</div>
-            <div className="font-bold text-yellow-400 text-lg">{subscription?.plan.toUpperCase()}</div>
+            <div className="font-bold text-yellow-400 text-lg">{formatPlan(subscription?.plan)}</div>
           </div>
         </div>
       </div>
@@ -1344,7 +1359,7 @@ export default function Dashboard() {
             <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
               <h3 className="text-gray-400 text-sm uppercase mb-2">Plan Actif</h3>
               <div className="flex items-center justify-between">
-                <p className="text-white text-2xl font-bold">{subscription?.plan.toUpperCase()}</p>
+                <p className="text-white text-2xl font-bold">{formatPlan(subscription?.plan)}</p>
                 {subscription?.plan !== 'premium' && (
                   <button
                     onClick={handleUpgrade}
@@ -1354,7 +1369,7 @@ export default function Dashboard() {
                   </button>
                 )}
               </div>
-              <p className="text-gray-400 text-sm mt-2">Depuis: {new Date(subscription?.started_at).toLocaleDateString('fr-FR')}</p>
+              <p className="text-gray-400 text-sm mt-2">Depuis: {formatDate(subscription?.started_at)}</p>
               {subscription?.plan === 'standard' && (
                 <p className="text-gray-400 text-xs mt-1">Fonctionnalités limitées — Upgrade vers PRO pour plus.</p>
               )}
