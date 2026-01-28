@@ -90,6 +90,17 @@ export default function Dashboard() {
     return 'STANDARD'
   }
 
+  const getPlanFeatures = (plan) => {
+    const normalized = String(plan || '').toLowerCase()
+    if (normalized === 'premium') {
+      return ['product_analysis', 'content_generation', 'cross_sell', 'automated_actions', 'reports', 'predictions']
+    }
+    if (normalized === 'pro') {
+      return ['product_analysis', 'content_generation', 'cross_sell', 'reports']
+    }
+    return ['product_analysis', 'title_optimization', 'price_suggestions']
+  }
+
   const translations = {
     fr: {
       accountSettings: 'Paramètres du compte',
@@ -1380,15 +1391,15 @@ export default function Dashboard() {
             
             <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
               <h3 className="text-gray-400 text-sm uppercase mb-2">Produits</h3>
-              <p className="text-white text-2xl font-bold">{subscription?.capabilities?.product_limit === null ? '∞' : subscription?.capabilities?.product_limit}</p>
+              <p className="text-white text-2xl font-bold">{subscription?.capabilities?.product_limit === null ? '∞' : subscription?.capabilities?.product_limit || 50}</p>
               <p className="text-gray-400 text-sm mt-2">Limite mensuelle</p>
             </div>
             
             <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
               <h3 className="text-gray-400 text-sm uppercase mb-2">Fonctionnalités</h3>
               <ul className="text-sm space-y-1">
-                {subscription?.capabilities?.features?.map((f, i) => (
-                  <li key={i} className="text-gray-300">✓ {f}</li>
+                {getPlanFeatures(subscription?.plan).map((feature, i) => (
+                  <li key={i} className="text-gray-300">✓ {feature}</li>
                 ))}
               </ul>
             </div>
