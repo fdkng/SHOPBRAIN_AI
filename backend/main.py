@@ -2170,13 +2170,18 @@ async def apply_recommendation_endpoint(req: ApplyRecommendationRequest, request
         if not shop_domain or not access_token:
             raise HTTPException(status_code=400, detail="Connexion Shopify invalide")
 
-        # Fetch product
+        # Fetch product (before)
         product_resp = requests.get(
             f"https://{shop_domain}/admin/api/2024-01/products/{req.product_id}.json",
             headers={"X-Shopify-Access-Token": access_token, "Content-Type": "application/json"}
         )
         product_resp.raise_for_status()
         product = product_resp.json().get("product", {})
+        before_title = product.get("title")
+        before_description = product.get("body_html")
+        before_price = None
+        if product.get("variants"):
+            before_price = product["variants"][0].get("price")
 
         from AI_engine.action_engine import ActionEngine
         action_engine = ActionEngine(shop_domain, access_token)
@@ -2193,7 +2198,7 @@ async def apply_recommendation_endpoint(req: ApplyRecommendationRequest, request
             result = action_engine.apply_price_change(req.product_id, new_price)
             if not result.get("success"):
                 raise HTTPException(status_code=400, detail=result.get("error", "Échec modification prix"))
-            return {"success": True, "result": result}
+            rec_type = "prix"
 
         if rec_type == "titre":
             engine = get_ai_engine()
@@ -2201,7 +2206,7 @@ async def apply_recommendation_endpoint(req: ApplyRecommendationRequest, request
             result = action_engine.update_product_content(req.product_id, title=new_title)
             if not result.get("success"):
                 raise HTTPException(status_code=400, detail=result.get("error", "Échec modification titre"))
-            return {"success": True, "result": result}
+            rec_type = "titre"
 
         if rec_type == "description":
             engine = get_ai_engine()
@@ -2209,7 +2214,46 @@ async def apply_recommendation_endpoint(req: ApplyRecommendationRequest, request
             result = action_engine.update_product_content(req.product_id, description=new_description)
             if not result.get("success"):
                 raise HTTPException(status_code=400, detail=result.get("error", "Échec modification description"))
-            return {"success": True, "result": result}
+            rec_type = "description"
+
+        # Fetch product (after) to verify change
+        after_resp = requests.get(
+            f"https://{shop_domain}/admin/api/2024-01/products/{req.product_id}.json",
+            headers={"X-Shopify-Access-Token": access_token, "Content-Type": "application/json"}
+        )
+        after_resp.raise_for_status()
+        after_product = after_resp.json().get("product", {})
+        after_title = after_product.get("title")
+        after_description = after_product.get("body_html")
+        after_price = None
+        if after_product.get("variants"):
+            after_price = after_product["variants"][0].get("price")
+
+        changed = False
+        if rec_type == "prix" and before_price != after_price:
+            changed = True
+        if rec_type == "titre" and before_title != after_title:
+            changed = True
+        if rec_type == "description" and before_description != after_description:
+            changed = True
+
+        if not changed:
+            raise HTTPException(status_code=400, detail="Aucune modification détectée sur Shopify")
+
+        return {
+            "success": True,
+            "result": result,
+            "before": {
+                "title": before_title,
+                "description": before_description,
+                "price": before_price
+            },
+            "after": {
+                "title": after_title,
+                "description": after_description,
+                "price": after_price
+            }
+        }
 
         raise HTTPException(status_code=400, detail="Type de recommandation non supporté")
 
