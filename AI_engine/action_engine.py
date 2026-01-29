@@ -16,9 +16,9 @@ class ActionEngine:
     def __init__(self, shopify_shop_url: str, shopify_access_token: str):
         self.shop_url = shopify_shop_url
         self.access_token = shopify_access_token
-        self.base_url = f"https://{shop_url}/admin/api/2024-01"
+        self.base_url = f"https://{self.shop_url}/admin/api/2024-01"
         self.headers = {
-            "X-Shopify-Access-Token": access_token,
+            "X-Shopify-Access-Token": self.access_token,
             "Content-Type": "application/json"
         }
     

@@ -2191,18 +2191,24 @@ async def apply_recommendation_endpoint(req: ApplyRecommendationRequest, request
                 raise HTTPException(status_code=400, detail="Prix actuel invalide")
             new_price = round(current_price * 1.2, 2)
             result = action_engine.apply_price_change(req.product_id, new_price)
+            if not result.get("success"):
+                raise HTTPException(status_code=400, detail=result.get("error", "Échec modification prix"))
             return {"success": True, "result": result}
 
         if rec_type == "titre":
             engine = get_ai_engine()
             new_title = engine.content_gen.generate_title(product, tier)
             result = action_engine.update_product_content(req.product_id, title=new_title)
+            if not result.get("success"):
+                raise HTTPException(status_code=400, detail=result.get("error", "Échec modification titre"))
             return {"success": True, "result": result}
 
         if rec_type == "description":
             engine = get_ai_engine()
             new_description = engine.content_gen.generate_description(product, tier)
             result = action_engine.update_product_content(req.product_id, description=new_description)
+            if not result.get("success"):
+                raise HTTPException(status_code=400, detail=result.get("error", "Échec modification description"))
             return {"success": True, "result": result}
 
         raise HTTPException(status_code=400, detail="Type de recommandation non supporté")
