@@ -1362,6 +1362,7 @@ export default function Dashboard() {
         </aside>
 
         <main className="flex-1">
+          <div className="min-h-full">
 
       {/* Plan Change Menu (kept separate for billing changes) */}
       {showPlanMenu && (
@@ -2634,6 +2635,7 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+          </div>
         </main>
       </div>
     </div>
