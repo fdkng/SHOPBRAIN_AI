@@ -1753,9 +1753,7 @@ async def chat_with_ai(req: ChatRequest, request: Request):
     if not message:
         raise HTTPException(status_code=400, detail="Message vide")
     
-    # Limiter à 500 caractères pour éviter les abus
-    if len(message) > 500:
-        raise HTTPException(status_code=400, detail="Message trop long (max 500 caractères)")
+    # Pas de limite stricte côté API pour permettre des messages longs
     
     system_prompt = SHOPBRAIN_EXPERT_SYSTEM or "Tu es un assistant expert en e-commerce Shopify."
 
@@ -1776,7 +1774,7 @@ async def chat_with_ai(req: ChatRequest, request: Request):
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": full_message}
                 ],
-                max_tokens=500,
+                max_tokens=4000,
                 temperature=0.7
             )
             print(f"✅ OpenAI response received")
@@ -1790,7 +1788,7 @@ async def chat_with_ai(req: ChatRequest, request: Request):
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": full_message}
                     ],
-                    "max_tokens": 500,
+                    "max_tokens": 4000,
                     "temperature": 0.7
                 }
                 r = requests.post(

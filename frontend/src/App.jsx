@@ -292,7 +292,7 @@ export default function App() {
     
     // Validation
     if (formData.password.length < 6) {
-      setAuthMessage('❌ Le mot de passe doit contenir au moins 6 caractères')
+      setAuthMessage('Le mot de passe doit contenir au moins 6 caractères')
       return
     }
     
@@ -314,9 +314,9 @@ export default function App() {
       
       if (error) {
         if (error.message.includes('already registered')) {
-          setAuthMessage('❌ Cet email est déjà utilisé. Connecte-toi ou utilise un autre email.')
+          setAuthMessage('Cet email est déjà utilisé. Connecte-toi ou utilise un autre email.')
         } else {
-          setAuthMessage('❌ ' + error.message)
+          setAuthMessage(error.message)
         }
         return
       }
@@ -333,7 +333,7 @@ export default function App() {
       }, 500)
       
     } catch (error) {
-      setAuthMessage('❌ Une erreur est survenue. Réessaie.')
+      setAuthMessage('Une erreur est survenue. Réessaie.')
       console.error(error)
     }
   }
@@ -350,9 +350,9 @@ export default function App() {
       
       if (error) {
         if (error.message.includes('Invalid login credentials')) {
-          setAuthMessage('❌ Email ou mot de passe incorrect')
+          setAuthMessage('Email ou mot de passe incorrect')
         } else {
-          setAuthMessage('❌ ' + error.message)
+          setAuthMessage(error.message)
         }
         return
       }
@@ -363,7 +363,7 @@ export default function App() {
       setFormData({ firstName: '', lastName: '', username: '', email: '', password: '' })
       
     } catch (error) {
-      setAuthMessage('❌ Une erreur est survenue. Réessaie.')
+      setAuthMessage('Une erreur est survenue. Réessaie.')
       console.error(error)
     }
   }
@@ -378,10 +378,10 @@ export default function App() {
       })
       
       if (error) {
-        setAuthMessage('❌ Erreur avec Google Sign-In: ' + error.message)
+        setAuthMessage('Erreur avec Google Sign-In: ' + error.message)
       }
     } catch (error) {
-      setAuthMessage('❌ Une erreur est survenue avec Google.')
+      setAuthMessage('Une erreur est survenue avec Google.')
       console.error(error)
     }
   }
@@ -503,36 +503,36 @@ export default function App() {
 
   // Otherwise show landing page
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen bg-gray-900">
       {/* Navigation */}
       <nav className={`fixed top-0 w-full z-50 transition-all duration-300 ${
-        scrolled ? 'bg-white/80 backdrop-blur-md shadow-sm border-b border-gray-200' : 'bg-white border-b border-gray-100'
+        scrolled ? 'bg-gray-900/80 backdrop-blur-md shadow-sm border-b border-gray-700' : 'bg-gray-900 border-b border-gray-700'
       }`}>
         <div className="max-w-7xl mx-auto px-6 sm:px-8">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-blue-700 rounded-lg flex items-center justify-center text-white font-bold text-sm">
-                💡
+              <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-blue-700 rounded-lg flex items-center justify-center text-white font-bold text-[10px] tracking-[0.2em]">
+                SB
               </div>
-              <span className="text-lg sm:text-xl font-semibold text-gray-900">ShopBrain AI</span>
+              <span className="text-lg sm:text-xl font-semibold text-white">ShopBrain AI</span>
             </div>
             
             <div className="hidden md:flex items-center gap-8">
-              <a href="#features" className="text-sm font-normal text-gray-600 hover:text-gray-900 transition-colors">
+              <a href="#features" className="text-sm font-normal text-gray-400 hover:text-white transition-colors">
                 Fonctionnalités
               </a>
-              <a href="#how-it-works" className="text-sm font-normal text-gray-600 hover:text-gray-900 transition-colors">
+              <a href="#how-it-works" className="text-sm font-normal text-gray-400 hover:text-white transition-colors">
                 Comment ça marche
               </a>
-              <a href="#pricing" className="text-sm font-normal text-gray-600 hover:text-gray-900 transition-colors">
+              <a href="#pricing" className="text-sm font-normal text-gray-400 hover:text-white transition-colors">
                 Tarifs
               </a>
             </div>
 
             {user ? (
               <div className="flex items-center gap-3">
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-green-50 text-green-700 rounded-full text-sm">
-                  <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-green-900/30 text-green-300 rounded-full text-sm border border-green-700/40">
+                  <span className="w-2 h-2 bg-green-400 rounded-full"></span>
                   <span className="font-medium">{user.user_metadata?.first_name || 'Connecté'}</span>
                 </div>
                 <button
@@ -548,7 +548,7 @@ export default function App() {
                     }
                   }}
                   className={`px-4 py-2 rounded-full text-sm font-medium transition ${
-                    hasSubscription ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-200 text-gray-600 cursor-not-allowed'
+                    hasSubscription ? 'bg-yellow-600 text-black hover:bg-yellow-500' : 'bg-gray-700 text-gray-400 cursor-not-allowed'
                   }`}
                 >
                   Dashboard
@@ -560,7 +560,7 @@ export default function App() {
                     setUser(null)
                     setCurrentView('landing')
                   }}
-                  className="px-4 py-2 text-gray-600 hover:text-gray-900 text-sm font-medium transition"
+                  className="px-4 py-2 text-gray-400 hover:text-white text-sm font-medium transition"
                 >
                   Déconnexion
                 </button>
@@ -568,7 +568,7 @@ export default function App() {
             ) : (
               <button
                 onClick={() => setShowAuthModal(true)}
-                className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-full hover:bg-blue-700 transition-all hover:scale-105 shadow-md"
+                className="px-4 py-2 bg-yellow-600 text-black text-sm font-medium rounded-full hover:bg-yellow-500 transition-all hover:scale-105 shadow-md"
               >
                 Se connecter
               </button>
@@ -582,7 +582,7 @@ export default function App() {
           <div className={`rounded-2xl p-6 flex items-center justify-between shadow-sm ${paymentProcessingState === 'verified' ? 'bg-green-50 border border-green-200 text-green-800' : paymentProcessingState === 'failed' ? 'bg-gray-50 border border-yellow-200 text-yellow-800' : 'bg-yellow-50 border border-yellow-200 text-yellow-800'}`}>
             <div className="flex items-center gap-4">
               <span className="text-4xl">
-                {paymentProcessingState === 'verified' ? '✅' : paymentProcessingState === 'failed' ? '❌' : '⏳'}
+                {paymentProcessingState === 'verified' ? 'OK' : paymentProcessingState === 'failed' ? 'Erreur' : '...'}
               </span>
               <div>
                 <div className="font-semibold text-lg">
@@ -601,7 +601,7 @@ export default function App() {
                   hasSubscription ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-200 text-gray-600 cursor-not-allowed'
                 }`}
               >
-                Accéder au dashboard →
+                Accéder au dashboard
               </button>
             </div>
           </div>
@@ -774,7 +774,7 @@ export default function App() {
 
             {authMessage && (
               <div className={`mt-4 p-3 rounded-xl text-xs ${
-                authMessage.includes('✅') ? 'bg-green-50 text-green-700' : 'bg-yellow-50 text-yellow-800'
+                authMessage.toLowerCase().startsWith('succès') ? 'bg-green-50 text-green-700' : 'bg-yellow-50 text-yellow-800'
               }`}>
                 {authMessage}
               </div>
@@ -784,40 +784,40 @@ export default function App() {
       )}
 
       {/* Hero Section - Apple Style avec visuels */}
-      <section className="pt-24 pb-16 px-6 bg-gradient-to-b from-white to-gray-50">
+      <section className="pt-28 pb-20 px-6 bg-gradient-to-b from-gray-900 via-gray-900 to-gray-800">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-12 animate-fadeIn">
             <div className="inline-block mb-6">
-              <span className="px-4 py-2 bg-blue-100 text-blue-700 rounded-full text-sm font-semibold">
-                Nouveau : IA Générative pour Shopify
+              <span className="px-4 py-2 bg-blue-900/60 text-blue-300 border border-blue-700/50 rounded-full text-xs font-semibold uppercase tracking-[0.2em]">
+                Nouveau — IA Générative Shopify
               </span>
             </div>
-            <h1 className="text-5xl md:text-7xl lg:text-8xl font-bold text-gray-900 tracking-tight leading-[1.05] mb-6">
-              L'IA qui transforme<br />
-              <span className="bg-gradient-to-r from-yellow-700 to-yellow-600 bg-clip-text text-transparent">
-                vos ventes Shopify
+            <h1 className="text-5xl md:text-7xl lg:text-8xl font-bold text-white tracking-tight leading-[1.05] mb-6">
+              Pilotez votre croissance<br />
+              <span className="bg-gradient-to-r from-yellow-300 via-yellow-400 to-yellow-600 bg-clip-text text-transparent">
+                avec une IA d'élite
               </span>
             </h1>
-            <p className="text-xl md:text-2xl text-gray-600 mb-12 max-w-3xl mx-auto leading-relaxed">
-              Optimisez automatiquement vos produits, descriptions et stratégies.<br />
-              Augmentation moyenne de <span className="font-bold text-gray-900">+127%</span> des conversions en 30 jours.
+            <p className="text-lg md:text-2xl text-gray-300 mb-12 max-w-3xl mx-auto leading-relaxed">
+              Optimisez produits, descriptions et stratégies en temps réel.<br />
+              Impact mesuré : <span className="font-bold text-white">+127%</span> de conversions en 30 jours.
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-8">
               <button
                 onClick={() => window.location.hash = '#stripe-pricing'}
-                className="px-10 py-5 bg-blue-600 text-white text-lg font-semibold rounded-full hover:bg-blue-700 transition-all hover:scale-105 shadow-2xl hover:shadow-blue-500/50"
+                className="px-10 py-5 bg-yellow-600 text-black text-lg font-semibold rounded-full hover:bg-yellow-500 transition-all hover:scale-105 shadow-2xl hover:shadow-yellow-500/30"
               >
-                Voir tous les plans →
+                Voir tous les plans
               </button>
               <button
                 onClick={() => setShowAuthModal(true)}
-                className="px-10 py-5 text-gray-900 text-lg font-semibold border-2 border-gray-900 rounded-full hover:bg-gray-900 hover:text-white transition-all hover:scale-105"
+                className="px-10 py-5 text-white text-lg font-semibold border-2 border-gray-600 rounded-full hover:bg-gray-800 hover:text-white transition-all hover:scale-105"
               >
                 Se connecter
               </button>
             </div>
-            <p className="text-sm text-gray-500">
-              ✓ Sans engagement • ✓ Essai 14 jours • ✓ Résultats garantis
+            <p className="text-sm text-gray-400">
+              • Sans engagement • Essai 14 jours • Résultats garantis
             </p>
           </div>
 
@@ -840,44 +840,142 @@ export default function App() {
                 disabled={!hasSubscription}
                 className={`px-12 py-4 text-white text-lg font-semibold rounded-full transition-all hover:scale-105 ${
                   hasSubscription
-                    ? 'bg-gradient-to-r from-yellow-700 to-yellow-600 hover:shadow-2xl hover:shadow-yellow-500/50'
-                    : 'bg-gray-300 cursor-not-allowed'
+                    ? 'bg-gradient-to-r from-yellow-600 to-yellow-500 hover:shadow-2xl hover:shadow-yellow-500/30'
+                    : 'bg-gray-700 cursor-not-allowed'
                 }`}
               >
-                Accéder à mon Dashboard →
+                Accéder à mon Dashboard
               </button>
               {renderLandingStatus('dashboardHero')}
             </div>
           )}
           {!user && (
             <div className="mt-16 text-center">
-              <p className="text-gray-600 mb-6">Connecte-toi pour accéder à ton dashboard et voir ton IA</p>
+              <p className="text-gray-400 mb-6">Connecte-toi pour accéder à ton dashboard et voir ton IA</p>
             </div>
           )}
         </div>
       </section>
 
-      {/* Social Proof */}
-      <section className="py-12 px-6 bg-gray-50 border-y border-gray-200">
+      {/* Ecosystem Section */}
+      <section className="py-24 px-6 bg-gray-900">
         <div className="max-w-6xl mx-auto">
-          <p className="text-center text-sm text-gray-500 mb-6">Ils nous font confiance</p>
+          <div className="text-center mb-16">
+            <p className="text-xs uppercase tracking-[0.3em] text-gray-400 mb-4">Écosystème</p>
+            <h2 className="text-4xl md:text-5xl font-bold text-white mb-4">Un cockpit complet, pensé pour la performance</h2>
+            <p className="text-lg text-gray-400 max-w-3xl mx-auto">Centralisez l’IA, la stratégie et l’exécution dans un hub unique, avec un rendu premium et une lisibilité irréprochable.</p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {[
+              {
+                title: 'Studio IA',
+                desc: 'Optimisation en continu des titres, descriptions et prix avec historique des décisions.'
+              },
+              {
+                title: 'Command Center',
+                desc: 'Priorités quotidiennes, alertes critiques et suivi d’impact sur les ventes.'
+              },
+              {
+                title: 'Automation Hub',
+                desc: 'Scénarios programmés et exécution sans friction, même à grande échelle.'
+              }
+            ].map((card, idx) => (
+              <div key={idx} className="bg-gray-800 border border-gray-700 rounded-3xl p-6">
+                <h3 className="text-white text-xl font-semibold mb-2">{card.title}</h3>
+                <p className="text-gray-400 text-sm leading-relaxed">{card.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Command Center Section */}
+      <section className="py-24 px-6 bg-gray-900">
+        <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-10 items-center">
+          <div>
+            <p className="text-xs uppercase tracking-[0.3em] text-gray-400 mb-4">Command Center</p>
+            <h2 className="text-4xl md:text-5xl font-bold text-white mb-4">La vue d’ensemble qui transforme vos décisions</h2>
+            <p className="text-lg text-gray-400 mb-6">Un design dense mais lisible, avec un contraste précis et des blocs de données hiérarchisés.</p>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between bg-gray-800 border border-gray-700 rounded-2xl px-4 py-3">
+                <span className="text-gray-300 text-sm">Impact prioritaire</span>
+                <span className="text-yellow-300 text-sm font-semibold">+18% revenus attendus</span>
+              </div>
+              <div className="flex items-center justify-between bg-gray-800 border border-gray-700 rounded-2xl px-4 py-3">
+                <span className="text-gray-300 text-sm">Risques critiques</span>
+                <span className="text-red-300 text-sm font-semibold">2 alertes</span>
+              </div>
+              <div className="flex items-center justify-between bg-gray-800 border border-gray-700 rounded-2xl px-4 py-3">
+                <span className="text-gray-300 text-sm">Exécutions planifiées</span>
+                <span className="text-green-300 text-sm font-semibold">12 actions</span>
+              </div>
+            </div>
+          </div>
+          <div className="bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700 rounded-3xl p-8">
+            <div className="grid grid-cols-2 gap-6">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Sessions</p>
+                <p className="text-3xl font-bold text-white mt-2">+2,4k</p>
+                <p className="text-gray-400 text-xs">semaine</p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Conversion</p>
+                <p className="text-3xl font-bold text-white mt-2">3,8%</p>
+                <p className="text-gray-400 text-xs">moyenne</p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Revenus</p>
+                <p className="text-3xl font-bold text-white mt-2">$84k</p>
+                <p className="text-gray-400 text-xs">30 jours</p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Tickets IA</p>
+                <p className="text-3xl font-bold text-white mt-2">56</p>
+                <p className="text-gray-400 text-xs">résolus</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Metrics Strip */}
+      <section className="py-12 px-6 bg-gray-900 border-y border-gray-700">
+        <div className="max-w-6xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
+          {[
+            { label: 'Optimisations', value: '48k' },
+            { label: 'Produits scannés', value: '12M' },
+            { label: 'Stores actifs', value: '1.4k' },
+            { label: 'ROI moyen', value: '+31%' }
+          ].map((stat) => (
+            <div key={stat.label} className="bg-gray-800 border border-gray-700 rounded-2xl py-4">
+              <p className="text-2xl font-bold text-white">{stat.value}</p>
+              <p className="text-xs uppercase tracking-[0.2em] text-gray-400 mt-1">{stat.label}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Social Proof */}
+      <section className="py-12 px-6 bg-gray-900 border-y border-gray-700">
+        <div className="max-w-6xl mx-auto">
+          <p className="text-center text-xs text-gray-400 mb-6 uppercase tracking-[0.3em]">Ils nous font confiance</p>
           <div className="flex flex-wrap justify-center items-center gap-12 opacity-60">
-            <div className="text-2xl font-bold text-gray-400">SHOPIFY</div>
-            <div className="text-2xl font-bold text-gray-400">STRIPE</div>
-            <div className="text-2xl font-bold text-gray-400">OPENAI</div>
-            <div className="text-2xl font-bold text-gray-400">SUPABASE</div>
+            <div className="text-2xl font-bold text-gray-500">SHOPIFY</div>
+            <div className="text-2xl font-bold text-gray-500">STRIPE</div>
+            <div className="text-2xl font-bold text-gray-500">OPENAI</div>
+            <div className="text-2xl font-bold text-gray-500">SUPABASE</div>
           </div>
         </div>
       </section>
 
       {/* Features Section - Apple Style amélioré */}
-      <section id="features" className="py-24 px-6 bg-white">
+      <section id="features" className="py-24 px-6 bg-gray-900">
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-20">
-            <h2 className="text-5xl md:text-6xl font-bold text-gray-900 mb-4">
+            <h2 className="text-5xl md:text-6xl font-bold text-white mb-4">
               Fonctionnalités<br />surpuissantes.
             </h2>
-            <p className="text-xl text-gray-600">
+            <p className="text-xl text-gray-400">
               Tout ce dont vous avez besoin pour dominer votre marché.
             </p>
           </div>
@@ -886,44 +984,44 @@ export default function App() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {[
               {
-                icon: '⚡',
+                icon: 'AI',
                 gradient: 'from-yellow-400 to-orange-500',
                 title: 'Analyse IA en temps réel',
                 desc: 'Scannez des milliers de produits en secondes. Notre IA analyse titres, descriptions, prix et images pour détecter les opportunités d\'optimisation.',
                 stat: '10M+ produits analysés'
               },
               {
-                icon: '✨',
+                icon: 'AUTO',
                 gradient: 'from-yellow-600 to-yellow-500',
                 title: 'Optimisation automatique',
                 desc: 'L\'IA génère automatiquement des titres SEO-optimisés, des descriptions persuasives et des tags pertinents. Augmentez vos conversions sans lever le petit doigt.',
                 stat: '+127% conversions moyenne'
               },
               {
-                icon: '📈',
+                icon: 'DATA',
                 gradient: 'from-green-400 to-emerald-500',
                 title: 'Analytics & Insights',
                 desc: 'Tableaux de bord en temps réel : ventes, profits, best-sellers, produits sous-performants. Prenez des décisions data-driven.',
                 stat: 'Mises à jour toutes les 5min'
               },
               {
-                icon: '🔗',
+                icon: 'SHOP',
                 gradient: 'from-blue-700 to-blue-600',
                 title: 'Intégration Shopify native',
                 desc: 'Connectez votre boutique en un clic. Synchronisation automatique bidirectionnelle : produits, commandes, clients, inventaire.',
                 stat: 'Sync en <1 seconde'
               }
             ].map((feature, idx) => (
-              <div key={idx} className="group relative p-8 bg-gradient-to-br from-gray-50 to-white border border-gray-200 rounded-3xl hover:shadow-2xl hover:scale-[1.02] transition-all duration-300 overflow-hidden">
+              <div key={idx} className="group relative p-8 bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700 rounded-3xl hover:shadow-2xl hover:scale-[1.02] transition-all duration-300 overflow-hidden">
                 <div className={`absolute top-0 right-0 w-32 h-32 bg-gradient-to-br ${feature.gradient} opacity-10 rounded-full blur-3xl group-hover:opacity-20 transition-opacity`}></div>
                 <div className="relative">
-                  <div className={`inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br ${feature.gradient} rounded-2xl text-3xl mb-6 shadow-lg`}>
+                  <div className={`inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br ${feature.gradient} rounded-2xl text-xs uppercase tracking-[0.2em] text-white mb-6 shadow-lg`}>
                     {feature.icon}
                   </div>
-                  <h3 className="text-2xl font-bold text-gray-900 mb-3">{feature.title}</h3>
-                  <p className="text-gray-600 leading-relaxed mb-4">{feature.desc}</p>
-                  <div className="inline-flex items-center gap-2 px-3 py-1 bg-gray-100 rounded-full text-sm font-semibold text-gray-700">
-                    <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                  <h3 className="text-2xl font-bold text-white mb-3">{feature.title}</h3>
+                  <p className="text-gray-400 leading-relaxed mb-4">{feature.desc}</p>
+                  <div className="inline-flex items-center gap-2 px-3 py-1 bg-gray-800 rounded-full text-sm font-semibold text-gray-300">
+                    <span className="w-2 h-2 bg-green-400 rounded-full"></span>
                     {feature.stat}
                   </div>
                 </div>
@@ -934,39 +1032,39 @@ export default function App() {
       </section>
 
       {/* How It Works Section */}
-      <section id="how-it-works" className="py-24 px-6">
+      <section id="how-it-works" className="py-24 px-6 bg-gray-900">
         <div className="max-w-6xl mx-auto">
-          <h2 className="text-4xl md:text-5xl font-bold text-gray-900 text-center mb-16">Comment ça marche</h2>
+          <h2 className="text-4xl md:text-5xl font-bold text-white text-center mb-16">Comment ça marche</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             {[
               {
                 number: '1',
-                icon: '🔗',
+                icon: 'CONNECT',
                 title: 'Connectez Shopify',
                 desc: 'Liez votre magasin en toute sécurité'
               },
               {
                 number: '2',
-                icon: '👆',
+                icon: 'SELECT',
                 title: 'Sélectionnez produits',
                 desc: 'Choisissez les articles à analyser'
               },
               {
                 number: '3',
-                icon: '💡',
+                icon: 'INSIGHT',
                 title: 'Recevez insights',
                 desc: 'Obtenez des recommandations personnalisées'
               }
             ].map((step, idx) => (
               <div key={idx} className="text-center">
-                <div className="w-16 h-16 bg-blue-600 text-white rounded-full flex items-center justify-center text-2xl font-bold mx-auto mb-6 shadow-lg">
+                <div className="w-16 h-16 bg-yellow-600 text-black rounded-full flex items-center justify-center text-2xl font-bold mx-auto mb-6 shadow-lg">
                   {step.number}
                 </div>
-                <div className="w-12 h-12 mx-auto bg-gray-100 rounded-xl flex items-center justify-center mb-4 text-2xl">
+                <div className="w-12 h-12 mx-auto bg-gray-800 rounded-xl flex items-center justify-center mb-4 text-[10px] uppercase tracking-[0.2em] text-gray-300">
                   {step.icon}
                 </div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">{step.title}</h3>
-                <p className="text-sm text-gray-600">{step.desc}</p>
+                <h3 className="text-lg font-semibold text-white mb-2">{step.title}</h3>
+                <p className="text-sm text-gray-400">{step.desc}</p>
               </div>
             ))}
           </div>
@@ -1033,7 +1131,7 @@ export default function App() {
                         <span className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center ${
                           plan.highlight ? 'bg-yellow-600/20 text-yellow-400' : 'bg-gray-700 text-gray-300'
                         }`}>
-                          ✓
+                          •
                         </span>
                         <span className="text-sm text-gray-200 leading-relaxed">{feature}</span>
                       </li>
@@ -1060,7 +1158,7 @@ export default function App() {
                 onClick={() => window.location.hash = '#stripe-pricing'}
                 className="px-8 py-3 bg-yellow-700 text-white font-semibold border-2 border-yellow-700 rounded-full hover:bg-yellow-600 transition-all"
               >
-                Voir tous les plans →
+                Voir tous les plans
               </button>
               <button
                 onClick={() => setShowAuthModal(true)}
@@ -1074,53 +1172,53 @@ export default function App() {
       </section>
 
       {/* CTA Section */}
-      <section className="py-24 px-6">
+      <section className="py-24 px-6 bg-gray-900">
         <div className="max-w-4xl mx-auto text-center">
-          <h2 className="text-4xl md:text-5xl font-bold text-gray-900 mb-6">
+          <h2 className="text-4xl md:text-5xl font-bold text-white mb-6">
             Prêt à transformer votre Shopify?
           </h2>
-          <p className="text-lg text-gray-600 mb-10">
+          <p className="text-lg text-gray-400 mb-10">
             Rejoignez des centaines de sellers qui utilisent ShopBrain AI
           </p>
           <button
             onClick={() => window.location.hash = '#stripe-pricing'}
-            className="px-8 py-4 bg-blue-600 text-white text-base font-medium rounded-full hover:bg-blue-700 transition-all hover:scale-105 shadow-lg hover:shadow-xl"
+            className="px-8 py-4 bg-yellow-600 text-black text-base font-medium rounded-full hover:bg-yellow-500 transition-all hover:scale-105 shadow-lg hover:shadow-xl"
           >
-            Voir tous les plans →
+            Voir tous les plans
           </button>
         </div>
       </section>
 
       {/* Footer */}
-      <footer className="border-t border-gray-200 py-12 px-6 bg-gray-50">
+      <footer className="border-t border-gray-700 py-12 px-6 bg-gray-900">
         <div className="max-w-6xl mx-auto">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-8">
             <div>
-              <h4 className="text-xs font-semibold text-gray-900 mb-4 tracking-wide">PRODUIT</h4>
-              <ul className="space-y-3 text-sm text-gray-600">
-                <li><a href="#features" className="hover:text-gray-900 transition-colors">Fonctionnalités</a></li>
-                <li><a href="#pricing" className="hover:text-gray-900 transition-colors">Tarifs</a></li>
-                <li><a href="#how-it-works" className="hover:text-gray-900 transition-colors">Comment ça marche</a></li>
+              <h4 className="text-xs font-semibold text-gray-300 mb-4 tracking-wide">PRODUIT</h4>
+              <ul className="space-y-3 text-sm text-gray-400">
+                <li><a href="#features" className="hover:text-white transition-colors">Fonctionnalités</a></li>
+                <li><a href="#pricing" className="hover:text-white transition-colors">Tarifs</a></li>
+                <li><a href="#how-it-works" className="hover:text-white transition-colors">Comment ça marche</a></li>
               </ul>
             </div>
             <div>
-              <h4 className="text-xs font-semibold text-gray-900 mb-4 tracking-wide">ENTREPRISE</h4>
-              <ul className="space-y-3 text-sm text-gray-600">
-                <li><a href="#" className="hover:text-gray-900 transition-colors">À propos</a></li>
-                <li><a href="#" className="hover:text-gray-900 transition-colors">Blog</a></li>
-                <li><a href="#" className="hover:text-gray-900 transition-colors">Contact</a></li>
+              <h4 className="text-xs font-semibold text-gray-300 mb-4 tracking-wide">ENTREPRISE</h4>
+              <ul className="space-y-3 text-sm text-gray-400">
+                <li><a href="#" className="hover:text-white transition-colors">À propos</a></li>
+                <li><a href="#" className="hover:text-white transition-colors">Blog</a></li>
+                <li><a href="#" className="hover:text-white transition-colors">Contact</a></li>
               </ul>
             </div>
             <div>
-              <h4 className="text-xs font-semibold text-gray-900 mb-4 tracking-wide">LÉGAL</h4>
-              <ul className="space-y-3 text-sm text-gray-600">
-                <li><a href="#" className="hover:text-gray-900 transition-colors">Politique de confidentialité</a></li>
-                <li><a href="#" className="hover:text-gray-900 transition-colors">Conditions d'utilisation</a></li>
+              <h4 className="text-xs font-semibold text-gray-300 mb-4 tracking-wide">LÉGAL</h4>
+              <ul className="space-y-3 text-sm text-gray-400">
+                <li><a href="#" className="hover:text-white transition-colors">Politique de confidentialité</a></li>
+                <li><a href="#" className="hover:text-white transition-colors">Conditions d'utilisation</a></li>
               </ul>
             </div>
           </div>
-          <div className="border-t border-gray-200 pt-8">
-            <p className="text-center text-sm text-gray-600">© 2025 ShopBrain AI. Tous droits réservés.</p>
+          <div className="border-t border-gray-700 pt-8">
+            <p className="text-center text-sm text-gray-500">© 2025 ShopBrain AI. Tous droits réservés.</p>
           </div>
         </div>
       </footer>

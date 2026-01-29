@@ -10,7 +10,15 @@ const API_URL = 'https://shopbrain-backend.onrender.com'
 
 export default function Dashboard() {
   const [user, setUser] = useState(null)
-  const [profile, setProfile] = useState(null)
+  const [profile, setProfile] = useState(() => {
+    if (typeof window === 'undefined') return null
+    try {
+      const cached = localStorage.getItem('profileCache')
+      return cached ? JSON.parse(cached) : null
+    } catch {
+      return null
+    }
+  })
   const [subscription, setSubscription] = useState(null)
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState(() => {
@@ -35,7 +43,7 @@ export default function Dashboard() {
   const [applyingActions, setApplyingActions] = useState(false)
   const [analysisResults, setAnalysisResults] = useState(null)
   const defaultChatMessages = [
-    { role: 'assistant', text: '👋 Bonjour! Je suis ton assistant IA e-commerce. Tu peux me poser des questions sur tes produits, tes stratégies de vente, ou tout ce qui concerne ton e-commerce.' }
+    { role: 'assistant', text: 'Bonjour, je suis ton assistant IA e-commerce. Pose-moi des questions sur tes produits, ta stratégie, ou ta boutique Shopify.' }
   ]
   const [chatMessages, setChatMessages] = useState(() => {
     if (typeof window === 'undefined') return defaultChatMessages
@@ -57,10 +65,7 @@ export default function Dashboard() {
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
-  const [darkMode, setDarkMode] = useState(() => {
-    const stored = localStorage.getItem('darkMode')
-    return stored ? stored === 'true' : true
-  })
+  const [darkMode] = useState(true)
   const [language, setLanguage] = useState(() => localStorage.getItem('language') || 'fr')
   const [notifications, setNotifications] = useState({
     email_notifications: true,
@@ -78,6 +83,7 @@ export default function Dashboard() {
   const [statusByKey, setStatusByKey] = useState({})
   const [pendingRevokeKeyId, setPendingRevokeKeyId] = useState(null)
   const [pendingCancelSubscription, setPendingCancelSubscription] = useState(false)
+  const chatEndRef = useRef(null)
 
   const formatDate = (value) => {
     if (!value) return '—'
@@ -110,6 +116,17 @@ export default function Dashboard() {
       ...prev,
       [key]: { type, message, ts: Date.now() }
     }))
+  }
+
+  const formatErrorDetail = (detail, fallback = 'Erreur') => {
+    if (!detail) return fallback
+    if (typeof detail === 'string') return detail
+    if (typeof detail?.message === 'string') return detail.message
+    try {
+      return JSON.stringify(detail)
+    } catch {
+      return fallback
+    }
   }
 
   const renderStatus = (key) => {
@@ -180,7 +197,7 @@ export default function Dashboard() {
       paymentMethod: 'Moyen de paiement',
       updatePaymentMethod: 'Mettre à jour le paiement',
       apiKeys: 'Clés API',
-      apiWarning: '⚠️ Garde tes clés API en sécurité. Ne les partage pas.',
+      apiWarning: 'Garde tes clés API en sécurité. Ne les partage pas.',
       productionApiKey: 'Clé API de production',
       createdOn: 'Créée le',
       revoke: 'Révoquer',
@@ -234,7 +251,7 @@ export default function Dashboard() {
       paymentMethod: 'Payment Method',
       updatePaymentMethod: 'Update Payment Method',
       apiKeys: 'API Keys',
-      apiWarning: '⚠️ Keep your API keys secure. Do not share them publicly.',
+      apiWarning: 'Keep your API keys secure. Do not share them publicly.',
       productionApiKey: 'Production API Key',
       createdOn: 'Created on',
       revoke: 'Revoke',
@@ -411,15 +428,6 @@ export default function Dashboard() {
   }
 
   useEffect(() => {
-    const root = document.documentElement
-    if (darkMode) {
-      root.classList.remove('theme-light')
-    } else {
-      root.classList.add('theme-light')
-    }
-  }, [darkMode])
-
-  useEffect(() => {
     if (typeof window !== 'undefined') {
       localStorage.setItem('activeTab', activeTab)
     }
@@ -437,6 +445,16 @@ export default function Dashboard() {
     }
   }, [chatMessages])
 
+  useEffect(() => {
+    if (typeof window !== 'undefined' && profile) {
+      localStorage.setItem('profileCache', JSON.stringify(profile))
+    }
+  }, [profile])
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+  }, [chatMessages, chatLoading])
+
   const initializeUser = async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession()
@@ -447,6 +465,18 @@ export default function Dashboard() {
       }
       
       setUser(session.user)
+      if (!profile) {
+        const meta = session.user?.user_metadata || {}
+        const quickProfile = {
+          first_name: meta.first_name || meta.firstName || '',
+          last_name: meta.last_name || meta.lastName || '',
+          username: meta.username || '',
+          avatar_url: meta.avatar_url || meta.avatar || ''
+        }
+        if (quickProfile.first_name || quickProfile.last_name || quickProfile.username || quickProfile.avatar_url) {
+          setProfile(quickProfile)
+        }
+      }
       setSubscriptionMissing(false)
 
       const authHeaders = {
@@ -483,9 +513,6 @@ export default function Dashboard() {
       if (prefsResp.ok) {
         const prefsData = await prefsResp.json()
         if (prefsData.success && prefsData.preferences) {
-          if (typeof prefsData.preferences.dark_mode === 'boolean') {
-            setDarkMode(prefsData.preferences.dark_mode)
-          }
           if (prefsData.preferences.language) {
             setLanguage(prefsData.preferences.language)
           }
@@ -511,12 +538,14 @@ export default function Dashboard() {
         }
       }
 
+      setLoading(false)
+
       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
       let data = subResp.ok ? await subResp.json() : null
       let attempts = 0
 
       while ((!data || !data.success || !data.has_subscription) && attempts < 3) {
-        await sleep(1500)
+        await sleep(1000)
         const retryResp = await fetch(`${API_URL}/api/subscription/status`, {
           method: 'POST',
           headers: authHeaders,
@@ -528,15 +557,10 @@ export default function Dashboard() {
 
       if (data && data.success && data.has_subscription) {
         setSubscription(data)
-      } else {
-        setSubscriptionMissing(true)
-      }
-
-      setLoading(false)
-
-      if (data && data.success && data.has_subscription) {
         console.log('Subscription active, loading Shopify products...')
         loadProducts()
+      } else {
+        setSubscriptionMissing(true)
       }
     } catch (err) {
       console.error('Error:', err)
@@ -830,7 +854,6 @@ export default function Dashboard() {
       const data = await response.json()
       if (data.success) {
         setStatus('interface', 'success', 'Paramètres mis à jour')
-        localStorage.setItem('darkMode', darkMode)
         localStorage.setItem('language', language)
       } else {
         setStatus('interface', 'error', 'Erreur: ' + (data.detail || 'Erreur'))
@@ -1170,7 +1193,7 @@ export default function Dashboard() {
         // Reload products to see changes
         await loadProducts()
       } else {
-        setStatus('apply-actions', 'error', 'Erreur: ' + (data.detail || 'Erreur lors de l\'application'))
+        setStatus('apply-actions', 'error', 'Erreur: ' + formatErrorDetail(data.detail, 'Erreur lors de l\'application'))
       }
     } catch (err) {
       console.error('Error applying actions:', err)
@@ -1205,7 +1228,7 @@ export default function Dashboard() {
         setStatus(`rec-${productId}-${recommendationType}`, 'success', 'Modification appliquée sur Shopify')
         await loadProducts()
       } else {
-        setStatus(`rec-${productId}-${recommendationType}`, 'error', 'Erreur: ' + (data.detail || 'Erreur'))
+        setStatus(`rec-${productId}-${recommendationType}`, 'error', 'Erreur: ' + formatErrorDetail(data.detail))
       }
     } catch (err) {
       setStatus(`rec-${productId}-${recommendationType}`, 'error', 'Erreur: ' + err.message)
@@ -1426,15 +1449,17 @@ export default function Dashboard() {
 
         {/* Overview Tab */}
         {activeTab === 'overview' && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+            <div className="xl:col-span-2 space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
               <h3 className="text-gray-400 text-sm uppercase mb-2">Plan Actif</h3>
               <div className="flex items-center justify-between">
                 <p className="text-white text-2xl font-bold">{formatPlan(subscription?.plan)}</p>
                 {subscription?.plan !== 'premium' && (
                   <button
                     onClick={handleUpgrade}
-                    className="ml-4 bg-yellow-600 hover:bg-yellow-700 text-white text-sm font-bold px-3 py-1 rounded-lg"
+                    className="ml-4 bg-yellow-600 hover:bg-yellow-500 text-black text-sm font-bold px-3 py-1 rounded-lg"
                   >
                     Upgrade
                   </button>
@@ -1450,19 +1475,210 @@ export default function Dashboard() {
               {renderStatus('upgrade')}
             </div>
             
-            <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+            <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
               <h3 className="text-gray-400 text-sm uppercase mb-2">Produits</h3>
               <p className="text-white text-2xl font-bold">{subscription?.capabilities?.product_limit === null ? '∞' : subscription?.capabilities?.product_limit || 50}</p>
               <p className="text-gray-400 text-sm mt-2">Limite mensuelle</p>
             </div>
             
-            <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+            <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
               <h3 className="text-gray-400 text-sm uppercase mb-2">Fonctionnalités</h3>
               <ul className="text-sm space-y-1">
                 {getPlanFeatures(subscription?.plan).map((feature, i) => (
-                  <li key={i} className="text-gray-300">✓ {feature}</li>
+                  <li key={i} className="text-gray-300">• {feature}</li>
                 ))}
               </ul>
+            </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              {[
+                { label: 'Revenus projetés', value: '$84.2k', hint: '30 jours' },
+                { label: 'Conversion', value: '3.8%', hint: 'moyenne' },
+                { label: 'Produits actifs', value: `${products?.length || 0}`, hint: 'catalogue' },
+                { label: 'Alerts IA', value: '2', hint: 'priorités' }
+              ].map((item) => (
+                <div key={item.label} className="bg-gray-800 rounded-xl p-4 border border-gray-700">
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-400">{item.label}</p>
+                  <p className="text-2xl font-bold text-white mt-2">{item.value}</p>
+                  <p className="text-xs text-gray-500 mt-1">{item.hint}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
+                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-3">Ops Center</h4>
+                <p className="text-white text-lg font-semibold mb-2">Flux Shopify unifié</p>
+                <p className="text-gray-400 text-sm">Suivi des produits, erreurs et actions en temps réel depuis un seul hub.</p>
+              </div>
+              <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
+                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-3">Insights</h4>
+                <p className="text-white text-lg font-semibold mb-2">Priorités IA quotidiennes</p>
+                <p className="text-gray-400 text-sm">Optimisations classées par impact, effort et urgence business.</p>
+              </div>
+              <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
+                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-3">Automation</h4>
+                <p className="text-white text-lg font-semibold mb-2">Scénarios premium</p>
+                <p className="text-gray-400 text-sm">Automatisations planifiées sur prix, contenu et collections.</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
+                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-4">Activité récente</h4>
+                <ul className="space-y-3 text-sm text-gray-300">
+                  <li className="flex items-center justify-between">
+                    <span>Optimisation prix — 6 produits</span>
+                    <span className="text-gray-500">Aujourd’hui</span>
+                  </li>
+                  <li className="flex items-center justify-between">
+                    <span>Descriptions IA — 3 produits</span>
+                    <span className="text-gray-500">Hier</span>
+                  </li>
+                  <li className="flex items-center justify-between">
+                    <span>Analyse catalogue complet</span>
+                    <span className="text-gray-500">Il y a 2 jours</span>
+                  </li>
+                </ul>
+              </div>
+              <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
+                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-4">File d’exécution</h4>
+                <div className="space-y-3">
+                  {[
+                    { label: 'Optimisation titres', status: 'En cours' },
+                    { label: 'Audit prix', status: 'Programmé' },
+                    { label: 'Rapport hebdo', status: 'Programmé' }
+                  ].map((row) => (
+                    <div key={row.label} className="flex items-center justify-between text-sm text-gray-300">
+                      <span>{row.label}</span>
+                      <span className="text-gray-500">{row.status}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
+                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-4">Pipeline IA</h4>
+                <div className="space-y-3 text-sm">
+                  {[
+                    { label: 'Titres', value: '14', status: 'Actif' },
+                    { label: 'Descriptions', value: '9', status: 'Programmé' },
+                    { label: 'Prix', value: '6', status: 'En cours' },
+                    { label: 'Images', value: '2', status: 'Bloqué' }
+                  ].map((row) => (
+                    <div key={row.label} className="flex items-center justify-between text-gray-300">
+                      <span>{row.label}</span>
+                      <span className="text-gray-500">{row.value} • {row.status}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
+                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-4">Alertes critiques</h4>
+                <ul className="space-y-3 text-sm text-gray-300">
+                  <li className="flex items-center justify-between">
+                    <span>Produits à prix zéro</span>
+                    <span className="text-red-300">2</span>
+                  </li>
+                  <li className="flex items-center justify-between">
+                    <span>Stock en rupture</span>
+                    <span className="text-yellow-300">4</span>
+                  </li>
+                  <li className="flex items-center justify-between">
+                    <span>SEO faible</span>
+                    <span className="text-yellow-300">11</span>
+                  </li>
+                </ul>
+              </div>
+              <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
+                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-4">Health Score</h4>
+                <p className="text-3xl font-bold text-white">92</p>
+                <p className="text-xs text-gray-500 mt-1">Global shop score</p>
+                <div className="mt-4 space-y-2 text-sm text-gray-300">
+                  <div className="flex items-center justify-between"><span>Ventes</span><span className="text-gray-500">A</span></div>
+                  <div className="flex items-center justify-between"><span>Catalogue</span><span className="text-gray-500">A-</span></div>
+                  <div className="flex items-center justify-between"><span>Contenu</span><span className="text-gray-500">B+</span></div>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-4">Répartition revenus</h4>
+                <div className="space-y-3 text-sm text-gray-300">
+                  <div className="flex items-center justify-between"><span>Top 10 produits</span><span className="text-gray-500">62%</span></div>
+                  <div className="flex items-center justify-between"><span>Collections long tail</span><span className="text-gray-500">28%</span></div>
+                  <div className="flex items-center justify-between"><span>Nouvelle saison</span><span className="text-gray-500">10%</span></div>
+                </div>
+              </div>
+              <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-4">Segmentation clients</h4>
+                <div className="space-y-3 text-sm text-gray-300">
+                  <div className="flex items-center justify-between"><span>Nouveaux</span><span className="text-gray-500">46%</span></div>
+                  <div className="flex items-center justify-between"><span>Récurrents</span><span className="text-gray-500">38%</span></div>
+                  <div className="flex items-center justify-between"><span>VIP</span><span className="text-gray-500">16%</span></div>
+                </div>
+              </div>
+            </div>
+            </div>
+
+            <div className="space-y-6">
+              <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-3">Executive Summary</h4>
+                <p className="text-white text-xl font-semibold mb-2">État global du compte</p>
+                <p className="text-gray-300 text-sm">Stabilité excellente, 2 alertes à corriger pour maximiser le ROI.</p>
+                <div className="mt-4 space-y-2 text-sm text-gray-300">
+                  <div className="flex items-center justify-between">
+                    <span>Plan</span>
+                    <span className="text-gray-400">{formatPlan(subscription?.plan)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Boutique</span>
+                    <span className="text-gray-400">{shopifyUrl || 'Non connectée'}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Dernière synchro</span>
+                    <span className="text-gray-400">Aujourd’hui</span>
+                  </div>
+                </div>
+              </div>
+              <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-3">AI Radar</h4>
+                <div className="space-y-3 text-sm text-gray-300">
+                  <div className="flex items-center justify-between">
+                    <span>Opportunités prix</span>
+                    <span className="text-yellow-300">8</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Descriptions à revoir</span>
+                    <span className="text-yellow-300">5</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Images critiques</span>
+                    <span className="text-red-300">2</span>
+                  </div>
+                </div>
+              </div>
+              <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-3">Next Moves</h4>
+                <ul className="space-y-3 text-sm text-gray-300">
+                  <li className="flex items-center justify-between">
+                    <span>Relancer 12 prix</span>
+                    <span className="text-gray-500">30 min</span>
+                  </li>
+                  <li className="flex items-center justify-between">
+                    <span>Optimiser 3 titres</span>
+                    <span className="text-gray-500">12 min</span>
+                  </li>
+                  <li className="flex items-center justify-between">
+                    <span>Créer rapport hebdo</span>
+                    <span className="text-gray-500">auto</span>
+                  </li>
+                </ul>
+              </div>
             </div>
           </div>
         )}
@@ -1497,7 +1713,7 @@ export default function Dashboard() {
               
               <button
                 onClick={connectShopify}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg"
+                className="w-full bg-yellow-600 hover:bg-yellow-500 text-black font-bold py-2 px-4 rounded-lg"
               >
                 Connecter
               </button>
@@ -1508,7 +1724,7 @@ export default function Dashboard() {
               <div className="mt-6">
                 <button
                   onClick={loadProducts}
-                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg"
+                  className="bg-yellow-600 hover:bg-yellow-500 text-black font-bold py-2 px-4 rounded-lg"
                 >
                   Charger mes produits ({products?.length || 0})
                 </button>
@@ -1534,10 +1750,10 @@ export default function Dashboard() {
             <h2 className="text-white text-xl font-bold mb-4">Assistant IA</h2>
             
             {/* Messages Container */}
-            <div className="flex-1 overflow-y-auto mb-4 space-y-4 bg-gray-900 rounded-lg p-4">
+            <div className="flex-1 overflow-y-auto overflow-x-hidden mb-4 space-y-4 bg-gray-900 rounded-lg p-4">
               {chatMessages.map((msg, idx) => (
                 <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
+                  <div className={`max-w-full lg:max-w-2xl px-4 py-2 rounded-lg whitespace-pre-wrap break-words ${
                     msg.role === 'user' 
                       ? 'bg-blue-600 text-white' 
                       : 'bg-gray-700 text-gray-200'
@@ -1553,22 +1769,24 @@ export default function Dashboard() {
                   </div>
                 </div>
               )}
+              <div ref={chatEndRef} />
             </div>
             
             {/* Input */}
             <div className="flex gap-2">
-              <input
-                type="text"
+              <textarea
                 placeholder="Pose une question à l'IA..."
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
-                onKeyPress={(e) => {
-                  if (e.key === 'Enter' && !chatLoading) {
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey && !chatLoading) {
+                    e.preventDefault()
                     sendChatMessage()
                   }
                 }}
                 disabled={chatLoading}
-                className="flex-1 bg-gray-700 text-white px-4 py-2 rounded-lg border border-gray-600 disabled:opacity-50"
+                rows={2}
+                className="flex-1 resize-none bg-gray-700 text-white px-4 py-2 rounded-lg border border-gray-600 disabled:opacity-50 max-h-36 overflow-y-auto"
               />
               <button
                 onClick={sendChatMessage}
@@ -1614,10 +1832,10 @@ export default function Dashboard() {
                   <div className="bg-blue-900 border-2 border-blue-700 rounded-lg p-6 shadow-xl">
                     <div className="flex items-center justify-between">
                       <div>
-                        <h3 className="text-white text-xl font-bold mb-2">🤖 Actions Automatiques IA</h3>
+                        <h3 className="text-white text-xl font-bold mb-2">Actions Automatiques IA</h3>
                         <p className="text-green-200 text-sm">L'IA peut appliquer automatiquement les optimisations recommandées à votre boutique Shopify.</p>
                         {subscription?.plan === 'premium' && (
-                          <p className="text-yellow-300 text-xs mt-1">⭐ Premium: Modifications automatiques sans limites</p>
+                          <p className="text-yellow-300 text-xs mt-1">Premium: Modifications automatiques sans limites</p>
                         )}
                       </div>
                       <button
@@ -2041,7 +2259,7 @@ export default function Dashboard() {
             {/* Content */}
             <div className="p-6 overflow-y-auto max-h-[calc(80vh-200px)]">
               <div className="bg-yellow-900/30 border border-yellow-600 rounded-lg p-4 mb-6">
-                <p className="text-yellow-300 font-bold mb-2">⚠️ Attention</p>
+                <p className="text-yellow-300 font-bold mb-2">Attention</p>
                 <p className="text-yellow-200 text-sm">L'IA va modifier {selectedActions.length} éléments dans votre boutique Shopify. Cette action est irréversible.</p>
               </div>
 
@@ -2163,7 +2381,7 @@ export default function Dashboard() {
                       {tab === 'interface' && `🎨 ${t('tabInterface')}`}
                       {tab === 'notifications' && `🔔 ${t('tabNotifications')}`}
                       {tab === 'billing' && `💳 ${t('tabBilling')}`}
-                      {tab === 'api' && `⚙️ ${t('tabApiKeys')}`}
+                      {tab === 'api' && `${t('tabApiKeys')}`}
                     </button>
                   ))}
                 </nav>
@@ -2267,15 +2485,6 @@ export default function Dashboard() {
                   <div className="space-y-6">
                     <h3 className="text-xl font-bold text-white mb-4">{t('interfacePreferences')}</h3>
                     <div className="space-y-4">
-                      <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 flex justify-between items-center">
-                        <div>
-                          <h4 className="text-white font-semibold">{t('darkMode')}</h4>
-                          <p className="text-sm text-gray-400">{darkMode ? t('enabled') : t('disabled')}</p>
-                        </div>
-                        <button onClick={() => setDarkMode(!darkMode)} className={`${darkMode ? 'bg-blue-600' : 'bg-gray-600'} w-12 h-6 rounded-full p-1 cursor-pointer transition`}>
-                          <div className={`${darkMode ? 'bg-white ml-auto' : 'bg-white'} w-4 h-4 rounded-full transition`}></div>
-                        </button>
-                      </div>
                       <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
                         <h4 className="text-white font-semibold mb-2">{t('language')}</h4>
                         <select value={language} onChange={(e) => setLanguage(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white">
