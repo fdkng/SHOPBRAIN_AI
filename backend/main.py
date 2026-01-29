@@ -2541,12 +2541,25 @@ async def check_subscription_status(request: Request):
                     }
                 }
                 
+                started_at = subscription.get('created_at')
+
+                # Prefer Stripe subscription start date when available
+                try:
+                    stripe_sub_id = subscription.get('stripe_subscription_id')
+                    if stripe_sub_id:
+                        stripe_sub = stripe.Subscription.retrieve(stripe_sub_id)
+                        stripe_start = stripe_sub.get('current_period_start') or stripe_sub.get('start_date')
+                        if stripe_start:
+                            started_at = datetime.utcfromtimestamp(stripe_start).isoformat()
+                except Exception as e:
+                    print(f"Stripe started_at sync warning: {e}")
+
                 return {
                     'success': True,
                     'has_subscription': True,
                     'plan': plan,
                     'status': subscription.get('status', 'active'),
-                    'started_at': subscription.get('created_at'),
+                    'started_at': started_at,
                     'capabilities': capabilities.get(plan, {})
                 }
 
@@ -2583,12 +2596,13 @@ async def check_subscription_status(request: Request):
                                 'features': ['product_analysis', 'content_generation', 'cross_sell', 'automated_actions', 'reports', 'predictions']
                             }
                         }
+                        started_at = profile.get('subscription_started_at') or profile.get('created_at')
                         return {
                             'success': True,
                             'has_subscription': plan is not None,
                             'plan': plan,
                             'status': profile.get('subscription_status', 'active'),
-                            'started_at': profile.get('created_at'),
+                            'started_at': started_at,
                             'capabilities': capabilities.get(plan, {})
                         }
             except Exception as e:
