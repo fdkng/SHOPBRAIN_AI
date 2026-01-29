@@ -1930,6 +1930,39 @@ def get_ai_engine():
     return ai_engine
 
 
+def get_user_tier(user_id: str) -> str:
+    """Resolve user's subscription tier from Supabase; default to standard."""
+    try:
+        if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+            supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+            sub_result = supabase.table("subscriptions").select("plan_tier,status,created_at").eq("user_id", user_id).in_("status", ["active", "trialing", "past_due", "incomplete"]).order("created_at", desc=True).limit(1).execute()
+            if sub_result.data:
+                plan = (sub_result.data[0].get("plan_tier") or "standard").lower()
+                if plan in ["standard", "pro", "premium"]:
+                    return plan
+
+            profile_result = supabase.table("user_profiles").select("subscription_plan,subscription_tier").eq("id", user_id).limit(1).execute()
+            if profile_result.data:
+                plan = (profile_result.data[0].get("subscription_plan") or profile_result.data[0].get("subscription_tier") or "standard").lower()
+                if plan in ["standard", "pro", "premium"]:
+                    return plan
+    except Exception as e:
+        print(f"Tier resolve warning: {e}")
+
+    return "standard"
+
+
+def ensure_feature_allowed(tier: str, feature: str):
+    feature_map = {
+        "standard": {"product_analysis", "title_optimization", "price_suggestions"},
+        "pro": {"product_analysis", "title_optimization", "price_suggestions", "content_generation", "cross_sell", "reports"},
+        "premium": {"product_analysis", "title_optimization", "price_suggestions", "content_generation", "cross_sell", "reports", "automated_actions", "predictions"},
+    }
+    allowed = feature_map.get(tier, feature_map["standard"])
+    if feature not in allowed:
+        raise HTTPException(status_code=403, detail="Fonctionnalité non disponible pour votre plan")
+
+
 class AnalyzeStoreRequest(BaseModel):
     products: list
     analytics: dict
@@ -1944,18 +1977,21 @@ async def analyze_store_endpoint(req: AnalyzeStoreRequest, request: Request):
     """
     try:
         user_id = get_user_id(request)
+        tier = get_user_tier(user_id)
         engine = get_ai_engine()
-        
+
+        ensure_feature_allowed(tier, "product_analysis")
+
         # Limite de produits selon tier
         limits = {'standard': 50, 'pro': 500, 'premium': None}
-        limit = limits.get(req.tier, 50)
+        limit = limits.get(tier, 50)
         products = req.products[:limit] if limit else req.products
         
-        analysis = engine.analyze_store(products, req.analytics, req.tier)
+        analysis = engine.analyze_store(products, req.analytics, tier)
         
         return {
             "success": True,
-            "tier": req.tier,
+            "tier": tier,
             "products_analyzed": len(products),
             "analysis": analysis
         }
@@ -1979,22 +2015,25 @@ async def optimize_content_endpoint(req: OptimizeContentRequest, request: Reques
     """
     try:
         user_id = get_user_id(request)
+        tier = get_user_tier(user_id)
         engine = get_ai_engine()
         
         result = {
             "product_id": req.product.get('id'),
-            "tier": req.tier
+            "tier": tier
         }
         
         # Tous les tiers: nouveau titre
-        result['new_title'] = engine.content_gen.generate_title(req.product, req.tier)
+        ensure_feature_allowed(tier, "title_optimization")
+        result['new_title'] = engine.content_gen.generate_title(req.product, tier)
         
         # Pro et Premium: description
-        if req.tier in ['pro', 'premium']:
-            result['new_description'] = engine.content_gen.generate_description(req.product, req.tier)
+        if tier in ['pro', 'premium']:
+            ensure_feature_allowed(tier, "content_generation")
+            result['new_description'] = engine.content_gen.generate_description(req.product, tier)
         
         # Premium: SEO metadata
-        if req.tier == 'premium':
+        if tier == 'premium':
             result['seo_metadata'] = engine.content_gen.generate_seo_metadata(req.product)
         
         return {"success": True, "optimization": result}
@@ -2020,10 +2059,13 @@ async def optimize_price_endpoint(req: OptimizePriceRequest, request: Request):
     """
     try:
         user_id = get_user_id(request)
+        tier = get_user_tier(user_id)
         engine = get_ai_engine()
+
+        ensure_feature_allowed(tier, "price_suggestions")
         
         recommendation = engine.price_opt.suggest_price_adjustment(
-            req.product, req.analytics, req.tier
+            req.product, req.analytics, tier
         )
         
         return {"success": True, "price_recommendation": recommendation}
@@ -2047,17 +2089,17 @@ async def get_recommendations_endpoint(req: RecommendationsRequest, request: Req
     """
     try:
         user_id = get_user_id(request)
-        
-        if req.tier not in ['pro', 'premium']:
-            raise HTTPException(status_code=403, detail="Fonctionnalité disponible à partir du plan Pro")
+        tier = get_user_tier(user_id)
+
+        ensure_feature_allowed(tier, "cross_sell")
         
         engine = get_ai_engine()
         
         cross_sell = engine.recommender.generate_cross_sell(
-            req.product, req.all_products, req.tier
+            req.product, req.all_products, tier
         )
         upsell = engine.recommender.generate_upsell(
-            req.product, req.all_products, req.tier
+            req.product, req.all_products, tier
         )
         
         return {
@@ -2085,12 +2127,12 @@ async def execute_actions_endpoint(req: ExecuteActionsRequest, request: Request)
     """
     try:
         user_id = get_user_id(request)
+        tier = get_user_tier(user_id)
         
-        if req.tier != 'premium':
-            raise HTTPException(status_code=403, detail="Actions automatiques disponibles uniquement pour Premium")
+        ensure_feature_allowed(tier, "automated_actions")
         
         engine = get_ai_engine()
-        result = engine.execute_optimizations(req.optimization_plan, req.tier)
+        result = engine.execute_optimizations(req.optimization_plan, tier)
         
         return {"success": True, "execution_result": result}
     
@@ -2114,9 +2156,12 @@ async def generate_report_endpoint(req: GenerateReportRequest, request: Request)
     """
     try:
         user_id = get_user_id(request)
-        
+        tier = get_user_tier(user_id)
+
+        ensure_feature_allowed(tier, "reports")
+
         engine = get_ai_engine()
-        report = engine.generate_report(req.analytics_data, req.tier, req.report_type)
+        report = engine.generate_report(req.analytics_data, tier, req.report_type)
         
         return {"success": True, "report": report}
     
