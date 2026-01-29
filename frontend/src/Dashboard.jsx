@@ -121,7 +121,7 @@ export default function Dashboard() {
       : status.type === 'warning'
         ? 'bg-yellow-900 border-yellow-700 text-yellow-200'
         : status.type === 'error'
-          ? 'bg-red-900 border-red-700 text-red-200'
+          ? 'bg-gray-800 border-yellow-700 text-yellow-200'
           : 'bg-gray-800 border-gray-700 text-gray-200'
 
     return (
@@ -1216,7 +1216,7 @@ export default function Dashboard() {
 
   if (loading && !user) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-900 to-purple-900 flex items-center justify-center">
+      <div className="min-h-screen bg-blue-900 flex items-center justify-center">
         <div className="text-white text-xl">Chargement...</div>
       </div>
     )
@@ -1224,7 +1224,7 @@ export default function Dashboard() {
 
   if (isProcessingPayment) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-900 to-purple-900 flex items-center justify-center">
+      <div className="min-h-screen bg-blue-900 flex items-center justify-center">
         <div className="text-center text-white">
           <h2 className="text-3xl font-bold mb-4">Paiement en cours de traitement...</h2>
           <p className="text-gray-300 mb-8">Merci! Nous enregistrons ton abonnement.</p>
@@ -1241,7 +1241,7 @@ export default function Dashboard() {
 
   if (!user || (!subscription && subscriptionMissing)) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-900 to-purple-900 flex items-center justify-center">
+      <div className="min-h-screen bg-blue-900 flex items-center justify-center">
         <div className="text-center text-white">
           <div className="text-xl mb-2">Synchronisation de l’abonnement…</div>
           <div className="text-gray-300 text-sm mb-4">Si tu viens de payer, ça peut prendre quelques secondes.</div>
@@ -1301,7 +1301,7 @@ export default function Dashboard() {
                   <div className="border-t border-gray-700 my-2"></div>
                   <button
                     onClick={() => { setShowProfileMenu(false); handleLogout() }}
-                    className="w-full text-left px-3 py-2 rounded hover:bg-red-700 text-sm text-red-400 hover:text-white"
+                    className="w-full text-left px-3 py-2 rounded hover:bg-gray-700 text-sm text-gray-300 hover:text-white"
                   >
                     Sign Out
                   </button>
@@ -1419,7 +1419,7 @@ export default function Dashboard() {
         <div className="max-w-7xl mx-auto p-6">
 
         {error && (
-          <div className="bg-red-900 border border-red-700 text-red-200 p-4 rounded-lg mb-6">
+          <div className="bg-gray-800 border border-yellow-700 text-yellow-200 p-4 rounded-lg mb-6">
             {error}
           </div>
         )}
@@ -1508,7 +1508,7 @@ export default function Dashboard() {
               <div className="mt-6">
                 <button
                   onClick={loadProducts}
-                  className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg"
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg"
                 >
                   Charger mes produits ({products?.length || 0})
                 </button>
@@ -1611,7 +1611,7 @@ export default function Dashboard() {
               <>
                 {/* Auto-Apply Actions Button (Pro/Premium only) */}
                 {(subscription?.plan === 'pro' || subscription?.plan === 'premium') && (
-                  <div className="bg-gradient-to-r from-green-900 to-emerald-900 border-2 border-green-500 rounded-lg p-6 shadow-xl">
+                  <div className="bg-blue-900 border-2 border-blue-700 rounded-lg p-6 shadow-xl">
                     <div className="flex items-center justify-between">
                       <div>
                         <h3 className="text-white text-xl font-bold mb-2">🤖 Actions Automatiques IA</h3>
@@ -1661,20 +1661,19 @@ export default function Dashboard() {
 
                 {/* Points critiques */}
                 {analysisResults.critical_issues && analysisResults.critical_issues.length > 0 && (
-                  <div className="bg-red-900 border-2 border-red-600 rounded-lg p-6">
-                    <h2 className="text-white text-2xl font-bold mb-4">⚠️ Points critiques à corriger MAINTENANT</h2>
+                  <div className="bg-gray-800 border-2 border-yellow-700 rounded-lg p-6">
+                    <h2 className="text-white text-2xl font-bold mb-4">Points critiques à corriger MAINTENANT</h2>
                     <div className="space-y-4">
                       {analysisResults.critical_issues.map((issue, idx) => (
-                        <div key={idx} className="bg-red-800 p-4 rounded-lg">
+                        <div key={idx} className="bg-gray-900 p-4 rounded-lg">
                           <div className="flex items-start gap-3">
-                            <span className="text-2xl">🚨</span>
                             <div className="flex-1">
-                              <p className="text-red-300 font-bold text-sm mb-1">SÉVÉRITÉ: {issue.severity}</p>
+                              <p className="text-yellow-300 font-bold text-sm mb-1">SÉVÉRITÉ: {issue.severity}</p>
                               <p className="text-white font-bold mb-2">{issue.issue}</p>
-                              <p className="text-red-200 text-sm mb-2">{issue.impact}</p>
-                              <div className="bg-red-900 p-3 rounded mt-2">
+                              <p className="text-gray-300 text-sm mb-2">{issue.impact}</p>
+                              <div className="bg-gray-800 p-3 rounded mt-2">
                                 <p className="text-white font-bold text-sm">Action immédiate:</p>
-                                <p className="text-red-100 text-sm mt-1">{issue.action}</p>
+                                <p className="text-gray-200 text-sm mt-1">{issue.action}</p>
                               </div>
                             </div>
                           </div>
@@ -1685,7 +1684,7 @@ export default function Dashboard() {
                 )}
 
                 {/* Actions immédiates */}
-                <div className="bg-gradient-to-r from-green-900 to-emerald-900 border-2 border-green-600 rounded-lg p-6">
+                <div className="bg-blue-900 border-2 border-blue-700 rounded-lg p-6">
                   <h2 className="text-white text-2xl font-bold mb-4">🎯 Actions à faire MAINTENANT</h2>
                   <div className="space-y-4">
                     {analysisResults.immediate_actions?.map((action, idx) => (
@@ -1700,7 +1699,7 @@ export default function Dashboard() {
                           ))}
                         </div>
                         <div className="flex gap-4 text-sm">
-                          <span className="text-green-300">⏱️ Temps: {action.time_required}</span>
+                          <span className="text-gray-300">Temps: {action.time_required}</span>
                           <span className="text-yellow-300">Impact: {action.expected_impact}</span>
                         </div>
                       </div>
@@ -1720,8 +1719,8 @@ export default function Dashboard() {
                       <div key={idx} className="bg-gray-700 p-5 rounded-lg border-l-4 border-blue-500">
                         <div className="flex items-center gap-2 mb-2">
                           <span className={`px-2 py-1 rounded text-xs font-bold ${
-                            rec.priority === 'HAUTE' ? 'bg-red-600' : 
-                            rec.priority === 'MOYENNE' ? 'bg-yellow-600' : 'bg-green-600'
+                            rec.priority === 'HAUTE' ? 'bg-yellow-700' : 
+                            rec.priority === 'MOYENNE' ? 'bg-blue-700' : 'bg-gray-700'
                           }`}>
                             {rec.priority}
                           </span>
@@ -1800,7 +1799,7 @@ export default function Dashboard() {
                         <div 
                           className={`h-4 rounded-full ${
                             analysisResults.content_improvements?.overall_score >= 80 ? 'bg-green-500' :
-                            analysisResults.content_improvements?.overall_score >= 60 ? 'bg-yellow-500' : 'bg-red-500'
+                            analysisResults.content_improvements?.overall_score >= 60 ? 'bg-yellow-500' : 'bg-blue-700'
                           }`}
                           style={{width: `${analysisResults.content_improvements?.overall_score}%`}}
                         />
@@ -1817,8 +1816,8 @@ export default function Dashboard() {
                           <div key={idx} className="bg-yellow-900 bg-opacity-30 p-4 rounded-lg">
                             <div className="flex items-center gap-2 mb-2">
                               <span className={`px-2 py-1 rounded text-xs font-bold ${
-                                issue.priority === 'CRITIQUE' ? 'bg-red-600' : 
-                                issue.priority === 'HAUTE' ? 'bg-orange-600' : 'bg-yellow-600'
+                                issue.priority === 'CRITIQUE' ? 'bg-yellow-700' : 
+                                issue.priority === 'HAUTE' ? 'bg-blue-700' : 'bg-gray-700'
                               }`}>
                                 {issue.priority}
                               </span>
@@ -1834,7 +1833,7 @@ export default function Dashboard() {
                   <h3 className="text-white font-bold mb-3">Quick Wins (résultats rapides):</h3>
                   <div className="space-y-3">
                     {analysisResults.content_improvements?.quick_wins?.map((win, idx) => (
-                      <div key={idx} className="bg-green-900 bg-opacity-30 p-4 rounded-lg">
+                      <div key={idx} className="bg-gray-900 p-4 rounded-lg border border-gray-700">
                         <p className="text-green-400 font-bold mb-2">{win.action}</p>
                         {win.example && <p className="text-gray-300 text-sm mb-2">Exemple: {win.example}</p>}
                         <p className="text-green-300 text-sm">{win.impact}</p>
@@ -1852,10 +1851,10 @@ export default function Dashboard() {
                       <h3 className="text-white font-bold mb-3">Opportunités d'Upsell:</h3>
                       <div className="space-y-3 mb-6">
                         {analysisResults.sales_strategies.upsell_opportunities.map((upsell, idx) => (
-                          <div key={idx} className="bg-purple-900 bg-opacity-30 p-4 rounded-lg">
-                            <h4 className="text-purple-400 font-bold mb-2">{upsell.strategy}</h4>
+                          <div key={idx} className="bg-gray-900 p-4 rounded-lg border border-gray-700">
+                            <h4 className="text-yellow-400 font-bold mb-2">{upsell.strategy}</h4>
                             <p className="text-gray-300 text-sm mb-2">{upsell.description}</p>
-                            {upsell.example && <p className="text-purple-200 text-sm mb-2">💡 Exemple: {upsell.example}</p>}
+                            {upsell.example && <p className="text-gray-300 text-sm mb-2">Exemple: {upsell.example}</p>}
                             <p className="text-green-400 text-sm font-bold">{upsell.expected_impact}</p>
                           </div>
                         ))}
@@ -1868,8 +1867,8 @@ export default function Dashboard() {
                       <h3 className="text-white font-bold mb-3">Bundles suggérés:</h3>
                       <div className="space-y-3 mb-6">
                         {analysisResults.sales_strategies.cross_sell_bundles.map((bundle, idx) => (
-                          <div key={idx} className="bg-blue-900 bg-opacity-30 p-4 rounded-lg">
-                            <h4 className="text-blue-400 font-bold mb-2">{bundle.bundle_name} (-{bundle.discount})</h4>
+                          <div key={idx} className="bg-gray-900 p-4 rounded-lg border border-gray-700">
+                            <h4 className="text-yellow-400 font-bold mb-2">{bundle.bundle_name} (-{bundle.discount})</h4>
                             <div className="mb-2">
                               <p className="text-gray-400 text-sm mb-1">Produits inclus:</p>
                               <ul className="list-disc list-inside text-gray-300 text-sm">
@@ -1899,7 +1898,7 @@ export default function Dashboard() {
                 </div>
 
                 {/* Opportunités de croissance */}
-                <div className="bg-gradient-to-r from-purple-900 to-pink-900 rounded-lg p-6 border border-purple-600">
+                <div className="bg-blue-900 rounded-lg p-6 border border-blue-700">
                   <h2 className="text-white text-2xl font-bold mb-4">Opportunités de croissance</h2>
                   <div className="space-y-4">
                     {analysisResults.growth_opportunities?.map((opp, idx) => (
@@ -1949,8 +1948,8 @@ export default function Dashboard() {
                               <div key={ridx} className="bg-gray-800 p-3 rounded">
                                 <div className="flex items-center gap-2 mb-1">
                                   <span className={`px-2 py-1 rounded text-xs font-bold ${
-                                    recItem.priority === 'Critique' ? 'bg-red-600' :
-                                    recItem.priority === 'Haute' ? 'bg-orange-600' : 'bg-yellow-600'
+                                    recItem.priority === 'Critique' ? 'bg-yellow-700' :
+                                    recItem.priority === 'Haute' ? 'bg-blue-700' : 'bg-gray-700'
                                   }`}>
                                     {recItem.priority}
                                   </span>
@@ -2021,7 +2020,7 @@ export default function Dashboard() {
         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" onClick={() => !applyingActions && setShowApplyModal(false)}>
           <div className="bg-gray-900 rounded-xl max-w-3xl w-full max-h-[80vh] overflow-hidden border border-green-500 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             {/* Header */}
-            <div className="bg-gradient-to-r from-green-900 to-emerald-900 p-6 flex justify-between items-center">
+            <div className="bg-blue-900 p-6 flex justify-between items-center">
               <h2 className="text-2xl font-bold text-white flex items-center gap-2">
                 <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -2054,7 +2053,7 @@ export default function Dashboard() {
                     <div className="flex items-start gap-3">
                       <div className={`mt-1 w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
                         action.type === 'price' ? 'bg-green-600' :
-                        action.type === 'titre' ? 'bg-blue-600' : 'bg-purple-600'
+                        action.type === 'titre' ? 'bg-blue-600' : 'bg-yellow-700'
                       }`}>
                         {action.type === 'price' ? '💰' : action.type === 'titre' ? '📝' : '📄'}
                       </div>
@@ -2064,7 +2063,7 @@ export default function Dashboard() {
                           <>
                             <p className="text-gray-300 text-sm mb-2">{action.reason}</p>
                             <div className="flex items-center gap-4 text-sm">
-                              <span className="text-red-400">Prix actuel: {action.current}$</span>
+                              <span className="text-white">Prix actuel: {action.current}$</span>
                               <span className="text-gray-500">→</span>
                               <span className="text-green-400 font-bold">Nouveau prix: {action.new}$</span>
                             </div>
@@ -2074,8 +2073,8 @@ export default function Dashboard() {
                           <>
                             <div className="flex items-center gap-2 mb-2">
                               <span className={`px-2 py-1 rounded text-xs font-bold ${
-                                action.priority === 'Critique' ? 'bg-red-600' :
-                                action.priority === 'Haute' ? 'bg-orange-600' : 'bg-yellow-600'
+                                action.priority === 'Critique' ? 'bg-yellow-700' :
+                                action.priority === 'Haute' ? 'bg-blue-700' : 'bg-gray-700'
                               }`}>
                                 {action.priority}
                               </span>
@@ -2138,7 +2137,7 @@ export default function Dashboard() {
         <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={() => setShowSettingsModal(false)}>
           <div className="bg-gray-900 rounded-xl max-w-4xl w-full max-h-[90vh] overflow-hidden border border-gray-700 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             {/* Header */}
-            <div className="bg-gradient-to-r from-blue-900 to-purple-900 p-6 flex justify-between items-center">
+            <div className="bg-blue-900 p-6 flex justify-between items-center">
               <h2 className="text-2xl font-bold text-white">{t('accountSettings')}</h2>
               <button onClick={() => setShowSettingsModal(false)} className="text-white hover:bg-white/20 p-2 rounded-lg">
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2255,7 +2254,7 @@ export default function Dashboard() {
                     <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
                       <h4 className="text-lg font-semibold text-white mb-2">{t('twoFactorAuth')}</h4>
                       <p className="text-gray-400 mb-4">{t('twoFactorDesc')}</p>
-                      <button onClick={handleToggle2FA} disabled={saveLoading} className={`${twoFAEnabled ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'} disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold`}>
+                      <button onClick={handleToggle2FA} disabled={saveLoading} className={`${twoFAEnabled ? 'bg-gray-700 hover:bg-gray-600' : 'bg-blue-600 hover:bg-blue-700'} disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold`}>
                         {saveLoading ? '...' : (twoFAEnabled ? t('disable2FA') : t('enable2FA'))}
                       </button>
                       {twoFAEnabled && <p className="text-green-400 text-sm mt-2">{t('twoFAEnabled')}</p>}
@@ -2337,7 +2336,7 @@ export default function Dashboard() {
                         <button onClick={() => { setShowSettingsModal(false); setShowPlanMenu(true) }} className="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded-lg text-white font-semibold">
                           {t('changePlan')}
                         </button>
-                        <button onClick={handleCancelSubscription} disabled={saveLoading} className="bg-red-600 hover:bg-red-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold">
+                        <button onClick={handleCancelSubscription} disabled={saveLoading} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold">
                           {saveLoading ? '...' : t('cancelSubscription')}
                         </button>
                       </div>
@@ -2383,7 +2382,7 @@ export default function Dashboard() {
                             <button
                               onClick={() => handleRevokeApiKey(keyItem.id)}
                               disabled={keyItem.revoked || apiLoading}
-                              className="bg-red-600 hover:bg-red-700 disabled:opacity-50 px-4 py-2 rounded-lg text-white text-sm"
+                              className="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 px-4 py-2 rounded-lg text-white text-sm"
                             >
                               {keyItem.revoked ? 'Révoquée' : t('revoke')}
                             </button>
@@ -2393,7 +2392,7 @@ export default function Dashboard() {
                               <button
                                 onClick={() => handleRevokeApiKey(keyItem.id)}
                                 disabled={apiLoading}
-                                className="bg-red-600 hover:bg-red-700 disabled:opacity-50 px-4 py-2 rounded-lg text-white text-sm"
+                                className="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 px-4 py-2 rounded-lg text-white text-sm"
                               >
                                 Confirmer
                               </button>

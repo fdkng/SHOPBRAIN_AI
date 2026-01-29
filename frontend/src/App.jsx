@@ -481,7 +481,7 @@ export default function App() {
       : status.type === 'warning'
         ? 'bg-yellow-50 border-yellow-200 text-yellow-800'
         : status.type === 'error'
-          ? 'bg-red-50 border-red-200 text-red-700'
+          ? 'bg-gray-50 border-yellow-200 text-yellow-800'
           : 'bg-gray-50 border-gray-200 text-gray-700'
 
     return (
@@ -579,7 +579,7 @@ export default function App() {
 
       {paymentSuccess && (
         <div className="mt-20 mx-auto max-w-7xl px-6 mb-6">
-          <div className={`rounded-2xl p-6 flex items-center justify-between shadow-sm ${paymentProcessingState === 'verified' ? 'bg-green-50 border border-green-200 text-green-800' : paymentProcessingState === 'failed' ? 'bg-red-50 border border-red-200 text-red-700' : 'bg-yellow-50 border border-yellow-200 text-yellow-800'}`}>
+          <div className={`rounded-2xl p-6 flex items-center justify-between shadow-sm ${paymentProcessingState === 'verified' ? 'bg-green-50 border border-green-200 text-green-800' : paymentProcessingState === 'failed' ? 'bg-gray-50 border border-yellow-200 text-yellow-800' : 'bg-yellow-50 border border-yellow-200 text-yellow-800'}`}>
             <div className="flex items-center gap-4">
               <span className="text-4xl">
                 {paymentProcessingState === 'verified' ? '✅' : paymentProcessingState === 'failed' ? '❌' : '⏳'}
@@ -774,7 +774,7 @@ export default function App() {
 
             {authMessage && (
               <div className={`mt-4 p-3 rounded-xl text-xs ${
-                authMessage.includes('✅') ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+                authMessage.includes('✅') ? 'bg-green-50 text-green-700' : 'bg-yellow-50 text-yellow-800'
               }`}>
                 {authMessage}
               </div>
@@ -794,7 +794,7 @@ export default function App() {
             </div>
             <h1 className="text-5xl md:text-7xl lg:text-8xl font-bold text-gray-900 tracking-tight leading-[1.05] mb-6">
               L'IA qui transforme<br />
-              <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+              <span className="bg-gradient-to-r from-yellow-700 to-yellow-600 bg-clip-text text-transparent">
                 vos ventes Shopify
               </span>
             </h1>
@@ -840,7 +840,7 @@ export default function App() {
                 disabled={!hasSubscription}
                 className={`px-12 py-4 text-white text-lg font-semibold rounded-full transition-all hover:scale-105 ${
                   hasSubscription
-                    ? 'bg-gradient-to-r from-blue-600 to-purple-600 hover:shadow-2xl hover:shadow-blue-500/50'
+                    ? 'bg-gradient-to-r from-yellow-700 to-yellow-600 hover:shadow-2xl hover:shadow-yellow-500/50'
                     : 'bg-gray-300 cursor-not-allowed'
                 }`}
               >
@@ -894,7 +894,7 @@ export default function App() {
               },
               {
                 icon: '✨',
-                gradient: 'from-blue-400 to-purple-500',
+                gradient: 'from-yellow-600 to-yellow-500',
                 title: 'Optimisation automatique',
                 desc: 'L\'IA génère automatiquement des titres SEO-optimisés, des descriptions persuasives et des tags pertinents. Augmentez vos conversions sans lever le petit doigt.',
                 stat: '+127% conversions moyenne'
@@ -908,7 +908,7 @@ export default function App() {
               },
               {
                 icon: '🔗',
-                gradient: 'from-purple-400 to-pink-500',
+                gradient: 'from-blue-700 to-blue-600',
                 title: 'Intégration Shopify native',
                 desc: 'Connectez votre boutique en un clic. Synchronisation automatique bidirectionnelle : produits, commandes, clients, inventaire.',
                 stat: 'Sync en <1 seconde'
