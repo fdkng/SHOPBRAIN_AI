@@ -2141,6 +2141,79 @@ async def execute_actions_endpoint(req: ExecuteActionsRequest, request: Request)
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class ApplyRecommendationRequest(BaseModel):
+    product_id: str
+    recommendation_type: str
+
+
+@app.post("/api/ai/apply-recommendation")
+async def apply_recommendation_endpoint(req: ApplyRecommendationRequest, request: Request):
+    """
+    ✅ Applique une recommandation précise (Premium uniquement)
+    Types supportés: Titre, Description, Prix
+    """
+    try:
+        user_id = get_user_id(request)
+        tier = get_user_tier(user_id)
+        ensure_feature_allowed(tier, "automated_actions")
+
+        if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+            raise HTTPException(status_code=500, detail="Supabase not configured")
+
+        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        connection = supabase.table("shopify_connections").select("shop_domain,access_token").eq("user_id", user_id).execute()
+        if not connection.data:
+            raise HTTPException(status_code=404, detail="Aucune boutique Shopify connectée")
+
+        shop_domain = connection.data[0].get("shop_domain")
+        access_token = connection.data[0].get("access_token")
+        if not shop_domain or not access_token:
+            raise HTTPException(status_code=400, detail="Connexion Shopify invalide")
+
+        # Fetch product
+        product_resp = requests.get(
+            f"https://{shop_domain}/admin/api/2024-01/products/{req.product_id}.json",
+            headers={"X-Shopify-Access-Token": access_token, "Content-Type": "application/json"}
+        )
+        product_resp.raise_for_status()
+        product = product_resp.json().get("product", {})
+
+        from AI_engine.action_engine import ActionEngine
+        action_engine = ActionEngine(shop_domain, access_token)
+        rec_type = (req.recommendation_type or "").lower()
+
+        if rec_type == "prix":
+            variants = product.get("variants", [])
+            if not variants:
+                raise HTTPException(status_code=400, detail="Produit sans variantes")
+            current_price = float(variants[0].get("price", 0))
+            if current_price <= 0:
+                raise HTTPException(status_code=400, detail="Prix actuel invalide")
+            new_price = round(current_price * 1.2, 2)
+            result = action_engine.apply_price_change(req.product_id, new_price)
+            return {"success": True, "result": result}
+
+        if rec_type == "titre":
+            engine = get_ai_engine()
+            new_title = engine.content_gen.generate_title(product, tier)
+            result = action_engine.update_product_content(req.product_id, title=new_title)
+            return {"success": True, "result": result}
+
+        if rec_type == "description":
+            engine = get_ai_engine()
+            new_description = engine.content_gen.generate_description(product, tier)
+            result = action_engine.update_product_content(req.product_id, description=new_description)
+            return {"success": True, "result": result}
+
+        raise HTTPException(status_code=400, detail="Type de recommandation non supporté")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error applying recommendation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 class GenerateReportRequest(BaseModel):
     analytics_data: dict
     tier: str

@@ -74,6 +74,7 @@ export default function Dashboard() {
   const avatarInputRef = useRef(null)
   const [apiKeys, setApiKeys] = useState([])
   const [apiLoading, setApiLoading] = useState(false)
+  const [applyingRecommendationId, setApplyingRecommendationId] = useState(null)
 
   const formatDate = (value) => {
     if (!value) return '—'
@@ -1140,6 +1141,40 @@ export default function Dashboard() {
     }
   }
 
+  const handleApplyRecommendation = async (productId, recommendationType) => {
+    if (subscription?.plan !== 'premium') {
+      alert('Cette fonctionnalité est réservée au plan PREMIUM')
+      return
+    }
+
+    try {
+      setApplyingRecommendationId(`${productId}-${recommendationType}`)
+      const { data: { session } } = await supabase.auth.getSession()
+      const response = await fetch(`${API_URL}/api/ai/apply-recommendation`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          product_id: productId,
+          recommendation_type: recommendationType
+        })
+      })
+      const data = await response.json()
+      if (data.success) {
+        alert('✅ Modification appliquée sur Shopify')
+        await loadProducts()
+      } else {
+        alert('❌ Erreur: ' + (data.detail || 'Erreur'))
+      }
+    } catch (err) {
+      alert('❌ Erreur: ' + err.message)
+    } finally {
+      setApplyingRecommendationId(null)
+    }
+  }
+
   if (loading && !user) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-900 to-purple-900 flex items-center justify-center">
@@ -1895,6 +1930,27 @@ export default function Dashboard() {
                                 </div>
                                 <p className="text-gray-300 text-sm mb-1">{recItem.issue}</p>
                                 <p className="text-green-300 text-sm">✅ {recItem.suggestion}</p>
+                                <div className="mt-3 flex items-center gap-2">
+                                  {['Titre', 'Description', 'Prix'].includes(recItem.type) ? (
+                                    <button
+                                      onClick={() => handleApplyRecommendation(rec.product_id, recItem.type)}
+                                      disabled={subscription?.plan !== 'premium' || applyingRecommendationId === `${rec.product_id}-${recItem.type}`}
+                                      className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold px-3 py-1 rounded"
+                                    >
+                                      {applyingRecommendationId === `${rec.product_id}-${recItem.type}` ? '⏳ Application...' : 'Faire modification'}
+                                    </button>
+                                  ) : (
+                                    <button
+                                      disabled
+                                      className="bg-gray-600 text-white text-xs font-semibold px-3 py-1 rounded opacity-70"
+                                    >
+                                      Modification indisponible
+                                    </button>
+                                  )}
+                                  {subscription?.plan !== 'premium' && (
+                                    <span className="text-xs text-yellow-300">Premium requis</span>
+                                  )}
+                                </div>
                               </div>
                             ))}
                           </div>
