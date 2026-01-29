@@ -85,6 +85,7 @@ export default function App() {
   const [paymentSuccess, setPaymentSuccess] = useState(false)
   const [paymentProcessingState, setPaymentProcessingState] = useState('idle') // 'idle' | 'verifying' | 'verified' | 'failed'
   const [paymentProcessingMessage, setPaymentProcessingMessage] = useState('')
+  const [landingStatusByKey, setLandingStatusByKey] = useState({})
   
   // Prevent simultaneous subscription checks
   const subscriptionCheckInProgressRef = React.useRef(false)
@@ -388,7 +389,10 @@ export default function App() {
   const handleStripeCheckout = async (planId) => {
     // Check if user is logged in
     if (!user) {
-      alert('⚠️ Tu dois d\'abord créer un compte avant de t\'abonner !')
+      setLandingStatusByKey((prev) => ({
+        ...prev,
+        pricing: { type: 'warning', message: 'Tu dois d\'abord créer un compte avant de t\'abonner.' }
+      }))
       setShowAuthModal(true)
       setAuthMode('signup')
       return
@@ -398,12 +402,18 @@ export default function App() {
       // Get auth session
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) {
-        alert('Erreur: Session non trouvée. Reconnecte-toi.')
+        setLandingStatusByKey((prev) => ({
+          ...prev,
+          pricing: { type: 'error', message: 'Erreur: Session non trouvée. Reconnecte-toi.' }
+        }))
         return
       }
 
       if (!session.access_token) {
-        alert('Erreur: Token d\'accès manquant. Reconnecte-toi.')
+        setLandingStatusByKey((prev) => ({
+          ...prev,
+          pricing: { type: 'error', message: 'Erreur: Token d\'accès manquant. Reconnecte-toi.' }
+        }))
         console.error('Missing access_token in session:', session)
         return
       }
@@ -434,7 +444,10 @@ export default function App() {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}))
-        alert(`Erreur: ${errorData.detail || response.statusText || 'Impossible de créer la session de paiement'}`)
+        setLandingStatusByKey((prev) => ({
+          ...prev,
+          pricing: { type: 'error', message: `Erreur: ${errorData.detail || response.statusText || 'Impossible de créer la session de paiement'}` }
+        }))
         console.error('Checkout session error:', errorData)
         return
       }
@@ -444,13 +457,38 @@ export default function App() {
       if (data.url) {
         window.location.href = data.url
       } else {
-        alert('Erreur: URL de checkout manquante')
+        setLandingStatusByKey((prev) => ({
+          ...prev,
+          pricing: { type: 'error', message: 'Erreur: URL de checkout manquante' }
+        }))
         console.error('Checkout response:', data)
       }
     } catch (error) {
-      alert(`Erreur de connexion: ${error.message}`)
+      setLandingStatusByKey((prev) => ({
+        ...prev,
+        pricing: { type: 'error', message: `Erreur de connexion: ${error.message}` }
+      }))
       console.error('Stripe checkout error:', error)
     }
+  }
+
+  const renderLandingStatus = (key) => {
+    const status = landingStatusByKey[key]
+    if (!status?.message) return null
+
+    const styles = status.type === 'success'
+      ? 'bg-green-50 border-green-200 text-green-800'
+      : status.type === 'warning'
+        ? 'bg-yellow-50 border-yellow-200 text-yellow-800'
+        : status.type === 'error'
+          ? 'bg-red-50 border-red-200 text-red-700'
+          : 'bg-gray-50 border-gray-200 text-gray-700'
+
+    return (
+      <div className={`mt-4 p-4 rounded-2xl border ${styles}`}>
+        {status.message}
+      </div>
+    )
   }
 
   // If user is logged in and on dashboard view, show Dashboard component
@@ -502,7 +540,10 @@ export default function App() {
                     if (hasSubscription) {
                       setCurrentView('dashboard')
                     } else {
-                      alert('Abonnement requis pour accéder au dashboard')
+                      setLandingStatusByKey((prev) => ({
+                        ...prev,
+                        dashboardNav: { type: 'warning', message: 'Abonnement requis pour accéder au dashboard.' }
+                      }))
                       window.location.hash = '#pricing'
                     }
                   }}
@@ -512,6 +553,7 @@ export default function App() {
                 >
                   Dashboard
                 </button>
+                {renderLandingStatus('dashboardNav')}
                 <button
                   onClick={async () => {
                     await supabase.auth.signOut()
@@ -788,7 +830,10 @@ export default function App() {
                     setCurrentView('dashboard')
                     window.location.hash = '#dashboard'
                   } else {
-                    alert('Abonnement requis pour accéder au dashboard')
+                    setLandingStatusByKey((prev) => ({
+                      ...prev,
+                      dashboardHero: { type: 'warning', message: 'Abonnement requis pour accéder au dashboard.' }
+                    }))
                     document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' })
                   }
                 }}
@@ -801,6 +846,7 @@ export default function App() {
               >
                 Accéder à mon Dashboard →
               </button>
+              {renderLandingStatus('dashboardHero')}
             </div>
           )}
           {!user && (
@@ -928,20 +974,21 @@ export default function App() {
       </section>
 
       {/* Pricing Section - Apple Style Premium */}
-      <section id="pricing" className="py-32 px-6 bg-gradient-to-b from-gray-50 to-white relative overflow-hidden">
+      <section id="pricing" className="py-32 px-6 bg-gray-900 relative overflow-hidden">
         <div className="absolute inset-0 bg-grid-pattern opacity-5"></div>
         <div className="max-w-7xl mx-auto relative">
           <div className="text-center mb-20">
-            <h2 className="text-5xl md:text-6xl font-bold text-gray-900 mb-6">
+            <h2 className="text-5xl md:text-6xl font-bold text-white mb-6">
               Choisissez votre<br />
-              <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+              <span className="text-yellow-400">
                 formule gagnante
               </span>
             </h2>
-            <p className="text-xl text-gray-600 mb-2">
+            <p className="text-xl text-gray-300 mb-2">
               Tous les plans incluent 14 jours d'essai gratuit. Sans engagement.
             </p>
-            <p className="text-sm text-blue-600 font-semibold">💡 Le plan Pro offre le meilleur rapport qualité-prix</p>
+            <p className="text-sm text-yellow-400 font-semibold">Le plan Pro offre le meilleur rapport qualité-prix</p>
+            {renderLandingStatus('pricing')}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-6xl mx-auto">
@@ -953,53 +1000,52 @@ export default function App() {
                 }`}
               >
                 {plan.highlight && (
-                  <div className="absolute -inset-1 bg-gradient-to-r from-blue-600 to-purple-600 rounded-3xl blur-xl opacity-50 group-hover:opacity-75 transition-opacity"></div>
+                  <div className="absolute -inset-1 bg-yellow-600/20 rounded-3xl blur-xl opacity-60 group-hover:opacity-80 transition-opacity"></div>
                 )}
                 <div
-                  className={`relative p-8 bg-white rounded-3xl transition-all duration-300 hover:shadow-2xl ${
+                  className={`relative p-8 bg-gray-800 rounded-3xl transition-all duration-300 hover:shadow-2xl ${
                     plan.highlight 
-                      ? 'border-2 border-blue-600 shadow-xl' 
-                      : 'border border-gray-200 hover:border-blue-300'
+                      ? 'border-2 border-yellow-400 shadow-xl' 
+                      : 'border border-gray-700 hover:border-yellow-400'
                   }`}
                 >
                   {plan.highlight && (
                     <div className="absolute -top-6 left-1/2 -translate-x-1/2">
-                      <div className="inline-flex items-center gap-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white px-4 py-2 rounded-full shadow-lg font-bold text-sm">
-                        <span>🏆</span>
+                      <div className="inline-flex items-center gap-2 bg-yellow-600 text-white px-4 py-2 rounded-full shadow-lg font-bold text-sm">
                         <span>LE PLUS POPULAIRE</span>
                       </div>
-                      <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-purple-600 rounded-full blur-lg opacity-30 -z-10"></div>
+                      <div className="absolute inset-0 bg-yellow-600 rounded-full blur-lg opacity-30 -z-10"></div>
                     </div>
                   )}
                   
                   <div className="text-center mb-6">
-                    <h3 className="text-2xl font-bold text-gray-900 mb-2">{plan.name}</h3>
+                    <h3 className="text-2xl font-bold text-white mb-2">{plan.name}</h3>
                     <div className="mb-4">
-                      <span className="text-5xl font-bold text-gray-900">{plan.price}</span>
-                      <span className="text-gray-600 text-lg">/mois</span>
+                      <span className="text-5xl font-bold text-white">{plan.price}</span>
+                      <span className="text-gray-300 text-lg">/mois</span>
                     </div>
-                    <p className="text-sm text-gray-500">Facturé mensuellement</p>
+                    <p className="text-sm text-gray-400">Facturé mensuellement</p>
                   </div>
 
                   <ul className="space-y-4 mb-8">
                     {plan.features.map((feature, fidx) => (
                       <li key={fidx} className="flex items-start gap-3">
                         <span className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center ${
-                          plan.highlight ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-600'
+                          plan.highlight ? 'bg-yellow-600/20 text-yellow-400' : 'bg-gray-700 text-gray-300'
                         }`}>
                           ✓
                         </span>
-                        <span className="text-sm text-gray-700 leading-relaxed">{feature}</span>
+                        <span className="text-sm text-gray-200 leading-relaxed">{feature}</span>
                       </li>
                     ))}
                   </ul>
 
                   {/* CTA removed; selection via Stripe Pricing Table */}
-                  <div className="w-full py-4 rounded-2xl text-base font-semibold text-center border border-gray-200 bg-gray-50 text-gray-600">
+                  <div className="w-full py-4 rounded-2xl text-base font-semibold text-center border border-gray-700 bg-gray-900 text-gray-300">
                     Sélectionnez votre plan via « Voir tous les plans »
                   </div>
                   
-                  <p className="text-center text-xs text-gray-500 mt-4">
+                  <p className="text-center text-xs text-gray-400 mt-4">
                     Annulation en un clic
                   </p>
                 </div>
@@ -1008,17 +1054,17 @@ export default function App() {
           </div>
 
           <div className="mt-16 text-center">
-            <p className="text-gray-600 mb-4">Besoin d'un plan sur mesure ?</p>
+            <p className="text-gray-300 mb-4">Besoin d'un plan sur mesure ?</p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
               <button
                 onClick={() => window.location.hash = '#stripe-pricing'}
-                className="px-8 py-3 bg-blue-600 text-white font-semibold border-2 border-blue-600 rounded-full hover:bg-blue-700 transition-all"
+                className="px-8 py-3 bg-yellow-700 text-white font-semibold border-2 border-yellow-700 rounded-full hover:bg-yellow-600 transition-all"
               >
                 Voir tous les plans →
               </button>
               <button
                 onClick={() => setShowAuthModal(true)}
-                className="px-8 py-3 text-blue-600 font-semibold border-2 border-blue-600 rounded-full hover:bg-blue-600 hover:text-white transition-all"
+                className="px-8 py-3 text-yellow-400 font-semibold border-2 border-yellow-700 rounded-full hover:bg-yellow-700 hover:text-white transition-all"
               >
                 Contactez notre équipe
               </button>

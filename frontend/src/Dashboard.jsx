@@ -75,6 +75,9 @@ export default function Dashboard() {
   const [apiKeys, setApiKeys] = useState([])
   const [apiLoading, setApiLoading] = useState(false)
   const [applyingRecommendationId, setApplyingRecommendationId] = useState(null)
+  const [statusByKey, setStatusByKey] = useState({})
+  const [pendingRevokeKeyId, setPendingRevokeKeyId] = useState(null)
+  const [pendingCancelSubscription, setPendingCancelSubscription] = useState(false)
 
   const formatDate = (value) => {
     if (!value) return '—'
@@ -102,6 +105,32 @@ export default function Dashboard() {
     return ['product_analysis', 'title_optimization', 'price_suggestions']
   }
 
+  const setStatus = (key, type, message) => {
+    setStatusByKey((prev) => ({
+      ...prev,
+      [key]: { type, message, ts: Date.now() }
+    }))
+  }
+
+  const renderStatus = (key) => {
+    const status = statusByKey[key]
+    if (!status?.message) return null
+
+    const styles = status.type === 'success'
+      ? 'bg-green-900 border-green-700 text-green-200'
+      : status.type === 'warning'
+        ? 'bg-yellow-900 border-yellow-700 text-yellow-200'
+        : status.type === 'error'
+          ? 'bg-red-900 border-red-700 text-red-200'
+          : 'bg-gray-800 border-gray-700 text-gray-200'
+
+    return (
+      <div className={`mt-3 p-3 rounded-lg border ${styles}`}>
+        {status.message}
+      </div>
+    )
+  }
+
   const translations = {
     fr: {
       accountSettings: 'Paramètres du compte',
@@ -119,19 +148,19 @@ export default function Dashboard() {
       usernameCannotChange: 'Le nom d’utilisateur ne peut pas être modifié',
       email: 'Email',
       saveChanges: 'Enregistrer',
-      saving: '⏳ Enregistrement...',
+      saving: 'Enregistrement...',
       securitySettings: 'Paramètres de sécurité',
       changePassword: 'Changer le mot de passe',
       currentPassword: 'Mot de passe actuel',
       newPassword: 'Nouveau mot de passe',
       confirmNewPassword: 'Confirmer le nouveau mot de passe',
       updatePassword: 'Mettre à jour',
-      updating: '⏳ Mise à jour...',
+      updating: 'Mise à jour...',
       twoFactorAuth: 'Authentification à deux facteurs',
       twoFactorDesc: 'Ajoute une couche de sécurité supplémentaire',
       enable2FA: 'Activer 2FA',
       disable2FA: 'Désactiver 2FA',
-      twoFAEnabled: '✅ 2FA est activée',
+      twoFAEnabled: '2FA est activée',
       interfacePreferences: 'Préférences d’interface',
       darkMode: 'Mode sombre',
       enabled: 'Activé',
@@ -173,19 +202,19 @@ export default function Dashboard() {
       usernameCannotChange: 'Username cannot be changed',
       email: 'Email',
       saveChanges: 'Save Changes',
-      saving: '⏳ Saving...',
+      saving: 'Saving...',
       securitySettings: 'Security Settings',
       changePassword: 'Change Password',
       currentPassword: 'Current Password',
       newPassword: 'New Password',
       confirmNewPassword: 'Confirm New Password',
       updatePassword: 'Update Password',
-      updating: '⏳ Updating...',
+      updating: 'Updating...',
       twoFactorAuth: 'Two-Factor Authentication',
       twoFactorDesc: 'Add an extra layer of security to your account',
       enable2FA: 'Enable 2FA',
       disable2FA: 'Disable 2FA',
-      twoFAEnabled: '✅ 2FA is enabled',
+      twoFAEnabled: '2FA is enabled',
       interfacePreferences: 'Interface Preferences',
       darkMode: 'Dark Mode',
       enabled: 'Enabled',
@@ -234,7 +263,7 @@ export default function Dashboard() {
 
       const data = await response.json()
       if (data.success) {
-        console.log('✅ Payment session verified and plan updated')
+        console.log('Payment session verified and plan updated')
       }
       
       // Always refresh user data after verification attempt
@@ -332,21 +361,26 @@ export default function Dashboard() {
       })
       const data = await response.json()
       if (data.success) {
-        alert(`✅ Nouvelle clé générée:\n${data.api_key}\n\nCopie-la maintenant, elle ne sera plus affichée.`)
+        setStatus('api', 'success', `Nouvelle clé générée: ${data.api_key}. Copie-la maintenant, elle ne sera plus affichée.`)
         setApiKeys((prev) => [data.key, ...prev])
       } else {
-        alert('❌ Erreur: ' + (data.detail || 'Erreur'))
+        setStatus('api', 'error', 'Erreur: ' + (data.detail || 'Erreur'))
       }
     } catch (err) {
       console.error('API key generate error:', err)
-      alert('❌ Erreur lors de la génération')
+      setStatus('api', 'error', 'Erreur lors de la génération')
     } finally {
       setApiLoading(false)
     }
   }
 
   const handleRevokeApiKey = async (keyId) => {
-    if (!window.confirm('Révoquer cette clé ?')) return
+    if (pendingRevokeKeyId !== keyId) {
+      setPendingRevokeKeyId(keyId)
+      setStatus('api', 'warning', 'Confirme la révocation de cette clé pour continuer.')
+      return
+    }
+    setPendingRevokeKeyId(null)
 
     try {
       setApiLoading(true)
@@ -364,12 +398,13 @@ export default function Dashboard() {
       const data = await response.json()
       if (data.success) {
         setApiKeys((prev) => prev.map((k) => k.id === keyId ? { ...k, revoked: true } : k))
+        setStatus('api', 'success', 'Clé révoquée avec succès.')
       } else {
-        alert('❌ Erreur: ' + (data.detail || 'Erreur'))
+        setStatus('api', 'error', 'Erreur: ' + (data.detail || 'Erreur'))
       }
     } catch (err) {
       console.error('API key revoke error:', err)
-      alert('❌ Erreur lors de la révocation')
+      setStatus('api', 'error', 'Erreur lors de la révocation')
     } finally {
       setApiLoading(false)
     }
@@ -500,7 +535,7 @@ export default function Dashboard() {
       setLoading(false)
 
       if (data && data.success && data.has_subscription) {
-        console.log('✅ Subscription active, loading Shopify products...')
+        console.log('Subscription active, loading Shopify products...')
         loadProducts()
       }
     } catch (err) {
@@ -520,13 +555,13 @@ export default function Dashboard() {
       const currentPlan = subscription?.plan
       const nextPlan = currentPlan === 'standard' ? 'pro' : currentPlan === 'pro' ? 'premium' : null
       if (!nextPlan) {
-        alert('Tu es déjà au plan PREMIUM avec toutes les fonctionnalités.')
+        setStatus('upgrade', 'warning', 'Tu es déjà au plan PREMIUM avec toutes les fonctionnalités.')
         return
       }
 
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) {
-        alert('Session expirée, reconnecte-toi.')
+        setStatus('upgrade', 'error', 'Session expirée, reconnecte-toi.')
         return
       }
 
@@ -543,11 +578,11 @@ export default function Dashboard() {
       if (data?.success && data?.url) {
         window.location.href = data.url
       } else {
-        alert('Erreur lors de la création de la session d\'upgrade')
+        setStatus('upgrade', 'error', 'Erreur lors de la création de la session d\'upgrade')
       }
     } catch (e) {
       console.error('Upgrade error:', e)
-      alert('Une erreur est survenue pour l\'upgrade')
+      setStatus('upgrade', 'error', 'Une erreur est survenue pour l\'upgrade')
     }
   }
 
@@ -556,7 +591,7 @@ export default function Dashboard() {
       if (!targetPlan || targetPlan === subscription?.plan) return
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) {
-        alert('Session expirée, reconnecte-toi.')
+        setStatus('change-plan', 'error', 'Session expirée, reconnecte-toi.')
         return
       }
 
@@ -573,13 +608,11 @@ export default function Dashboard() {
       if (data?.success && data?.url) {
         window.location.href = data.url
       } else {
-        alert('Erreur lors de la création de la session Stripe')
+        setStatus('change-plan', 'error', 'Erreur lors de la création de la session Stripe')
       }
     } catch (e) {
       console.error('Change plan error:', e)
-      alert('Une erreur est survenue')
-    } finally {
-      setShowPlanMenu(false)
+      setStatus('change-plan', 'error', 'Une erreur est survenue')
     }
   }
 
@@ -615,13 +648,13 @@ export default function Dashboard() {
       } else {
         setChatMessages(prev => [...prev, { 
           role: 'assistant', 
-          text: '❌ Erreur: ' + (data.detail || 'Erreur inconnue') 
+          text: 'Erreur: ' + (data.detail || 'Erreur inconnue') 
         }])
       }
     } catch (err) {
       setChatMessages(prev => [...prev, { 
         role: 'assistant', 
-        text: '❌ Erreur de connexion: ' + err.message 
+        text: 'Erreur de connexion: ' + err.message 
       }])
     } finally {
       setChatLoading(false)
@@ -635,13 +668,13 @@ export default function Dashboard() {
     if (!file) return
 
     if (!file.type.startsWith('image/')) {
-      alert('❌ Format invalide. Choisis une image.')
+      setStatus('profile', 'warning', 'Format invalide. Choisis une image.')
       event.target.value = ''
       return
     }
 
     if (file.size > 5 * 1024 * 1024) {
-      alert('❌ Image trop volumineuse (max 5MB).')
+      setStatus('profile', 'warning', 'Image trop volumineuse (max 5MB).')
       event.target.value = ''
       return
     }
@@ -650,7 +683,7 @@ export default function Dashboard() {
       setAvatarUploading(true)
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) {
-        alert('Session expirée, reconnecte-toi.')
+        setStatus('profile', 'error', 'Session expirée, reconnecte-toi.')
         return
       }
 
@@ -668,13 +701,13 @@ export default function Dashboard() {
       const data = await response.json()
       if (data.success && data.avatar_url) {
         setProfile((prev) => prev ? { ...prev, avatar_url: data.avatar_url } : prev)
-        alert('✅ Photo de profil mise à jour')
+        setStatus('profile', 'success', 'Photo de profil mise à jour')
       } else {
-        alert('❌ Erreur: ' + (data.detail || 'Erreur inconnue'))
+        setStatus('profile', 'error', 'Erreur: ' + (data.detail || 'Erreur inconnue'))
       }
     } catch (err) {
       console.error('Avatar upload error:', err)
-      alert('❌ Erreur lors de l’upload')
+      setStatus('profile', 'error', 'Erreur lors de l’upload')
     } finally {
       setAvatarUploading(false)
       event.target.value = ''
@@ -698,13 +731,13 @@ export default function Dashboard() {
       })
       const data = await response.json()
       if (data.success) {
-        alert('✅ Profil mis à jour')
+        setStatus('profile', 'success', 'Profil mis à jour')
         await initializeUser()
       } else {
-        alert('❌ Erreur: ' + (data.detail || 'Erreur'))
+        setStatus('profile', 'error', 'Erreur: ' + (data.detail || 'Erreur'))
       }
     } catch (err) {
-      alert('❌ Erreur: ' + err.message)
+      setStatus('profile', 'error', 'Erreur: ' + err.message)
     } finally {
       setSaveLoading(false)
     }
@@ -712,15 +745,15 @@ export default function Dashboard() {
 
   const handleUpdatePassword = async () => {
     if (!currentPassword || !newPassword) {
-      alert('Veuillez remplir tous les champs')
+      setStatus('password', 'warning', 'Veuillez remplir tous les champs')
       return
     }
     if (newPassword !== confirmPassword) {
-      alert('Les mots de passe ne correspondent pas')
+      setStatus('password', 'warning', 'Les mots de passe ne correspondent pas')
       return
     }
     if (newPassword.length < 8) {
-      alert('Le mot de passe doit avoir au moins 8 caractères')
+      setStatus('password', 'warning', 'Le mot de passe doit avoir au moins 8 caractères')
       return
     }
     try {
@@ -739,15 +772,15 @@ export default function Dashboard() {
       })
       const data = await response.json()
       if (data.success) {
-        alert('✅ Mot de passe mis à jour')
+        setStatus('password', 'success', 'Mot de passe mis à jour')
         setCurrentPassword('')
         setNewPassword('')
         setConfirmPassword('')
       } else {
-        alert('❌ Erreur: ' + (data.detail || 'Erreur'))
+        setStatus('password', 'error', 'Erreur: ' + (data.detail || 'Erreur'))
       }
     } catch (err) {
-      alert('❌ Erreur: ' + err.message)
+      setStatus('password', 'error', 'Erreur: ' + err.message)
     } finally {
       setSaveLoading(false)
     }
@@ -768,12 +801,12 @@ export default function Dashboard() {
       const data = await response.json()
       if (data.success) {
         setTwoFAEnabled(!twoFAEnabled)
-        alert('✅ 2FA ' + (twoFAEnabled ? 'désactivée' : 'activée'))
+        setStatus('2fa', 'success', '2FA ' + (twoFAEnabled ? 'désactivée' : 'activée'))
       } else {
-        alert('❌ Erreur: ' + (data.detail || 'Erreur'))
+        setStatus('2fa', 'error', 'Erreur: ' + (data.detail || 'Erreur'))
       }
     } catch (err) {
-      alert('❌ Erreur: ' + err.message)
+      setStatus('2fa', 'error', 'Erreur: ' + err.message)
     } finally {
       setSaveLoading(false)
     }
@@ -796,14 +829,14 @@ export default function Dashboard() {
       })
       const data = await response.json()
       if (data.success) {
-        alert('✅ Paramètres updated')
+        setStatus('interface', 'success', 'Paramètres mis à jour')
         localStorage.setItem('darkMode', darkMode)
         localStorage.setItem('language', language)
       } else {
-        alert('❌ Erreur: ' + (data.detail || 'Erreur'))
+        setStatus('interface', 'error', 'Erreur: ' + (data.detail || 'Erreur'))
       }
     } catch (err) {
-      alert('❌ Erreur: ' + err.message)
+      setStatus('interface', 'error', 'Erreur: ' + err.message)
     } finally {
       setSaveLoading(false)
     }
@@ -823,19 +856,24 @@ export default function Dashboard() {
       })
       const data = await response.json()
       if (data.success) {
-        alert('✅ Préférences mises à jour')
+        setStatus('notifications', 'success', 'Préférences mises à jour')
       } else {
-        alert('❌ Erreur: ' + (data.detail || 'Erreur'))
+        setStatus('notifications', 'error', 'Erreur: ' + (data.detail || 'Erreur'))
       }
     } catch (err) {
-      alert('❌ Erreur: ' + err.message)
+      setStatus('notifications', 'error', 'Erreur: ' + err.message)
     } finally {
       setSaveLoading(false)
     }
   }
 
   const handleCancelSubscription = async () => {
-    if (!confirm('Êtes-vous sûr? Cette action est irréversible.')) return
+    if (!pendingCancelSubscription) {
+      setPendingCancelSubscription(true)
+      setStatus('billing-cancel', 'warning', 'Clique une seconde fois pour confirmer l’annulation.')
+      return
+    }
+    setPendingCancelSubscription(false)
     try {
       setSaveLoading(true)
       const { data: { session } } = await supabase.auth.getSession()
@@ -848,13 +886,13 @@ export default function Dashboard() {
       })
       const data = await response.json()
       if (data.success) {
-        alert('✅ Abonnement annulé')
+        setStatus('billing-cancel', 'success', 'Abonnement annulé')
         await initializeUser()
       } else {
-        alert('❌ Erreur: ' + (data.detail || 'Erreur'))
+        setStatus('billing-cancel', 'error', 'Erreur: ' + (data.detail || 'Erreur'))
       }
     } catch (err) {
-      alert('❌ Erreur: ' + err.message)
+      setStatus('billing-cancel', 'error', 'Erreur: ' + err.message)
     } finally {
       setSaveLoading(false)
     }
@@ -875,10 +913,10 @@ export default function Dashboard() {
       if (data.success && data.portal_url) {
         window.location.href = data.portal_url
       } else {
-        alert('❌ Erreur: ' + (data.detail || 'Erreur'))
+        setStatus('billing-payment', 'error', 'Erreur: ' + (data.detail || 'Erreur'))
       }
     } catch (err) {
-      alert('❌ Erreur: ' + err.message)
+      setStatus('billing-payment', 'error', 'Erreur: ' + err.message)
     } finally {
       setSaveLoading(false)
     }
@@ -886,13 +924,13 @@ export default function Dashboard() {
 
   const connectShopify = async () => {
     if (!shopifyUrl || !shopifyToken) {
-      alert('⚠️ Veuillez remplir l\'URL et le token')
+      setStatus('shopify', 'warning', 'Veuillez remplir l\'URL et le token')
       return
     }
     
     // Valider le format de l'URL
     if (!shopifyUrl.endsWith('.myshopify.com')) {
-      alert('⚠️ Format URL invalide. Utilisez: votre-boutique.myshopify.com')
+      setStatus('shopify', 'warning', 'Format URL invalide. Utilisez: votre-boutique.myshopify.com')
       return
     }
     
@@ -903,7 +941,7 @@ export default function Dashboard() {
       const { data: { session } } = await supabase.auth.getSession()
       
       if (!session) {
-        alert('❌ Session expirée, reconnectez-vous')
+        setStatus('shopify', 'error', 'Session expirée, reconnectez-vous')
         return
       }
       
@@ -928,10 +966,10 @@ export default function Dashboard() {
       }
       
       const testData = await testResponse.json()
-      console.log('✅ Test passed:', testData)
+      console.log('Test passed:', testData)
       
       if (!testData.ready_to_save) {
-        alert('❌ La connexion a échoué. Vérifiez vos credentials.')
+        setStatus('shopify', 'error', 'La connexion a échoué. Vérifiez vos credentials.')
         return
       }
       
@@ -958,8 +996,8 @@ export default function Dashboard() {
       const saveData = await saveResponse.json()
       
       if (saveData.success) {
-        alert(`✅ Shopify connecté! ${testData.tests?.products_fetch?.product_count || 0} produits trouvés.`)
-        console.log('✅ Connection saved, loading products...')
+        setStatus('shopify', 'success', `Shopify connecté. ${testData.tests?.products_fetch?.product_count || 0} produits trouvés.`)
+        console.log('Connection saved, loading products...')
         
         // Charger les produits
         await loadProducts()
@@ -967,8 +1005,8 @@ export default function Dashboard() {
         throw new Error('Sauvegarde échouée')
       }
     } catch (err) {
-      console.error('❌ Error:', err)
-      alert('❌ Erreur: ' + err.message)
+      console.error('Error:', err)
+      setStatus('shopify', 'error', 'Erreur: ' + err.message)
       setError(err.message)
     } finally {
       setLoading(false)
@@ -1003,20 +1041,20 @@ export default function Dashboard() {
       }
       
       const data = await response.json()
-      console.log('✅ Products loaded:', data.product_count)
+      console.log('Products loaded:', data.product_count)
       
       if (data.success && data.products) {
         setProducts(data.products)
         // Afficher les statistiques
         if (data.statistics) {
-          console.log('📊 Stats:', data.statistics)
+          console.log('Stats:', data.statistics)
         }
       } else {
         setProducts([])
         setError('Aucun produit trouvé. Connectez votre boutique Shopify d\'abord.')
       }
     } catch (err) {
-      console.error('❌ Error loading products:', err)
+      console.error('Error loading products:', err)
       setError('Erreur: ' + err.message)
       setProducts([])
     } finally {
@@ -1026,7 +1064,7 @@ export default function Dashboard() {
 
   const analyzeProducts = async () => {
     if (!products || products.length === 0) {
-      alert('Charge tes produits d\'abord')
+      setStatus('analyze', 'warning', 'Charge tes produits d\'abord')
       return
     }
     
@@ -1051,15 +1089,16 @@ export default function Dashboard() {
       const data = await response.json()
       
       if (data.success) {
-        console.log('✅ Analyse terminée:', data.analysis)
+        console.log('Analyse terminée:', data.analysis)
         setAnalysisResults(data.analysis)
         setActiveTab('analysis')
+        setStatus('analyze', 'success', 'Analyse terminée. Les résultats sont disponibles.')
       } else {
-        alert('❌ Erreur lors de l\'analyse: ' + (data.detail || 'Erreur inconnue'))
+        setStatus('analyze', 'error', 'Erreur lors de l\'analyse: ' + (data.detail || 'Erreur inconnue'))
       }
     } catch (err) {
       console.error('Erreur analyse:', err)
-      alert('Erreur analyse: ' + err.message)
+      setStatus('analyze', 'error', 'Erreur analyse: ' + err.message)
     } finally {
       setLoading(false)
     }
@@ -1126,16 +1165,16 @@ export default function Dashboard() {
       const data = await response.json()
       
       if (data.success) {
-        alert('✅ Modifications appliquées avec succès!')
+        setStatus('apply-actions', 'success', 'Modifications appliquées avec succès.')
         setShowApplyModal(false)
         // Reload products to see changes
         await loadProducts()
       } else {
-        alert('❌ Erreur: ' + (data.detail || 'Erreur lors de l\'application'))
+        setStatus('apply-actions', 'error', 'Erreur: ' + (data.detail || 'Erreur lors de l\'application'))
       }
     } catch (err) {
       console.error('Error applying actions:', err)
-      alert('❌ Erreur: ' + err.message)
+      setStatus('apply-actions', 'error', 'Erreur: ' + err.message)
     } finally {
       setApplyingActions(false)
     }
@@ -1143,7 +1182,7 @@ export default function Dashboard() {
 
   const handleApplyRecommendation = async (productId, recommendationType) => {
     if (subscription?.plan !== 'premium') {
-      alert('Cette fonctionnalité est réservée au plan PREMIUM')
+      setStatus(`rec-${productId}-${recommendationType}`, 'warning', 'Cette fonctionnalité est réservée au plan PREMIUM')
       return
     }
 
@@ -1163,13 +1202,13 @@ export default function Dashboard() {
       })
       const data = await response.json()
       if (data.success) {
-        alert('✅ Modification appliquée sur Shopify')
+        setStatus(`rec-${productId}-${recommendationType}`, 'success', 'Modification appliquée sur Shopify')
         await loadProducts()
       } else {
-        alert('❌ Erreur: ' + (data.detail || 'Erreur'))
+        setStatus(`rec-${productId}-${recommendationType}`, 'error', 'Erreur: ' + (data.detail || 'Erreur'))
       }
     } catch (err) {
-      alert('❌ Erreur: ' + err.message)
+      setStatus(`rec-${productId}-${recommendationType}`, 'error', 'Erreur: ' + err.message)
     } finally {
       setApplyingRecommendationId(null)
     }
@@ -1187,7 +1226,6 @@ export default function Dashboard() {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-900 to-purple-900 flex items-center justify-center">
         <div className="text-center text-white">
-          <div className="text-6xl mb-4">✅</div>
           <h2 className="text-3xl font-bold mb-4">Paiement en cours de traitement...</h2>
           <p className="text-gray-300 mb-8">Merci! Nous enregistrons ton abonnement.</p>
           <div className="flex justify-center gap-2 mb-4">
@@ -1218,17 +1256,14 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-gray-900">
-      {/* Header */}
-      <div className="bg-gradient-to-r from-blue-900 to-purple-900 text-white p-4 shadow-lg">
-        <div className="max-w-7xl mx-auto flex justify-between items-center">
-          {/* Left: Profile Menu */}
-          <div className="flex items-center gap-4 relative">
+      <div className="flex min-h-screen">
+        <aside className="w-64 bg-gray-800 border-r border-gray-700 p-4 flex flex-col gap-4">
+          <div className="flex items-center gap-3 relative">
             <button
               onClick={() => setShowProfileMenu((v) => !v)}
-              className="flex items-center gap-3 hover:bg-white/10 px-3 py-2 rounded-lg transition"
+              className="flex items-center gap-3 hover:bg-white/10 px-3 py-2 rounded-lg transition w-full"
             >
-              {/* Avatar */}
-              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-yellow-400 to-orange-500 flex items-center justify-center font-bold text-lg shadow-lg overflow-hidden">
+              <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center font-bold text-lg shadow-lg overflow-hidden">
                 {profile?.avatar_url ? (
                   <img src={profile.avatar_url} alt="Avatar" className="w-full h-full object-cover" />
                 ) : (
@@ -1236,51 +1271,38 @@ export default function Dashboard() {
                 )}
               </div>
               <div className="text-left">
-                <div className="font-semibold text-sm">{profile?.full_name || user?.email}</div>
-                <div className="text-xs text-gray-300">@{profile?.username || 'user'}</div>
+                <div className="font-semibold text-sm text-white">{profile?.full_name || user?.email}</div>
+                <div className="text-xs text-gray-400">@{profile?.username || 'user'}</div>
               </div>
-              <svg className="w-4 h-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
             </button>
 
-            {/* Profile Dropdown */}
             {showProfileMenu && (
-              <div className="absolute top-full left-0 mt-2 w-64 bg-gray-800 border border-gray-700 rounded-lg shadow-2xl z-50">
+              <div className="absolute top-full left-0 mt-2 w-60 bg-gray-800 border border-gray-700 rounded-lg shadow-2xl z-50">
                 <div className="p-4 border-b border-gray-700">
-                  <div className="font-semibold">{profile?.full_name || user?.email}</div>
+                  <div className="font-semibold text-white">{profile?.full_name || user?.email}</div>
                   <div className="text-sm text-gray-400">{user?.email}</div>
                   <div className="mt-2 px-2 py-1 bg-yellow-600/20 text-yellow-400 text-xs rounded inline-block">
-                    {subscription?.plan?.toUpperCase() || 'FREE'}
+                    {formatPlan(subscription?.plan)}
                   </div>
                 </div>
                 <div className="p-2">
                   <button
                     onClick={() => { setShowProfileMenu(false); setShowSettingsModal(true); setSettingsTab('profile') }}
-                    className="w-full text-left px-3 py-2 rounded hover:bg-gray-700 flex items-center gap-2 text-sm"
+                    className="w-full text-left px-3 py-2 rounded hover:bg-gray-700 flex items-center gap-2 text-sm text-white"
                   >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                    </svg>
                     {t('accountSettings')}
                   </button>
                   <button
                     onClick={() => { setShowProfileMenu(false); setShowPlanMenu(true) }}
-                    className="w-full text-left px-3 py-2 rounded hover:bg-gray-700 flex items-center gap-2 text-sm"
+                    className="w-full text-left px-3 py-2 rounded hover:bg-gray-700 flex items-center gap-2 text-sm text-white"
                   >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
                     Subscription & Billing
                   </button>
                   <div className="border-t border-gray-700 my-2"></div>
                   <button
                     onClick={() => { setShowProfileMenu(false); handleLogout() }}
-                    className="w-full text-left px-3 py-2 rounded hover:bg-red-700 flex items-center gap-2 text-sm text-red-400 hover:text-white"
+                    className="w-full text-left px-3 py-2 rounded hover:bg-red-700 text-sm text-red-400 hover:text-white"
                   >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                    </svg>
                     Sign Out
                   </button>
                 </div>
@@ -1288,13 +1310,35 @@ export default function Dashboard() {
             )}
           </div>
 
-          {/* Right: Plan Badge */}
-          <div className="text-right relative">
-            <div className="text-xs text-gray-300 mb-1">Current Plan</div>
+          <div className="bg-gray-700 rounded-lg p-3">
+            <div className="text-xs text-gray-400 mb-1">Current Plan</div>
             <div className="font-bold text-yellow-400 text-lg">{formatPlan(subscription?.plan)}</div>
           </div>
-        </div>
-      </div>
+
+          <nav className="flex flex-col gap-1">
+            {[
+              { key: 'overview', label: 'Vue d\'ensemble' },
+              { key: 'shopify', label: 'Shopify' },
+              { key: 'assistant', label: 'Assistant IA' },
+              { key: 'ai', label: 'Analyse IA' },
+              { key: 'analysis', label: 'Résultats' }
+            ].map((item) => (
+              <button
+                key={item.key}
+                onClick={() => setActiveTab(item.key)}
+                className={`text-left px-3 py-2 rounded-lg text-sm font-semibold transition ${
+                  activeTab === item.key
+                    ? 'bg-gray-700 text-white'
+                    : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
+        </aside>
+
+        <main className="flex-1">
 
       {/* Plan Change Menu (kept separate for billing changes) */}
       {showPlanMenu && (
@@ -1341,6 +1385,7 @@ export default function Dashboard() {
                 </button>
               </div>
             </div>
+            {renderStatus('change-plan')}
           </div>
         </div>
       )}
@@ -1350,7 +1395,7 @@ export default function Dashboard() {
           <div className="max-w-7xl mx-auto px-6 mb-4">
             <div className="bg-green-800 border border-green-600 text-green-100 p-4 rounded-lg flex items-center justify-between">
               <div>
-                <p className="font-bold">✅ Paiement confirmé — abonnement activé</p>
+                <p className="font-bold">Paiement confirmé — abonnement activé</p>
                 <p className="text-sm opacity-90">Ton plan est appliqué et disponible dans le dashboard.</p>
               </div>
               <div className="flex gap-3">
@@ -1358,40 +1403,20 @@ export default function Dashboard() {
                   onClick={() => { window.location.hash = '#/' }}
                   className="bg-green-600 hover:bg-green-700 text-white font-semibold px-4 py-2 rounded-lg"
                 >
-                  ↩️ Retour à l'accueil
+                  Retour à l'accueil
                 </button>
                 <button
                   onClick={() => { window.location.hash = '#dashboard' }}
                   className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg"
                 >
-                  📊 Aller au dashboard
+                  Aller au dashboard
                 </button>
               </div>
             </div>
           </div>
         )}
 
-        {/* Tabs */}
-      <div className="max-w-7xl mx-auto p-6">
-        <div className="flex gap-4 mb-6 border-b border-gray-700 overflow-x-auto">
-          {['overview', 'shopify', 'assistant', 'ai', 'analysis'].map(t => (
-            <button
-              key={t}
-              onClick={() => setActiveTab(t)}
-              className={`px-4 py-2 font-semibold transition whitespace-nowrap ${
-                activeTab === t
-                  ? 'text-blue-400 border-b-2 border-blue-400'
-                  : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              {t === 'overview' && '📊 Vue d\'ensemble'}
-              {t === 'shopify' && '🛒 Shopify'}
-              {t === 'assistant' && '💬 Assistant IA'}
-              {t === 'ai' && '✨ Analyse IA'}
-              {t === 'analysis' && '📈 Résultats'}
-            </button>
-          ))}
-        </div>
+        <div className="max-w-7xl mx-auto p-6">
 
         {error && (
           <div className="bg-red-900 border border-red-700 text-red-200 p-4 rounded-lg mb-6">
@@ -1422,6 +1447,7 @@ export default function Dashboard() {
               {subscription?.plan === 'pro' && (
                 <p className="text-gray-400 text-xs mt-1">Bon choix — Upgrade vers PREMIUM pour tout débloquer.</p>
               )}
+              {renderStatus('upgrade')}
             </div>
             
             <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
@@ -1444,7 +1470,7 @@ export default function Dashboard() {
         {/* Shopify Tab */}
         {activeTab === 'shopify' && (
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-            <h2 className="text-white text-xl font-bold mb-4">🛒 Connecter Shopify</h2>
+            <h2 className="text-white text-xl font-bold mb-4">Connecter Shopify</h2>
             
             <div className="space-y-4 max-w-md">
               <div>
@@ -1473,8 +1499,9 @@ export default function Dashboard() {
                 onClick={connectShopify}
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg"
               >
-                ✅ Connecter
+                Connecter
               </button>
+              {renderStatus('shopify')}
             </div>
 
             {shopifyUrl && !loading && (
@@ -1483,7 +1510,7 @@ export default function Dashboard() {
                   onClick={loadProducts}
                   className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg"
                 >
-                  📦 Charger mes produits ({products?.length || 0})
+                  Charger mes produits ({products?.length || 0})
                 </button>
               </div>
             )}
@@ -1504,7 +1531,7 @@ export default function Dashboard() {
         {/* AI Assistant Tab */}
         {activeTab === 'assistant' && (
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 h-96 flex flex-col">
-            <h2 className="text-white text-xl font-bold mb-4">💬 Assistant IA</h2>
+            <h2 className="text-white text-xl font-bold mb-4">Assistant IA</h2>
             
             {/* Messages Container */}
             <div className="flex-1 overflow-y-auto mb-4 space-y-4 bg-gray-900 rounded-lg p-4">
@@ -1522,7 +1549,7 @@ export default function Dashboard() {
               {chatLoading && (
                 <div className="flex justify-start">
                   <div className="bg-gray-700 text-gray-200 px-4 py-2 rounded-lg">
-                    ⏳ L'IA réfléchit...
+                    L'IA réfléchit...
                   </div>
                 </div>
               )}
@@ -1548,7 +1575,7 @@ export default function Dashboard() {
                 disabled={chatLoading || !chatInput.trim()}
                 className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-lg disabled:opacity-50"
               >
-                {chatLoading ? '⏳' : '📤'}
+                {chatLoading ? 'Envoi...' : 'Envoyer'}
               </button>
             </div>
           </div>
@@ -1557,7 +1584,7 @@ export default function Dashboard() {
         {/* AI Analysis Tab */}
         {activeTab === 'ai' && (
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-            <h2 className="text-white text-xl font-bold mb-4">✨ Analyser avec l'IA</h2>
+            <h2 className="text-white text-xl font-bold mb-4">Analyser avec l'IA</h2>
             
             {products && products.length > 0 ? (
               <div>
@@ -1567,8 +1594,9 @@ export default function Dashboard() {
                   disabled={loading}
                   className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
                 >
-                  {loading ? '⏳ Analyse en cours...' : '🚀 Lancer l\'analyse IA'}
+                  {loading ? 'Analyse en cours...' : 'Lancer l\'analyse IA'}
                 </button>
+                {renderStatus('analyze')}
               </div>
             ) : (
               <p className="text-gray-400">Charge tes produits Shopify d'abord</p>
@@ -1606,7 +1634,7 @@ export default function Dashboard() {
                 )}
                 {/* Vue d'ensemble */}
                 <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-                  <h2 className="text-white text-2xl font-bold mb-4">📊 Vue d'ensemble de votre boutique</h2>
+                  <h2 className="text-white text-2xl font-bold mb-4">Vue d'ensemble de votre boutique</h2>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div className="bg-gray-700 p-4 rounded-lg">
                       <p className="text-gray-400 text-sm">Produits totaux</p>
@@ -1645,7 +1673,7 @@ export default function Dashboard() {
                               <p className="text-white font-bold mb-2">{issue.issue}</p>
                               <p className="text-red-200 text-sm mb-2">{issue.impact}</p>
                               <div className="bg-red-900 p-3 rounded mt-2">
-                                <p className="text-white font-bold text-sm">✅ Action immédiate:</p>
+                                <p className="text-white font-bold text-sm">Action immédiate:</p>
                                 <p className="text-red-100 text-sm mt-1">{issue.action}</p>
                               </div>
                             </div>
@@ -1673,7 +1701,7 @@ export default function Dashboard() {
                         </div>
                         <div className="flex gap-4 text-sm">
                           <span className="text-green-300">⏱️ Temps: {action.time_required}</span>
-                          <span className="text-yellow-300">📈 Impact: {action.expected_impact}</span>
+                          <span className="text-yellow-300">Impact: {action.expected_impact}</span>
                         </div>
                       </div>
                     ))}
@@ -1706,7 +1734,7 @@ export default function Dashboard() {
                           <p className="text-green-300 text-sm">{rec.impact}</p>
                         </div>
                         <div className="bg-blue-900 bg-opacity-30 p-3 rounded mt-2">
-                          <p className="text-blue-400 text-sm font-bold">✅ Action:</p>
+                          <p className="text-blue-400 text-sm font-bold">Action:</p>
                           <p className="text-blue-200 text-sm">{rec.action}</p>
                         </div>
                       </div>
@@ -1755,7 +1783,7 @@ export default function Dashboard() {
                         <div key={idx} className="bg-blue-900 bg-opacity-30 p-4 rounded-lg">
                           <h4 className="text-blue-400 font-bold mb-2">{opp.strategy}</h4>
                           <p className="text-gray-300 text-sm mb-2">{opp.description}</p>
-                          <p className="text-green-400 text-sm font-bold">📈 {opp.expected_impact}</p>
+                          <p className="text-green-400 text-sm font-bold">{opp.expected_impact}</p>
                         </div>
                       ))}
                     </div>
@@ -1809,7 +1837,7 @@ export default function Dashboard() {
                       <div key={idx} className="bg-green-900 bg-opacity-30 p-4 rounded-lg">
                         <p className="text-green-400 font-bold mb-2">{win.action}</p>
                         {win.example && <p className="text-gray-300 text-sm mb-2">Exemple: {win.example}</p>}
-                        <p className="text-green-300 text-sm">📈 {win.impact}</p>
+                        <p className="text-green-300 text-sm">{win.impact}</p>
                       </div>
                     ))}
                   </div>
@@ -1817,7 +1845,7 @@ export default function Dashboard() {
 
                 {/* Stratégies de vente */}
                 <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-                  <h2 className="text-white text-2xl font-bold mb-4">🛒 Stratégies Upsell & Cross-sell</h2>
+                  <h2 className="text-white text-2xl font-bold mb-4">Stratégies Upsell & Cross-sell</h2>
                   
                   {analysisResults.sales_strategies?.upsell_opportunities?.length > 0 && (
                     <>
@@ -1828,7 +1856,7 @@ export default function Dashboard() {
                             <h4 className="text-purple-400 font-bold mb-2">{upsell.strategy}</h4>
                             <p className="text-gray-300 text-sm mb-2">{upsell.description}</p>
                             {upsell.example && <p className="text-purple-200 text-sm mb-2">💡 Exemple: {upsell.example}</p>}
-                            <p className="text-green-400 text-sm font-bold">📈 {upsell.expected_impact}</p>
+                            <p className="text-green-400 text-sm font-bold">{upsell.expected_impact}</p>
                           </div>
                         ))}
                       </div>
@@ -1851,7 +1879,7 @@ export default function Dashboard() {
                               </ul>
                             </div>
                             <p className="text-gray-300 text-sm mb-2">{bundle.positioning}</p>
-                            <p className="text-green-400 text-sm font-bold">📈 {bundle.expected_impact}</p>
+                            <p className="text-green-400 text-sm font-bold">{bundle.expected_impact}</p>
                           </div>
                         ))}
                       </div>
@@ -1872,7 +1900,7 @@ export default function Dashboard() {
 
                 {/* Opportunités de croissance */}
                 <div className="bg-gradient-to-r from-purple-900 to-pink-900 rounded-lg p-6 border border-purple-600">
-                  <h2 className="text-white text-2xl font-bold mb-4">🚀 Opportunités de croissance</h2>
+                  <h2 className="text-white text-2xl font-bold mb-4">Opportunités de croissance</h2>
                   <div className="space-y-4">
                     {analysisResults.growth_opportunities?.map((opp, idx) => (
                       <div key={idx} className="bg-black bg-opacity-30 p-5 rounded-lg">
@@ -1929,7 +1957,7 @@ export default function Dashboard() {
                                   <span className="text-blue-400 font-bold text-sm">{recItem.type}</span>
                                 </div>
                                 <p className="text-gray-300 text-sm mb-1">{recItem.issue}</p>
-                                <p className="text-green-300 text-sm">✅ {recItem.suggestion}</p>
+                                <p className="text-green-300 text-sm">{recItem.suggestion}</p>
                                 <div className="mt-3 flex items-center gap-2">
                                   {['Titre', 'Description', 'Prix'].includes(recItem.type) ? (
                                     <button
@@ -1937,7 +1965,7 @@ export default function Dashboard() {
                                       disabled={subscription?.plan !== 'premium' || applyingRecommendationId === `${rec.product_id}-${recItem.type}`}
                                       className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold px-3 py-1 rounded"
                                     >
-                                      {applyingRecommendationId === `${rec.product_id}-${recItem.type}` ? '⏳ Application...' : 'Faire modification'}
+                                      {applyingRecommendationId === `${rec.product_id}-${recItem.type}` ? 'Application...' : 'Faire modification'}
                                     </button>
                                   ) : (
                                     <button
@@ -1951,11 +1979,12 @@ export default function Dashboard() {
                                     <span className="text-xs text-yellow-300">Premium requis</span>
                                   )}
                                 </div>
+                                {renderStatus(`rec-${rec.product_id}-${recItem.type}`)}
                               </div>
                             ))}
                           </div>
                         ) : (
-                          <p className="text-green-400">✅ Aucune amélioration critique nécessaire</p>
+                          <p className="text-green-400">Aucune amélioration critique nécessaire</p>
                         )}
                       </div>
                     ))}
@@ -2053,7 +2082,7 @@ export default function Dashboard() {
                               <span className="text-blue-400 text-sm font-bold">{action.type.toUpperCase()}</span>
                             </div>
                             <p className="text-gray-400 text-sm mb-1">Problème: {action.issue}</p>
-                            <p className="text-green-300 text-sm">✅ Solution: {action.suggestion}</p>
+                            <p className="text-green-300 text-sm">Solution: {action.suggestion}</p>
                           </>
                         )}
                       </div>
@@ -2099,6 +2128,7 @@ export default function Dashboard() {
                 )}
               </button>
             </div>
+            {renderStatus('apply-actions')}
           </div>
         </div>
       )}
@@ -2192,6 +2222,7 @@ export default function Dashboard() {
                         <button onClick={handleSaveProfile} disabled={saveLoading} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold">
                           {saveLoading ? t('saving') : t('saveChanges')}
                         </button>
+                        {renderStatus('profile')}
                       </div>
                     </div>
                   </div>
@@ -2218,15 +2249,17 @@ export default function Dashboard() {
                         <button onClick={handleUpdatePassword} disabled={saveLoading} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold">
                           {saveLoading ? t('updating') : t('updatePassword')}
                         </button>
+                        {renderStatus('password')}
                       </div>
                     </div>
                     <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
                       <h4 className="text-lg font-semibold text-white mb-2">{t('twoFactorAuth')}</h4>
                       <p className="text-gray-400 mb-4">{t('twoFactorDesc')}</p>
                       <button onClick={handleToggle2FA} disabled={saveLoading} className={`${twoFAEnabled ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'} disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold`}>
-                        {saveLoading ? '⏳...' : (twoFAEnabled ? t('disable2FA') : t('enable2FA'))}
+                        {saveLoading ? '...' : (twoFAEnabled ? t('disable2FA') : t('enable2FA'))}
                       </button>
                       {twoFAEnabled && <p className="text-green-400 text-sm mt-2">{t('twoFAEnabled')}</p>}
+                      {renderStatus('2fa')}
                     </div>
                   </div>
                 )}
@@ -2255,6 +2288,7 @@ export default function Dashboard() {
                       <button onClick={handleSaveInterface} disabled={saveLoading} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold w-full">
                         {saveLoading ? t('saving') : t('saveInterface')}
                       </button>
+                      {renderStatus('interface')}
                     </div>
                   </div>
                 )}
@@ -2279,6 +2313,7 @@ export default function Dashboard() {
                       <button onClick={handleSaveNotifications} disabled={saveLoading} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold w-full mt-4">
                         {saveLoading ? t('saving') : t('saveNotifications')}
                       </button>
+                      {renderStatus('notifications')}
                     </div>
                   </div>
                 )}
@@ -2303,9 +2338,10 @@ export default function Dashboard() {
                           {t('changePlan')}
                         </button>
                         <button onClick={handleCancelSubscription} disabled={saveLoading} className="bg-red-600 hover:bg-red-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold">
-                          {saveLoading ? '⏳...' : t('cancelSubscription')}
+                          {saveLoading ? '...' : t('cancelSubscription')}
                         </button>
                       </div>
+                      {renderStatus('billing-cancel')}
                     </div>
                     <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
                       <h4 className="text-lg font-semibold text-white mb-4">{t('paymentMethod')}</h4>
@@ -2319,8 +2355,9 @@ export default function Dashboard() {
                         </div>
                       </div>
                       <button onClick={handleUpdatePaymentMethod} disabled={saveLoading} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold">
-                        {saveLoading ? '⏳...' : t('updatePaymentMethod')}
+                        {saveLoading ? '...' : t('updatePaymentMethod')}
                       </button>
+                      {renderStatus('billing-payment')}
                     </div>
                   </div>
                 )}
@@ -2351,6 +2388,23 @@ export default function Dashboard() {
                               {keyItem.revoked ? 'Révoquée' : t('revoke')}
                             </button>
                           </div>
+                          {pendingRevokeKeyId === keyItem.id && !keyItem.revoked && (
+                            <div className="flex gap-2 mb-4">
+                              <button
+                                onClick={() => handleRevokeApiKey(keyItem.id)}
+                                disabled={apiLoading}
+                                className="bg-red-600 hover:bg-red-700 disabled:opacity-50 px-4 py-2 rounded-lg text-white text-sm"
+                              >
+                                Confirmer
+                              </button>
+                              <button
+                                onClick={() => setPendingRevokeKeyId(null)}
+                                className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-white text-sm"
+                              >
+                                Annuler
+                              </button>
+                            </div>
+                          )}
                           <div className="bg-gray-700 rounded p-3 font-mono text-sm text-gray-300">
                             {keyItem.key_prefix}••••{keyItem.key_last4}
                           </div>
@@ -2364,6 +2418,7 @@ export default function Dashboard() {
                     >
                       {t('generateKey')}
                     </button>
+                    {renderStatus('api')}
                   </div>
                 )}
               </div>
