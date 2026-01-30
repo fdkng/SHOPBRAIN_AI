@@ -857,6 +857,42 @@ export default function App() {
         </div>
       </section>
 
+      {/* Pre-Dashboard Questions */}
+      <section className="py-20 px-6 bg-gray-950 border-y border-gray-800">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center mb-12">
+            <p className="text-xs uppercase tracking-[0.3em] text-gray-500 mb-4">Avant le dashboard</p>
+            <h2 className="text-4xl md:text-5xl font-bold text-white mb-4">Répondre aux questions critiques avant d’agir</h2>
+            <p className="text-lg text-gray-400 max-w-3xl mx-auto">ShopBrain structure les décisions avec des questions métiers claires et priorisées.</p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {[
+              {
+                question: 'Quelles actions ont un impact immédiat sur les revenus ?',
+                answer: 'Le cockpit identifie les optimisations à ROI rapide avant d’exécuter.'
+              },
+              {
+                question: 'Où perdons-nous des ventes ?',
+                answer: 'Les points de friction sont isolés par segment, produit et canal.'
+              },
+              {
+                question: 'Quelles fiches produits doivent être corrigées en priorité ?',
+                answer: 'Les anomalies critiques sont hiérarchisées avec un plan d’action.'
+              },
+              {
+                question: 'Quel est l’impact réel des actions IA ?',
+                answer: 'Chaque décision est suivie avec KPI, historique et exécution.'
+              }
+            ].map((item, idx) => (
+              <div key={idx} className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
+                <h3 className="text-white text-lg font-semibold mb-3">{item.question}</h3>
+                <p className="text-gray-400 text-sm leading-relaxed">{item.answer}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* Ecosystem Section */}
       <section className="py-24 px-6 bg-gray-900">
         <div className="max-w-6xl mx-auto">
@@ -952,6 +988,101 @@ export default function App() {
               <p className="text-xs uppercase tracking-[0.2em] text-gray-400 mt-1">{stat.label}</p>
             </div>
           ))}
+        </div>
+      </section>
+
+      {/* Before / After */}
+      <section className="py-24 px-6 bg-gray-900">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center mb-14">
+            <p className="text-xs uppercase tracking-[0.3em] text-gray-400 mb-4">Avant / Après</p>
+            <h2 className="text-4xl md:text-5xl font-bold text-white mb-4">Passez d’un Shopify dispersé à un cockpit maîtrisé</h2>
+            <p className="text-lg text-gray-400 max-w-3xl mx-auto">Une gouvernance claire, une IA pilotable et des actions traçables à l’échelle.</p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="bg-gray-800 border border-gray-700 rounded-3xl p-6">
+              <h3 className="text-white text-xl font-semibold mb-4">Sans ShopBrain</h3>
+              <ul className="space-y-3 text-sm text-gray-300">
+                <li>Décisions éparpillées, peu de visibilité sur l’impact.</li>
+                <li>Optimisations ponctuelles et non suivies.</li>
+                <li>Gestion manuelle des contenus et prix.</li>
+                <li>Peu de priorisation et pas de traçabilité.</li>
+              </ul>
+            </div>
+            <div className="bg-gray-800 border border-gray-700 rounded-3xl p-6">
+              <h3 className="text-white text-xl font-semibold mb-4">Avec ShopBrain</h3>
+              <ul className="space-y-3 text-sm text-gray-300">
+                <li>Vision unifiée : IA, KPI, risques, exécutions.</li>
+                <li>Optimisations programmées et mesurées.</li>
+                <li>Automations avancées multi‑produits.</li>
+                <li>Priorités claires et impact immédiat.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Benefits */}
+      <section className="py-24 px-6 bg-gray-900">
+        <div className="max-w-7xl mx-auto">
+          <div className="text-center mb-16">
+            <p className="text-xs uppercase tracking-[0.3em] text-gray-400 mb-4">Bénéfices</p>
+            <h2 className="text-4xl md:text-5xl font-bold text-white mb-4">Sécurité, gouvernance, observabilité</h2>
+            <p className="text-lg text-gray-400 max-w-3xl mx-auto">Des résultats mesurables sans complexité opérationnelle.</p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            {[
+              { title: 'Sécurité renforcée', desc: 'Contrôles d’accès, traçabilité et historiques complets.' },
+              { title: 'Gouvernance claire', desc: 'Politiques unifiées pour tous les flux IA.' },
+              { title: 'Observabilité totale', desc: 'Suivi des actions, impact et ROI en temps réel.' },
+              { title: 'Intégration fluide', desc: 'Connecteurs Shopify et API sans friction.' }
+            ].map((b, idx) => (
+              <div key={idx} className="bg-gray-800 border border-gray-700 rounded-3xl p-6">
+                <h3 className="text-white text-lg font-semibold mb-2">{b.title}</h3>
+                <p className="text-gray-400 text-sm leading-relaxed">{b.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Testimonial */}
+      <section className="py-20 px-6 bg-gray-900">
+        <div className="max-w-5xl mx-auto bg-gray-800 border border-gray-700 rounded-3xl p-8">
+          <p className="text-sm uppercase tracking-[0.3em] text-gray-400 mb-4">Case study</p>
+          <p className="text-xl text-white leading-relaxed mb-6">
+            “ShopBrain nous a donné une vue claire des priorités. Nous avons automatisé nos optimisations et augmenté nos conversions en quelques semaines.”
+          </p>
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <div>
+              <p className="text-white font-semibold">Marie L.</p>
+              <p className="text-gray-400 text-sm">Directrice e‑commerce</p>
+            </div>
+            <div className="text-gray-500 text-sm">Entreprise partenaire</div>
+          </div>
+        </div>
+      </section>
+
+      {/* Resources */}
+      <section className="py-24 px-6 bg-gray-900 border-y border-gray-700">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center mb-14">
+            <p className="text-xs uppercase tracking-[0.3em] text-gray-400 mb-4">Ressources</p>
+            <h2 className="text-4xl md:text-5xl font-bold text-white mb-4">Guides, démos et communauté</h2>
+            <p className="text-lg text-gray-400 max-w-3xl mx-auto">Inspirez‑vous de cas concrets et déployez plus vite.</p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {[
+              { title: 'Guides stratégiques', desc: 'Checklists et playbooks IA pour Shopify.' },
+              { title: 'Démonstrations', desc: 'Walkthroughs complets des dashboards et workflows.' },
+              { title: 'Communauté', desc: 'Partage d’expériences entre e‑commerçants.' }
+            ].map((r, idx) => (
+              <div key={idx} className="bg-gray-800 border border-gray-700 rounded-3xl p-6">
+                <h3 className="text-white text-lg font-semibold mb-2">{r.title}</h3>
+                <p className="text-gray-400 text-sm leading-relaxed">{r.desc}</p>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 

@@ -1645,6 +1645,218 @@ async def get_shopify_products(request: Request, limit: int = 250):
         raise HTTPException(status_code=500, detail=f"Erreur: {str(e)}")
 
 
+def _get_shopify_connection(user_id: str):
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        raise HTTPException(status_code=500, detail="Supabase not configured")
+
+    supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    connection = supabase.table("shopify_connections").select("shop_domain,access_token").eq("user_id", user_id).execute()
+
+    if not connection.data:
+        raise HTTPException(status_code=404, detail="Aucune boutique Shopify connectée")
+
+    shop_domain = connection.data[0].get("shop_domain")
+    access_token = connection.data[0].get("access_token")
+
+    if not shop_domain or not access_token:
+        raise HTTPException(status_code=400, detail="Connexion Shopify invalide")
+
+    return shop_domain, access_token
+
+
+def _parse_shopify_next_link(link_header: str | None) -> str | None:
+    if not link_header:
+        return None
+    parts = link_header.split(',')
+    for part in parts:
+        if 'rel="next"' in part:
+            start = part.find('<')
+            end = part.find('>')
+            if start != -1 and end != -1:
+                return part[start + 1:end]
+    return None
+
+
+@app.get("/api/shopify/customers")
+async def get_shopify_customers(request: Request, limit: int = 100):
+    """👥 Récupère les clients Shopify pour facturation"""
+    user_id = get_user_id(request)
+    shop_domain, access_token = _get_shopify_connection(user_id)
+
+    customers_url = f"https://{shop_domain}/admin/api/2024-10/customers.json?limit={min(limit, 250)}&fields=id,first_name,last_name,email,phone,tags,created_at"
+    headers = {
+        "X-Shopify-Access-Token": access_token,
+        "Content-Type": "application/json"
+    }
+
+    response = requests.get(customers_url, headers=headers, timeout=30)
+    if response.status_code == 401:
+        raise HTTPException(status_code=401, detail="Token Shopify expiré ou invalide. Reconnectez-vous.")
+    if response.status_code == 404:
+        raise HTTPException(status_code=404, detail=f"Boutique Shopify non trouvée: {shop_domain}")
+    if response.status_code != 200:
+        raise HTTPException(status_code=response.status_code, detail=f"Erreur Shopify: {response.text[:300]}")
+
+    customers = response.json().get("customers", [])
+    return {
+        "success": True,
+        "shop": shop_domain,
+        "customer_count": len(customers),
+        "customers": customers
+    }
+
+
+@app.get("/api/shopify/analytics")
+async def get_shopify_analytics(request: Request, range: str = "30d"):
+    """📈 Récupère les KPIs Shopify (revenus, commandes, AOV, série temporelle)"""
+    user_id = get_user_id(request)
+    shop_domain, access_token = _get_shopify_connection(user_id)
+
+    range_map = {
+        "7d": 7,
+        "30d": 30,
+        "90d": 90,
+        "365d": 365
+    }
+    days = range_map.get(range, 30)
+    start_date = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    headers = {
+        "X-Shopify-Access-Token": access_token,
+        "Content-Type": "application/json"
+    }
+
+    orders = []
+    next_url = f"https://{shop_domain}/admin/api/2024-10/orders.json?status=any&created_at_min={start_date}&limit=250&fields=id,created_at,total_price,financial_status,currency,line_items"
+    page_count = 0
+
+    while next_url and page_count < 4:
+        response = requests.get(next_url, headers=headers, timeout=30)
+        if response.status_code == 401:
+            raise HTTPException(status_code=401, detail="Token Shopify expiré ou invalide. Reconnectez-vous.")
+        if response.status_code == 404:
+            raise HTTPException(status_code=404, detail=f"Boutique Shopify non trouvée: {shop_domain}")
+        if response.status_code != 200:
+            raise HTTPException(status_code=response.status_code, detail=f"Erreur Shopify: {response.text[:300]}")
+
+        payload = response.json()
+        orders.extend(payload.get("orders", []))
+        next_url = _parse_shopify_next_link(response.headers.get("Link"))
+        page_count += 1
+
+    revenue = 0.0
+    currency = "USD"
+    orders_count = 0
+    series_map = {}
+    top_products = {}
+
+    for order in orders:
+        total_price = float(order.get("total_price") or 0)
+        revenue += total_price
+        orders_count += 1
+        currency = order.get("currency") or currency
+
+        created_at = order.get("created_at")
+        try:
+            date_key = created_at[:10]
+        except Exception:
+            date_key = datetime.utcnow().strftime("%Y-%m-%d")
+
+        if date_key not in series_map:
+            series_map[date_key] = {"date": date_key, "revenue": 0.0, "orders": 0}
+        series_map[date_key]["revenue"] += total_price
+        series_map[date_key]["orders"] += 1
+
+        for item in order.get("line_items", []):
+            title = item.get("title") or "Produit"
+            quantity = int(item.get("quantity") or 0)
+            price = float(item.get("price") or 0)
+            if title not in top_products:
+                top_products[title] = {"title": title, "revenue": 0.0, "quantity": 0}
+            top_products[title]["revenue"] += price * quantity
+            top_products[title]["quantity"] += quantity
+
+    series = sorted(series_map.values(), key=lambda x: x["date"])
+    aov = revenue / orders_count if orders_count else 0
+
+    top_products_list = sorted(top_products.values(), key=lambda x: x["revenue"], reverse=True)[:5]
+
+    return {
+        "success": True,
+        "shop": shop_domain,
+        "range": range,
+        "currency": currency,
+        "totals": {
+            "revenue": round(revenue, 2),
+            "orders": orders_count,
+            "aov": round(aov, 2)
+        },
+        "series": series,
+        "top_products": top_products_list
+    }
+
+
+class DraftOrderRequest(BaseModel):
+    customer_id: str | None = None
+    email: str | None = None
+    line_items: list
+    note: str | None = None
+    send_invoice: bool | None = False
+
+
+@app.post("/api/shopify/draft-orders")
+async def create_draft_order(request: Request, payload: DraftOrderRequest):
+    """🧾 Crée une facture Shopify via Draft Order"""
+    user_id = get_user_id(request)
+    shop_domain, access_token = _get_shopify_connection(user_id)
+
+    if not payload.line_items:
+        raise HTTPException(status_code=400, detail="Aucun produit sélectionné")
+    if not payload.customer_id and not payload.email:
+        raise HTTPException(status_code=400, detail="Sélectionne un client ou un email")
+
+    draft_payload = {
+        "draft_order": {
+            "line_items": payload.line_items,
+            "note": payload.note or "",
+        }
+    }
+
+    if payload.customer_id:
+        draft_payload["draft_order"]["customer"] = {"id": payload.customer_id}
+    if payload.email:
+        draft_payload["draft_order"]["email"] = payload.email
+
+    headers = {
+        "X-Shopify-Access-Token": access_token,
+        "Content-Type": "application/json"
+    }
+
+    draft_url = f"https://{shop_domain}/admin/api/2024-10/draft_orders.json"
+    response = requests.post(draft_url, headers=headers, data=json.dumps(draft_payload), timeout=30)
+    if response.status_code == 401:
+        raise HTTPException(status_code=401, detail="Token Shopify expiré ou invalide. Reconnectez-vous.")
+    if response.status_code == 404:
+        raise HTTPException(status_code=404, detail=f"Boutique Shopify non trouvée: {shop_domain}")
+    if response.status_code not in [200, 201]:
+        raise HTTPException(status_code=response.status_code, detail=f"Erreur Shopify: {response.text[:300]}")
+
+    draft_order = response.json().get("draft_order", {})
+
+    invoice_sent = False
+    if payload.send_invoice and draft_order.get("id"):
+        send_url = f"https://{shop_domain}/admin/api/2024-10/draft_orders/{draft_order.get('id')}/send_invoice.json"
+        send_resp = requests.post(send_url, headers=headers, timeout=30)
+        invoice_sent = send_resp.status_code in [200, 201]
+
+    return {
+        "success": True,
+        "shop": shop_domain,
+        "draft_order": draft_order,
+        "invoice_sent": invoice_sent
+    }
+
+
 
 @app.post("/api/analyze-product")
 async def analyze_product(payload: dict, request: Request):

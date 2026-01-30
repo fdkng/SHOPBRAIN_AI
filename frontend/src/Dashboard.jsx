@@ -19,7 +19,15 @@ export default function Dashboard() {
       return null
     }
   })
-  const [subscription, setSubscription] = useState(null)
+  const [subscription, setSubscription] = useState(() => {
+    if (typeof window === 'undefined') return null
+    try {
+      const cached = localStorage.getItem('subscriptionCache')
+      return cached ? JSON.parse(cached) : null
+    } catch {
+      return null
+    }
+  })
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState(() => {
     if (typeof window === 'undefined') return 'overview'
@@ -84,6 +92,21 @@ export default function Dashboard() {
   const [pendingRevokeKeyId, setPendingRevokeKeyId] = useState(null)
   const [pendingCancelSubscription, setPendingCancelSubscription] = useState(false)
   const chatEndRef = useRef(null)
+  const [showChatModal, setShowChatModal] = useState(false)
+  const [analyticsRange, setAnalyticsRange] = useState('30d')
+  const [analyticsData, setAnalyticsData] = useState(null)
+  const [analyticsLoading, setAnalyticsLoading] = useState(false)
+  const [analyticsError, setAnalyticsError] = useState('')
+  const [customers, setCustomers] = useState([])
+  const [customersLoading, setCustomersLoading] = useState(false)
+  const [invoiceCustomerId, setInvoiceCustomerId] = useState('')
+  const [invoiceCustomerEmail, setInvoiceCustomerEmail] = useState('')
+  const [invoiceProductId, setInvoiceProductId] = useState('')
+  const [invoiceQuantity, setInvoiceQuantity] = useState(1)
+  const [invoiceItems, setInvoiceItems] = useState([])
+  const [invoiceNote, setInvoiceNote] = useState('')
+  const [invoiceSubmitting, setInvoiceSubmitting] = useState(false)
+  const [invoiceResult, setInvoiceResult] = useState(null)
 
   const formatDate = (value) => {
     if (!value) return '—'
@@ -92,12 +115,46 @@ export default function Dashboard() {
     return date.toLocaleDateString('fr-FR')
   }
 
+  const formatCurrency = (value, currency = 'EUR') => {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) return '—'
+    try {
+      return new Intl.NumberFormat('fr-FR', {
+        style: 'currency',
+        currency
+      }).format(Number(value))
+    } catch {
+      return `${value} ${currency}`
+    }
+  }
+
+  const formatCompactNumber = (value) => {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) return '—'
+    return new Intl.NumberFormat('fr-FR', { notation: 'compact', maximumFractionDigits: 1 }).format(Number(value))
+  }
+
+  const buildSparklinePoints = (series, width = 520, height = 140) => {
+    if (!series || series.length === 0) return ''
+    const values = series.map((point) => Number(point.revenue || 0))
+    const max = Math.max(...values)
+    const min = Math.min(...values)
+    const range = max - min || 1
+    const step = width / Math.max(series.length - 1, 1)
+
+    return series.map((point, index) => {
+      const value = Number(point.revenue || 0)
+      const x = index * step
+      const y = height - ((value - min) / range) * height
+      return `${x},${y}`
+    }).join(' ')
+  }
+
   const formatPlan = (plan) => {
     const normalized = String(plan || '').toLowerCase()
+    if (!normalized) return '—'
     if (normalized === 'standard') return 'STANDARD'
     if (normalized === 'pro') return 'PRO'
     if (normalized === 'premium') return 'PREMIUM'
-    return 'STANDARD'
+    return normalized.toUpperCase()
   }
 
   const getPlanFeatures = (plan) => {
@@ -452,6 +509,12 @@ export default function Dashboard() {
   }, [profile])
 
   useEffect(() => {
+    if (typeof window !== 'undefined' && subscription) {
+      localStorage.setItem('subscriptionCache', JSON.stringify(subscription))
+    }
+  }, [subscription])
+
+  useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [chatMessages, chatLoading])
 
@@ -559,6 +622,7 @@ export default function Dashboard() {
         setSubscription(data)
         console.log('Subscription active, loading Shopify products...')
         loadProducts()
+        loadAnalytics(analyticsRange)
       } else {
         setSubscriptionMissing(true)
       }
@@ -1085,6 +1149,187 @@ export default function Dashboard() {
     }
   }
 
+  const loadAnalytics = async (rangeOverride) => {
+    try {
+      const rangeValue = rangeOverride || analyticsRange
+      setAnalyticsLoading(true)
+      setAnalyticsError('')
+      const { data: { session } } = await supabase.auth.getSession()
+
+      if (!session) {
+        setAnalyticsError('Session expirée, reconnectez-vous')
+        return
+      }
+
+      const response = await fetch(`${API_URL}/api/shopify/analytics?range=${rangeValue}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        }
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.detail || `HTTP ${response.status}`)
+      }
+
+      const data = await response.json()
+      if (data.success) {
+        setAnalyticsData(data)
+      } else {
+        setAnalyticsError('Analytics indisponibles')
+      }
+    } catch (err) {
+      console.error('Error loading analytics:', err)
+      setAnalyticsError(err.message)
+    } finally {
+      setAnalyticsLoading(false)
+    }
+  }
+
+  const loadCustomers = async () => {
+    try {
+      setCustomersLoading(true)
+      const { data: { session } } = await supabase.auth.getSession()
+
+      if (!session) {
+        setStatus('invoice', 'error', 'Session expirée, reconnectez-vous')
+        return
+      }
+
+      const response = await fetch(`${API_URL}/api/shopify/customers?limit=200`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        }
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.detail || `HTTP ${response.status}`)
+      }
+
+      const data = await response.json()
+      if (data.success && data.customers) {
+        setCustomers(data.customers)
+      }
+    } catch (err) {
+      console.error('Error loading customers:', err)
+      setStatus('invoice', 'error', err.message)
+    } finally {
+      setCustomersLoading(false)
+    }
+  }
+
+  const addInvoiceItem = () => {
+    if (!invoiceProductId) {
+      setStatus('invoice', 'warning', 'Sélectionne un produit')
+      return
+    }
+    const product = (products || []).find((p) => String(p.id) === String(invoiceProductId))
+    if (!product || !product.variants || product.variants.length === 0) {
+      setStatus('invoice', 'error', 'Produit invalide ou sans variante')
+      return
+    }
+    const variant = product.variants[0]
+    const quantity = Number(invoiceQuantity) > 0 ? Number(invoiceQuantity) : 1
+
+    setInvoiceItems((prev) => ([
+      ...prev,
+      {
+        variant_id: variant.id,
+        quantity,
+        title: product.title,
+        price: Number(variant.price || 0)
+      }
+    ]))
+    setInvoiceProductId('')
+    setInvoiceQuantity(1)
+  }
+
+  const removeInvoiceItem = (index) => {
+    setInvoiceItems((prev) => prev.filter((_, idx) => idx !== index))
+  }
+
+  const submitInvoice = async () => {
+    if (!invoiceItems.length) {
+      setStatus('invoice', 'warning', 'Ajoute au moins un produit')
+      return
+    }
+    if (!invoiceCustomerId && !invoiceCustomerEmail) {
+      setStatus('invoice', 'warning', 'Sélectionne un client ou un email')
+      return
+    }
+
+    try {
+      setInvoiceSubmitting(true)
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        setStatus('invoice', 'error', 'Session expirée, reconnectez-vous')
+        return
+      }
+
+      const payload = {
+        customer_id: invoiceCustomerId || null,
+        email: invoiceCustomerEmail || null,
+        line_items: invoiceItems.map((item) => ({
+          variant_id: item.variant_id,
+          quantity: item.quantity
+        })),
+        note: invoiceNote,
+        send_invoice: true
+      }
+
+      const response = await fetch(`${API_URL}/api/shopify/draft-orders`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.detail || `HTTP ${response.status}`)
+      }
+
+      const data = await response.json()
+      if (data.success) {
+        setInvoiceResult(data)
+        setInvoiceItems([])
+        setInvoiceNote('')
+        setInvoiceCustomerId('')
+        setInvoiceCustomerEmail('')
+        setStatus('invoice', 'success', 'Facture créée avec succès')
+      } else {
+        setStatus('invoice', 'error', 'Échec création facture')
+      }
+    } catch (err) {
+      console.error('Error creating invoice:', err)
+      setStatus('invoice', 'error', err.message)
+    } finally {
+      setInvoiceSubmitting(false)
+    }
+  }
+
+  useEffect(() => {
+    if (activeTab === 'overview') {
+      loadAnalytics(analyticsRange)
+    }
+  }, [activeTab, analyticsRange])
+
+  useEffect(() => {
+    if (activeTab === 'invoices' && customers.length === 0) {
+      loadCustomers()
+    }
+    if (activeTab === 'invoices' && (!products || products.length === 0)) {
+      loadProducts()
+    }
+  }, [activeTab])
+
   const analyzeProducts = async () => {
     if (!products || products.length === 0) {
       setStatus('analyze', 'warning', 'Charge tes produits d\'abord')
@@ -1342,7 +1587,7 @@ export default function Dashboard() {
             {[
               { key: 'overview', label: 'Vue d\'ensemble' },
               { key: 'shopify', label: 'Shopify' },
-              { key: 'assistant', label: 'Assistant IA' },
+              { key: 'invoices', label: 'Facturation' },
               { key: 'ai', label: 'Analyse IA' },
               { key: 'analysis', label: 'Résultats' }
             ].map((item) => (
@@ -1452,6 +1697,68 @@ export default function Dashboard() {
         {activeTab === 'overview' && (
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
             <div className="xl:col-span-2 space-y-6">
+            <div className="bg-gradient-to-br from-gray-800 via-gray-900 to-black border border-yellow-700/40 rounded-2xl p-6">
+              <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.3em] text-yellow-300/70">Performance</p>
+                  <h3 className="text-2xl font-bold text-white mt-2">Revenus & commandes en temps réel</h3>
+                  <p className="text-sm text-gray-400 mt-2">Source Shopify · {analyticsData?.range || analyticsRange}</p>
+                </div>
+                <div className="flex items-center gap-2 bg-gray-800/70 border border-gray-700 rounded-full px-2 py-1">
+                  {['7d', '30d', '90d', '365d'].map((range) => (
+                    <button
+                      key={range}
+                      onClick={() => setAnalyticsRange(range)}
+                      className={`px-3 py-1 rounded-full text-xs font-semibold transition ${analyticsRange === range ? 'bg-yellow-600 text-black' : 'text-gray-300 hover:text-white'}`}
+                    >
+                      {range}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Revenus</p>
+                  <p className="text-2xl font-bold text-white mt-2">
+                    {analyticsLoading ? 'Chargement...' : formatCurrency(analyticsData?.totals?.revenue, analyticsData?.currency || 'EUR')}
+                  </p>
+                </div>
+                <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Commandes</p>
+                  <p className="text-2xl font-bold text-white mt-2">
+                    {analyticsLoading ? '...' : formatCompactNumber(analyticsData?.totals?.orders || 0)}
+                  </p>
+                </div>
+                <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">AOV</p>
+                  <p className="text-2xl font-bold text-white mt-2">
+                    {analyticsLoading ? '...' : formatCurrency(analyticsData?.totals?.aov, analyticsData?.currency || 'EUR')}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-6 bg-gray-900/60 border border-gray-800 rounded-2xl p-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Ventes dans le temps</p>
+                  {analyticsError && <p className="text-xs text-yellow-400">{analyticsError}</p>}
+                </div>
+                <div className="mt-3">
+                  {analyticsData?.series?.length ? (
+                    <svg viewBox="0 0 520 140" className="w-full h-32">
+                      <polyline
+                        fill="none"
+                        stroke="#facc15"
+                        strokeWidth="3"
+                        points={buildSparklinePoints(analyticsData.series)}
+                      />
+                    </svg>
+                  ) : (
+                    <div className="text-sm text-gray-500 py-6">Connecte Shopify pour afficher les ventes.</div>
+                  )}
+                </div>
+              </div>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
               <h3 className="text-gray-400 text-sm uppercase mb-2">Plan Actif</h3>
@@ -1494,10 +1801,26 @@ export default function Dashboard() {
 
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               {[
-                { label: 'Revenus projetés', value: '$84.2k', hint: '30 jours' },
-                { label: 'Conversion', value: '3.8%', hint: 'moyenne' },
-                { label: 'Produits actifs', value: `${products?.length || 0}`, hint: 'catalogue' },
-                { label: 'Alerts IA', value: '2', hint: 'priorités' }
+                {
+                  label: 'Revenus',
+                  value: analyticsLoading ? '...' : formatCurrency(analyticsData?.totals?.revenue, analyticsData?.currency || 'EUR'),
+                  hint: analyticsRange
+                },
+                {
+                  label: 'Commandes',
+                  value: analyticsLoading ? '...' : formatCompactNumber(analyticsData?.totals?.orders || 0),
+                  hint: 'volume'
+                },
+                {
+                  label: 'AOV',
+                  value: analyticsLoading ? '...' : formatCurrency(analyticsData?.totals?.aov, analyticsData?.currency || 'EUR'),
+                  hint: 'panier moyen'
+                },
+                {
+                  label: 'Produits actifs',
+                  value: `${products?.length || 0}`,
+                  hint: 'catalogue'
+                }
               ].map((item) => (
                 <div key={item.label} className="bg-gray-800 rounded-xl p-4 border border-gray-700">
                   <p className="text-xs uppercase tracking-[0.2em] text-gray-400">{item.label}</p>
@@ -1530,11 +1853,11 @@ export default function Dashboard() {
                 <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-4">Activité récente</h4>
                 <ul className="space-y-3 text-sm text-gray-300">
                   <li className="flex items-center justify-between">
-                    <span>Optimisation prix — 6 produits</span>
+                    <span>Optimisation prix</span>
                     <span className="text-gray-500">Aujourd’hui</span>
                   </li>
                   <li className="flex items-center justify-between">
-                    <span>Descriptions IA — 3 produits</span>
+                    <span>Descriptions IA</span>
                     <span className="text-gray-500">Hier</span>
                   </li>
                   <li className="flex items-center justify-between">
@@ -1565,10 +1888,10 @@ export default function Dashboard() {
                 <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-4">Pipeline IA</h4>
                 <div className="space-y-3 text-sm">
                   {[
-                    { label: 'Titres', value: '14', status: 'Actif' },
-                    { label: 'Descriptions', value: '9', status: 'Programmé' },
-                    { label: 'Prix', value: '6', status: 'En cours' },
-                    { label: 'Images', value: '2', status: 'Bloqué' }
+                    { label: 'Titres', value: '—', status: 'Actif' },
+                    { label: 'Descriptions', value: '—', status: 'Programmé' },
+                    { label: 'Prix', value: '—', status: 'En cours' },
+                    { label: 'Images', value: '—', status: 'Bloqué' }
                   ].map((row) => (
                     <div key={row.label} className="flex items-center justify-between text-gray-300">
                       <span>{row.label}</span>
@@ -1651,15 +1974,15 @@ export default function Dashboard() {
                 <div className="space-y-3 text-sm text-gray-300">
                   <div className="flex items-center justify-between">
                     <span>Opportunités prix</span>
-                    <span className="text-yellow-300">8</span>
+                    <span className="text-gray-500">—</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span>Descriptions à revoir</span>
-                    <span className="text-yellow-300">5</span>
+                    <span className="text-gray-500">—</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span>Images critiques</span>
-                    <span className="text-red-300">2</span>
+                    <span className="text-gray-500">—</span>
                   </div>
                 </div>
               </div>
@@ -1667,19 +1990,156 @@ export default function Dashboard() {
                 <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-3">Next Moves</h4>
                 <ul className="space-y-3 text-sm text-gray-300">
                   <li className="flex items-center justify-between">
-                    <span>Relancer 12 prix</span>
-                    <span className="text-gray-500">30 min</span>
+                    <span>Relancer les prix</span>
+                    <span className="text-gray-500">À planifier</span>
                   </li>
                   <li className="flex items-center justify-between">
-                    <span>Optimiser 3 titres</span>
-                    <span className="text-gray-500">12 min</span>
+                    <span>Optimiser les titres</span>
+                    <span className="text-gray-500">À planifier</span>
                   </li>
                   <li className="flex items-center justify-between">
                     <span>Créer rapport hebdo</span>
-                    <span className="text-gray-500">auto</span>
+                    <span className="text-gray-500">Automatique</span>
                   </li>
                 </ul>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Invoices Tab */}
+        {activeTab === 'invoices' && (
+          <div className="space-y-6">
+            <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+              <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.3em] text-gray-400">Facturation</p>
+                  <h2 className="text-white text-2xl font-bold mt-2">Créer une facture Shopify</h2>
+                  <p className="text-sm text-gray-400 mt-2">Génère un Draft Order et envoie la facture.</p>
+                </div>
+                <button
+                  onClick={loadCustomers}
+                  className="px-4 py-2 rounded-lg bg-gray-700 text-white hover:bg-gray-600 text-sm"
+                >
+                  {customersLoading ? 'Chargement...' : 'Rafraîchir clients'}
+                </button>
+              </div>
+
+              <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="bg-gray-900 border border-gray-700 rounded-xl p-4">
+                  <label className="block text-gray-400 text-xs uppercase tracking-[0.2em] mb-2">Client</label>
+                  <select
+                    value={invoiceCustomerId}
+                    onChange={(e) => setInvoiceCustomerId(e.target.value)}
+                    className="w-full bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-700"
+                  >
+                    <option value="">Sélectionner un client</option>
+                    {customers.map((customer) => (
+                      <option key={customer.id} value={customer.id}>
+                        {(customer.first_name || customer.last_name)
+                          ? `${customer.first_name || ''} ${customer.last_name || ''}`.trim()
+                          : (customer.email || `Client ${customer.id}`)}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-500 mt-2">Ou saisir un email ci-dessous</p>
+                  <input
+                    type="email"
+                    value={invoiceCustomerEmail}
+                    onChange={(e) => setInvoiceCustomerEmail(e.target.value)}
+                    placeholder="client@exemple.com"
+                    className="mt-2 w-full bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-700"
+                  />
+                </div>
+
+                <div className="bg-gray-900 border border-gray-700 rounded-xl p-4">
+                  <label className="block text-gray-400 text-xs uppercase tracking-[0.2em] mb-2">Produit</label>
+                  <select
+                    value={invoiceProductId}
+                    onChange={(e) => setInvoiceProductId(e.target.value)}
+                    className="w-full bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-700"
+                  >
+                    <option value="">Sélectionner un produit</option>
+                    {(products || []).map((product) => (
+                      <option key={product.id} value={product.id}>
+                        {product.title}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="mt-3 flex items-center gap-3">
+                    <input
+                      type="number"
+                      min="1"
+                      value={invoiceQuantity}
+                      onChange={(e) => setInvoiceQuantity(e.target.value)}
+                      className="w-24 bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-700"
+                    />
+                    <button
+                      onClick={addInvoiceItem}
+                      className="flex-1 bg-yellow-600 hover:bg-yellow-500 text-black font-semibold py-2 rounded-lg"
+                    >
+                      Ajouter
+                    </button>
+                  </div>
+                </div>
+
+                <div className="bg-gray-900 border border-gray-700 rounded-xl p-4">
+                  <label className="block text-gray-400 text-xs uppercase tracking-[0.2em] mb-2">Note</label>
+                  <textarea
+                    value={invoiceNote}
+                    onChange={(e) => setInvoiceNote(e.target.value)}
+                    placeholder="Message ou conditions"
+                    className="w-full h-28 bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-700"
+                  />
+                </div>
+              </div>
+              {renderStatus('invoice')}
+            </div>
+
+            <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+              <h3 className="text-white text-lg font-semibold mb-4">Lignes de facture</h3>
+              {invoiceItems.length === 0 ? (
+                <p className="text-sm text-gray-500">Ajoute des produits pour générer une facture.</p>
+              ) : (
+                <div className="space-y-3">
+                  {invoiceItems.map((item, index) => (
+                    <div key={`${item.variant_id}-${index}`} className="flex items-center justify-between bg-gray-900 border border-gray-700 rounded-xl px-4 py-3">
+                      <div>
+                        <p className="text-white text-sm font-semibold">{item.title}</p>
+                        <p className="text-xs text-gray-500">Qté: {item.quantity}</p>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <p className="text-sm text-gray-300">{formatCurrency(item.price, analyticsData?.currency || 'EUR')}</p>
+                        <button
+                          onClick={() => removeInvoiceItem(index)}
+                          className="text-xs text-gray-400 hover:text-white"
+                        >
+                          Retirer
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="mt-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                <div className="text-sm text-gray-400">
+                  {invoiceItems.length > 0 && (
+                    <span>{invoiceItems.length} ligne(s) · Total {formatCurrency(invoiceItems.reduce((acc, item) => acc + item.price * item.quantity, 0), analyticsData?.currency || 'EUR')}</span>
+                  )}
+                </div>
+                <button
+                  onClick={submitInvoice}
+                  className="bg-yellow-600 hover:bg-yellow-500 text-black font-semibold px-6 py-3 rounded-lg"
+                >
+                  {invoiceSubmitting ? 'Création...' : 'Créer la facture'}
+                </button>
+              </div>
+              {invoiceResult?.draft_order?.invoice_url && (
+                <div className="mt-4 text-sm text-gray-300">
+                  Facture créée: <a className="text-yellow-400 hover:underline" href={invoiceResult.draft_order.invoice_url} target="_blank" rel="noreferrer">Voir la facture</a>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1742,61 +2202,6 @@ export default function Dashboard() {
                 ))}
               </div>
             )}
-          </div>
-        )}
-
-        {/* AI Assistant Tab */}
-        {activeTab === 'assistant' && (
-          <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 h-96 flex flex-col">
-            <h2 className="text-white text-xl font-bold mb-4">Assistant IA</h2>
-            
-            {/* Messages Container */}
-            <div className="flex-1 overflow-y-auto overflow-x-hidden mb-4 space-y-4 bg-gray-900 rounded-lg p-4">
-              {chatMessages.map((msg, idx) => (
-                <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-full lg:max-w-2xl px-4 py-2 rounded-lg whitespace-pre-wrap break-words ${
-                    msg.role === 'user' 
-                      ? 'bg-blue-600 text-white' 
-                      : 'bg-gray-700 text-gray-200'
-                  }`}>
-                    {msg.text}
-                  </div>
-                </div>
-              ))}
-              {chatLoading && (
-                <div className="flex justify-start">
-                  <div className="bg-gray-700 text-gray-200 px-4 py-2 rounded-lg">
-                    L'IA réfléchit...
-                  </div>
-                </div>
-              )}
-              <div ref={chatEndRef} />
-            </div>
-            
-            {/* Input */}
-            <div className="flex gap-2">
-              <textarea
-                placeholder="Pose une question à l'IA..."
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey && !chatLoading) {
-                    e.preventDefault()
-                    sendChatMessage()
-                  }
-                }}
-                disabled={chatLoading}
-                rows={2}
-                className="flex-1 resize-none bg-gray-700 text-white px-4 py-2 rounded-lg border border-gray-600 disabled:opacity-50 max-h-36 overflow-y-auto"
-              />
-              <button
-                onClick={sendChatMessage}
-                disabled={chatLoading || !chatInput.trim()}
-                className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-lg disabled:opacity-50"
-              >
-                {chatLoading ? 'Envoi...' : 'Envoyer'}
-              </button>
-            </div>
           </div>
         )}
 
@@ -2636,6 +3041,81 @@ export default function Dashboard() {
         </div>
       )}
           </div>
+
+          <button
+            onClick={() => setShowChatModal(true)}
+            className="fixed bottom-6 right-6 bg-yellow-600 hover:bg-yellow-500 text-black font-semibold px-5 py-3 rounded-full shadow-xl border border-yellow-400/40 z-40"
+          >
+            Assistant IA
+          </button>
+
+          {showChatModal && (
+            <div className="fixed inset-0 bg-black/60 z-50 flex items-end md:items-center justify-center" onClick={() => setShowChatModal(false)}>
+              <div
+                className="bg-gray-900 border border-gray-700 rounded-2xl w-full md:max-w-2xl h-[75vh] md:h-[70vh] mx-4 mb-6 md:mb-0 flex flex-col"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Assistant</p>
+                    <h3 className="text-white text-lg font-semibold">Assistant IA</h3>
+                  </div>
+                  <button
+                    onClick={() => setShowChatModal(false)}
+                    className="text-gray-400 hover:text-white text-sm"
+                  >
+                    Fermer
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto overflow-x-hidden px-6 py-4 space-y-4">
+                  {chatMessages.map((msg, idx) => (
+                    <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                      <div className={`max-w-full lg:max-w-2xl px-4 py-2 rounded-lg whitespace-pre-wrap break-words ${
+                        msg.role === 'user'
+                          ? 'bg-yellow-600 text-black'
+                          : 'bg-gray-800 text-gray-200'
+                      }`}>
+                        {msg.text}
+                      </div>
+                    </div>
+                  ))}
+                  {chatLoading && (
+                    <div className="flex justify-start">
+                      <div className="bg-gray-800 text-gray-200 px-4 py-2 rounded-lg">
+                        L'IA réfléchit...
+                      </div>
+                    </div>
+                  )}
+                  <div ref={chatEndRef} />
+                </div>
+                <div className="border-t border-gray-700 px-6 py-4">
+                  <div className="flex gap-2">
+                    <textarea
+                      placeholder="Pose une question à l'IA..."
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey && !chatLoading) {
+                          e.preventDefault()
+                          sendChatMessage()
+                        }
+                      }}
+                      disabled={chatLoading}
+                      rows={2}
+                      className="flex-1 resize-none bg-gray-800 text-white px-4 py-2 rounded-lg border border-gray-700 disabled:opacity-50 max-h-36 overflow-y-auto"
+                    />
+                    <button
+                      onClick={sendChatMessage}
+                      disabled={chatLoading || !chatInput.trim()}
+                      className="bg-yellow-600 hover:bg-yellow-500 text-black font-semibold py-2 px-6 rounded-lg disabled:opacity-50"
+                    >
+                      {chatLoading ? 'Envoi...' : 'Envoyer'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </main>
       </div>
     </div>
