@@ -148,6 +148,21 @@ export default function Dashboard() {
     }).join(' ')
   }
 
+  const getRangeDays = (range) => {
+    if (range === '7d') return 7
+    if (range === '90d') return 90
+    if (range === '365d') return 365
+    return 30
+  }
+
+  const getRangeLabel = (range) => {
+    const days = getRangeDays(range)
+    const endDate = new Date()
+    const startDate = new Date()
+    startDate.setDate(endDate.getDate() - days)
+    return `Du ${startDate.toLocaleDateString('fr-FR')} au ${endDate.toLocaleDateString('fr-FR')}`
+  }
+
   const formatPlan = (plan) => {
     const normalized = String(plan || '').toLowerCase()
     if (!normalized) return '—'
@@ -214,6 +229,7 @@ export default function Dashboard() {
       tabNotifications: 'Notifications',
       tabBilling: 'Facturation',
       tabApiKeys: 'Clés API',
+      tabShopify: 'Shopify',
       profileInformation: 'Informations du profil',
       uploadPhoto: 'Importer une photo',
       firstName: 'Prénom',
@@ -268,6 +284,7 @@ export default function Dashboard() {
       tabNotifications: 'Notifications',
       tabBilling: 'Billing',
       tabApiKeys: 'API Keys',
+      tabShopify: 'Shopify',
       profileInformation: 'Profile Information',
       uploadPhoto: 'Upload Photo',
       firstName: 'First Name',
@@ -487,6 +504,13 @@ export default function Dashboard() {
   useEffect(() => {
     if (typeof window !== 'undefined') {
       localStorage.setItem('activeTab', activeTab)
+    }
+  }, [activeTab])
+
+  useEffect(() => {
+    const allowedTabs = ['overview', 'invoices', 'ai', 'analysis']
+    if (!allowedTabs.includes(activeTab)) {
+      setActiveTab('overview')
     }
   }, [activeTab])
 
@@ -1586,7 +1610,6 @@ export default function Dashboard() {
           <nav className="flex flex-col gap-1">
             {[
               { key: 'overview', label: 'Vue d\'ensemble' },
-              { key: 'shopify', label: 'Shopify' },
               { key: 'invoices', label: 'Facturation' },
               { key: 'ai', label: 'Analyse IA' },
               { key: 'analysis', label: 'Résultats' }
@@ -1702,7 +1725,7 @@ export default function Dashboard() {
                 <div>
                   <p className="text-xs uppercase tracking-[0.3em] text-yellow-300/70">Performance</p>
                   <h3 className="text-2xl font-bold text-white mt-2">Revenus & commandes en temps réel</h3>
-                  <p className="text-sm text-gray-400 mt-2">Source Shopify · {analyticsData?.range || analyticsRange}</p>
+                  <p className="text-sm text-gray-400 mt-2">Source Shopify · {analyticsData?.range || analyticsRange} · {getRangeLabel(analyticsData?.range || analyticsRange)}</p>
                 </div>
                 <div className="flex items-center gap-2 bg-gray-800/70 border border-gray-700 rounded-full px-2 py-1">
                   {['7d', '30d', '90d', '365d'].map((range) => (
@@ -1744,7 +1767,9 @@ export default function Dashboard() {
                   {analyticsError && <p className="text-xs text-yellow-400">{analyticsError}</p>}
                 </div>
                 <div className="mt-3">
-                  {analyticsData?.series?.length ? (
+                  {analyticsLoading ? (
+                    <div className="text-sm text-gray-500 py-6">Chargement des ventes...</div>
+                  ) : analyticsData?.series?.length ? (
                     <svg viewBox="0 0 520 140" className="w-full h-32">
                       <polyline
                         fill="none"
@@ -1753,6 +1778,8 @@ export default function Dashboard() {
                         points={buildSparklinePoints(analyticsData.series)}
                       />
                     </svg>
+                  ) : shopifyUrl ? (
+                    <div className="text-sm text-gray-500 py-6">Aucune vente sur la période sélectionnée.</div>
                   ) : (
                     <div className="text-sm text-gray-500 py-6">Connecte Shopify pour afficher les ventes.</div>
                   )}
@@ -2015,7 +2042,7 @@ export default function Dashboard() {
                 <div>
                   <p className="text-xs uppercase tracking-[0.3em] text-gray-400">Facturation</p>
                   <h2 className="text-white text-2xl font-bold mt-2">Créer une facture Shopify</h2>
-                  <p className="text-sm text-gray-400 mt-2">Génère un Draft Order et envoie la facture.</p>
+                  <p className="text-sm text-gray-400 mt-2">Facturation manuelle: génère un Draft Order et envoie la facture au client.</p>
                 </div>
                 <button
                   onClick={loadCustomers}
@@ -2136,72 +2163,16 @@ export default function Dashboard() {
                 </button>
               </div>
               {invoiceResult?.draft_order?.invoice_url && (
-                <div className="mt-4 text-sm text-gray-300">
-                  Facture créée: <a className="text-yellow-400 hover:underline" href={invoiceResult.draft_order.invoice_url} target="_blank" rel="noreferrer">Voir la facture</a>
+                <div className="mt-4 text-sm text-gray-300 space-y-1">
+                  <div>
+                    Facture créée: <a className="text-yellow-400 hover:underline" href={invoiceResult.draft_order.invoice_url} target="_blank" rel="noreferrer">Voir la facture</a>
+                  </div>
+                  <div>
+                    Total: {formatCurrency(invoiceResult.draft_order.total_price, analyticsData?.currency || 'EUR')}
+                  </div>
                 </div>
               )}
             </div>
-          </div>
-        )}
-
-        {/* Shopify Tab */}
-        {activeTab === 'shopify' && (
-          <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-            <h2 className="text-white text-xl font-bold mb-4">Connecter Shopify</h2>
-            
-            <div className="space-y-4 max-w-md">
-              <div>
-                <label className="block text-gray-400 text-sm mb-2">URL de boutique</label>
-                <input
-                  type="text"
-                  placeholder="ma-boutique.myshopify.com"
-                  value={shopifyUrl}
-                  onChange={(e) => setShopifyUrl(e.target.value)}
-                  className="w-full bg-gray-700 text-white px-4 py-2 rounded-lg border border-gray-600"
-                />
-              </div>
-              
-              <div>
-                <label className="block text-gray-400 text-sm mb-2">Token d'accès</label>
-                <input
-                  type="password"
-                  placeholder="shpat_..."
-                  value={shopifyToken}
-                  onChange={(e) => setShopifyToken(e.target.value)}
-                  className="w-full bg-gray-700 text-white px-4 py-2 rounded-lg border border-gray-600"
-                />
-              </div>
-              
-              <button
-                onClick={connectShopify}
-                className="w-full bg-yellow-600 hover:bg-yellow-500 text-black font-bold py-2 px-4 rounded-lg"
-              >
-                Connecter
-              </button>
-              {renderStatus('shopify')}
-            </div>
-
-            {shopifyUrl && !loading && (
-              <div className="mt-6">
-                <button
-                  onClick={loadProducts}
-                  className="bg-yellow-600 hover:bg-yellow-500 text-black font-bold py-2 px-4 rounded-lg"
-                >
-                  Charger mes produits ({products?.length || 0})
-                </button>
-              </div>
-            )}
-
-            {products && (
-              <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4">
-                {products.map(p => (
-                  <div key={p.id} className="bg-gray-700 p-3 rounded-lg">
-                    <p className="text-white font-semibold text-sm truncate">{p.title}</p>
-                    <p className="text-gray-400 text-xs">${p.variants[0]?.price}</p>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         )}
 
@@ -2774,7 +2745,7 @@ export default function Dashboard() {
               {/* Sidebar */}
               <div className="w-64 bg-gray-800 border-r border-gray-700 p-4">
                 <nav className="space-y-1">
-                  {['profile', 'security', 'interface', 'notifications', 'billing', 'api'].map(tab => (
+                  {['profile', 'security', 'interface', 'notifications', 'shopify', 'billing', 'api'].map(tab => (
                     <button
                       key={tab}
                       onClick={() => setSettingsTab(tab)}
@@ -2782,12 +2753,13 @@ export default function Dashboard() {
                         settingsTab === tab ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'
                       }`}
                     >
-                      {tab === 'profile' && `👤 ${t('tabProfile')}`}
-                      {tab === 'security' && `🔐 ${t('tabSecurity')}`}
-                      {tab === 'interface' && `🎨 ${t('tabInterface')}`}
-                      {tab === 'notifications' && `🔔 ${t('tabNotifications')}`}
-                      {tab === 'billing' && `💳 ${t('tabBilling')}`}
-                      {tab === 'api' && `${t('tabApiKeys')}`}
+                      {tab === 'profile' && t('tabProfile')}
+                      {tab === 'security' && t('tabSecurity')}
+                      {tab === 'interface' && t('tabInterface')}
+                      {tab === 'notifications' && t('tabNotifications')}
+                      {tab === 'shopify' && t('tabShopify')}
+                      {tab === 'billing' && t('tabBilling')}
+                      {tab === 'api' && t('tabApiKeys')}
                     </button>
                   ))}
                 </nav>
@@ -2903,6 +2875,57 @@ export default function Dashboard() {
                         {saveLoading ? t('saving') : t('saveInterface')}
                       </button>
                       {renderStatus('interface')}
+                    </div>
+                  </div>
+                )}
+
+                {settingsTab === 'shopify' && (
+                  <div className="space-y-6">
+                    <h3 className="text-xl font-bold text-white mb-4">Connexion Shopify</h3>
+                    <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 max-w-2xl">
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-gray-400 text-sm mb-2">URL de boutique</label>
+                          <input
+                            type="text"
+                            placeholder="ma-boutique.myshopify.com"
+                            value={shopifyUrl}
+                            onChange={(e) => setShopifyUrl(e.target.value)}
+                            className="w-full bg-gray-700 text-white px-4 py-2 rounded-lg border border-gray-600"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-gray-400 text-sm mb-2">Token d'accès</label>
+                          <input
+                            type="password"
+                            placeholder="shpat_..."
+                            value={shopifyToken}
+                            onChange={(e) => setShopifyToken(e.target.value)}
+                            className="w-full bg-gray-700 text-white px-4 py-2 rounded-lg border border-gray-600"
+                          />
+                          <p className="text-xs text-gray-500 mt-2">Scopes requis: read_products, write_products, read_orders, read_customers, read_analytics.</p>
+                        </div>
+
+                        <button
+                          onClick={connectShopify}
+                          className="w-full bg-yellow-600 hover:bg-yellow-500 text-black font-bold py-2 px-4 rounded-lg"
+                        >
+                          Connecter Shopify
+                        </button>
+                        {renderStatus('shopify')}
+                      </div>
+
+                      {shopifyUrl && !loading && (
+                        <div className="mt-6">
+                          <button
+                            onClick={loadProducts}
+                            className="bg-yellow-600 hover:bg-yellow-500 text-black font-bold py-2 px-4 rounded-lg"
+                          >
+                            Charger mes produits ({products?.length || 0})
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
