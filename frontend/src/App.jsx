@@ -86,6 +86,7 @@ export default function App() {
   const [paymentProcessingState, setPaymentProcessingState] = useState('idle') // 'idle' | 'verifying' | 'verified' | 'failed'
   const [paymentProcessingMessage, setPaymentProcessingMessage] = useState('')
   const [landingStatusByKey, setLandingStatusByKey] = useState({})
+  const [faqOpenIndex, setFaqOpenIndex] = useState(null)
   
   // Prevent simultaneous subscription checks
   const subscriptionCheckInProgressRef = React.useRef(false)
@@ -321,16 +322,18 @@ export default function App() {
         return
       }
       
-      // Compte créé et connecté automatiquement
-      setUser(data.user)
-      setShowAuthModal(false)
-      setAuthMessage('')
-      setFormData({ firstName: '', lastName: '', username: '', email: '', password: '' })
-      
-      // Scroll vers les tarifs
-      setTimeout(() => {
-        document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' })
-      }, 500)
+      if (data?.session && data?.user) {
+        setUser(data.user)
+        setShowAuthModal(false)
+        setAuthMessage('')
+        setFormData({ firstName: '', lastName: '', username: '', email: '', password: '' })
+        setTimeout(() => {
+          document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' })
+        }, 500)
+      } else {
+        setAuthMessage('Compte créé. Vérifie ton email pour activer le compte, puis connecte-toi.')
+        setAuthMode('login')
+      }
       
     } catch (error) {
       setAuthMessage('Une erreur est survenue. Réessaie.')
@@ -511,9 +514,6 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-6 sm:px-8">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-blue-700 rounded-lg flex items-center justify-center text-white font-bold text-[10px] tracking-[0.2em]">
-                SB
-              </div>
               <span className="text-lg sm:text-xl font-semibold text-white">ShopBrain AI</span>
             </div>
             
@@ -522,7 +522,7 @@ export default function App() {
                 Fonctionnalités
               </a>
               <a href="#how-it-works" className="text-sm font-normal text-gray-400 hover:text-white transition-colors">
-                Comment ça marche
+                Fonctionnement
               </a>
               <a href="#pricing" className="text-sm font-normal text-gray-400 hover:text-white transition-colors">
                 Tarifs
@@ -651,7 +651,7 @@ export default function App() {
                       onChange={(e) => setFormData({...formData, firstName: e.target.value})}
                       placeholder="Jean"
                       required
-                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm text-gray-900 placeholder-gray-400"
                     />
                   </div>
                   <div>
@@ -662,7 +662,7 @@ export default function App() {
                       onChange={(e) => setFormData({...formData, lastName: e.target.value})}
                       placeholder="Dupont"
                       required
-                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm text-gray-900 placeholder-gray-400"
                     />
                   </div>
                 </div>
@@ -674,7 +674,7 @@ export default function App() {
                     onChange={(e) => setFormData({...formData, username: e.target.value})}
                     placeholder="monpseudo"
                     required
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm text-gray-900 placeholder-gray-400"
                   />
                 </div>
                 <div>
@@ -685,7 +685,7 @@ export default function App() {
                     onChange={(e) => setFormData({...formData, email: e.target.value})}
                     placeholder="votre@email.com"
                     required
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm text-gray-900 placeholder-gray-400"
                   />
                 </div>
                 <div>
@@ -697,7 +697,7 @@ export default function App() {
                     placeholder="••••••••"
                     required
                     minLength={6}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm text-gray-900 placeholder-gray-400"
                   />
                   <p className="text-xs text-gray-500 mt-1">Minimum 6 caractères</p>
                 </div>
@@ -724,7 +724,7 @@ export default function App() {
                     onChange={(e) => setFormData({...formData, email: e.target.value})}
                     placeholder="votre@email.com"
                     required
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm text-gray-900 placeholder-gray-400"
                   />
                 </div>
                 <div>
@@ -735,7 +735,7 @@ export default function App() {
                     onChange={(e) => setFormData({...formData, password: e.target.value})}
                     placeholder="••••••••"
                     required
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm text-gray-900 placeholder-gray-400"
                   />
                 </div>
                 <button
@@ -774,7 +774,9 @@ export default function App() {
 
             {authMessage && (
               <div className={`mt-4 p-3 rounded-xl text-xs ${
-                authMessage.toLowerCase().startsWith('succès') ? 'bg-green-50 text-green-700' : 'bg-yellow-50 text-yellow-800'
+                authMessage.toLowerCase().startsWith('succès') || authMessage.toLowerCase().startsWith('compte créé')
+                  ? 'bg-green-50 text-green-700'
+                  : 'bg-yellow-50 text-yellow-800'
               }`}>
                 {authMessage}
               </div>
@@ -792,15 +794,11 @@ export default function App() {
                 Nouveau — IA Générative Shopify
               </span>
             </div>
-            <h1 className="text-5xl md:text-7xl lg:text-8xl font-bold text-white tracking-tight leading-[1.05] mb-6">
-              Pilotez votre croissance<br />
-              <span className="bg-gradient-to-r from-yellow-300 via-yellow-400 to-yellow-600 bg-clip-text text-transparent">
-                avec une IA d'élite
-              </span>
+            <h1 className="text-5xl md:text-6xl lg:text-7xl font-bold text-white tracking-tight leading-[1.05] mb-4">
+              L'IA qui transforme vos ventes Shopify
             </h1>
-            <p className="text-lg md:text-2xl text-gray-300 mb-12 max-w-3xl mx-auto leading-relaxed">
-              Optimisez produits, descriptions et stratégies en temps réel.<br />
-              Impact mesuré : <span className="font-bold text-white">+127%</span> de conversions en 30 jours.
+            <p className="text-base md:text-lg text-gray-400 mb-12 max-w-3xl mx-auto leading-relaxed">
+              Pilotez votre croissance avec une IA d'élite, claire et actionnable.
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-8">
               <button
@@ -885,8 +883,16 @@ export default function App() {
               }
             ].map((item, idx) => (
               <div key={idx} className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
-                <h3 className="text-white text-lg font-semibold mb-3">{item.question}</h3>
-                <p className="text-gray-400 text-sm leading-relaxed">{item.answer}</p>
+                <button
+                  onClick={() => setFaqOpenIndex(faqOpenIndex === idx ? null : idx)}
+                  className="w-full flex items-center justify-between text-left"
+                >
+                  <h3 className="text-white text-lg font-semibold">{item.question}</h3>
+                  <span className={`text-gray-400 text-sm transition-transform ${faqOpenIndex === idx ? 'rotate-90' : ''}`}>&raquo;</span>
+                </button>
+                {faqOpenIndex === idx && (
+                  <p className="text-gray-400 text-sm leading-relaxed mt-4">{item.answer}</p>
+                )}
               </div>
             ))}
           </div>
@@ -905,15 +911,15 @@ export default function App() {
             {[
               {
                 title: 'Studio IA',
-                desc: 'Optimisation en continu des titres, descriptions et prix avec historique des décisions.'
+                desc: 'Analyse tes produits et propose des améliorations concrètes, avec historique clair des changements.'
               },
               {
                 title: 'Command Center',
-                desc: 'Priorités quotidiennes, alertes critiques et suivi d’impact sur les ventes.'
+                desc: 'Centralise les priorités, les alertes et les actions à lancer pour piloter la boutique.'
               },
               {
                 title: 'Automation Hub',
-                desc: 'Scénarios programmés et exécution sans friction, même à grande échelle.'
+                desc: 'Planifie et exécute automatiquement les optimisations, sans interventions répétitives.'
               }
             ].map((card, idx) => (
               <div key={idx} className="bg-gray-800 border border-gray-700 rounded-3xl p-6">
@@ -930,64 +936,39 @@ export default function App() {
         <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-10 items-center">
           <div>
             <p className="text-xs uppercase tracking-[0.3em] text-gray-400 mb-4">Command Center</p>
-            <h2 className="text-4xl md:text-5xl font-bold text-white mb-4">La vue d’ensemble qui transforme vos décisions</h2>
-            <p className="text-lg text-gray-400 mb-6">Un design dense mais lisible, avec un contraste précis et des blocs de données hiérarchisés.</p>
+            <h2 className="text-4xl md:text-5xl font-bold text-white mb-4">Tout comprendre en un coup d’œil</h2>
+            <p className="text-lg text-gray-400 mb-6">Le tableau de bord explique clairement quoi améliorer, pourquoi, et comment agir.</p>
             <div className="space-y-3">
               <div className="flex items-center justify-between bg-gray-800 border border-gray-700 rounded-2xl px-4 py-3">
-                <span className="text-gray-300 text-sm">Impact prioritaire</span>
-                <span className="text-yellow-300 text-sm font-semibold">+18% revenus attendus</span>
+                <span className="text-gray-300 text-sm">Actions recommandées</span>
+                <span className="text-gray-500 text-sm">Claires et classées</span>
               </div>
               <div className="flex items-center justify-between bg-gray-800 border border-gray-700 rounded-2xl px-4 py-3">
-                <span className="text-gray-300 text-sm">Risques critiques</span>
-                <span className="text-red-300 text-sm font-semibold">2 alertes</span>
+                <span className="text-gray-300 text-sm">Problèmes détectés</span>
+                <span className="text-gray-500 text-sm">Avec explication</span>
               </div>
               <div className="flex items-center justify-between bg-gray-800 border border-gray-700 rounded-2xl px-4 py-3">
-                <span className="text-gray-300 text-sm">Exécutions planifiées</span>
-                <span className="text-green-300 text-sm font-semibold">12 actions</span>
+                <span className="text-gray-300 text-sm">Suivi des résultats</span>
+                <span className="text-gray-500 text-sm">Avant / après</span>
               </div>
             </div>
           </div>
           <div className="bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700 rounded-3xl p-8">
-            <div className="grid grid-cols-2 gap-6">
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Sessions</p>
-                <p className="text-3xl font-bold text-white mt-2">+2,4k</p>
-                <p className="text-gray-400 text-xs">semaine</p>
+            <div className="space-y-4">
+              <div className="bg-gray-900/60 border border-gray-800 rounded-2xl p-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Vue claire</p>
+                <p className="text-sm text-gray-300 mt-2">Comprends rapidement ce qui bloque les ventes et ce qui doit être optimisé.</p>
               </div>
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Conversion</p>
-                <p className="text-3xl font-bold text-white mt-2">3,8%</p>
-                <p className="text-gray-400 text-xs">moyenne</p>
+              <div className="bg-gray-900/60 border border-gray-800 rounded-2xl p-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Priorités utiles</p>
+                <p className="text-sm text-gray-300 mt-2">Les actions sont classées pour que tu saches quoi faire en premier.</p>
               </div>
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Revenus</p>
-                <p className="text-3xl font-bold text-white mt-2">$84k</p>
-                <p className="text-gray-400 text-xs">30 jours</p>
-              </div>
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Tickets IA</p>
-                <p className="text-3xl font-bold text-white mt-2">56</p>
-                <p className="text-gray-400 text-xs">résolus</p>
+              <div className="bg-gray-900/60 border border-gray-800 rounded-2xl p-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Résultats mesurés</p>
+                <p className="text-sm text-gray-300 mt-2">Chaque action est suivie pour voir l'impact réel sur les ventes.</p>
               </div>
             </div>
           </div>
-        </div>
-      </section>
-
-      {/* Metrics Strip */}
-      <section className="py-12 px-6 bg-gray-900 border-y border-gray-700">
-        <div className="max-w-6xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
-          {[
-            { label: 'Optimisations', value: '48k' },
-            { label: 'Produits scannés', value: '12M' },
-            { label: 'Stores actifs', value: '1.4k' },
-            { label: 'ROI moyen', value: '+31%' }
-          ].map((stat) => (
-            <div key={stat.label} className="bg-gray-800 border border-gray-700 rounded-2xl py-4">
-              <p className="text-2xl font-bold text-white">{stat.value}</p>
-              <p className="text-xs uppercase tracking-[0.2em] text-gray-400 mt-1">{stat.label}</p>
-            </div>
-          ))}
         </div>
       </section>
 
@@ -1027,59 +1008,19 @@ export default function App() {
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-16">
             <p className="text-xs uppercase tracking-[0.3em] text-gray-400 mb-4">Bénéfices</p>
-            <h2 className="text-4xl md:text-5xl font-bold text-white mb-4">Sécurité, gouvernance, observabilité</h2>
-            <p className="text-lg text-gray-400 max-w-3xl mx-auto">Des résultats mesurables sans complexité opérationnelle.</p>
+            <h2 className="text-4xl md:text-5xl font-bold text-white mb-4">Des bénéfices concrets et visibles</h2>
+            <p className="text-lg text-gray-400 max-w-3xl mx-auto">Moins de flou, plus d’actions claires et de ventes mesurables.</p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             {[
-              { title: 'Sécurité renforcée', desc: 'Contrôles d’accès, traçabilité et historiques complets.' },
-              { title: 'Gouvernance claire', desc: 'Politiques unifiées pour tous les flux IA.' },
-              { title: 'Observabilité totale', desc: 'Suivi des actions, impact et ROI en temps réel.' },
-              { title: 'Intégration fluide', desc: 'Connecteurs Shopify et API sans friction.' }
+              { title: 'Gagne du temps', desc: 'L’IA prépare les actions, tu n’as plus à tout analyser manuellement.' },
+              { title: 'Décisions claires', desc: 'Chaque recommandation est expliquée pour savoir quoi faire.' },
+              { title: 'Ventes suivies', desc: 'Tu vois l’impact réel après chaque optimisation appliquée.' },
+              { title: 'Shopify connecté', desc: 'Les données viennent directement de ta boutique.' }
             ].map((b, idx) => (
-              <div key={idx} className="bg-gray-800 border border-gray-700 rounded-3xl p-6">
-                <h3 className="text-white text-lg font-semibold mb-2">{b.title}</h3>
-                <p className="text-gray-400 text-sm leading-relaxed">{b.desc}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Testimonial */}
-      <section className="py-20 px-6 bg-gray-900">
-        <div className="max-w-5xl mx-auto bg-gray-800 border border-gray-700 rounded-3xl p-8">
-          <p className="text-sm uppercase tracking-[0.3em] text-gray-400 mb-4">Case study</p>
-          <p className="text-xl text-white leading-relaxed mb-6">
-            “ShopBrain nous a donné une vue claire des priorités. Nous avons automatisé nos optimisations et augmenté nos conversions en quelques semaines.”
-          </p>
-          <div className="flex items-center justify-between flex-wrap gap-4">
-            <div>
-              <p className="text-white font-semibold">Marie L.</p>
-              <p className="text-gray-400 text-sm">Directrice e‑commerce</p>
-            </div>
-            <div className="text-gray-500 text-sm">Entreprise partenaire</div>
-          </div>
-        </div>
-      </section>
-
-      {/* Resources */}
-      <section className="py-24 px-6 bg-gray-900 border-y border-gray-700">
-        <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-14">
-            <p className="text-xs uppercase tracking-[0.3em] text-gray-400 mb-4">Ressources</p>
-            <h2 className="text-4xl md:text-5xl font-bold text-white mb-4">Guides, démos et communauté</h2>
-            <p className="text-lg text-gray-400 max-w-3xl mx-auto">Inspirez‑vous de cas concrets et déployez plus vite.</p>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {[
-              { title: 'Guides stratégiques', desc: 'Checklists et playbooks IA pour Shopify.' },
-              { title: 'Démonstrations', desc: 'Walkthroughs complets des dashboards et workflows.' },
-              { title: 'Communauté', desc: 'Partage d’expériences entre e‑commerçants.' }
-            ].map((r, idx) => (
-              <div key={idx} className="bg-gray-800 border border-gray-700 rounded-3xl p-6">
-                <h3 className="text-white text-lg font-semibold mb-2">{r.title}</h3>
-                <p className="text-gray-400 text-sm leading-relaxed">{r.desc}</p>
+              <div key={idx} className="bg-gray-900 border border-yellow-500/40 rounded-3xl p-6">
+                <h3 className="text-yellow-300 text-lg font-semibold mb-2">{b.title}</h3>
+                <p className="text-gray-300 text-sm leading-relaxed">{b.desc}</p>
               </div>
             ))}
           </div>
@@ -1165,7 +1106,7 @@ export default function App() {
       {/* How It Works Section */}
       <section id="how-it-works" className="py-24 px-6 bg-gray-900">
         <div className="max-w-6xl mx-auto">
-          <h2 className="text-4xl md:text-5xl font-bold text-white text-center mb-16">Comment ça marche</h2>
+          <h2 className="text-4xl md:text-5xl font-bold text-white text-center mb-16">Fonctionnement</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             {[
               {
@@ -1220,6 +1161,15 @@ export default function App() {
             {renderLandingStatus('pricing')}
           </div>
 
+          <div className="flex justify-center mb-12">
+            <button
+              onClick={() => window.location.hash = '#stripe-pricing'}
+              className="px-10 py-4 bg-yellow-600 text-black text-base font-semibold rounded-full hover:bg-yellow-500 transition-all"
+            >
+              Choisissez votre abonnement
+            </button>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-6xl mx-auto">
             {PRICING_PLANS.map((plan, idx) => (
               <div
@@ -1271,7 +1221,7 @@ export default function App() {
 
                   {/* CTA removed; selection via Stripe Pricing Table */}
                   <div className="w-full py-4 rounded-2xl text-base font-semibold text-center border border-gray-700 bg-gray-900 text-gray-300">
-                    Sélectionnez votre plan via « Voir tous les plans »
+                    Voir tous les plans
                   </div>
                   
                   <p className="text-center text-xs text-gray-400 mt-4">
@@ -1291,12 +1241,12 @@ export default function App() {
               >
                 Voir tous les plans
               </button>
-              <button
-                onClick={() => setShowAuthModal(true)}
+              <a
+                href="mailto:louis-philippe.felix.gilbert@outlook.com"
                 className="px-8 py-3 text-yellow-400 font-semibold border-2 border-yellow-700 rounded-full hover:bg-yellow-700 hover:text-white transition-all"
               >
                 Contactez notre équipe
-              </button>
+              </a>
             </div>
           </div>
         </div>
@@ -1329,7 +1279,7 @@ export default function App() {
               <ul className="space-y-3 text-sm text-gray-400">
                 <li><a href="#features" className="hover:text-white transition-colors">Fonctionnalités</a></li>
                 <li><a href="#pricing" className="hover:text-white transition-colors">Tarifs</a></li>
-                <li><a href="#how-it-works" className="hover:text-white transition-colors">Comment ça marche</a></li>
+                <li><a href="#how-it-works" className="hover:text-white transition-colors">Fonctionnement</a></li>
               </ul>
             </div>
             <div>
