@@ -1033,14 +1033,35 @@ export default function App() {
           <p className="text-center text-xs text-gray-400 mb-6 uppercase tracking-[0.3em]">Ils nous font confiance</p>
           <div className="flex flex-wrap justify-center items-center gap-4">
             {[
-              { name: 'Stripe', style: 'from-[#635BFF]/20 to-[#635BFF]/5 text-[#d6d1ff] border-[#635BFF]/40' },
-              { name: 'ChatGPT', style: 'from-[#10b981]/20 to-[#10b981]/5 text-[#a7f3d0] border-[#10b981]/40' },
-              { name: 'OpenAI', style: 'from-[#0f172a]/70 to-[#111827]/40 text-gray-200 border-gray-700' },
-              { name: 'Firebase', style: 'from-[#f59e0b]/25 to-[#f59e0b]/5 text-[#fde68a] border-[#f59e0b]/40' }
+              {
+                name: 'Shopify',
+                style: 'from-[#95BF47]/15 to-[#95BF47]/5 text-[#d9f5a8] border-[#95BF47]/40',
+                fontFamily: '"Inter", sans-serif',
+                letterSpacing: '0.08em'
+              },
+              {
+                name: 'Stripe',
+                style: 'from-[#635BFF]/20 to-[#635BFF]/5 text-[#d6d1ff] border-[#635BFF]/40',
+                fontFamily: '"Space Grotesk", sans-serif',
+                letterSpacing: '0.1em'
+              },
+              {
+                name: 'OpenAI',
+                style: 'from-[#111827]/70 to-[#1f2937]/40 text-gray-200 border-gray-700',
+                fontFamily: '"Inter", sans-serif',
+                letterSpacing: '0.06em'
+              },
+              {
+                name: 'Supabase',
+                style: 'from-[#3ECF8E]/20 to-[#3ECF8E]/5 text-[#b6f7d9] border-[#3ECF8E]/40',
+                fontFamily: '"Inter", sans-serif',
+                letterSpacing: '0.08em'
+              }
             ].map((brand) => (
               <div
                 key={brand.name}
-                className={`px-6 py-3 rounded-full border bg-gradient-to-r ${brand.style} text-sm font-semibold tracking-[0.2em] uppercase`}
+                style={{ fontFamily: brand.fontFamily, letterSpacing: brand.letterSpacing }}
+                className={`px-6 py-3 rounded-full border bg-gradient-to-r ${brand.style} text-sm font-semibold uppercase`}
               >
                 {brand.name}
               </div>
