@@ -1031,42 +1031,69 @@ export default function App() {
       <section className="py-12 px-6 bg-gray-900 border-y border-gray-700">
         <div className="max-w-6xl mx-auto">
           <p className="text-center text-xs text-gray-400 mb-6 uppercase tracking-[0.3em]">Ils nous font confiance</p>
-          <div className="flex flex-wrap justify-center items-center gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 place-items-center">
             {[
               {
                 name: 'Stripe',
+                href: 'https://ca.trustpilot.com/review/stripe.com',
                 style: 'text-gray-200 border-gray-700',
                 fontFamily: '"Space Grotesk", sans-serif',
                 letterSpacing: '0.1em'
               },
               {
                 name: 'OpenAI',
+                href: 'https://en.wikipedia.org/wiki/Products_and_applications_of_OpenAI',
                 style: 'text-gray-200 border-gray-700',
                 fontFamily: '"Inter", sans-serif',
                 letterSpacing: '0.06em'
               },
               {
                 name: 'Supabase',
+                href: 'https://www.youtube.com/c/supabase',
+                style: 'text-gray-200 border-gray-700',
+                fontFamily: '"Inter", sans-serif',
+                letterSpacing: '0.08em'
+              },
+              {
+                name: 'Shopify',
+                imgSrc: 'https://cdn.worldvectorlogo.com/logos/shopify.svg',
                 style: 'text-gray-200 border-gray-700',
                 fontFamily: '"Inter", sans-serif',
                 letterSpacing: '0.08em'
               }
-            ].map((brand) => (
-              <div
-                key={brand.name}
-                style={{ fontFamily: brand.fontFamily, letterSpacing: brand.letterSpacing }}
-                className={`px-6 py-3 rounded-full border bg-gray-900 ${brand.style} text-sm font-semibold uppercase`}
-              >
-                {brand.name}
-              </div>
-            ))}
-            <div className="px-6 py-3 rounded-full border border-gray-700 bg-gray-900">
-              <img
-                src="https://cdn.worldvectorlogo.com/logos/shopify.svg"
-                alt="Shopify"
-                className="h-5 w-auto opacity-60 grayscale"
-              />
-            </div>
+            ].map((brand) => {
+              const Wrapper = brand.href ? 'a' : 'div'
+              return (
+                <Wrapper
+                  key={brand.name}
+                  href={brand.href}
+                  target={brand.href ? '_blank' : undefined}
+                  rel={brand.href ? 'noreferrer' : undefined}
+                  className="flex flex-col items-center gap-2"
+                >
+                  <div
+                    style={{ fontFamily: brand.fontFamily, letterSpacing: brand.letterSpacing }}
+                    className={`px-6 py-3 rounded-full border bg-gray-900 ${brand.style} text-sm font-semibold uppercase`}
+                  >
+                    {brand.imgSrc ? (
+                      <img
+                        src={brand.imgSrc}
+                        alt={brand.name}
+                        className="h-5 w-auto opacity-60 grayscale"
+                      />
+                    ) : (
+                      brand.name
+                    )}
+                  </div>
+                  <span
+                    style={{ fontFamily: brand.fontFamily, letterSpacing: brand.letterSpacing }}
+                    className="text-xs uppercase text-gray-400"
+                  >
+                    {brand.name}
+                  </span>
+                </Wrapper>
+              )
+            })}
           </div>
         </div>
       </section>
