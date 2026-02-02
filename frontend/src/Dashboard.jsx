@@ -33,8 +33,13 @@ export default function Dashboard() {
     if (typeof window === 'undefined') return 'overview'
     return localStorage.getItem('activeTab') || 'overview'
   })
-  const [shopifyUrl, setShopifyUrl] = useState('')
+  const [shopifyUrl, setShopifyUrl] = useState(() => {
+    if (typeof window === 'undefined') return ''
+    return localStorage.getItem('shopifyUrlCache') || ''
+  })
   const [shopifyToken, setShopifyToken] = useState('')
+  const [shopifyConnected, setShopifyConnected] = useState(false)
+  const [showShopifyToken, setShowShopifyToken] = useState(false)
   const [products, setProducts] = useState(null)
   const [error, setError] = useState('')
   const [isProcessingPayment, setIsProcessingPayment] = useState(false)
@@ -533,6 +538,12 @@ export default function Dashboard() {
   }, [profile])
 
   useEffect(() => {
+    if (typeof window !== 'undefined' && shopifyUrl) {
+      localStorage.setItem('shopifyUrlCache', shopifyUrl)
+    }
+  }, [shopifyUrl])
+
+  useEffect(() => {
     if (typeof window !== 'undefined' && subscription) {
       localStorage.setItem('subscriptionCache', JSON.stringify(subscription))
     }
@@ -622,6 +633,7 @@ export default function Dashboard() {
         const shopData = await shopResp.json()
         if (shopData.success && shopData.connection?.shop_domain) {
           setShopifyUrl(shopData.connection.shop_domain)
+          setShopifyConnected(true)
         }
       }
 
@@ -1034,6 +1046,10 @@ export default function Dashboard() {
   }
 
   const connectShopify = async () => {
+    if (shopifyConnected && !shopifyToken) {
+      setStatus('shopify', 'success', 'Shopify déjà connecté. Aucun token requis pour continuer.')
+      return
+    }
     if (!shopifyUrl || !shopifyToken) {
       setStatus('shopify', 'warning', 'Veuillez remplir l\'URL et le token')
       return
@@ -1108,6 +1124,9 @@ export default function Dashboard() {
       
       if (saveData.success) {
         setStatus('shopify', 'success', `Shopify connecté. ${testData.tests?.products_fetch?.product_count || 0} produits trouvés.`)
+        setShopifyConnected(true)
+        setShowShopifyToken(false)
+        setShopifyToken('')
         console.log('Connection saved, loading products...')
         
         // Charger les produits
@@ -2884,6 +2903,15 @@ export default function Dashboard() {
                     <h3 className="text-xl font-bold text-white mb-4">Connexion Shopify</h3>
                     <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 max-w-2xl">
                       <div className="space-y-4">
+                        {shopifyConnected && shopifyUrl && (
+                          <div className="flex items-center justify-between bg-gray-900 border border-gray-700 rounded-xl px-4 py-3">
+                            <div>
+                              <p className="text-sm text-gray-400">Boutique connectée</p>
+                              <p className="text-white font-semibold">{shopifyUrl}</p>
+                            </div>
+                            <span className="text-xs text-green-300 bg-green-900/30 border border-green-700/40 px-3 py-1 rounded-full">Connecté</span>
+                          </div>
+                        )}
                         <div>
                           <label className="block text-gray-400 text-sm mb-2">URL de boutique</label>
                           <input
@@ -2895,23 +2923,48 @@ export default function Dashboard() {
                           />
                         </div>
 
-                        <div>
-                          <label className="block text-gray-400 text-sm mb-2">Token d'accès</label>
-                          <input
-                            type="password"
-                            placeholder="shpat_..."
-                            value={shopifyToken}
-                            onChange={(e) => setShopifyToken(e.target.value)}
-                            className="w-full bg-gray-700 text-white px-4 py-2 rounded-lg border border-gray-600"
-                          />
-                          <p className="text-xs text-gray-500 mt-2">Scopes requis: read_products, write_products, read_orders, read_customers, read_analytics.</p>
-                        </div>
+                        {!shopifyConnected && (
+                          <div>
+                            <label className="block text-gray-400 text-sm mb-2">Token d'accès</label>
+                            <input
+                              type="password"
+                              placeholder="shpat_..."
+                              value={shopifyToken}
+                              onChange={(e) => setShopifyToken(e.target.value)}
+                              className="w-full bg-gray-700 text-white px-4 py-2 rounded-lg border border-gray-600"
+                            />
+                            <p className="text-xs text-gray-500 mt-2">Scopes requis: read_products, write_products, read_orders, read_customers, read_analytics.</p>
+                          </div>
+                        )}
+
+                        {shopifyConnected && (
+                          <button
+                            onClick={() => setShowShopifyToken((prev) => !prev)}
+                            className="w-full bg-gray-700 hover:bg-gray-600 text-white font-semibold py-2 px-4 rounded-lg"
+                          >
+                            {showShopifyToken ? 'Masquer le token' : 'Mettre à jour le token'}
+                          </button>
+                        )}
+
+                        {shopifyConnected && showShopifyToken && (
+                          <div>
+                            <label className="block text-gray-400 text-sm mb-2">Nouveau token d'accès</label>
+                            <input
+                              type="password"
+                              placeholder="shpat_..."
+                              value={shopifyToken}
+                              onChange={(e) => setShopifyToken(e.target.value)}
+                              className="w-full bg-gray-700 text-white px-4 py-2 rounded-lg border border-gray-600"
+                            />
+                            <p className="text-xs text-gray-500 mt-2">Scopes requis: read_products, write_products, read_orders, read_customers, read_analytics.</p>
+                          </div>
+                        )}
 
                         <button
                           onClick={connectShopify}
                           className="w-full bg-yellow-600 hover:bg-yellow-500 text-black font-bold py-2 px-4 rounded-lg"
                         >
-                          Connecter Shopify
+                          {shopifyConnected ? 'Mettre à jour la connexion' : 'Connecter Shopify'}
                         </button>
                         {renderStatus('shopify')}
                       </div>

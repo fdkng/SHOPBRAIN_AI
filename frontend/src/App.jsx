@@ -1031,11 +1031,20 @@ export default function App() {
       <section className="py-12 px-6 bg-gray-900 border-y border-gray-700">
         <div className="max-w-6xl mx-auto">
           <p className="text-center text-xs text-gray-400 mb-6 uppercase tracking-[0.3em]">Ils nous font confiance</p>
-          <div className="flex flex-wrap justify-center items-center gap-12 opacity-60">
-            <div className="text-2xl font-bold text-gray-500">SHOPIFY</div>
-            <div className="text-2xl font-bold text-gray-500">STRIPE</div>
-            <div className="text-2xl font-bold text-gray-500">OPENAI</div>
-            <div className="text-2xl font-bold text-gray-500">SUPABASE</div>
+          <div className="flex flex-wrap justify-center items-center gap-4">
+            {[
+              { name: 'Stripe', style: 'from-[#635BFF]/20 to-[#635BFF]/5 text-[#d6d1ff] border-[#635BFF]/40' },
+              { name: 'ChatGPT', style: 'from-[#10b981]/20 to-[#10b981]/5 text-[#a7f3d0] border-[#10b981]/40' },
+              { name: 'OpenAI', style: 'from-[#0f172a]/70 to-[#111827]/40 text-gray-200 border-gray-700' },
+              { name: 'Firebase', style: 'from-[#f59e0b]/25 to-[#f59e0b]/5 text-[#fde68a] border-[#f59e0b]/40' }
+            ].map((brand) => (
+              <div
+                key={brand.name}
+                className={`px-6 py-3 rounded-full border bg-gradient-to-r ${brand.style} text-sm font-semibold tracking-[0.2em] uppercase`}
+              >
+                {brand.name}
+              </div>
+            ))}
           </div>
         </div>
       </section>
