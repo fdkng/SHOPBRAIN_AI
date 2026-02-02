@@ -1035,7 +1035,7 @@ export default function App() {
             {['Stripe', 'OpenAI', 'Supabase', 'Shopify'].map((brand) => (
               <span
                 key={brand}
-                className="text-sm md:text-base font-semibold uppercase tracking-[0.28em] text-white/60"
+                className="text-sm md:text-base font-semibold uppercase tracking-[0.32em] text-white/50"
               >
                 {brand}
               </span>
