@@ -1034,12 +1034,6 @@ export default function App() {
           <div className="flex flex-wrap justify-center items-center gap-4">
             {[
               {
-                name: 'Shopify',
-                style: 'text-gray-200 border-gray-700',
-                fontFamily: '"Inter", sans-serif',
-                letterSpacing: '0.08em'
-              },
-              {
                 name: 'Stripe',
                 style: 'text-gray-200 border-gray-700',
                 fontFamily: '"Space Grotesk", sans-serif',
@@ -1066,6 +1060,13 @@ export default function App() {
                 {brand.name}
               </div>
             ))}
+            <div className="px-6 py-3 rounded-full border border-gray-700 bg-gray-900">
+              <img
+                src="https://cdn.worldvectorlogo.com/logos/shopify.svg"
+                alt="Shopify"
+                className="h-5 w-auto opacity-60 grayscale"
+              />
+            </div>
           </div>
         </div>
       </section>
