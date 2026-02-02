@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Playfair+Display:wght@500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Playfair+Display:wght@500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -13,16 +13,16 @@ body,
 #root {
   background-color: #0b0d12;
   color: #e8edf6;
-  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
-  letter-spacing: 0.006em;
-  line-height: 1.6;
+  font-family: 'Cormorant Garamond', system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.01em;
+  line-height: 1.7;
   background-image:
     radial-gradient(1000px 500px at 50% -20%, rgba(255, 255, 255, 0.08), transparent 60%),
     radial-gradient(600px 400px at 15% 80%, rgba(79, 129, 255, 0.18), transparent 60%);
 }
 
 h1, h2, h3, h4, h5, h6 {
-  font-family: 'Playfair Display', 'DM Sans', system-ui, sans-serif;
+  font-family: 'Playfair Display', 'Cormorant Garamond', system-ui, sans-serif;
   letter-spacing: 0.015em;
   line-height: 1.15;
 }

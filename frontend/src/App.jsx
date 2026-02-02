@@ -1251,7 +1251,7 @@ export default function App() {
                 Voir tous les plans
               </button>
               <a
-                href="mailto:louis-philippe.felix.gilbert@outlook.com"
+                href="mailto:louis-felix.gilbert@outlook.com"
                 className="px-8 py-3 text-yellow-400 font-semibold border-2 border-yellow-700 rounded-full hover:bg-yellow-700 hover:text-white transition-all"
               >
                 Contactez notre équipe
