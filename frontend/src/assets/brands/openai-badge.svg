@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="96" viewBox="0 0 240 96" role="img" aria-label="OpenAI badge">
+  <rect x="2" y="2" width="236" height="92" rx="46" fill="#0B1220" stroke="#243041" stroke-width="2"/>
+  <circle cx="60" cy="48" r="26" fill="#111827" stroke="#2B3444" stroke-width="2"/>
+  <text x="60" y="54" text-anchor="middle" font-family="'Inter', Arial, sans-serif" font-size="20" fill="#CBD5E1" letter-spacing="0.08em">O</text>
+  <text x="120" y="56" font-family="'Inter', Arial, sans-serif" font-size="18" fill="#CBD5E1" letter-spacing="0.18em">OPENAI</text>
+</svg>

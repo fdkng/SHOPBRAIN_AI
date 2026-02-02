@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import Dashboard from './Dashboard'
 import StripePricingTable from './PricingTable'
-import stripeLogo from './assets/brands/stripe.svg'
-import openaiLogo from './assets/brands/openai.svg'
-import supabaseLogo from './assets/brands/supabase.svg'
+import shopifyBadge from './assets/brands/shopify-badge.svg'
+import stripeBadge from './assets/brands/stripe-badge.svg'
+import openaiBadge from './assets/brands/openai-badge.svg'
+import supabaseBadge from './assets/brands/supabase-badge.svg'
 
 const supabase = createClient(
   'https://jgmsfadayzbgykzajvmw.supabase.co',
@@ -1039,7 +1040,7 @@ export default function App() {
               {
                 name: 'Stripe',
                 href: 'https://ca.trustpilot.com/review/stripe.com',
-                imgSrc: stripeLogo,
+                imgSrc: stripeBadge,
                 style: 'text-gray-200 border-gray-700',
                 fontFamily: '"Space Grotesk", sans-serif',
                 letterSpacing: '0.1em'
@@ -1047,7 +1048,7 @@ export default function App() {
               {
                 name: 'OpenAI',
                 href: 'https://en.wikipedia.org/wiki/Products_and_applications_of_OpenAI',
-                imgSrc: openaiLogo,
+                imgSrc: openaiBadge,
                 style: 'text-gray-200 border-gray-700',
                 fontFamily: '"Inter", sans-serif',
                 letterSpacing: '0.06em'
@@ -1055,14 +1056,14 @@ export default function App() {
               {
                 name: 'Supabase',
                 href: 'https://www.youtube.com/c/supabase',
-                imgSrc: supabaseLogo,
+                imgSrc: supabaseBadge,
                 style: 'text-gray-200 border-gray-700',
                 fontFamily: '"Inter", sans-serif',
                 letterSpacing: '0.08em'
               },
               {
                 name: 'Shopify',
-                imgSrc: 'https://cdn.worldvectorlogo.com/logos/shopify.svg',
+                imgSrc: shopifyBadge,
                 style: 'text-gray-200 border-gray-700',
                 fontFamily: '"Inter", sans-serif',
                 letterSpacing: '0.08em'
