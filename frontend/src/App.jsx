@@ -2,10 +2,6 @@ import React, { useState, useEffect } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import Dashboard from './Dashboard'
 import StripePricingTable from './PricingTable'
-import shopifyBadge from './assets/brands/shopify-badge.svg'
-import stripeBadge from './assets/brands/stripe-badge.svg'
-import openaiBadge from './assets/brands/openai-badge.svg'
-import supabaseBadge from './assets/brands/supabase-badge.svg'
 
 const supabase = createClient(
   'https://jgmsfadayzbgykzajvmw.supabase.co',
@@ -1035,72 +1031,15 @@ export default function App() {
       <section className="py-12 px-6 bg-gray-900 border-y border-gray-700">
         <div className="max-w-6xl mx-auto">
           <p className="text-center text-xs text-gray-400 mb-6 uppercase tracking-[0.3em]">Ils nous font confiance</p>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 place-items-center">
-            {[
-              {
-                name: 'Stripe',
-                href: 'https://ca.trustpilot.com/review/stripe.com',
-                imgSrc: stripeBadge,
-                style: 'text-gray-200 border-gray-700',
-                fontFamily: '"Space Grotesk", sans-serif',
-                letterSpacing: '0.1em'
-              },
-              {
-                name: 'OpenAI',
-                href: 'https://en.wikipedia.org/wiki/Products_and_applications_of_OpenAI',
-                imgSrc: openaiBadge,
-                style: 'text-gray-200 border-gray-700',
-                fontFamily: '"Inter", sans-serif',
-                letterSpacing: '0.06em'
-              },
-              {
-                name: 'Supabase',
-                href: 'https://www.youtube.com/c/supabase',
-                imgSrc: supabaseBadge,
-                style: 'text-gray-200 border-gray-700',
-                fontFamily: '"Inter", sans-serif',
-                letterSpacing: '0.08em'
-              },
-              {
-                name: 'Shopify',
-                imgSrc: shopifyBadge,
-                style: 'text-gray-200 border-gray-700',
-                fontFamily: '"Inter", sans-serif',
-                letterSpacing: '0.08em'
-              }
-            ].map((brand) => {
-              const Wrapper = brand.href ? 'a' : 'div'
-              return (
-                <Wrapper
-                  key={brand.name}
-                  href={brand.href}
-                  target={brand.href ? '_blank' : undefined}
-                  rel={brand.href ? 'noreferrer' : undefined}
-                  className="flex flex-col items-center gap-2"
-                >
-                  <div
-                    style={{ fontFamily: brand.fontFamily, letterSpacing: brand.letterSpacing }}
-                    className={`px-6 py-3 rounded-full border bg-gray-900 ${brand.style} text-sm font-semibold uppercase`}
-                  >
-                    {brand.imgSrc ? (
-                      <img
-                        src={brand.imgSrc}
-                        alt={brand.name}
-                        className="h-5 w-auto opacity-60 grayscale"
-                      />
-                    ) : (
-                      brand.name
-                    )}
-                  </div>
-                  <span
-                    style={{ fontFamily: brand.fontFamily, letterSpacing: brand.letterSpacing }}
-                    className="text-xs uppercase text-gray-400"
-                  >
-                    {brand.name}
-                  </span>
-                </Wrapper>
-              )
-            })}
+          <div className="flex flex-wrap justify-center items-center gap-6">
+            {['Stripe', 'OpenAI', 'Supabase', 'Shopify'].map((brand) => (
+              <span
+                key={brand}
+                className="text-sm md:text-base font-semibold uppercase tracking-[0.28em] text-white/60"
+              >
+                {brand}
+              </span>
+            ))}
           </div>
         </div>
       </section>
