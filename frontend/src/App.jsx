@@ -1036,6 +1036,7 @@ export default function App() {
               {
                 name: 'Stripe',
                 href: 'https://ca.trustpilot.com/review/stripe.com',
+                imgSrc: 'https://worldvectorlogo.com/download/stripe-4.svg',
                 style: 'text-gray-200 border-gray-700',
                 fontFamily: '"Space Grotesk", sans-serif',
                 letterSpacing: '0.1em'
@@ -1043,6 +1044,7 @@ export default function App() {
               {
                 name: 'OpenAI',
                 href: 'https://en.wikipedia.org/wiki/Products_and_applications_of_OpenAI',
+                imgSrc: 'https://cdn.worldvectorlogo.com/logos/openai.svg',
                 style: 'text-gray-200 border-gray-700',
                 fontFamily: '"Inter", sans-serif',
                 letterSpacing: '0.06em'
@@ -1050,6 +1052,7 @@ export default function App() {
               {
                 name: 'Supabase',
                 href: 'https://www.youtube.com/c/supabase',
+                imgSrc: 'https://frontend-assets.supabase.com/www/adf7d06de8ab/_next/static/media/logo-preview.50e72501.jpg',
                 style: 'text-gray-200 border-gray-700',
                 fontFamily: '"Inter", sans-serif',
                 letterSpacing: '0.08em'
