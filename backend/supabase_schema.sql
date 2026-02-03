@@ -56,16 +56,37 @@ CREATE TABLE IF NOT EXISTS user_preferences (
   updated_at TIMESTAMP DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS invoice_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  shop_domain TEXT,
+  order_id TEXT,
+  order_number TEXT,
+  invoice_number TEXT,
+  customer_email TEXT,
+  country_code TEXT,
+  province_code TEXT,
+  total_amount NUMERIC,
+  currency TEXT,
+  status TEXT DEFAULT 'sent',
+  error TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id);
 CREATE INDEX IF NOT EXISTS idx_api_keys_key_prefix ON api_keys(key_prefix);
 
 CREATE INDEX IF NOT EXISTS idx_subscriptions_user_id ON subscriptions(user_id);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_stripe_subscription_id ON subscriptions(stripe_subscription_id);
 
+CREATE INDEX IF NOT EXISTS idx_invoice_events_user_id ON invoice_events(user_id);
+CREATE INDEX IF NOT EXISTS idx_invoice_events_created_at ON invoice_events(created_at);
+
 ALTER TABLE products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE subscriptions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_preferences ENABLE ROW LEVEL SECURITY;
+ALTER TABLE invoice_events ENABLE ROW LEVEL SECURITY;
 
 DO $$
 BEGIN
@@ -188,6 +209,25 @@ BEGIN
     CREATE POLICY "Users can update their own preferences"
       ON user_preferences FOR UPDATE
       USING (auth.uid() = user_id);
+  END IF;
+
+  -- Invoice events policies
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'invoice_events' AND policyname = 'Users can view their own invoice events'
+  ) THEN
+    CREATE POLICY "Users can view their own invoice events"
+      ON invoice_events FOR SELECT
+      USING (auth.uid() = user_id);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'invoice_events' AND policyname = 'Users can insert their own invoice events'
+  ) THEN
+    CREATE POLICY "Users can insert their own invoice events"
+      ON invoice_events FOR INSERT
+      WITH CHECK (auth.uid() = user_id);
   END IF;
 END
 $$;

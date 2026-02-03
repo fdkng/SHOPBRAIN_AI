@@ -16,11 +16,18 @@ import jwt
 from functools import lru_cache
 import hmac
 import hashlib
+import base64
 import requests
 import json
 import sys
 from datetime import datetime, timedelta
 from supabase import create_client
+from io import BytesIO
+from email.message import EmailMessage
+import smtplib
+import ssl
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
 
 # Ajouter le répertoire parent au path pour importer AI_engine
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -1857,6 +1864,305 @@ async def create_draft_order(request: Request, payload: DraftOrderRequest):
     }
 
 
+def _resolve_invoice_language(country_code: str | None, province_code: str | None) -> str:
+    if (country_code or "").upper() == "FR":
+        return "fr"
+    if (country_code or "").upper() == "CA" and (province_code or "").upper() in {"QC", "QUEBEC", "QUÉBEC"}:
+        return "fr"
+    if (country_code or "").upper() == "CH":
+        return "en"
+    return "en"
+
+
+def _invoice_strings(language: str) -> dict:
+    if language == "fr":
+        return {
+            "title": "Facture officielle",
+            "invoice": "Facture",
+            "date": "Date",
+            "order": "Commande",
+            "customer": "Client",
+            "item": "Produit",
+            "qty": "Qté",
+            "price": "Prix",
+            "subtotal": "Sous-total",
+            "tax": "Taxes",
+            "total": "Total",
+            "email_subject": "Votre facture officielle",
+            "email_body": "Bonjour,\n\nVeuillez trouver votre facture officielle en pièce jointe.\n\nMerci pour votre achat.",
+        }
+    return {
+        "title": "Official Invoice",
+        "invoice": "Invoice",
+        "date": "Date",
+        "order": "Order",
+        "customer": "Customer",
+        "item": "Item",
+        "qty": "Qty",
+        "price": "Price",
+        "subtotal": "Subtotal",
+        "tax": "Tax",
+        "total": "Total",
+        "email_subject": "Your official invoice",
+        "email_body": "Hello,\n\nPlease find your official invoice attached.\n\nThank you for your purchase.",
+    }
+
+
+def _generate_invoice_pdf(order: dict, invoice_number: str, language: str, shop_domain: str) -> bytes:
+    strings = _invoice_strings(language)
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+
+    billing = order.get("billing_address") or {}
+    shipping = order.get("shipping_address") or {}
+    customer = order.get("customer") or {}
+
+    customer_name = " ".join([
+        billing.get("first_name") or customer.get("first_name") or "",
+        billing.get("last_name") or customer.get("last_name") or "",
+    ]).strip() or order.get("email") or ""
+
+    pdf.setFont("Helvetica-Bold", 16)
+    pdf.drawString(40, height - 50, strings["title"])
+
+    pdf.setFont("Helvetica", 10)
+    pdf.drawString(40, height - 70, f"{strings['invoice']}: {invoice_number}")
+    pdf.drawString(40, height - 85, f"{strings['date']}: {datetime.utcnow().strftime('%Y-%m-%d')}")
+    pdf.drawString(40, height - 100, f"{strings['order']}: {order.get('name') or order.get('order_number')}")
+    pdf.drawString(40, height - 115, f"Boutique: {shop_domain}")
+
+    pdf.setFont("Helvetica-Bold", 11)
+    pdf.drawString(40, height - 140, strings["customer"])
+    pdf.setFont("Helvetica", 10)
+    pdf.drawString(40, height - 155, customer_name)
+    address_lines = [
+        billing.get("address1") or shipping.get("address1") or "",
+        billing.get("address2") or shipping.get("address2") or "",
+        " ".join(filter(None, [
+            billing.get("city") or shipping.get("city") or "",
+            billing.get("province") or shipping.get("province") or "",
+            billing.get("zip") or shipping.get("zip") or "",
+        ])).strip(),
+        billing.get("country") or shipping.get("country") or "",
+    ]
+    y = height - 170
+    for line in address_lines:
+        if line:
+            pdf.drawString(40, y, line)
+            y -= 12
+
+    pdf.setFont("Helvetica-Bold", 10)
+    pdf.drawString(40, y - 10, strings["item"])
+    pdf.drawString(320, y - 10, strings["qty"])
+    pdf.drawString(380, y - 10, strings["price"])
+    y -= 24
+
+    pdf.setFont("Helvetica", 10)
+    line_items = order.get("line_items", [])
+    for item in line_items:
+        title = item.get("title") or "Produit"
+        qty = item.get("quantity") or 1
+        price = item.get("price") or "0"
+        pdf.drawString(40, y, str(title)[:45])
+        pdf.drawString(320, y, str(qty))
+        pdf.drawString(380, y, str(price))
+        y -= 14
+        if y < 120:
+            pdf.showPage()
+            y = height - 60
+
+    currency = order.get("currency") or "USD"
+    subtotal = order.get("subtotal_price") or "0"
+    tax = order.get("total_tax") or "0"
+    total = order.get("total_price") or "0"
+
+    pdf.setFont("Helvetica-Bold", 10)
+    pdf.drawString(300, y - 10, strings["subtotal"])
+    pdf.drawString(420, y - 10, f"{subtotal} {currency}")
+    pdf.drawString(300, y - 24, strings["tax"])
+    pdf.drawString(420, y - 24, f"{tax} {currency}")
+    pdf.drawString(300, y - 38, strings["total"])
+    pdf.drawString(420, y - 38, f"{total} {currency}")
+
+    pdf.showPage()
+    pdf.save()
+    buffer.seek(0)
+    return buffer.read()
+
+
+def _send_invoice_email(to_email: str, invoice_number: str, pdf_bytes: bytes, language: str, shop_domain: str) -> None:
+    smtp_host = os.getenv("SMTP_HOST")
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_pass = os.getenv("SMTP_PASS")
+    smtp_from = os.getenv("SMTP_FROM") or smtp_user
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_secure = (os.getenv("SMTP_SECURE") or "tls").lower()
+
+    if not smtp_host or not smtp_user or not smtp_pass or not smtp_from:
+        raise RuntimeError("SMTP configuration missing")
+
+    strings = _invoice_strings(language)
+
+    msg = EmailMessage()
+    msg["Subject"] = strings["email_subject"]
+    msg["From"] = smtp_from
+    msg["To"] = to_email
+    msg.set_content(strings["email_body"])
+
+    filename = f"{invoice_number}.pdf"
+    msg.add_attachment(pdf_bytes, maintype="application", subtype="pdf", filename=filename)
+
+    if smtp_secure == "ssl":
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL(smtp_host, smtp_port, context=context) as server:
+            server.login(smtp_user, smtp_pass)
+            server.send_message(msg)
+    else:
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.starttls(context=ssl.create_default_context())
+            server.login(smtp_user, smtp_pass)
+            server.send_message(msg)
+
+
+def _count_invoices_this_month(user_id: str) -> int:
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        return 0
+    start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    resp = supabase.table("invoice_events").select("id", count="exact").eq("user_id", user_id).gte("created_at", start.isoformat()).execute()
+    if resp.count is not None:
+        return int(resp.count)
+    return len(resp.data or [])
+
+
+def _log_invoice_event(payload: dict) -> None:
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        return
+    supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    supabase.table("invoice_events").insert(payload).execute()
+
+
+@app.post("/api/shopify/webhook/orders-paid")
+async def shopify_orders_paid_webhook(request: Request):
+    raw_body = await request.body()
+
+    if not SHOPIFY_API_SECRET:
+        raise HTTPException(status_code=500, detail="Shopify API secret not configured")
+
+    hmac_header = request.headers.get("X-Shopify-Hmac-Sha256", "")
+    digest = hmac.new(SHOPIFY_API_SECRET.encode("utf-8"), raw_body, hashlib.sha256).digest()
+    computed_hmac = base64.b64encode(digest).decode("utf-8")
+    if not hmac.compare_digest(computed_hmac, hmac_header):
+        raise HTTPException(status_code=401, detail="Invalid Shopify webhook signature")
+
+    try:
+        order = json.loads(raw_body.decode("utf-8"))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid payload: {e}")
+
+    shop_domain = request.headers.get("X-Shopify-Shop-Domain") or order.get("shop_domain")
+    if not shop_domain:
+        return {"success": False, "message": "Missing shop domain"}
+
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        raise HTTPException(status_code=500, detail="Supabase not configured")
+
+    supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    conn = supabase.table("shopify_connections").select("user_id").eq("shop_domain", shop_domain).limit(1).execute()
+    if not conn.data:
+        return {"success": False, "message": "Shop not connected"}
+
+    user_id = conn.data[0].get("user_id")
+    tier = get_user_tier(user_id)
+    ensure_feature_allowed(tier, "invoicing")
+
+    if tier == "pro" and _count_invoices_this_month(user_id) >= 50:
+        _log_invoice_event({
+            "user_id": user_id,
+            "shop_domain": shop_domain,
+            "order_id": str(order.get("id")),
+            "order_number": str(order.get("order_number") or order.get("name")),
+            "invoice_number": None,
+            "customer_email": order.get("email"),
+            "country_code": (order.get("billing_address") or {}).get("country_code"),
+            "province_code": (order.get("billing_address") or {}).get("province_code"),
+            "total_amount": order.get("total_price"),
+            "currency": order.get("currency"),
+            "status": "limit_reached",
+            "error": "Pro monthly limit reached"
+        })
+        return {"success": False, "message": "Pro invoice limit reached"}
+
+    order_id = str(order.get("id"))
+    existing = supabase.table("invoice_events").select("id").eq("shop_domain", shop_domain).eq("order_id", order_id).limit(1).execute()
+    if existing.data:
+        return {"success": True, "message": "Already processed"}
+
+    billing = order.get("billing_address") or {}
+    shipping = order.get("shipping_address") or {}
+    country_code = billing.get("country_code") or shipping.get("country_code")
+    province_code = billing.get("province_code") or shipping.get("province_code")
+    language = _resolve_invoice_language(country_code, province_code)
+
+    customer_email = order.get("email") or (order.get("customer") or {}).get("email")
+    if not customer_email:
+        _log_invoice_event({
+            "user_id": user_id,
+            "shop_domain": shop_domain,
+            "order_id": order_id,
+            "order_number": str(order.get("order_number") or order.get("name")),
+            "invoice_number": None,
+            "customer_email": None,
+            "country_code": country_code,
+            "province_code": province_code,
+            "total_amount": order.get("total_price"),
+            "currency": order.get("currency"),
+            "status": "missing_email",
+            "error": "Customer email missing"
+        })
+        return {"success": False, "message": "Customer email missing"}
+
+    order_number = order.get("order_number") or order.get("name") or order_id
+    shop_slug = shop_domain.split(".")[0].upper()
+    invoice_number = f"INV-{shop_slug}-{order_number}"
+
+    try:
+        pdf_bytes = _generate_invoice_pdf(order, invoice_number, language, shop_domain)
+        _send_invoice_email(customer_email, invoice_number, pdf_bytes, language, shop_domain)
+        _log_invoice_event({
+            "user_id": user_id,
+            "shop_domain": shop_domain,
+            "order_id": order_id,
+            "order_number": str(order_number),
+            "invoice_number": invoice_number,
+            "customer_email": customer_email,
+            "country_code": country_code,
+            "province_code": province_code,
+            "total_amount": order.get("total_price"),
+            "currency": order.get("currency"),
+            "status": "sent",
+            "error": None
+        })
+        return {"success": True}
+    except Exception as e:
+        _log_invoice_event({
+            "user_id": user_id,
+            "shop_domain": shop_domain,
+            "order_id": order_id,
+            "order_number": str(order_number),
+            "invoice_number": invoice_number,
+            "customer_email": customer_email,
+            "country_code": country_code,
+            "province_code": province_code,
+            "total_amount": order.get("total_price"),
+            "currency": order.get("currency"),
+            "status": "failed",
+            "error": str(e)
+        })
+        return {"success": False, "message": "Invoice generation failed"}
+
+
 
 @app.post("/api/analyze-product")
 async def analyze_product(payload: dict, request: Request):
@@ -2165,8 +2471,8 @@ def get_user_tier(user_id: str) -> str:
 def ensure_feature_allowed(tier: str, feature: str):
     feature_map = {
         "standard": {"product_analysis", "title_optimization", "price_suggestions"},
-        "pro": {"product_analysis", "title_optimization", "price_suggestions", "content_generation", "cross_sell", "reports"},
-        "premium": {"product_analysis", "title_optimization", "price_suggestions", "content_generation", "cross_sell", "reports", "automated_actions", "predictions"},
+        "pro": {"product_analysis", "title_optimization", "price_suggestions", "content_generation", "cross_sell", "reports", "invoicing"},
+        "premium": {"product_analysis", "title_optimization", "price_suggestions", "content_generation", "cross_sell", "reports", "automated_actions", "predictions", "invoicing"},
     }
     allowed = feature_map.get(tier, feature_map["standard"])
     if feature not in allowed:
