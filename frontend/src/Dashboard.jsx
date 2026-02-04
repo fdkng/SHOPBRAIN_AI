@@ -534,7 +534,7 @@ export default function Dashboard() {
   }, [activeTab])
 
   useEffect(() => {
-    const allowedTabs = ['overview', 'invoices', 'ai', 'analysis']
+    const allowedTabs = ['overview', 'underperforming', 'invoices', 'ai', 'analysis']
     if (!allowedTabs.includes(activeTab)) {
       setActiveTab('overview')
     }
