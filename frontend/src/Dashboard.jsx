@@ -102,6 +102,9 @@ export default function Dashboard() {
   const [analyticsData, setAnalyticsData] = useState(null)
   const [analyticsLoading, setAnalyticsLoading] = useState(false)
   const [analyticsError, setAnalyticsError] = useState('')
+  const [insightsData, setInsightsData] = useState(null)
+  const [insightsLoading, setInsightsLoading] = useState(false)
+  const [insightsError, setInsightsError] = useState('')
   const [customers, setCustomers] = useState([])
   const [customersLoading, setCustomersLoading] = useState(false)
   const [invoiceCustomerId, setInvoiceCustomerId] = useState('')
@@ -153,6 +156,24 @@ export default function Dashboard() {
     }).join(' ')
   }
 
+  const getInsightCount = (items) => (Array.isArray(items) ? items.length : 0)
+
+  const renderInsightItems = (items, formatter) => {
+    if (insightsLoading) {
+      return <p className="text-xs text-gray-500 mt-2">Chargement...</p>
+    }
+    if (!Array.isArray(items) || items.length === 0) {
+      return <p className="text-xs text-gray-500 mt-2">Aucun signal détecté.</p>
+    }
+    return (
+      <ul className="mt-2 space-y-1 text-xs text-gray-400">
+        {items.slice(0, 3).map((item, index) => (
+          <li key={index}>{formatter(item)}</li>
+        ))}
+      </ul>
+    )
+  }
+
   const getRangeDays = (range) => {
     if (range === '7d') return 7
     if (range === '90d') return 90
@@ -180,10 +201,10 @@ export default function Dashboard() {
   const getPlanFeatures = (plan) => {
     const normalized = String(plan || '').toLowerCase()
     if (normalized === 'premium') {
-      return ['product_analysis', 'content_generation', 'cross_sell', 'automated_actions', 'reports', 'predictions']
+      return ['product_analysis', 'content_generation', 'cross_sell', 'automated_actions', 'reports', 'predictions', 'invoicing']
     }
     if (normalized === 'pro') {
-      return ['product_analysis', 'content_generation', 'cross_sell', 'reports']
+      return ['product_analysis', 'content_generation', 'cross_sell', 'reports', 'automated_actions', 'invoicing']
     }
     return ['product_analysis', 'title_optimization', 'price_suggestions']
   }
@@ -1231,6 +1252,45 @@ export default function Dashboard() {
     }
   }
 
+  const loadInsights = async (rangeOverride) => {
+    try {
+      const rangeValue = rangeOverride || analyticsRange
+      setInsightsLoading(true)
+      setInsightsError('')
+      const { data: { session } } = await supabase.auth.getSession()
+
+      if (!session) {
+        setInsightsError('Session expirée, reconnectez-vous')
+        return
+      }
+
+      const response = await fetch(`${API_URL}/api/shopify/insights?range=${rangeValue}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        }
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.detail || `HTTP ${response.status}`)
+      }
+
+      const data = await response.json()
+      if (data.success) {
+        setInsightsData(data)
+      } else {
+        setInsightsError('Insights indisponibles')
+      }
+    } catch (err) {
+      console.error('Error loading insights:', err)
+      setInsightsError(err.message)
+    } finally {
+      setInsightsLoading(false)
+    }
+  }
+
   const loadCustomers = async () => {
     try {
       setCustomersLoading(true)
@@ -1361,6 +1421,7 @@ export default function Dashboard() {
   useEffect(() => {
     if (activeTab === 'overview') {
       loadAnalytics(analyticsRange)
+      loadInsights(analyticsRange)
     }
   }, [activeTab, analyticsRange])
 
@@ -1874,6 +1935,78 @@ export default function Dashboard() {
                   <p className="text-xs text-gray-500 mt-1">{item.hint}</p>
                 </div>
               ))}
+            </div>
+
+            <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.3em] text-gray-400">7 Insights IA</p>
+                  <h4 className="text-white text-xl font-semibold mt-2">Priorités Shopify à traiter</h4>
+                  <p className="text-sm text-gray-400 mt-1">Source Shopify · {insightsData?.range || analyticsRange}</p>
+                </div>
+                <div className="text-xs text-gray-500">
+                  Signaux: {getInsightCount(insightsData?.blockers)
+                    + getInsightCount(insightsData?.image_risks)
+                    + getInsightCount(insightsData?.bundle_suggestions)
+                    + getInsightCount(insightsData?.stock_risks)
+                    + getInsightCount(insightsData?.price_opportunities)
+                    + getInsightCount(insightsData?.return_risks)}
+                </div>
+              </div>
+              {insightsError && (
+                <p className="text-xs text-yellow-400 mt-3">{insightsError}</p>
+              )}
+              <div className="mt-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Produits freins</p>
+                  <p className="text-2xl font-bold text-white mt-2">{getInsightCount(insightsData?.blockers)}</p>
+                  {renderInsightItems(insightsData?.blockers, (item) => `${item.title || 'Produit'} — ${item.orders || 0} commandes`)}
+                </div>
+                <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Images à risque</p>
+                  <p className="text-2xl font-bold text-white mt-2">{getInsightCount(insightsData?.image_risks)}</p>
+                  {renderInsightItems(insightsData?.image_risks, (item) => `#${item.product_id} — ${item.images_count} images${item.missing_alt ? ' • alt manquant' : ''}`)}
+                </div>
+                <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Bundles recommandés</p>
+                  <p className="text-2xl font-bold text-white mt-2">{getInsightCount(insightsData?.bundle_suggestions)}</p>
+                  {renderInsightItems(insightsData?.bundle_suggestions, (item) => {
+                    const left = item.pair?.[0] || 'A'
+                    const right = item.pair?.[1] || 'B'
+                    return `#${left} + #${right} — ${item.count || 0} commandes`
+                  })}
+                </div>
+                <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Risque de rupture</p>
+                  <p className="text-2xl font-bold text-white mt-2">{getInsightCount(insightsData?.stock_risks)}</p>
+                  {renderInsightItems(insightsData?.stock_risks, (item) => `${item.title || item.product_id} — ${item.days_cover} j`)}
+                </div>
+                <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Opportunités prix</p>
+                  <p className="text-2xl font-bold text-white mt-2">{getInsightCount(insightsData?.price_opportunities)}</p>
+                  {renderInsightItems(insightsData?.price_opportunities, (item) => `${item.title || item.product_id} — ${item.suggestion || 'Ajuster'}`)}
+                </div>
+                <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Retours à risque</p>
+                  <p className="text-2xl font-bold text-white mt-2">{getInsightCount(insightsData?.return_risks)}</p>
+                  {renderInsightItems(insightsData?.return_risks, (item) => `${item.title || item.product_id} — ${item.refunds || 0} retours`)}
+                </div>
+                <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Synthèse IA</p>
+                  <p className="text-2xl font-bold text-white mt-2">
+                    {insightsLoading ? '…' : Math.max(
+                      0,
+                      getInsightCount(insightsData?.blockers)
+                      + getInsightCount(insightsData?.image_risks)
+                      + getInsightCount(insightsData?.bundle_suggestions)
+                      + getInsightCount(insightsData?.stock_risks)
+                      + getInsightCount(insightsData?.price_opportunities)
+                      + getInsightCount(insightsData?.return_risks)
+                    )}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-2">Total de signaux détectés sur la période.</p>
+                </div>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
