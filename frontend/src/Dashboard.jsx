@@ -1940,36 +1940,44 @@ export default function Dashboard() {
             <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700">
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.3em] text-gray-400">7 Insights IA</p>
-                  <h4 className="text-white text-xl font-semibold mt-2">Priorités Shopify à traiter</h4>
+                  <p className="text-xs uppercase tracking-[0.3em] text-gray-400">7 Fonctionnalités IA</p>
+                  <h4 className="text-white text-xl font-semibold mt-2">Les 7 idées demandées (live)</h4>
                   <p className="text-sm text-gray-400 mt-1">Source Shopify · {insightsData?.range || analyticsRange}</p>
                 </div>
-                <div className="text-xs text-gray-500">
-                  Signaux: {getInsightCount(insightsData?.blockers)
-                    + getInsightCount(insightsData?.image_risks)
-                    + getInsightCount(insightsData?.bundle_suggestions)
-                    + getInsightCount(insightsData?.stock_risks)
-                    + getInsightCount(insightsData?.price_opportunities)
-                    + getInsightCount(insightsData?.return_risks)}
-                </div>
+                <div className="text-xs text-gray-500">MàJ: {insightsLoading ? 'en cours' : 'ok'}</div>
               </div>
               {insightsError && (
                 <p className="text-xs text-yellow-400 mt-3">{insightsError}</p>
               )}
               <div className="mt-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Produits freins</p>
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">1) Produits “freins”</p>
                   <p className="text-2xl font-bold text-white mt-2">{getInsightCount(insightsData?.blockers)}</p>
+                  <p className="text-xs text-gray-400 mt-2">Compare vues → panier → achat. Propose titre, image, prix.</p>
                   {renderInsightItems(insightsData?.blockers, (item) => `${item.title || 'Produit'} — ${item.orders || 0} commandes`)}
                 </div>
                 <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Images à risque</p>
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">2) Réécriture continue</p>
+                  <p className="text-2xl font-bold text-white mt-2">{insightsLoading ? '…' : getInsightCount(insightsData?.blockers)}</p>
+                  <p className="text-xs text-gray-400 mt-2">IA réécrit titres/descriptions selon performance (hebdo/mensuel).</p>
+                  <p className="text-xs text-gray-500 mt-2">Ex: CTR bas → nouvelle accroche + bénéfices clairs.</p>
+                </div>
+                <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">3) Optimisation prix</p>
+                  <p className="text-2xl font-bold text-white mt-2">{getInsightCount(insightsData?.price_opportunities)}</p>
+                  <p className="text-xs text-gray-400 mt-2">Élasticité, marges, saisonnalité. Ajustements ciblés.</p>
+                  {renderInsightItems(insightsData?.price_opportunities, (item) => `${item.title || item.product_id} — ${item.suggestion || 'Ajuster'}`)}
+                </div>
+                <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">4) Images qui ne convertissent pas</p>
                   <p className="text-2xl font-bold text-white mt-2">{getInsightCount(insightsData?.image_risks)}</p>
+                  <p className="text-xs text-gray-400 mt-2">Analyse CTR par image/produit. Reco image gagnante.</p>
                   {renderInsightItems(insightsData?.image_risks, (item) => `#${item.product_id} — ${item.images_count} images${item.missing_alt ? ' • alt manquant' : ''}`)}
                 </div>
                 <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Bundles recommandés</p>
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">5) Bundles & cross-sell</p>
                   <p className="text-2xl font-bold text-white mt-2">{getInsightCount(insightsData?.bundle_suggestions)}</p>
+                  <p className="text-xs text-gray-400 mt-2">Packs basés sur commandes passées pour booster l’AOV.</p>
                   {renderInsightItems(insightsData?.bundle_suggestions, (item) => {
                     const left = item.pair?.[0] || 'A'
                     const right = item.pair?.[1] || 'B'
@@ -1977,34 +1985,16 @@ export default function Dashboard() {
                   })}
                 </div>
                 <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Risque de rupture</p>
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">6) Prévision des ruptures</p>
                   <p className="text-2xl font-bold text-white mt-2">{getInsightCount(insightsData?.stock_risks)}</p>
+                  <p className="text-xs text-gray-400 mt-2">Estime jours restants selon ventes actuelles.</p>
                   {renderInsightItems(insightsData?.stock_risks, (item) => `${item.title || item.product_id} — ${item.days_cover} j`)}
                 </div>
                 <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Opportunités prix</p>
-                  <p className="text-2xl font-bold text-white mt-2">{getInsightCount(insightsData?.price_opportunities)}</p>
-                  {renderInsightItems(insightsData?.price_opportunities, (item) => `${item.title || item.product_id} — ${item.suggestion || 'Ajuster'}`)}
-                </div>
-                <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Retours à risque</p>
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">7) Anti-retours / chargebacks</p>
                   <p className="text-2xl font-bold text-white mt-2">{getInsightCount(insightsData?.return_risks)}</p>
+                  <p className="text-xs text-gray-400 mt-2">Détecte causes probables: taille, qualité, description.</p>
                   {renderInsightItems(insightsData?.return_risks, (item) => `${item.title || item.product_id} — ${item.refunds || 0} retours`)}
-                </div>
-                <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Synthèse IA</p>
-                  <p className="text-2xl font-bold text-white mt-2">
-                    {insightsLoading ? '…' : Math.max(
-                      0,
-                      getInsightCount(insightsData?.blockers)
-                      + getInsightCount(insightsData?.image_risks)
-                      + getInsightCount(insightsData?.bundle_suggestions)
-                      + getInsightCount(insightsData?.stock_risks)
-                      + getInsightCount(insightsData?.price_opportunities)
-                      + getInsightCount(insightsData?.return_risks)
-                    )}
-                  </p>
-                  <p className="text-xs text-gray-400 mt-2">Total de signaux détectés sur la période.</p>
                 </div>
               </div>
             </div>
