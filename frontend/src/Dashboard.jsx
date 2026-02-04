@@ -1553,8 +1553,8 @@ export default function Dashboard() {
   }
 
   const handleApplyRecommendation = async (productId, recommendationType) => {
-    if (subscription?.plan !== 'premium') {
-      setStatus(`rec-${productId}-${recommendationType}`, 'warning', 'Cette fonctionnalité est réservée au plan PREMIUM')
+    if (!['pro', 'premium'].includes(subscription?.plan)) {
+      setStatus(`rec-${productId}-${recommendationType}`, 'warning', 'Cette fonctionnalité est réservée aux plans PRO ou PREMIUM')
       return
     }
 
@@ -2334,6 +2334,72 @@ export default function Dashboard() {
               {insightsError && (
                 <p className="text-xs text-yellow-400 mt-3">{insightsError}</p>
               )}
+            </div>
+
+            <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.3em] text-gray-400">Section 1</p>
+                  <h3 className="text-white text-2xl font-bold mt-2">Produits qui freinent la conversion</h3>
+                  <p className="text-sm text-gray-400 mt-1">Détection automatique des fiches qui sous-performent sur la période.</p>
+                </div>
+                <div className="text-xs text-gray-500">Signaux: {getInsightCount(insightsData?.blockers)}</div>
+              </div>
+
+              <div className="mt-4 overflow-hidden border border-gray-700 rounded-xl">
+                <div className="grid grid-cols-12 gap-2 bg-gray-900/70 text-xs uppercase tracking-[0.2em] text-gray-500 px-4 py-3">
+                  <div className="col-span-5">Produit</div>
+                  <div className="col-span-2">Commandes</div>
+                  <div className="col-span-2">Revenus</div>
+                  <div className="col-span-3">Actions</div>
+                </div>
+                {insightsLoading ? (
+                  <div className="px-4 py-4 text-sm text-gray-500">Chargement...</div>
+                ) : (!insightsData?.blockers || insightsData.blockers.length === 0) ? (
+                  <div className="px-4 py-4 text-sm text-gray-500">Aucun produit frein détecté sur cette période.</div>
+                ) : (
+                  insightsData.blockers.slice(0, 8).map((item) => (
+                    <div key={item.product_id || item.title} className="grid grid-cols-12 gap-2 px-4 py-3 border-t border-gray-800 text-sm text-gray-200">
+                      <div className="col-span-5">
+                        <div className="font-semibold text-white">{item.title || 'Produit'}</div>
+                        <div className="text-xs text-gray-500">Raison: {item.reason || 'Sous-performance ventes'}</div>
+                      </div>
+                      <div className="col-span-2 text-gray-300">{item.orders || 0}</div>
+                      <div className="col-span-2 text-gray-300">{formatCurrency(item.revenue || 0, insightsData?.currency || 'EUR')}</div>
+                      <div className="col-span-3 flex flex-wrap gap-2">
+                        <button
+                          onClick={() => handleApplyRecommendation(item.product_id, 'titre')}
+                          className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-white"
+                          disabled={applyingRecommendationId === `${item.product_id}-titre`}
+                        >
+                          Titre
+                        </button>
+                        <button
+                          onClick={() => handleApplyRecommendation(item.product_id, 'prix')}
+                          className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-white"
+                          disabled={applyingRecommendationId === `${item.product_id}-prix`}
+                        >
+                          Prix
+                        </button>
+                        {shopifyUrl && item.product_id && (
+                          <a
+                            href={`https://${shopifyUrl}/admin/products/${item.product_id}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-white"
+                          >
+                            Image
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="mt-3 text-xs text-gray-500">
+                Actions proposées: mise à jour du titre, ajustement du prix, changement d’image.
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
