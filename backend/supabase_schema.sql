@@ -73,6 +73,18 @@ CREATE TABLE IF NOT EXISTS invoice_events (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS action_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  shop_domain TEXT,
+  product_id TEXT,
+  action_type TEXT,
+  action_count INT DEFAULT 1,
+  status TEXT DEFAULT 'executed',
+  error TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id);
 CREATE INDEX IF NOT EXISTS idx_api_keys_key_prefix ON api_keys(key_prefix);
 
@@ -82,11 +94,15 @@ CREATE INDEX IF NOT EXISTS idx_subscriptions_stripe_subscription_id ON subscript
 CREATE INDEX IF NOT EXISTS idx_invoice_events_user_id ON invoice_events(user_id);
 CREATE INDEX IF NOT EXISTS idx_invoice_events_created_at ON invoice_events(created_at);
 
+CREATE INDEX IF NOT EXISTS idx_action_events_user_id ON action_events(user_id);
+CREATE INDEX IF NOT EXISTS idx_action_events_created_at ON action_events(created_at);
+
 ALTER TABLE products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE subscriptions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_preferences ENABLE ROW LEVEL SECURITY;
 ALTER TABLE invoice_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE action_events ENABLE ROW LEVEL SECURITY;
 
 DO $$
 BEGIN
@@ -227,6 +243,25 @@ BEGIN
   ) THEN
     CREATE POLICY "Users can insert their own invoice events"
       ON invoice_events FOR INSERT
+      WITH CHECK (auth.uid() = user_id);
+  END IF;
+
+  -- Action events policies
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'action_events' AND policyname = 'Users can view their own action events'
+  ) THEN
+    CREATE POLICY "Users can view their own action events"
+      ON action_events FOR SELECT
+      USING (auth.uid() = user_id);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'action_events' AND policyname = 'Users can insert their own action events'
+  ) THEN
+    CREATE POLICY "Users can insert their own action events"
+      ON action_events FOR INSERT
       WITH CHECK (auth.uid() = user_id);
   END IF;
 END

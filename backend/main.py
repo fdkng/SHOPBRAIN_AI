@@ -1684,6 +1684,38 @@ def _parse_shopify_next_link(link_header: str | None) -> str | None:
     return None
 
 
+def _fetch_shopify_orders(shop_domain: str, access_token: str, range_days: int = 30):
+    start_date = (datetime.utcnow() - timedelta(days=range_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    headers = {
+        "X-Shopify-Access-Token": access_token,
+        "Content-Type": "application/json"
+    }
+
+    orders = []
+    next_url = (
+        f"https://{shop_domain}/admin/api/2024-10/orders.json"
+        f"?status=any&created_at_min={start_date}&limit=250"
+        f"&fields=id,created_at,total_price,financial_status,currency,line_items,refunds,order_number,name"
+    )
+    page_count = 0
+
+    while next_url and page_count < 6:
+        response = requests.get(next_url, headers=headers, timeout=30)
+        if response.status_code == 401:
+            raise HTTPException(status_code=401, detail="Token Shopify expiré ou invalide. Reconnectez-vous.")
+        if response.status_code == 404:
+            raise HTTPException(status_code=404, detail=f"Boutique Shopify non trouvée: {shop_domain}")
+        if response.status_code != 200:
+            raise HTTPException(status_code=response.status_code, detail=f"Erreur Shopify: {response.text[:300]}")
+
+        payload = response.json()
+        orders.extend(payload.get("orders", []))
+        next_url = _parse_shopify_next_link(response.headers.get("Link"))
+        page_count += 1
+
+    return orders
+
+
 @app.get("/api/shopify/customers")
 async def get_shopify_customers(request: Request, limit: int = 100):
     """👥 Récupère les clients Shopify pour facturation"""
@@ -1800,6 +1832,154 @@ async def get_shopify_analytics(request: Request, range: str = "30d"):
         },
         "series": series,
         "top_products": top_products_list
+    }
+
+
+@app.get("/api/shopify/insights")
+async def get_shopify_insights(request: Request, range: str = "30d"):
+    """🧠 Insights: produits freins, images faibles, bundles, stocks, prix, retours"""
+    user_id = get_user_id(request)
+    shop_domain, access_token = _get_shopify_connection(user_id)
+
+    range_map = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}
+    days = range_map.get(range, 30)
+
+    orders = _fetch_shopify_orders(shop_domain, access_token, days)
+
+    # Build product stats
+    product_stats = {}
+    refunds_by_product = {}
+
+    for order in orders:
+        for item in order.get("line_items", []):
+            pid = str(item.get("product_id") or item.get("id"))
+            if pid not in product_stats:
+                product_stats[pid] = {
+                    "product_id": pid,
+                    "title": item.get("title") or "Produit",
+                    "orders": 0,
+                    "quantity": 0,
+                    "revenue": 0.0,
+                }
+            qty = int(item.get("quantity") or 0)
+            price = float(item.get("price") or 0)
+            product_stats[pid]["orders"] += 1
+            product_stats[pid]["quantity"] += qty
+            product_stats[pid]["revenue"] += price * qty
+
+        for refund in order.get("refunds", []) or []:
+            for refund_line in refund.get("refund_line_items", []) or []:
+                item = refund_line.get("line_item") or {}
+                pid = str(item.get("product_id") or item.get("id"))
+                refunds_by_product[pid] = refunds_by_product.get(pid, 0) + 1
+
+    # Fetch products for inventory + images
+    products_resp = get_shopify_products
+    products_payload = await products_resp(request)
+    products = products_payload.get("products", [])
+
+    inventory_map = {}
+    images_map = {}
+    for product in products:
+        pid = str(product.get("id"))
+        inventory = 0
+        for variant in product.get("variants", []) or []:
+            inventory += int(variant.get("inventory_quantity") or 0)
+        inventory_map[pid] = inventory
+        images_map[pid] = product.get("images", []) or []
+
+    # Blockers: low orders vs median
+    order_counts = [p.get("orders", 0) for p in product_stats.values()]
+    median_orders = sorted(order_counts)[len(order_counts) // 2] if order_counts else 0
+    blockers = [
+        {
+            **p,
+            "reason": "Faible ventes",
+        }
+        for p in product_stats.values()
+        if p.get("orders", 0) <= max(1, median_orders // 2)
+    ][:10]
+
+    # Image risks: too few images or missing alt
+    image_risks = []
+    for pid, imgs in images_map.items():
+        if len(imgs) <= 1 or any(not (img.get("alt") or "").strip() for img in imgs):
+            image_risks.append({
+                "product_id": pid,
+                "images_count": len(imgs),
+                "missing_alt": any(not (img.get("alt") or "").strip() for img in imgs),
+            })
+    image_risks = image_risks[:10]
+
+    # Stock risks: days of cover
+    stock_risks = []
+    for pid, stats in product_stats.items():
+        inventory = inventory_map.get(pid, 0)
+        daily_sales = (stats.get("quantity", 0) / max(days, 1))
+        days_cover = inventory / daily_sales if daily_sales > 0 else None
+        if days_cover is not None and days_cover < 7:
+            stock_risks.append({
+                "product_id": pid,
+                "title": stats.get("title"),
+                "inventory": inventory,
+                "days_cover": round(days_cover, 2),
+            })
+    stock_risks = sorted(stock_risks, key=lambda x: x.get("days_cover", 0))[:10]
+
+    # Price opportunities: low sales/high inventory or high sales/low inventory
+    price_opportunities = []
+    for pid, stats in product_stats.items():
+        inventory = inventory_map.get(pid, 0)
+        orders_count = stats.get("orders", 0)
+        if inventory > 50 and orders_count < max(1, median_orders // 3):
+            price_opportunities.append({
+                "product_id": pid,
+                "title": stats.get("title"),
+                "suggestion": "Baisser le prix de 5-10%",
+            })
+        if inventory < 5 and orders_count > median_orders:
+            price_opportunities.append({
+                "product_id": pid,
+                "title": stats.get("title"),
+                "suggestion": "Augmenter le prix de 3-7%",
+            })
+
+    # Bundle suggestions: co-occurrence pairs
+    pair_counts = {}
+    for order in orders:
+        ids = [str(item.get("product_id") or item.get("id")) for item in order.get("line_items", [])]
+        ids = list({pid for pid in ids if pid})
+        for i in range(len(ids)):
+            for j in range(i + 1, len(ids)):
+                pair = tuple(sorted([ids[i], ids[j]]))
+                pair_counts[pair] = pair_counts.get(pair, 0) + 1
+    bundles = [
+        {"pair": pair, "count": count}
+        for pair, count in sorted(pair_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+    ]
+
+    # Return/chargeback risks: refund count
+    return_risks = []
+    for pid, count in refunds_by_product.items():
+        stats = product_stats.get(pid, {})
+        if count >= 2:
+            return_risks.append({
+                "product_id": pid,
+                "title": stats.get("title"),
+                "refunds": count,
+            })
+    return_risks = return_risks[:10]
+
+    return {
+        "success": True,
+        "shop": shop_domain,
+        "range": range,
+        "blockers": blockers,
+        "image_risks": image_risks,
+        "bundle_suggestions": bundles,
+        "stock_risks": stock_risks,
+        "price_opportunities": price_opportunities[:10],
+        "return_risks": return_risks,
     }
 
 
@@ -2041,6 +2221,24 @@ def _log_invoice_event(payload: dict) -> None:
         return
     supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
     supabase.table("invoice_events").insert(payload).execute()
+
+
+def _count_actions_this_month(user_id: str) -> int:
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        return 0
+    start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    resp = supabase.table("action_events").select("id", count="exact").eq("user_id", user_id).gte("created_at", start.isoformat()).execute()
+    if resp.count is not None:
+        return int(resp.count)
+    return len(resp.data or [])
+
+
+def _log_action_event(payload: dict) -> None:
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        return
+    supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    supabase.table("action_events").insert(payload).execute()
 
 
 @app.post("/api/shopify/webhook/orders-paid")
@@ -2471,7 +2669,7 @@ def get_user_tier(user_id: str) -> str:
 def ensure_feature_allowed(tier: str, feature: str):
     feature_map = {
         "standard": {"product_analysis", "title_optimization", "price_suggestions"},
-        "pro": {"product_analysis", "title_optimization", "price_suggestions", "content_generation", "cross_sell", "reports", "invoicing"},
+        "pro": {"product_analysis", "title_optimization", "price_suggestions", "content_generation", "cross_sell", "reports", "automated_actions", "invoicing"},
         "premium": {"product_analysis", "title_optimization", "price_suggestions", "content_generation", "cross_sell", "reports", "automated_actions", "predictions", "invoicing"},
     }
     allowed = feature_map.get(tier, feature_map["standard"])
@@ -2646,9 +2844,30 @@ async def execute_actions_endpoint(req: ExecuteActionsRequest, request: Request)
         tier = get_user_tier(user_id)
         
         ensure_feature_allowed(tier, "automated_actions")
+
+        actions_count = len(req.optimization_plan or [])
+        if tier == "pro":
+            current_count = _count_actions_this_month(user_id)
+            if current_count + actions_count > 50:
+                _log_action_event({
+                    "user_id": user_id,
+                    "action_type": "bulk_execute",
+                    "action_count": actions_count,
+                    "status": "limit_reached",
+                    "error": "Pro monthly limit reached"
+                })
+                raise HTTPException(status_code=403, detail="Limite mensuelle Pro atteinte (50 actions)")
         
         engine = get_ai_engine()
         result = engine.execute_optimizations(req.optimization_plan, tier)
+
+        _log_action_event({
+            "user_id": user_id,
+            "action_type": "bulk_execute",
+            "action_count": actions_count,
+            "status": "executed",
+            "error": None
+        })
         
         return {"success": True, "execution_result": result}
     
@@ -2685,6 +2904,20 @@ async def apply_recommendation_endpoint(req: ApplyRecommendationRequest, request
         access_token = connection.data[0].get("access_token")
         if not shop_domain or not access_token:
             raise HTTPException(status_code=400, detail="Connexion Shopify invalide")
+
+        if tier == "pro":
+            current_count = _count_actions_this_month(user_id)
+            if current_count + 1 > 50:
+                _log_action_event({
+                    "user_id": user_id,
+                    "shop_domain": shop_domain,
+                    "product_id": req.product_id,
+                    "action_type": "apply_recommendation",
+                    "action_count": 1,
+                    "status": "limit_reached",
+                    "error": "Pro monthly limit reached"
+                })
+                raise HTTPException(status_code=403, detail="Limite mensuelle Pro atteinte (50 actions)")
 
         # Fetch product (before)
         product_resp = requests.get(
@@ -2755,6 +2988,16 @@ async def apply_recommendation_endpoint(req: ApplyRecommendationRequest, request
 
         if not changed:
             raise HTTPException(status_code=400, detail="Aucune modification détectée sur Shopify")
+
+        _log_action_event({
+            "user_id": user_id,
+            "shop_domain": shop_domain,
+            "product_id": req.product_id,
+            "action_type": f"apply_{rec_type}",
+            "action_count": 1,
+            "status": "executed",
+            "error": None
+        })
 
         return {
             "success": True,
@@ -3099,11 +3342,11 @@ async def check_subscription_status(request: Request):
                     },
                     'pro': {
                         'product_limit': 500,
-                        'features': ['product_analysis', 'content_generation', 'cross_sell', 'reports']
+                        'features': ['product_analysis', 'content_generation', 'cross_sell', 'reports', 'automated_actions', 'invoicing']
                     },
                     'premium': {
                         'product_limit': None,
-                        'features': ['product_analysis', 'content_generation', 'cross_sell', 'automated_actions', 'reports', 'predictions']
+                        'features': ['product_analysis', 'content_generation', 'cross_sell', 'automated_actions', 'reports', 'predictions', 'invoicing']
                     }
                 }
                 
