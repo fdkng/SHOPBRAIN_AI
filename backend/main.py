@@ -1895,6 +1895,11 @@ async def get_shopify_insights(request: Request, range: str = "30d"):
         {
             **p,
             "reason": "Faible ventes",
+            "actions": [
+                "Refaire le titre",
+                "Changer l’image principale",
+                "Ajuster le prix",
+            ]
         }
         for p in product_stats.values()
         if p.get("orders", 0) <= max(1, median_orders // 2)

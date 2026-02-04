@@ -2341,7 +2341,10 @@ export default function Dashboard() {
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">1) Produits “freins”</p>
                 <p className="text-2xl font-bold text-white mt-2">{getInsightCount(insightsData?.blockers)}</p>
                 <p className="text-xs text-gray-400 mt-2">Compare vues → panier → achat. Propose titre, image, prix.</p>
-                {renderInsightItems(insightsData?.blockers, (item) => `${item.title || 'Produit'} — ${item.orders || 0} commandes`)}
+                {renderInsightItems(insightsData?.blockers, (item) => {
+                  const actions = Array.isArray(item.actions) ? item.actions.join(' • ') : ''
+                  return `${item.title || 'Produit'} — ${item.orders || 0} commandes${actions ? ` · ${actions}` : ''}`
+                })}
               </div>
               <div className="bg-gray-800 rounded-xl p-5 border border-gray-700">
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">2) Réécriture intelligente</p>
