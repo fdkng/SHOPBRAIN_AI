@@ -1888,18 +1888,43 @@ async def get_shopify_insights(request: Request, range: str = "30d"):
         inventory_map[pid] = inventory
         images_map[pid] = product.get("images", []) or []
 
-    # Blockers: low orders vs median
+    # Blockers: low orders vs median (orders-based proxy for conversion signals)
     order_counts = [p.get("orders", 0) for p in product_stats.values()]
     median_orders = sorted(order_counts)[len(order_counts) // 2] if order_counts else 0
+
+    def _classify_blocker(stats: dict, median: int):
+        orders_count = stats.get("orders", 0)
+        revenue = stats.get("revenue", 0)
+        inventory = inventory_map.get(stats.get("product_id"), 0)
+        if orders_count <= max(1, median // 3):
+            return "Sous-performant critique"
+        if orders_count <= max(1, median // 2):
+            return "Attractif mais non convaincant"
+        if inventory > 50 and orders_count < max(1, median // 2):
+            return "Hésitant"
+        if revenue > 0 and orders_count <= max(1, median // 2):
+            return "Opportunité"
+        return "À surveiller"
+
     blockers = [
         {
             **p,
-            "reason": "Faible ventes",
+            "category": _classify_blocker(p, median_orders),
+            "reason": "Sous-performance vs moyenne",
+            "signals": {
+                "orders": p.get("orders", 0),
+                "revenue": p.get("revenue", 0),
+                "inventory": inventory_map.get(p.get("product_id"), 0),
+                "benchmark": {"median_orders": median_orders}
+            },
             "actions": [
                 "Refaire le titre",
+                "Optimiser la description",
                 "Changer l’image principale",
                 "Ajuster le prix",
-            ]
+                "Ajouter preuve sociale",
+            ],
+            "data_basis": "orders_only"
         }
         for p in product_stats.values()
         if p.get("orders", 0) <= max(1, median_orders // 2)
