@@ -93,6 +93,7 @@ export default function Dashboard() {
   const [apiKeys, setApiKeys] = useState([])
   const [apiLoading, setApiLoading] = useState(false)
   const [applyingRecommendationId, setApplyingRecommendationId] = useState(null)
+  const [applyingBlockerActionId, setApplyingBlockerActionId] = useState(null)
   const [statusByKey, setStatusByKey] = useState({})
   const [pendingRevokeKeyId, setPendingRevokeKeyId] = useState(null)
   const [pendingCancelSubscription, setPendingCancelSubscription] = useState(false)
@@ -1264,7 +1265,7 @@ export default function Dashboard() {
         return
       }
 
-      const response = await fetch(`${API_URL}/api/shopify/insights?range=${rangeValue}`, {
+      const response = await fetch(`${API_URL}/api/shopify/blockers?range=${rangeValue}`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
@@ -1281,13 +1282,57 @@ export default function Dashboard() {
       if (data.success) {
         setInsightsData(data)
       } else {
-        setInsightsError('Insights indisponibles')
+        setInsightsError('Analyse indisponible')
       }
     } catch (err) {
       console.error('Error loading insights:', err)
       setInsightsError(err.message)
     } finally {
       setInsightsLoading(false)
+    }
+  }
+
+  const handleApplyBlockerAction = async (productId, action) => {
+    const plan = String(subscription?.plan || '').toLowerCase()
+    if (!['pro', 'premium'].includes(plan)) {
+      setStatus('blockers', 'warning', 'Fonctionnalité réservée aux plans Pro/Premium')
+      return
+    }
+
+    try {
+      setApplyingBlockerActionId(`${productId}-${action.type}`)
+      const { data: { session } } = await supabase.auth.getSession()
+
+      if (!session) {
+        setStatus('blockers', 'error', 'Session expirée, reconnectez-vous')
+        return
+      }
+
+      const response = await fetch(`${API_URL}/api/shopify/blockers/apply`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          product_id: productId,
+          action_type: action.type,
+          suggested_price: action.suggested_price
+        })
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.detail || `HTTP ${response.status}`)
+      }
+
+      setStatus('blockers', 'success', 'Action appliquée sur Shopify')
+      loadInsights()
+    } catch (err) {
+      console.error('Error applying blocker action:', err)
+      setStatus('blockers', 'error', err.message)
+    } finally {
+      setApplyingBlockerActionId(null)
     }
   }
 
@@ -2327,52 +2372,25 @@ export default function Dashboard() {
                 <div>
                   <p className="text-xs uppercase tracking-[0.3em] text-gray-400">Section 1</p>
                   <h3 className="text-white text-2xl font-bold mt-2">Produits sous-performants</h3>
-                  <p className="text-sm text-gray-400 mt-1">Détection automatique des fiches qui cassent la conversion et actions proposées.</p>
+                  <p className="text-sm text-gray-400 mt-1">Analyse automatique des ventes Shopify et actions proposées.</p>
                 </div>
                 <div className="text-xs text-gray-500">Signaux: {getInsightCount(insightsData?.blockers)}</div>
               </div>
 
-              <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4 text-sm text-gray-300">
-                <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500 mb-2">Problème actuel</p>
-                  <ul className="space-y-2">
-                    <li>Beaucoup de vues mais peu d’ajouts au panier.</li>
-                    <li>Beaucoup d’ATC mais peu de ventes.</li>
-                    <li>Prix mal positionné, fiche peu convaincante, preuves sociales manquantes.</li>
-                  </ul>
+              {insightsData?.notes?.length > 0 && (
+                <div className="mt-4 text-xs text-gray-500 space-y-1">
+                  {insightsData.notes.map((note, idx) => (
+                    <div key={idx}>• {note}</div>
+                  ))}
                 </div>
-                <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500 mb-2">Solution ShopBrainAI</p>
-                  <ul className="space-y-2">
-                    <li>Analyse automatique par produit (période sélectionnée).</li>
-                    <li>Détecte les anomalies vs moyenne du store.</li>
-                    <li>Classement en catégories et actions prioritaires.</li>
-                  </ul>
-                </div>
-              </div>
-
-              <div className="mt-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-                {[
-                  { title: 'Attractif mais non convaincant', desc: 'Beaucoup de vues, peu d’ATC.' },
-                  { title: 'Hésitant', desc: 'Beaucoup d’ATC, peu de ventes.' },
-                  { title: 'Sous‑performant critique', desc: 'Pire que la moyenne du store.' },
-                  { title: 'Opportunité', desc: 'Optimisations simples, gros gain.' }
-                ].map((item) => (
-                  <div key={item.title} className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
-                    <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Catégorie</p>
-                    <p className="text-white font-semibold mt-2">{item.title}</p>
-                    <p className="text-xs text-gray-500 mt-2">{item.desc}</p>
-                  </div>
-                ))}
-              </div>
+              )}
 
               <div className="mt-5 overflow-hidden border border-gray-700 rounded-xl">
                 <div className="grid grid-cols-12 gap-2 bg-gray-900/70 text-xs uppercase tracking-[0.2em] text-gray-500 px-4 py-3">
-                  <div className="col-span-4">Produit</div>
-                  <div className="col-span-2">Score</div>
+                  <div className="col-span-5">Produit</div>
                   <div className="col-span-2">Commandes</div>
                   <div className="col-span-2">Revenus</div>
-                  <div className="col-span-2">Actions</div>
+                  <div className="col-span-3">Actions</div>
                 </div>
                 {insightsLoading ? (
                   <div className="px-4 py-4 text-sm text-gray-500">Chargement...</div>
@@ -2381,51 +2399,37 @@ export default function Dashboard() {
                 ) : (
                   insightsData.blockers.slice(0, 8).map((item) => (
                     <div key={item.product_id || item.title} className="grid grid-cols-12 gap-2 px-4 py-3 border-t border-gray-800 text-sm text-gray-200">
-                      <div className="col-span-4">
+                      <div className="col-span-5">
                         <div className="font-semibold text-white">{item.title || 'Produit'}</div>
-                        <div className="text-xs text-gray-500">Catégorie: {item.category || 'À surveiller'}</div>
-                        <div className="text-xs text-gray-500">Raison: {item.reason || 'Sous-performance ventes'}</div>
-                      </div>
-                      <div className="col-span-2 text-gray-300">
-                        <div className="text-white font-semibold">{item.score ?? '—'}</div>
-                        <div className="text-xs text-gray-500">/100</div>
+                        <div className="text-xs text-gray-500">Score: {item.score ?? '—'} • Stock: {item.inventory ?? 0}</div>
                       </div>
                       <div className="col-span-2 text-gray-300">{item.orders || 0}</div>
                       <div className="col-span-2 text-gray-300">{formatCurrency(item.revenue || 0, insightsData?.currency || 'EUR')}</div>
-                      <div className="col-span-2 flex flex-wrap gap-2">
-                        <button
-                          onClick={() => handleApplyRecommendation(item.product_id, 'titre')}
-                          className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-white"
-                          disabled={applyingRecommendationId === `${item.product_id}-titre`}
-                        >
-                          Titre
-                        </button>
-                        <button
-                          onClick={() => handleApplyRecommendation(item.product_id, 'prix')}
-                          className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-white"
-                          disabled={applyingRecommendationId === `${item.product_id}-prix`}
-                        >
-                          Prix
-                        </button>
-                        {shopifyUrl && item.product_id && (
-                          <a
-                            href={`https://${shopifyUrl}/admin/products/${item.product_id}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-white"
-                          >
-                            Image
-                          </a>
+                      <div className="col-span-3 flex flex-wrap gap-2">
+                        {item.actions?.length ? item.actions.map((action) => (
+                          action.can_apply ? (
+                            <button
+                              key={action.type}
+                              onClick={() => handleApplyBlockerAction(item.product_id, action)}
+                              className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-white"
+                              disabled={applyingBlockerActionId === `${item.product_id}-${action.type}`}
+                            >
+                              {action.label}
+                            </button>
+                          ) : (
+                            <span key={action.type} className="px-2 py-1 rounded bg-gray-900/70 text-xs text-gray-400">
+                              {action.label}
+                            </span>
+                          )
+                        )) : (
+                          <span className="text-xs text-gray-500">Aucune action</span>
                         )}
                       </div>
                     </div>
                   ))
                 )}
               </div>
-
-              <div className="mt-3 text-xs text-gray-500">
-                Décisions proposées: ajuster le prix, améliorer le titre/description, optimiser les images, renforcer la preuve sociale.
-              </div>
+              {renderStatus('blockers')}
             </div>
           </div>
         )}

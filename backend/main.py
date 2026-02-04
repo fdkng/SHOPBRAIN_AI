@@ -1684,6 +1684,19 @@ def _parse_shopify_next_link(link_header: str | None) -> str | None:
     return None
 
 
+def _strip_html(text: str) -> str:
+    if not text:
+        return ""
+    return re.sub(r"<[^>]+>", " ", text).replace("&nbsp;", " ").strip()
+
+
+def _safe_float(value, default=0.0):
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
 def _fetch_shopify_orders(shop_domain: str, access_token: str, range_days: int = 30):
     start_date = (datetime.utcnow() - timedelta(days=range_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
     headers = {
@@ -2104,6 +2117,278 @@ def _invoice_strings(language: str) -> dict:
     if language == "fr":
         return {
             "title": "Facture officielle",
+
+
+    @app.get("/api/shopify/blockers")
+    async def get_shopify_blockers(request: Request, range: str = "30d", limit: int = 12):
+        """🔎 Détecte les produits qui cassent la conversion (basé sur données de ventes réelles)."""
+        user_id = get_user_id(request)
+        tier = get_user_tier(user_id)
+        ensure_feature_allowed(tier, "product_analysis")
+
+        shop_domain, access_token = _get_shopify_connection(user_id)
+
+        range_map = {
+            "7d": 7,
+            "30d": 30,
+            "90d": 90,
+            "365d": 365,
+        }
+        days = range_map.get(range, 30)
+        start_date = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        headers = {
+            "X-Shopify-Access-Token": access_token,
+            "Content-Type": "application/json",
+        }
+
+        orders = []
+        next_url = (
+            f"https://{shop_domain}/admin/api/2024-10/orders.json"
+            f"?status=any&created_at_min={start_date}&limit=250"
+            f"&fields=id,created_at,total_price,financial_status,currency,line_items"
+        )
+        page_count = 0
+
+        while next_url and page_count < 4:
+            response = requests.get(next_url, headers=headers, timeout=30)
+            if response.status_code == 401:
+                raise HTTPException(status_code=401, detail="Token Shopify expiré ou invalide. Reconnectez-vous.")
+            if response.status_code != 200:
+                raise HTTPException(status_code=response.status_code, detail=f"Erreur Shopify: {response.text[:300]}")
+            data = response.json()
+            orders.extend(data.get("orders", []))
+            next_url = _parse_shopify_next_link(response.headers.get("Link"))
+            page_count += 1
+
+        product_stats = {}
+        for order in orders:
+            status = (order.get("financial_status") or "").lower()
+            if status in {"voided"}:
+                continue
+            order_id = order.get("id")
+            for item in order.get("line_items", []) or []:
+                product_id = item.get("product_id")
+                if not product_id:
+                    continue
+                qty = item.get("quantity", 0) or 0
+                price = _safe_float(item.get("price"), 0.0)
+                revenue = qty * price
+                stat = product_stats.setdefault(
+                    str(product_id),
+                    {"order_ids": set(), "quantity": 0, "revenue": 0.0},
+                )
+                if order_id:
+                    stat["order_ids"].add(order_id)
+                stat["quantity"] += qty
+                stat["revenue"] += revenue
+
+        product_ids = list(product_stats.keys())
+        if not product_ids:
+            return {
+                "success": True,
+                "shop": shop_domain,
+                "range": range,
+                "currency": None,
+                "blockers": [],
+                "notes": ["Aucune vente sur la période sélectionnée."],
+            }
+
+        products_by_id = {}
+        batch_size = 50
+        for i in range(0, len(product_ids), batch_size):
+            batch_ids = ",".join(product_ids[i : i + batch_size])
+            products_url = (
+                f"https://{shop_domain}/admin/api/2024-10/products.json"
+                f"?ids={batch_ids}&fields=id,title,body_html,images,variants,product_type,vendor,status"
+            )
+            response = requests.get(products_url, headers=headers, timeout=30)
+            if response.status_code != 200:
+                raise HTTPException(status_code=response.status_code, detail=f"Erreur Shopify: {response.text[:300]}")
+            for product in response.json().get("products", []):
+                products_by_id[str(product.get("id"))] = product
+
+        currency = None
+        for order in orders:
+            if order.get("currency"):
+                currency = order.get("currency")
+                break
+
+        total_orders = 0
+        total_revenue = 0.0
+        total_price = 0.0
+        price_count = 0
+
+        for product_id, stat in product_stats.items():
+            orders_count = len(stat["order_ids"])
+            total_orders += orders_count
+            total_revenue += stat["revenue"]
+            product = products_by_id.get(product_id, {})
+            variants = product.get("variants", []) or []
+            if variants:
+                total_price += _safe_float(variants[0].get("price"), 0.0)
+                price_count += 1
+
+        avg_orders = total_orders / len(product_stats) if product_stats else 0
+        avg_revenue = total_revenue / len(product_stats) if product_stats else 0
+        avg_price = total_price / price_count if price_count else 0
+
+        blockers = []
+        for product_id, stat in product_stats.items():
+            product = products_by_id.get(product_id, {})
+            orders_count = len(stat["order_ids"])
+            revenue = stat["revenue"]
+            quantity = stat["quantity"]
+            variants = product.get("variants", []) or []
+            price_current = _safe_float(variants[0].get("price"), 0.0) if variants else 0.0
+            inventory_total = sum(v.get("inventory_quantity", 0) or 0 for v in variants) if variants else 0
+            images_count = len(product.get("images", []) or [])
+            title = product.get("title") or ""
+            description_text = _strip_html(product.get("body_html") or "")
+            description_len = len(description_text)
+
+            score = 0
+            if orders_count <= 1:
+                score += 2
+            if avg_orders and orders_count < avg_orders * 0.4:
+                score += 1
+            if avg_revenue and revenue < avg_revenue * 0.4:
+                score += 1
+            if description_len < 120:
+                score += 1
+            if images_count < 2:
+                score += 1
+            if avg_price and price_current > avg_price * 1.3 and orders_count < avg_orders:
+                score += 1
+            if inventory_total > 20 and avg_orders and orders_count < avg_orders * 0.3:
+                score += 1
+
+            if score < 2:
+                continue
+
+            actions = []
+            if description_len < 120:
+                actions.append({
+                    "type": "description",
+                    "label": "Réécrire la description",
+                    "reason": f"Description courte ({description_len} caractères)",
+                    "can_apply": True,
+                })
+            if len(title) < 20 or len(title) > 70:
+                actions.append({
+                    "type": "title",
+                    "label": "Optimiser le titre",
+                    "reason": f"Titre {len(title)} caractères",
+                    "can_apply": True,
+                })
+            if avg_price and price_current > avg_price * 1.3 and orders_count < avg_orders:
+                suggested_price = round(price_current * 0.9, 2)
+                actions.append({
+                    "type": "price",
+                    "label": f"Baisser le prix à {suggested_price}",
+                    "reason": "Prix élevé vs moyenne boutique",
+                    "can_apply": True,
+                    "suggested_price": suggested_price,
+                })
+            if images_count < 2:
+                actions.append({
+                    "type": "image",
+                    "label": "Ajouter des images",
+                    "reason": "Moins de 2 images",
+                    "can_apply": False,
+                })
+
+            blockers.append({
+                "product_id": product_id,
+                "title": title or f"Produit {product_id}",
+                "orders": orders_count,
+                "quantity": quantity,
+                "revenue": round(revenue, 2),
+                "price": price_current,
+                "inventory": inventory_total,
+                "images": images_count,
+                "score": score,
+                "actions": actions,
+            })
+
+        blockers.sort(key=lambda item: (item["score"], -item["revenue"]), reverse=True)
+
+        return {
+            "success": True,
+            "shop": shop_domain,
+            "range": range,
+            "currency": currency,
+            "blockers": blockers[: max(1, min(limit, 50))],
+            "notes": [
+                "Analyse basée sur les ventes réelles Shopify (commandes, revenus, catalogue).",
+                "Les vues et ajouts au panier ne sont pas exposés via l'API Admin Shopify par défaut.",
+            ],
+        }
+
+
+    class BlockerApplyRequest(BaseModel):
+        product_id: str
+        action_type: str
+        suggested_price: float | None = None
+
+
+    @app.post("/api/shopify/blockers/apply")
+    async def apply_blocker_action(req: BlockerApplyRequest, request: Request):
+        """⚡ Applique une action sur un produit frein (Pro/Premium)."""
+        user_id = get_user_id(request)
+        tier = get_user_tier(user_id)
+        if tier not in {"pro", "premium"}:
+            raise HTTPException(status_code=403, detail="Fonctionnalité réservée aux plans Pro/Premium")
+
+        shop_domain, access_token = _get_shopify_connection(user_id)
+        headers = {
+            "X-Shopify-Access-Token": access_token,
+            "Content-Type": "application/json",
+        }
+
+        product_resp = requests.get(
+            f"https://{shop_domain}/admin/api/2024-01/products/{req.product_id}.json",
+            headers=headers,
+            timeout=30,
+        )
+        if product_resp.status_code != 200:
+            raise HTTPException(status_code=product_resp.status_code, detail=f"Erreur Shopify: {product_resp.text[:300]}")
+        product = product_resp.json().get("product", {})
+
+        from AI_engine.action_engine import ActionEngine
+        action_engine = ActionEngine(shop_domain, access_token)
+
+        action_type = (req.action_type or "").lower()
+        if action_type == "price":
+            variants = product.get("variants", []) or []
+            if not variants:
+                raise HTTPException(status_code=400, detail="Produit sans variantes")
+            current_price = _safe_float(variants[0].get("price"), 0.0)
+            if current_price <= 0:
+                raise HTTPException(status_code=400, detail="Prix actuel invalide")
+            new_price = req.suggested_price if req.suggested_price else round(current_price * 0.9, 2)
+            result = action_engine.apply_price_change(req.product_id, new_price)
+            if not result.get("success"):
+                raise HTTPException(status_code=400, detail=result.get("error", "Échec modification prix"))
+            return {"success": True, "action": "price", "new_price": new_price}
+
+        if action_type == "title":
+            engine = get_ai_engine()
+            new_title = engine.content_gen.generate_title(product, tier)
+            result = action_engine.update_product_content(req.product_id, title=new_title)
+            if not result.get("success"):
+                raise HTTPException(status_code=400, detail=result.get("error", "Échec modification titre"))
+            return {"success": True, "action": "title", "new_title": new_title}
+
+        if action_type == "description":
+            engine = get_ai_engine()
+            new_description = engine.content_gen.generate_description(product, tier)
+            result = action_engine.update_product_content(req.product_id, description=new_description)
+            if not result.get("success"):
+                raise HTTPException(status_code=400, detail=result.get("error", "Échec modification description"))
+            return {"success": True, "action": "description"}
+
+        raise HTTPException(status_code=400, detail="Action non supportée")
             "invoice": "Facture",
             "date": "Date",
             "order": "Commande",
