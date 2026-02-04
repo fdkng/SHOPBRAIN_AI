@@ -2368,10 +2368,11 @@ export default function Dashboard() {
 
               <div className="mt-5 overflow-hidden border border-gray-700 rounded-xl">
                 <div className="grid grid-cols-12 gap-2 bg-gray-900/70 text-xs uppercase tracking-[0.2em] text-gray-500 px-4 py-3">
-                  <div className="col-span-5">Produit</div>
+                  <div className="col-span-4">Produit</div>
+                  <div className="col-span-2">Score</div>
                   <div className="col-span-2">Commandes</div>
                   <div className="col-span-2">Revenus</div>
-                  <div className="col-span-3">Actions</div>
+                  <div className="col-span-2">Actions</div>
                 </div>
                 {insightsLoading ? (
                   <div className="px-4 py-4 text-sm text-gray-500">Chargement...</div>
@@ -2380,14 +2381,18 @@ export default function Dashboard() {
                 ) : (
                   insightsData.blockers.slice(0, 8).map((item) => (
                     <div key={item.product_id || item.title} className="grid grid-cols-12 gap-2 px-4 py-3 border-t border-gray-800 text-sm text-gray-200">
-                      <div className="col-span-5">
+                      <div className="col-span-4">
                         <div className="font-semibold text-white">{item.title || 'Produit'}</div>
                         <div className="text-xs text-gray-500">Catégorie: {item.category || 'À surveiller'}</div>
                         <div className="text-xs text-gray-500">Raison: {item.reason || 'Sous-performance ventes'}</div>
                       </div>
+                      <div className="col-span-2 text-gray-300">
+                        <div className="text-white font-semibold">{item.score ?? '—'}</div>
+                        <div className="text-xs text-gray-500">/100</div>
+                      </div>
                       <div className="col-span-2 text-gray-300">{item.orders || 0}</div>
                       <div className="col-span-2 text-gray-300">{formatCurrency(item.revenue || 0, insightsData?.currency || 'EUR')}</div>
-                      <div className="col-span-3 flex flex-wrap gap-2">
+                      <div className="col-span-2 flex flex-wrap gap-2">
                         <button
                           onClick={() => handleApplyRecommendation(item.product_id, 'titre')}
                           className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-white"

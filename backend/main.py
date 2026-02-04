@@ -1906,10 +1906,26 @@ async def get_shopify_insights(request: Request, range: str = "30d"):
             return "Opportunité"
         return "À surveiller"
 
+    def _score_blocker(stats: dict, median: int):
+        orders_count = stats.get("orders", 0)
+        revenue = stats.get("revenue", 0)
+        inventory = inventory_map.get(stats.get("product_id"), 0)
+        score = 100
+        if orders_count <= max(1, median // 3):
+            score -= 40
+        elif orders_count <= max(1, median // 2):
+            score -= 25
+        if revenue <= 0:
+            score -= 15
+        if inventory > 50:
+            score -= 10
+        return max(0, min(100, score))
+
     blockers = [
         {
             **p,
             "category": _classify_blocker(p, median_orders),
+            "score": _score_blocker(p, median_orders),
             "reason": "Sous-performance vs moyenne",
             "signals": {
                 "orders": p.get("orders", 0),
