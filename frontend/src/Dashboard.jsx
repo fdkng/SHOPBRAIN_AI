@@ -1419,7 +1419,7 @@ export default function Dashboard() {
   }
 
   useEffect(() => {
-    if (activeTab === 'overview' || activeTab === 'insights') {
+    if (activeTab === 'overview' || activeTab === 'underperforming') {
       loadAnalytics(analyticsRange)
       loadInsights(analyticsRange)
     }
@@ -1690,6 +1690,7 @@ export default function Dashboard() {
           <nav className="flex flex-col gap-1">
             {[
               { key: 'overview', label: 'Vue d\'ensemble' },
+              { key: 'underperforming', label: 'Produits sous-performants' },
               { key: 'invoices', label: 'Facturation' },
               { key: 'ai', label: 'Analyse IA' },
               { key: 'analysis', label: 'Résultats' }
@@ -2314,6 +2315,112 @@ export default function Dashboard() {
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* Underperforming Products Tab */}
+        {activeTab === 'underperforming' && (
+          <div className="space-y-6">
+            <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.3em] text-gray-400">Section 1</p>
+                  <h3 className="text-white text-2xl font-bold mt-2">Produits sous-performants</h3>
+                  <p className="text-sm text-gray-400 mt-1">Détection automatique des fiches qui cassent la conversion et actions proposées.</p>
+                </div>
+                <div className="text-xs text-gray-500">Signaux: {getInsightCount(insightsData?.blockers)}</div>
+              </div>
+
+              <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4 text-sm text-gray-300">
+                <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500 mb-2">Problème actuel</p>
+                  <ul className="space-y-2">
+                    <li>Beaucoup de vues mais peu d’ajouts au panier.</li>
+                    <li>Beaucoup d’ATC mais peu de ventes.</li>
+                    <li>Prix mal positionné, fiche peu convaincante, preuves sociales manquantes.</li>
+                  </ul>
+                </div>
+                <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500 mb-2">Solution ShopBrainAI</p>
+                  <ul className="space-y-2">
+                    <li>Analyse automatique par produit (période sélectionnée).</li>
+                    <li>Détecte les anomalies vs moyenne du store.</li>
+                    <li>Classement en catégories et actions prioritaires.</li>
+                  </ul>
+                </div>
+              </div>
+
+              <div className="mt-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                {[
+                  { title: 'Attractif mais non convaincant', desc: 'Beaucoup de vues, peu d’ATC.' },
+                  { title: 'Hésitant', desc: 'Beaucoup d’ATC, peu de ventes.' },
+                  { title: 'Sous‑performant critique', desc: 'Pire que la moyenne du store.' },
+                  { title: 'Opportunité', desc: 'Optimisations simples, gros gain.' }
+                ].map((item) => (
+                  <div key={item.title} className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
+                    <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Catégorie</p>
+                    <p className="text-white font-semibold mt-2">{item.title}</p>
+                    <p className="text-xs text-gray-500 mt-2">{item.desc}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-5 overflow-hidden border border-gray-700 rounded-xl">
+                <div className="grid grid-cols-12 gap-2 bg-gray-900/70 text-xs uppercase tracking-[0.2em] text-gray-500 px-4 py-3">
+                  <div className="col-span-5">Produit</div>
+                  <div className="col-span-2">Commandes</div>
+                  <div className="col-span-2">Revenus</div>
+                  <div className="col-span-3">Actions</div>
+                </div>
+                {insightsLoading ? (
+                  <div className="px-4 py-4 text-sm text-gray-500">Chargement...</div>
+                ) : (!insightsData?.blockers || insightsData.blockers.length === 0) ? (
+                  <div className="px-4 py-4 text-sm text-gray-500">Aucun produit frein détecté sur cette période.</div>
+                ) : (
+                  insightsData.blockers.slice(0, 8).map((item) => (
+                    <div key={item.product_id || item.title} className="grid grid-cols-12 gap-2 px-4 py-3 border-t border-gray-800 text-sm text-gray-200">
+                      <div className="col-span-5">
+                        <div className="font-semibold text-white">{item.title || 'Produit'}</div>
+                        <div className="text-xs text-gray-500">Catégorie: {item.category || 'À surveiller'}</div>
+                        <div className="text-xs text-gray-500">Raison: {item.reason || 'Sous-performance ventes'}</div>
+                      </div>
+                      <div className="col-span-2 text-gray-300">{item.orders || 0}</div>
+                      <div className="col-span-2 text-gray-300">{formatCurrency(item.revenue || 0, insightsData?.currency || 'EUR')}</div>
+                      <div className="col-span-3 flex flex-wrap gap-2">
+                        <button
+                          onClick={() => handleApplyRecommendation(item.product_id, 'titre')}
+                          className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-white"
+                          disabled={applyingRecommendationId === `${item.product_id}-titre`}
+                        >
+                          Titre
+                        </button>
+                        <button
+                          onClick={() => handleApplyRecommendation(item.product_id, 'prix')}
+                          className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-white"
+                          disabled={applyingRecommendationId === `${item.product_id}-prix`}
+                        >
+                          Prix
+                        </button>
+                        {shopifyUrl && item.product_id && (
+                          <a
+                            href={`https://${shopifyUrl}/admin/products/${item.product_id}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-white"
+                          >
+                            Image
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="mt-3 text-xs text-gray-500">
+                Décisions proposées: ajuster le prix, améliorer le titre/description, optimiser les images, renforcer la preuve sociale.
+              </div>
             </div>
           </div>
         )}
