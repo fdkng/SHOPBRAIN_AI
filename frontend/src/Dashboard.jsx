@@ -106,6 +106,8 @@ export default function Dashboard() {
   const [insightsData, setInsightsData] = useState(null)
   const [insightsLoading, setInsightsLoading] = useState(false)
   const [insightsError, setInsightsError] = useState('')
+  const [blockersData, setBlockersData] = useState(null)
+  const [blockersLoading, setBlockersLoading] = useState(false)
   const [customers, setCustomers] = useState([])
   const [customersLoading, setCustomersLoading] = useState(false)
   const [invoiceCustomerId, setInvoiceCustomerId] = useState('')
@@ -1265,7 +1267,7 @@ export default function Dashboard() {
         return
       }
 
-      const response = await fetch(`${API_URL}/api/shopify/blockers?range=${rangeValue}`, {
+      const response = await fetch(`${API_URL}/api/shopify/insights?range=${rangeValue}`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
@@ -1289,6 +1291,44 @@ export default function Dashboard() {
       setInsightsError(err.message)
     } finally {
       setInsightsLoading(false)
+    }
+  }
+
+  const loadBlockers = async (rangeOverride) => {
+    try {
+      const rangeValue = rangeOverride || analyticsRange
+      setBlockersLoading(true)
+      const { data: { session } } = await supabase.auth.getSession()
+
+      if (!session) {
+        setStatus('blockers', 'error', 'Session expirée, reconnectez-vous')
+        return
+      }
+
+      const response = await fetch(`${API_URL}/api/shopify/blockers?range=${rangeValue}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        }
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.detail || `HTTP ${response.status}`)
+      }
+
+      const data = await response.json()
+      if (data.success) {
+        setBlockersData(data)
+      } else {
+        setStatus('blockers', 'error', 'Analyse indisponible')
+      }
+    } catch (err) {
+      console.error('Error loading blockers:', err)
+      setStatus('blockers', 'error', err.message)
+    } finally {
+      setBlockersLoading(false)
     }
   }
 
@@ -1327,7 +1367,7 @@ export default function Dashboard() {
       }
 
       setStatus('blockers', 'success', 'Action appliquée sur Shopify')
-      loadInsights()
+      loadBlockers()
     } catch (err) {
       console.error('Error applying blocker action:', err)
       setStatus('blockers', 'error', err.message)
@@ -1467,6 +1507,7 @@ export default function Dashboard() {
     if (activeTab === 'overview' || activeTab === 'underperforming') {
       loadAnalytics(analyticsRange)
       loadInsights(analyticsRange)
+      loadBlockers(analyticsRange)
     }
   }, [activeTab, analyticsRange])
 
@@ -2004,9 +2045,42 @@ export default function Dashboard() {
                 </div>
                 <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
                   <p className="text-xs uppercase tracking-[0.2em] text-gray-500">2) Réécriture continue</p>
-                  <p className="text-2xl font-bold text-white mt-2">{insightsLoading ? '…' : getInsightCount(insightsData?.blockers)}</p>
+                  <p className="text-2xl font-bold text-white mt-2">{insightsLoading ? '…' : getInsightCount(insightsData?.rewrite_opportunities)}</p>
                   <p className="text-xs text-gray-400 mt-2">IA réécrit titres/descriptions selon performance (hebdo/mensuel).</p>
                   <p className="text-xs text-gray-500 mt-2">Ex: CTR bas → nouvelle accroche + bénéfices clairs.</p>
+                  {insightsLoading ? (
+                    <p className="text-xs text-gray-500 mt-2">Chargement...</p>
+                  ) : (!Array.isArray(insightsData?.rewrite_opportunities) || insightsData.rewrite_opportunities.length === 0) ? (
+                    <p className="text-xs text-gray-500 mt-2">Aucun signal détecté.</p>
+                  ) : (
+                    <ul className="mt-2 space-y-2 text-xs text-gray-400">
+                      {insightsData.rewrite_opportunities.slice(0, 3).map((item, index) => (
+                        <li key={index} className="flex items-center justify-between gap-2">
+                          <span>{item.title || 'Produit'} — {(item.reasons || []).join(', ')}</span>
+                          <div className="flex gap-2">
+                            {(item.recommendations || []).includes('title') && (
+                              <button
+                                onClick={() => handleApplyBlockerAction(item.product_id, { type: 'title' })}
+                                className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-[11px] text-white"
+                                disabled={applyingBlockerActionId === `${item.product_id}-title`}
+                              >
+                                Titre
+                              </button>
+                            )}
+                            {(item.recommendations || []).includes('description') && (
+                              <button
+                                onClick={() => handleApplyBlockerAction(item.product_id, { type: 'description' })}
+                                className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-[11px] text-white"
+                                disabled={applyingBlockerActionId === `${item.product_id}-description`}
+                              >
+                                Description
+                              </button>
+                            )}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
                 <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
                   <p className="text-xs uppercase tracking-[0.2em] text-gray-500">3) Optimisation prix</p>
@@ -2374,12 +2448,12 @@ export default function Dashboard() {
                   <h3 className="text-white text-2xl font-bold mt-2">Produits sous-performants</h3>
                   <p className="text-sm text-gray-400 mt-1">Analyse automatique des ventes Shopify et actions proposées.</p>
                 </div>
-                <div className="text-xs text-gray-500">Signaux: {getInsightCount(insightsData?.blockers)}</div>
+                <div className="text-xs text-gray-500">Signaux: {getInsightCount(blockersData?.blockers)}</div>
               </div>
 
-              {insightsData?.notes?.length > 0 && (
+              {blockersData?.notes?.length > 0 && (
                 <div className="mt-4 text-xs text-gray-500 space-y-1">
-                  {insightsData.notes.map((note, idx) => (
+                  {blockersData.notes.map((note, idx) => (
                     <div key={idx}>• {note}</div>
                   ))}
                 </div>
@@ -2391,12 +2465,12 @@ export default function Dashboard() {
                   <div className="col-span-3">Commandes</div>
                   <div className="col-span-3">Actions</div>
                 </div>
-                {insightsLoading ? (
+                {blockersLoading ? (
                   <div className="px-4 py-4 text-sm text-gray-500">Chargement...</div>
-                ) : (!insightsData?.blockers || insightsData.blockers.length === 0) ? (
+                ) : (!blockersData?.blockers || blockersData.blockers.length === 0) ? (
                   <div className="px-4 py-4 text-sm text-gray-500">Aucun produit frein détecté sur cette période.</div>
                 ) : (
-                  insightsData.blockers.slice(0, 8).map((item) => (
+                  blockersData.blockers.slice(0, 8).map((item) => (
                     <div key={item.product_id || item.title} className="grid grid-cols-12 gap-2 px-4 py-3 border-t border-gray-800 text-sm text-gray-200">
                       <div className="col-span-6">
                         <div className="font-semibold text-white">{item.title || 'Produit'}</div>

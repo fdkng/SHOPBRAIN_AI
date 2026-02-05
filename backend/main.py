@@ -1915,6 +1915,7 @@ async def get_shopify_insights(request: Request, range: str = "30d"):
 
     inventory_map = {}
     images_map = {}
+    content_map = {}
     for product in products:
         pid = str(product.get("id"))
         inventory = 0
@@ -1922,6 +1923,13 @@ async def get_shopify_insights(request: Request, range: str = "30d"):
             inventory += int(variant.get("inventory_quantity") or 0)
         inventory_map[pid] = inventory
         images_map[pid] = product.get("images", []) or []
+        title = product.get("title") or ""
+        description_text = _strip_html(product.get("body_html") or "")
+        content_map[pid] = {
+            "title": title,
+            "title_len": len(title),
+            "description_len": len(description_text),
+        }
 
     # Blockers: low orders vs median (orders-based proxy for conversion signals)
     order_counts = [p.get("orders", 0) for p in product_stats.values()]
@@ -2025,6 +2033,44 @@ async def get_shopify_insights(request: Request, range: str = "30d"):
                 "suggestion": "Augmenter le prix de 3-7%",
             })
 
+    # Rewrite opportunities: low performance + weak content signals
+    rewrite_opportunities = []
+    for pid, stats in product_stats.items():
+        orders_count = stats.get("orders", 0)
+        revenue = stats.get("revenue", 0)
+        content = content_map.get(pid, {})
+        title_len = content.get("title_len", 0)
+        description_len = content.get("description_len", 0)
+
+        reasons = []
+        if orders_count <= max(1, median_orders // 2):
+            reasons.append("Sous-performance vs moyenne")
+        if revenue <= 0:
+            reasons.append("Aucune vente")
+        if description_len < 120:
+            reasons.append("Description courte")
+        if title_len < 20 or title_len > 70:
+            reasons.append("Titre à optimiser")
+
+        if not reasons:
+            continue
+
+        recommendations = []
+        if description_len < 120:
+            recommendations.append("description")
+        if title_len < 20 or title_len > 70:
+            recommendations.append("title")
+
+        if recommendations:
+            rewrite_opportunities.append({
+                "product_id": pid,
+                "title": stats.get("title") or content.get("title") or "Produit",
+                "orders": orders_count,
+                "revenue": round(revenue, 2),
+                "reasons": reasons,
+                "recommendations": recommendations,
+            })
+
     # Bundle suggestions: co-occurrence pairs
     pair_counts = {}
     for order in orders:
@@ -2056,6 +2102,7 @@ async def get_shopify_insights(request: Request, range: str = "30d"):
         "shop": shop_domain,
         "range": range,
         "blockers": blockers,
+        "rewrite_opportunities": rewrite_opportunities[:10],
         "image_risks": image_risks,
         "bundle_suggestions": bundles,
         "stock_risks": stock_risks,
