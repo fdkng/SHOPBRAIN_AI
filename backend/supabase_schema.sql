@@ -85,6 +85,17 @@ CREATE TABLE IF NOT EXISTS action_events (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS shopify_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  shop_domain TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  product_id TEXT,
+  session_id TEXT,
+  user_agent TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id);
 CREATE INDEX IF NOT EXISTS idx_api_keys_key_prefix ON api_keys(key_prefix);
 
@@ -97,12 +108,18 @@ CREATE INDEX IF NOT EXISTS idx_invoice_events_created_at ON invoice_events(creat
 CREATE INDEX IF NOT EXISTS idx_action_events_user_id ON action_events(user_id);
 CREATE INDEX IF NOT EXISTS idx_action_events_created_at ON action_events(created_at);
 
+CREATE INDEX IF NOT EXISTS idx_shopify_events_user_id ON shopify_events(user_id);
+CREATE INDEX IF NOT EXISTS idx_shopify_events_shop_domain ON shopify_events(shop_domain);
+CREATE INDEX IF NOT EXISTS idx_shopify_events_event_type ON shopify_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_shopify_events_created_at ON shopify_events(created_at);
+
 ALTER TABLE products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE subscriptions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_preferences ENABLE ROW LEVEL SECURITY;
 ALTER TABLE invoice_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE action_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE shopify_events ENABLE ROW LEVEL SECURITY;
 
 DO $$
 BEGIN

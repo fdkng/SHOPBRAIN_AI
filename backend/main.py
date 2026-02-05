@@ -1697,6 +1697,28 @@ def _safe_float(value, default=0.0):
         return default
 
 
+def _normalize_shopify_id(raw_id: str | int | None) -> str | None:
+    if raw_id is None:
+        return None
+    if isinstance(raw_id, int):
+        return str(raw_id)
+    value = str(raw_id)
+    if value.isdigit():
+        return value
+    match = re.search(r"(\d+)$", value)
+    return match.group(1) if match else None
+
+
+def _get_user_id_by_shop_domain(shop_domain: str) -> str | None:
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        return None
+    supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    result = supabase.table("shopify_connections").select("user_id").eq("shop_domain", shop_domain).limit(1).execute()
+    if result.data:
+        return result.data[0].get("user_id")
+    return None
+
+
 def _fetch_shopify_orders(shop_domain: str, access_token: str, range_days: int = 30):
     start_date = (datetime.utcnow() - timedelta(days=range_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
     headers = {
@@ -2119,6 +2141,46 @@ def _invoice_strings(language: str) -> dict:
             "title": "Facture officielle",
 
 
+    class PixelEventRequest(BaseModel):
+        shop_domain: str
+        event_type: str
+        product_id: str | None = None
+        session_id: str | None = None
+        user_agent: str | None = None
+
+
+    @app.post("/api/shopify/pixel-event")
+    async def track_shopify_pixel_event(req: PixelEventRequest, request: Request):
+        """📌 Ingestion d'événements Shopify Pixel (view_item, add_to_cart)."""
+        if not req.shop_domain:
+            raise HTTPException(status_code=400, detail="Shop domain requis")
+
+        allowed_events = {"view_item", "add_to_cart", "product_viewed", "product_added_to_cart"}
+        event_type = (req.event_type or "").strip().lower()
+        if event_type not in allowed_events:
+            raise HTTPException(status_code=400, detail="Event non supporté")
+
+        normalized_product_id = _normalize_shopify_id(req.product_id)
+        user_id = _get_user_id_by_shop_domain(req.shop_domain)
+        if not user_id:
+            raise HTTPException(status_code=404, detail="Boutique inconnue")
+
+        if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+            raise HTTPException(status_code=500, detail="Supabase not configured")
+
+        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        payload = {
+            "user_id": user_id,
+            "shop_domain": req.shop_domain,
+            "event_type": event_type,
+            "product_id": normalized_product_id,
+            "session_id": req.session_id,
+            "user_agent": req.user_agent or request.headers.get("user-agent"),
+        }
+        supabase.table("shopify_events").insert(payload).execute()
+        return {"success": True}
+
+
     @app.get("/api/shopify/blockers")
     async def get_shopify_blockers(request: Request, range: str = "30d", limit: int = 12):
         """🔎 Détecte les produits qui cassent la conversion (basé sur données de ventes réelles)."""
@@ -2234,6 +2296,23 @@ def _invoice_strings(language: str) -> dict:
         avg_price = total_price / price_count if price_count else 0
 
         blockers = []
+        events_by_product = {}
+        if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+            try:
+                supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+                events_result = supabase.table("shopify_events").select("event_type,product_id").eq("shop_domain", shop_domain).gte("created_at", start_date).in_("event_type", ["view_item", "add_to_cart", "product_viewed", "product_added_to_cart"]).limit(10000).execute()
+                for row in events_result.data or []:
+                    pid = _normalize_shopify_id(row.get("product_id"))
+                    if not pid:
+                        continue
+                    event = (row.get("event_type") or "").lower()
+                    stat = events_by_product.setdefault(pid, {"views": 0, "add_to_cart": 0})
+                    if event in {"view_item", "product_viewed"}:
+                        stat["views"] += 1
+                    if event in {"add_to_cart", "product_added_to_cart"}:
+                        stat["add_to_cart"] += 1
+            except Exception as e:
+                print(f"Warning: could not load pixel events: {e}")
         for product_id, stat in product_stats.items():
             product = products_by_id.get(product_id, {})
             orders_count = len(stat["order_ids"])
@@ -2298,6 +2377,11 @@ def _invoice_strings(language: str) -> dict:
                     "can_apply": False,
                 })
 
+            event_stat = events_by_product.get(product_id, {"views": 0, "add_to_cart": 0})
+            views = event_stat.get("views", 0)
+            add_to_cart = event_stat.get("add_to_cart", 0)
+            atc_rate = round((add_to_cart / views) * 100, 2) if views else None
+
             blockers.append({
                 "product_id": product_id,
                 "title": title or f"Produit {product_id}",
@@ -2308,10 +2392,20 @@ def _invoice_strings(language: str) -> dict:
                 "inventory": inventory_total,
                 "images": images_count,
                 "score": score,
+                "views": views,
+                "add_to_cart": add_to_cart,
+                "atc_rate": atc_rate,
                 "actions": actions,
             })
 
         blockers.sort(key=lambda item: (item["score"], -item["revenue"]), reverse=True)
+
+        notes = [
+            "Analyse basée sur les ventes réelles Shopify (commandes, revenus, catalogue).",
+            "Les vues et ajouts au panier proviennent du Pixel ShopBrain si installé.",
+        ]
+        if not events_by_product:
+            notes.append("Aucun événement Pixel détecté — installe le Pixel ShopBrain pour vues/ATC.")
 
         return {
             "success": True,
@@ -2319,10 +2413,7 @@ def _invoice_strings(language: str) -> dict:
             "range": range,
             "currency": currency,
             "blockers": blockers[: max(1, min(limit, 50))],
-            "notes": [
-                "Analyse basée sur les ventes réelles Shopify (commandes, revenus, catalogue).",
-                "Les vues et ajouts au panier ne sont pas exposés via l'API Admin Shopify par défaut.",
-            ],
+            "notes": notes,
         }
 
 
