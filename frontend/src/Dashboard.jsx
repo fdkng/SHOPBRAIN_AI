@@ -1332,6 +1332,20 @@ export default function Dashboard() {
     }
   }
 
+  const runActionAnalysis = async (actionKey) => {
+    try {
+      setStatus(actionKey, 'info', 'Analyse en cours...')
+      if (actionKey === 'action-blockers') {
+        await loadBlockers()
+      } else {
+        await loadInsights()
+      }
+      setStatus(actionKey, 'success', 'Analyse terminée.')
+    } catch (err) {
+      setStatus(actionKey, 'error', err.message || 'Erreur analyse')
+    }
+  }
+
   const handleApplyBlockerAction = async (productId, action) => {
     const plan = String(subscription?.plan || '').toLowerCase()
     if (!['pro', 'premium'].includes(plan)) {
@@ -1504,9 +1518,11 @@ export default function Dashboard() {
   }
 
   useEffect(() => {
-    if (activeTab === 'overview' || activeTab === 'underperforming') {
+    if (activeTab === 'overview') {
       loadAnalytics(analyticsRange)
-      loadInsights(analyticsRange)
+    }
+    if (activeTab === 'underperforming') {
+      loadAnalytics(analyticsRange)
       loadBlockers(analyticsRange)
     }
   }, [activeTab, analyticsRange])
@@ -1777,6 +1793,13 @@ export default function Dashboard() {
             {[
               { key: 'overview', label: 'Vue d\'ensemble' },
               { key: 'underperforming', label: 'Produits sous-performants' },
+              { key: 'action-blockers', label: 'Produits freins' },
+              { key: 'action-rewrite', label: 'Réécriture continue' },
+              { key: 'action-price', label: 'Optimisation prix' },
+              { key: 'action-images', label: 'Images non convertissantes' },
+              { key: 'action-bundles', label: 'Bundles & cross-sell' },
+              { key: 'action-stock', label: 'Prévision ruptures' },
+              { key: 'action-returns', label: 'Anti-retours / chargebacks' },
               { key: 'invoices', label: 'Facturation' },
               { key: 'ai', label: 'Analyse IA' },
               { key: 'analysis', label: 'Résultats' }
@@ -2022,101 +2045,6 @@ export default function Dashboard() {
                   <p className="text-xs text-gray-500 mt-1">{item.hint}</p>
                 </div>
               ))}
-            </div>
-
-            <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700">
-              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.3em] text-gray-400">7 Fonctionnalités IA</p>
-                  <h4 className="text-white text-xl font-semibold mt-2">Les 7 idées demandées (live)</h4>
-                  <p className="text-sm text-gray-400 mt-1">Source Shopify · {insightsData?.range || analyticsRange}</p>
-                </div>
-                <div className="text-xs text-gray-500">MàJ: {insightsLoading ? 'en cours' : 'ok'}</div>
-              </div>
-              {insightsError && (
-                <p className="text-xs text-yellow-400 mt-3">{insightsError}</p>
-              )}
-              <div className="mt-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">1) Produits “freins”</p>
-                  <p className="text-2xl font-bold text-white mt-2">{getInsightCount(insightsData?.blockers)}</p>
-                  <p className="text-xs text-gray-400 mt-2">Compare vues → panier → achat. Propose titre, image, prix.</p>
-                  {renderInsightItems(insightsData?.blockers, (item) => `${item.title || 'Produit'} — ${item.orders || 0} commandes`)}
-                </div>
-                <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">2) Réécriture continue</p>
-                  <p className="text-2xl font-bold text-white mt-2">{insightsLoading ? '…' : getInsightCount(insightsData?.rewrite_opportunities)}</p>
-                  <p className="text-xs text-gray-400 mt-2">IA réécrit titres/descriptions selon performance (hebdo/mensuel).</p>
-                  <p className="text-xs text-gray-500 mt-2">Ex: CTR bas → nouvelle accroche + bénéfices clairs.</p>
-                  {insightsLoading ? (
-                    <p className="text-xs text-gray-500 mt-2">Chargement...</p>
-                  ) : (!Array.isArray(insightsData?.rewrite_opportunities) || insightsData.rewrite_opportunities.length === 0) ? (
-                    <p className="text-xs text-gray-500 mt-2">Aucun signal détecté.</p>
-                  ) : (
-                    <ul className="mt-2 space-y-2 text-xs text-gray-400">
-                      {insightsData.rewrite_opportunities.slice(0, 3).map((item, index) => (
-                        <li key={index} className="flex items-center justify-between gap-2">
-                          <span>{item.title || 'Produit'} — {(item.reasons || []).join(', ')}</span>
-                          <div className="flex gap-2">
-                            {(item.recommendations || []).includes('title') && (
-                              <button
-                                onClick={() => handleApplyBlockerAction(item.product_id, { type: 'title' })}
-                                className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-[11px] text-white"
-                                disabled={applyingBlockerActionId === `${item.product_id}-title`}
-                              >
-                                Titre
-                              </button>
-                            )}
-                            {(item.recommendations || []).includes('description') && (
-                              <button
-                                onClick={() => handleApplyBlockerAction(item.product_id, { type: 'description' })}
-                                className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-[11px] text-white"
-                                disabled={applyingBlockerActionId === `${item.product_id}-description`}
-                              >
-                                Description
-                              </button>
-                            )}
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-                <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">3) Optimisation prix</p>
-                  <p className="text-2xl font-bold text-white mt-2">{getInsightCount(insightsData?.price_opportunities)}</p>
-                  <p className="text-xs text-gray-400 mt-2">Élasticité, marges, saisonnalité. Ajustements ciblés.</p>
-                  {renderInsightItems(insightsData?.price_opportunities, (item) => `${item.title || item.product_id} — ${item.suggestion || 'Ajuster'}`)}
-                </div>
-                <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">4) Images qui ne convertissent pas</p>
-                  <p className="text-2xl font-bold text-white mt-2">{getInsightCount(insightsData?.image_risks)}</p>
-                  <p className="text-xs text-gray-400 mt-2">Analyse CTR par image/produit. Reco image gagnante.</p>
-                  {renderInsightItems(insightsData?.image_risks, (item) => `#${item.product_id} — ${item.images_count} images${item.missing_alt ? ' • alt manquant' : ''}`)}
-                </div>
-                <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">5) Bundles & cross-sell</p>
-                  <p className="text-2xl font-bold text-white mt-2">{getInsightCount(insightsData?.bundle_suggestions)}</p>
-                  <p className="text-xs text-gray-400 mt-2">Packs basés sur commandes passées pour booster l’AOV.</p>
-                  {renderInsightItems(insightsData?.bundle_suggestions, (item) => {
-                    const left = item.pair?.[0] || 'A'
-                    const right = item.pair?.[1] || 'B'
-                    return `#${left} + #${right} — ${item.count || 0} commandes`
-                  })}
-                </div>
-                <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">6) Prévision des ruptures</p>
-                  <p className="text-2xl font-bold text-white mt-2">{getInsightCount(insightsData?.stock_risks)}</p>
-                  <p className="text-xs text-gray-400 mt-2">Estime jours restants selon ventes actuelles.</p>
-                  {renderInsightItems(insightsData?.stock_risks, (item) => `${item.title || item.product_id} — ${item.days_cover} j`)}
-                </div>
-                <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">7) Anti-retours / chargebacks</p>
-                  <p className="text-2xl font-bold text-white mt-2">{getInsightCount(insightsData?.return_risks)}</p>
-                  <p className="text-xs text-gray-400 mt-2">Détecte causes probables: taille, qualité, description.</p>
-                  {renderInsightItems(insightsData?.return_risks, (item) => `${item.title || item.product_id} — ${item.refunds || 0} retours`)}
-                </div>
-              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -2505,6 +2433,278 @@ export default function Dashboard() {
                 )}
               </div>
               {renderStatus('blockers')}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'action-blockers' && (
+          <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 space-y-6">
+            <div>
+              <h2 className="text-white text-xl font-bold mb-2">Analyser les produits freins</h2>
+              <p className="text-gray-400">Détecte les produits qui cassent la conversion et propose des actions.</p>
+            </div>
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <p className="text-sm text-gray-400">{getInsightCount(blockersData?.blockers)} produits analysés</p>
+              <button
+                onClick={() => runActionAnalysis('action-blockers')}
+                disabled={blockersLoading}
+                className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
+              >
+                {blockersLoading ? 'Analyse en cours...' : 'Lancer l\'analyse IA'}
+              </button>
+            </div>
+            {renderStatus('action-blockers')}
+            <div className="space-y-3">
+              {!blockersLoading && (!blockersData?.blockers || blockersData.blockers.length === 0) ? (
+                <p className="text-sm text-gray-500">Aucun produit frein détecté.</p>
+              ) : (
+                blockersData?.blockers?.slice(0, 8).map((item) => (
+                  <div key={item.product_id || item.title} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-white font-semibold">{item.title || 'Produit'}</p>
+                        <p className="text-xs text-gray-500">Commandes: {item.orders || 0} • CA: {formatCurrency(item.revenue, analyticsData?.currency || 'EUR')}</p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {item.actions?.length ? item.actions.map((action) => (
+                          action.can_apply ? (
+                            <button
+                              key={action.type}
+                              onClick={() => handleApplyBlockerAction(item.product_id, action)}
+                              className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-white"
+                              disabled={applyingBlockerActionId === `${item.product_id}-${action.type}`}
+                            >
+                              {action.label}
+                            </button>
+                          ) : (
+                            <span key={action.type} className="px-2 py-1 rounded bg-gray-900/70 text-xs text-gray-400">
+                              {action.label}
+                            </span>
+                          )
+                        )) : (
+                          <span className="text-xs text-gray-500">Aucune action</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'action-rewrite' && (
+          <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 space-y-6">
+            <div>
+              <h2 className="text-white text-xl font-bold mb-2">Réécriture intelligente</h2>
+              <p className="text-gray-400">Réécrit titres et descriptions selon la performance réelle.</p>
+            </div>
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <p className="text-sm text-gray-400">{getInsightCount(insightsData?.rewrite_opportunities)} produits analysés</p>
+              <button
+                onClick={() => runActionAnalysis('action-rewrite')}
+                disabled={insightsLoading}
+                className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
+              >
+                {insightsLoading ? 'Analyse en cours...' : 'Lancer l\'analyse IA'}
+              </button>
+            </div>
+            {renderStatus('action-rewrite')}
+            <div className="space-y-3">
+              {!insightsLoading && (!insightsData?.rewrite_opportunities || insightsData.rewrite_opportunities.length === 0) ? (
+                <p className="text-sm text-gray-500">Aucun signal détecté.</p>
+              ) : (
+                insightsData?.rewrite_opportunities?.slice(0, 8).map((item, index) => (
+                  <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-white font-semibold">{item.title || 'Produit'}</p>
+                        <p className="text-xs text-gray-500">{(item.reasons || []).join(', ')}</p>
+                      </div>
+                      <div className="flex gap-2">
+                        {(item.recommendations || []).includes('title') && (
+                          <button
+                            onClick={() => handleApplyBlockerAction(item.product_id, { type: 'title' })}
+                            className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-white"
+                            disabled={applyingBlockerActionId === `${item.product_id}-title`}
+                          >
+                            Titre
+                          </button>
+                        )}
+                        {(item.recommendations || []).includes('description') && (
+                          <button
+                            onClick={() => handleApplyBlockerAction(item.product_id, { type: 'description' })}
+                            className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-white"
+                            disabled={applyingBlockerActionId === `${item.product_id}-description`}
+                          >
+                            Description
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'action-price' && (
+          <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 space-y-6">
+            <div>
+              <h2 className="text-white text-xl font-bold mb-2">Optimisation dynamique des prix</h2>
+              <p className="text-gray-400">Ajuste les prix selon élasticité et performance.</p>
+            </div>
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <p className="text-sm text-gray-400">{getInsightCount(insightsData?.price_opportunities)} opportunités</p>
+              <button
+                onClick={() => runActionAnalysis('action-price')}
+                disabled={insightsLoading}
+                className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
+              >
+                {insightsLoading ? 'Analyse en cours...' : 'Lancer l\'analyse IA'}
+              </button>
+            </div>
+            {renderStatus('action-price')}
+            <div className="space-y-3">
+              {!insightsLoading && (!insightsData?.price_opportunities || insightsData.price_opportunities.length === 0) ? (
+                <p className="text-sm text-gray-500">Aucune opportunité détectée.</p>
+              ) : (
+                insightsData?.price_opportunities?.slice(0, 8).map((item, index) => (
+                  <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
+                    <p className="text-white font-semibold">{item.title || item.product_id}</p>
+                    <p className="text-xs text-gray-500">{item.suggestion || 'Ajuster le prix'}</p>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'action-images' && (
+          <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 space-y-6">
+            <div>
+              <h2 className="text-white text-xl font-bold mb-2">Images qui ne convertissent pas</h2>
+              <p className="text-gray-400">Analyse des images produits et recommandations.</p>
+            </div>
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <p className="text-sm text-gray-400">{getInsightCount(insightsData?.image_risks)} produits analysés</p>
+              <button
+                onClick={() => runActionAnalysis('action-images')}
+                disabled={insightsLoading}
+                className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
+              >
+                {insightsLoading ? 'Analyse en cours...' : 'Lancer l\'analyse IA'}
+              </button>
+            </div>
+            {renderStatus('action-images')}
+            <div className="space-y-3">
+              {!insightsLoading && (!insightsData?.image_risks || insightsData.image_risks.length === 0) ? (
+                <p className="text-sm text-gray-500">Aucun signal détecté.</p>
+              ) : (
+                insightsData?.image_risks?.slice(0, 8).map((item, index) => (
+                  <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
+                    <p className="text-white font-semibold">Produit #{item.product_id}</p>
+                    <p className="text-xs text-gray-500">{item.images_count} images{item.missing_alt ? ' • alt manquant' : ''}</p>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'action-bundles' && (
+          <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 space-y-6">
+            <div>
+              <h2 className="text-white text-xl font-bold mb-2">Bundles & cross-sell</h2>
+              <p className="text-gray-400">Packs basés sur les commandes passées pour booster l’AOV.</p>
+            </div>
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <p className="text-sm text-gray-400">{getInsightCount(insightsData?.bundle_suggestions)} suggestions</p>
+              <button
+                onClick={() => runActionAnalysis('action-bundles')}
+                disabled={insightsLoading}
+                className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
+              >
+                {insightsLoading ? 'Analyse en cours...' : 'Lancer l\'analyse IA'}
+              </button>
+            </div>
+            {renderStatus('action-bundles')}
+            <div className="space-y-3">
+              {!insightsLoading && (!insightsData?.bundle_suggestions || insightsData.bundle_suggestions.length === 0) ? (
+                <p className="text-sm text-gray-500">Aucune suggestion détectée.</p>
+              ) : (
+                insightsData?.bundle_suggestions?.slice(0, 8).map((item, index) => (
+                  <div key={index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
+                    <p className="text-white font-semibold">#{item.pair?.[0] || 'A'} + #{item.pair?.[1] || 'B'}</p>
+                    <p className="text-xs text-gray-500">{item.count || 0} commandes</p>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'action-stock' && (
+          <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 space-y-6">
+            <div>
+              <h2 className="text-white text-xl font-bold mb-2">Prévision des ruptures</h2>
+              <p className="text-gray-400">Estime les jours restants selon les ventes actuelles.</p>
+            </div>
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <p className="text-sm text-gray-400">{getInsightCount(insightsData?.stock_risks)} alertes</p>
+              <button
+                onClick={() => runActionAnalysis('action-stock')}
+                disabled={insightsLoading}
+                className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
+              >
+                {insightsLoading ? 'Analyse en cours...' : 'Lancer l\'analyse IA'}
+              </button>
+            </div>
+            {renderStatus('action-stock')}
+            <div className="space-y-3">
+              {!insightsLoading && (!insightsData?.stock_risks || insightsData.stock_risks.length === 0) ? (
+                <p className="text-sm text-gray-500">Aucun risque détecté.</p>
+              ) : (
+                insightsData?.stock_risks?.slice(0, 8).map((item, index) => (
+                  <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
+                    <p className="text-white font-semibold">{item.title || item.product_id}</p>
+                    <p className="text-xs text-gray-500">{item.days_cover} jours restants</p>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'action-returns' && (
+          <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 space-y-6">
+            <div>
+              <h2 className="text-white text-xl font-bold mb-2">Anti-retours / chargebacks</h2>
+              <p className="text-gray-400">Détecte les produits à risque de retours ou litiges.</p>
+            </div>
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <p className="text-sm text-gray-400">{getInsightCount(insightsData?.return_risks)} alertes</p>
+              <button
+                onClick={() => runActionAnalysis('action-returns')}
+                disabled={insightsLoading}
+                className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
+              >
+                {insightsLoading ? 'Analyse en cours...' : 'Lancer l\'analyse IA'}
+              </button>
+            </div>
+            {renderStatus('action-returns')}
+            <div className="space-y-3">
+              {!insightsLoading && (!insightsData?.return_risks || insightsData.return_risks.length === 0) ? (
+                <p className="text-sm text-gray-500">Aucun signal détecté.</p>
+              ) : (
+                insightsData?.return_risks?.slice(0, 8).map((item, index) => (
+                  <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
+                    <p className="text-white font-semibold">{item.title || item.product_id}</p>
+                    <p className="text-xs text-gray-500">{item.refunds || 0} retours</p>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         )}
