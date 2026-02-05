@@ -2296,23 +2296,6 @@ def _invoice_strings(language: str) -> dict:
         avg_price = total_price / price_count if price_count else 0
 
         blockers = []
-        events_by_product = {}
-        if SUPABASE_URL and SUPABASE_SERVICE_KEY:
-            try:
-                supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-                events_result = supabase.table("shopify_events").select("event_type,product_id").eq("shop_domain", shop_domain).gte("created_at", start_date).in_("event_type", ["view_item", "add_to_cart", "product_viewed", "product_added_to_cart"]).limit(10000).execute()
-                for row in events_result.data or []:
-                    pid = _normalize_shopify_id(row.get("product_id"))
-                    if not pid:
-                        continue
-                    event = (row.get("event_type") or "").lower()
-                    stat = events_by_product.setdefault(pid, {"views": 0, "add_to_cart": 0})
-                    if event in {"view_item", "product_viewed"}:
-                        stat["views"] += 1
-                    if event in {"add_to_cart", "product_added_to_cart"}:
-                        stat["add_to_cart"] += 1
-            except Exception as e:
-                print(f"Warning: could not load pixel events: {e}")
         for product_id, stat in product_stats.items():
             product = products_by_id.get(product_id, {})
             orders_count = len(stat["order_ids"])
@@ -2377,11 +2360,6 @@ def _invoice_strings(language: str) -> dict:
                     "can_apply": False,
                 })
 
-            event_stat = events_by_product.get(product_id, {"views": 0, "add_to_cart": 0})
-            views = event_stat.get("views", 0)
-            add_to_cart = event_stat.get("add_to_cart", 0)
-            atc_rate = round((add_to_cart / views) * 100, 2) if views else None
-
             blockers.append({
                 "product_id": product_id,
                 "title": title or f"Produit {product_id}",
@@ -2392,9 +2370,6 @@ def _invoice_strings(language: str) -> dict:
                 "inventory": inventory_total,
                 "images": images_count,
                 "score": score,
-                "views": views,
-                "add_to_cart": add_to_cart,
-                "atc_rate": atc_rate,
                 "actions": actions,
             })
 
@@ -2402,10 +2377,7 @@ def _invoice_strings(language: str) -> dict:
 
         notes = [
             "Analyse basée sur les ventes réelles Shopify (commandes, revenus, catalogue).",
-            "Les vues et ajouts au panier proviennent du Pixel ShopBrain si installé.",
         ]
-        if not events_by_product:
-            notes.append("Aucun événement Pixel détecté — installe le Pixel ShopBrain pour vues/ATC.")
 
         return {
             "success": True,
