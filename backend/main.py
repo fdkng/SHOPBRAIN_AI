@@ -2186,46 +2186,74 @@ def _invoice_strings(language: str) -> dict:
     if language == "fr":
         return {
             "title": "Facture officielle",
-
-
-    class PixelEventRequest(BaseModel):
-        shop_domain: str
-        event_type: str
-        product_id: str | None = None
-        session_id: str | None = None
-        user_agent: str | None = None
-
-
-    @app.post("/api/shopify/pixel-event")
-    async def track_shopify_pixel_event(req: PixelEventRequest, request: Request):
-        """📌 Ingestion d'événements Shopify Pixel (view_item, add_to_cart)."""
-        if not req.shop_domain:
-            raise HTTPException(status_code=400, detail="Shop domain requis")
-
-        allowed_events = {"view_item", "add_to_cart", "product_viewed", "product_added_to_cart"}
-        event_type = (req.event_type or "").strip().lower()
-        if event_type not in allowed_events:
-            raise HTTPException(status_code=400, detail="Event non supporté")
-
-        normalized_product_id = _normalize_shopify_id(req.product_id)
-        user_id = _get_user_id_by_shop_domain(req.shop_domain)
-        if not user_id:
-            raise HTTPException(status_code=404, detail="Boutique inconnue")
-
-        if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
-            raise HTTPException(status_code=500, detail="Supabase not configured")
-
-        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-        payload = {
-            "user_id": user_id,
-            "shop_domain": req.shop_domain,
-            "event_type": event_type,
-            "product_id": normalized_product_id,
-            "session_id": req.session_id,
-            "user_agent": req.user_agent or request.headers.get("user-agent"),
+            "invoice": "Facture",
+            "date": "Date",
+            "order": "Commande",
+            "customer": "Client",
+            "item": "Produit",
+            "qty": "Qté",
+            "price": "Prix",
+            "subtotal": "Sous-total",
+            "tax": "Taxes",
+            "total": "Total",
+            "email_subject": "Votre facture officielle",
+            "email_body": "Bonjour,\n\nVeuillez trouver votre facture officielle en pièce jointe.\n\nMerci pour votre achat.",
         }
-        supabase.table("shopify_events").insert(payload).execute()
-        return {"success": True}
+    return {
+        "title": "Official Invoice",
+        "invoice": "Invoice",
+        "date": "Date",
+        "order": "Order",
+        "customer": "Customer",
+        "item": "Item",
+        "qty": "Qty",
+        "price": "Price",
+        "subtotal": "Subtotal",
+        "tax": "Tax",
+        "total": "Total",
+        "email_subject": "Your official invoice",
+        "email_body": "Hello,\n\nPlease find your official invoice attached.\n\nThank you for your purchase.",
+    }
+
+
+class PixelEventRequest(BaseModel):
+    shop_domain: str
+    event_type: str
+    product_id: str | None = None
+    session_id: str | None = None
+    user_agent: str | None = None
+
+
+@app.post("/api/shopify/pixel-event")
+async def track_shopify_pixel_event(req: PixelEventRequest, request: Request):
+    """📌 Ingestion d'événements Shopify Pixel (view_item, add_to_cart)."""
+    if not req.shop_domain:
+        raise HTTPException(status_code=400, detail="Shop domain requis")
+
+    allowed_events = {"view_item", "add_to_cart", "product_viewed", "product_added_to_cart"}
+    event_type = (req.event_type or "").strip().lower()
+    if event_type not in allowed_events:
+        raise HTTPException(status_code=400, detail="Event non supporté")
+
+    normalized_product_id = _normalize_shopify_id(req.product_id)
+    user_id = _get_user_id_by_shop_domain(req.shop_domain)
+    if not user_id:
+        raise HTTPException(status_code=404, detail="Boutique inconnue")
+
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        raise HTTPException(status_code=500, detail="Supabase not configured")
+
+    supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    payload = {
+        "user_id": user_id,
+        "shop_domain": req.shop_domain,
+        "event_type": event_type,
+        "product_id": normalized_product_id,
+        "session_id": req.session_id,
+        "user_agent": req.user_agent or request.headers.get("user-agent"),
+    }
+    supabase.table("shopify_events").insert(payload).execute()
+    return {"success": True}
 
 
     @app.get("/api/shopify/blockers")
@@ -2499,34 +2527,6 @@ def _invoice_strings(language: str) -> dict:
             return {"success": True, "action": "description"}
 
         raise HTTPException(status_code=400, detail="Action non supportée")
-            "invoice": "Facture",
-            "date": "Date",
-            "order": "Commande",
-            "customer": "Client",
-            "item": "Produit",
-            "qty": "Qté",
-            "price": "Prix",
-            "subtotal": "Sous-total",
-            "tax": "Taxes",
-            "total": "Total",
-            "email_subject": "Votre facture officielle",
-            "email_body": "Bonjour,\n\nVeuillez trouver votre facture officielle en pièce jointe.\n\nMerci pour votre achat.",
-        }
-    return {
-        "title": "Official Invoice",
-        "invoice": "Invoice",
-        "date": "Date",
-        "order": "Order",
-        "customer": "Customer",
-        "item": "Item",
-        "qty": "Qty",
-        "price": "Price",
-        "subtotal": "Subtotal",
-        "tax": "Tax",
-        "total": "Total",
-        "email_subject": "Your official invoice",
-        "email_body": "Hello,\n\nPlease find your official invoice attached.\n\nThank you for your purchase.",
-    }
 
 
 def _generate_invoice_pdf(order: dict, invoice_number: str, language: str, shop_domain: str) -> bytes:
