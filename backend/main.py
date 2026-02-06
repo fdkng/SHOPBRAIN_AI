@@ -1916,6 +1916,7 @@ async def get_shopify_insights(request: Request, range: str = "30d"):
     inventory_map = {}
     images_map = {}
     content_map = {}
+    price_map = {}
     for product in products:
         pid = str(product.get("id"))
         inventory = 0
@@ -1923,6 +1924,8 @@ async def get_shopify_insights(request: Request, range: str = "30d"):
             inventory += int(variant.get("inventory_quantity") or 0)
         inventory_map[pid] = inventory
         images_map[pid] = product.get("images", []) or []
+        variants = product.get("variants", []) or []
+        price_map[pid] = _safe_float(variants[0].get("price"), 0.0) if variants else 0.0
         title = product.get("title") or ""
         description_text = _strip_html(product.get("body_html") or "")
         content_map[pid] = {
@@ -1930,6 +1933,17 @@ async def get_shopify_insights(request: Request, range: str = "30d"):
             "title_len": len(title),
             "description_len": len(description_text),
         }
+
+    for product in products:
+        pid = str(product.get("id"))
+        if pid not in product_stats:
+            product_stats[pid] = {
+                "product_id": pid,
+                "title": product.get("title") or "Produit",
+                "orders": 0,
+                "quantity": 0,
+                "revenue": 0.0,
+            }
 
     event_counts = _fetch_shopify_event_counts(user_id, shop_domain, days)
 
@@ -1978,22 +1992,52 @@ async def get_shopify_insights(request: Request, range: str = "30d"):
         views = int(signals.get("views", 0))
         add_to_cart = int(signals.get("add_to_cart", 0))
         orders_count = p.get("orders", 0)
+        revenue = p.get("revenue", 0)
         view_to_cart = (add_to_cart / views) if views else None
         cart_to_order = (orders_count / add_to_cart) if add_to_cart else None
+        content = content_map.get(product_id, {})
+        title_len = content.get("title_len", 0)
+        description_len = content.get("description_len", 0)
+        images_count = len(images_map.get(product_id, []) or [])
+        inventory = inventory_map.get(product_id, 0)
+        price_current = price_map.get(product_id, 0)
 
-        if orders_count > max(1, median_orders // 2):
+        score = 0
+        if orders_count <= max(1, median_orders // 2):
+            score += 1
+        if revenue <= 0:
+            score += 1
+        if description_len < 120:
+            score += 1
+        if title_len < 20 or title_len > 70:
+            score += 1
+        if images_count < 2:
+            score += 1
+        if avg_price and price_current > avg_price * 1.3:
+            score += 1
+        if inventory > 20 and orders_count == 0:
+            score += 1
+        if views >= max(10, avg_views) and view_to_cart is not None and view_to_cart < 0.03:
+            score += 2
+        if add_to_cart >= max(5, avg_add_to_cart) and cart_to_order is not None and cart_to_order < 0.2:
+            score += 2
+
+        if score < 2:
             continue
 
         actions = []
+        if title_len < 20 or title_len > 70:
+            actions.append("Optimiser le titre")
+        if description_len < 120:
+            actions.append("Renforcer la description")
+        if images_count < 2:
+            actions.append("Ajouter des images")
+        if avg_price and price_current > avg_price * 1.3:
+            actions.append("Tester un prix inférieur")
         if views >= max(10, avg_views) and view_to_cart is not None and view_to_cart < 0.03:
-            actions.extend([
-                "Optimiser le titre",
-                "Renforcer la description",
-            ])
+            actions.append("Améliorer image/titre")
         if add_to_cart >= max(5, avg_add_to_cart) and cart_to_order is not None and cart_to_order < 0.2:
             actions.append("Tester un prix inférieur")
-        if inventory_map.get(product_id, 0) > 50 and orders_count < max(1, median_orders // 2):
-            actions.append("Mettre en avant avec preuve sociale")
 
         blockers.append({
             **p,
@@ -2002,8 +2046,8 @@ async def get_shopify_insights(request: Request, range: str = "30d"):
             "reason": "Sous-performance vs moyenne",
             "signals": {
                 "orders": orders_count,
-                "revenue": p.get("revenue", 0),
-                "inventory": inventory_map.get(product_id, 0),
+                "revenue": revenue,
+                "inventory": inventory,
                 "views": views,
                 "add_to_cart": add_to_cart,
                 "view_to_cart_rate": round(view_to_cart, 4) if view_to_cart is not None else None,
