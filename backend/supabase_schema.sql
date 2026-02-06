@@ -121,6 +121,21 @@ ALTER TABLE invoice_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE action_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE shopify_events ENABLE ROW LEVEL SECURITY;
 
+CREATE TABLE IF NOT EXISTS shopify_blocker_actions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  shop_domain text NOT NULL,
+  product_id text,
+  action_type text NOT NULL,
+  created_at timestamptz DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_blocker_actions_user_id ON shopify_blocker_actions(user_id);
+CREATE INDEX IF NOT EXISTS idx_blocker_actions_shop_domain ON shopify_blocker_actions(shop_domain);
+CREATE INDEX IF NOT EXISTS idx_blocker_actions_created_at ON shopify_blocker_actions(created_at);
+
+ALTER TABLE shopify_blocker_actions ENABLE ROW LEVEL SECURITY;
+
 DO $$
 BEGIN
   -- Products policies

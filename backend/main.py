@@ -2256,6 +2256,40 @@ async def track_shopify_pixel_event(req: PixelEventRequest, request: Request):
     return {"success": True}
 
 
+def _fetch_shopify_event_counts(user_id: str, shop_domain: str, days: int) -> dict:
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        return {}
+    supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    start_date = (datetime.utcnow() - timedelta(days=days)).isoformat()
+
+    response = (
+        supabase.table("shopify_events")
+        .select("product_id,event_type,created_at")
+        .eq("user_id", user_id)
+        .eq("shop_domain", shop_domain)
+        .gte("created_at", start_date)
+        .execute()
+    )
+
+    rows = response.data or []
+    counts: dict[str, dict[str, int]] = {}
+    view_events = {"view_item", "product_viewed"}
+    atc_events = {"add_to_cart", "product_added_to_cart"}
+
+    for row in rows:
+        product_id = str(row.get("product_id") or "")
+        if not product_id:
+            continue
+        event_type = (row.get("event_type") or "").lower()
+        entry = counts.setdefault(product_id, {"views": 0, "add_to_cart": 0})
+        if event_type in view_events:
+            entry["views"] += 1
+        elif event_type in atc_events:
+            entry["add_to_cart"] += 1
+
+    return counts
+
+
     @app.get("/api/shopify/blockers")
     async def get_shopify_blockers(request: Request, range: str = "30d", limit: int = 12):
         """🔎 Détecte les produits qui cassent la conversion (basé sur données de ventes réelles)."""
@@ -2331,6 +2365,8 @@ async def track_shopify_pixel_event(req: PixelEventRequest, request: Request):
                 "notes": ["Aucune vente sur la période sélectionnée."],
             }
 
+            event_counts = _fetch_shopify_event_counts(user_id, shop_domain, days)
+
         products_by_id = {}
         batch_size = 50
         for i in range(0, len(product_ids), batch_size):
@@ -2369,6 +2405,11 @@ async def track_shopify_pixel_event(req: PixelEventRequest, request: Request):
         avg_orders = total_orders / len(product_stats) if product_stats else 0
         avg_revenue = total_revenue / len(product_stats) if product_stats else 0
         avg_price = total_price / price_count if price_count else 0
+        avg_views = 0
+        avg_add_to_cart = 0
+        if event_counts:
+            avg_views = sum(v.get("views", 0) for v in event_counts.values()) / max(1, len(event_counts))
+            avg_add_to_cart = sum(v.get("add_to_cart", 0) for v in event_counts.values()) / max(1, len(event_counts))
 
         blockers = []
         for product_id, stat in product_stats.items():
@@ -2383,6 +2424,12 @@ async def track_shopify_pixel_event(req: PixelEventRequest, request: Request):
             title = product.get("title") or ""
             description_text = _strip_html(product.get("body_html") or "")
             description_len = len(description_text)
+
+            signals = event_counts.get(product_id, {"views": 0, "add_to_cart": 0})
+            views = int(signals.get("views", 0))
+            add_to_cart = int(signals.get("add_to_cart", 0))
+            view_to_cart = (add_to_cart / views) if views else None
+            cart_to_order = (orders_count / add_to_cart) if add_to_cart else None
 
             score = 0
             if orders_count <= 1:
@@ -2399,11 +2446,36 @@ async def track_shopify_pixel_event(req: PixelEventRequest, request: Request):
                 score += 1
             if inventory_total > 20 and avg_orders and orders_count < avg_orders * 0.3:
                 score += 1
+            if views >= max(10, avg_views) and view_to_cart is not None and view_to_cart < 0.03:
+                score += 2
+            if add_to_cart >= max(5, avg_add_to_cart) and cart_to_order is not None and cart_to_order < 0.2:
+                score += 2
 
             if score < 2:
                 continue
 
             actions = []
+            if views >= max(10, avg_views) and view_to_cart is not None and view_to_cart < 0.03:
+                actions.append({
+                    "type": "title",
+                    "label": "Optimiser le titre",
+                    "reason": "Beaucoup de vues, peu d’ajouts au panier",
+                    "can_apply": True,
+                })
+                actions.append({
+                    "type": "description",
+                    "label": "Renforcer la description",
+                    "reason": "Vues élevées, conversion panier faible",
+                    "can_apply": True,
+                })
+            if add_to_cart >= max(5, avg_add_to_cart) and cart_to_order is not None and cart_to_order < 0.2:
+                actions.append({
+                    "type": "price",
+                    "label": "Tester un prix inférieur",
+                    "reason": "Ajouts au panier élevés, peu d’achats",
+                    "can_apply": True,
+                    "suggested_price": round(price_current * 0.9, 2) if price_current else None,
+                })
             if description_len < 120:
                 actions.append({
                     "type": "description",
@@ -2444,6 +2516,10 @@ async def track_shopify_pixel_event(req: PixelEventRequest, request: Request):
                 "price": price_current,
                 "inventory": inventory_total,
                 "images": images_count,
+                "views": views,
+                "add_to_cart": add_to_cart,
+                "view_to_cart_rate": round(view_to_cart, 4) if view_to_cart is not None else None,
+                "cart_to_order_rate": round(cart_to_order, 4) if cart_to_order is not None else None,
                 "score": score,
                 "actions": actions,
             })
@@ -2451,7 +2527,8 @@ async def track_shopify_pixel_event(req: PixelEventRequest, request: Request):
         blockers.sort(key=lambda item: (item["score"], -item["revenue"]), reverse=True)
 
         notes = [
-            "Analyse basée sur les ventes réelles Shopify (commandes, revenus, catalogue).",
+            "Analyse basée sur commandes Shopify + événements Shopify Pixel (vues, ajout panier).",
+            "Si les événements Pixel ne sont pas configurés, certaines métriques peuvent manquer.",
         ]
 
         return {
@@ -2477,6 +2554,22 @@ async def track_shopify_pixel_event(req: PixelEventRequest, request: Request):
         tier = get_user_tier(user_id)
         if tier not in {"pro", "premium"}:
             raise HTTPException(status_code=403, detail="Fonctionnalité réservée aux plans Pro/Premium")
+
+        if tier == "pro":
+            if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+                raise HTTPException(status_code=500, detail="Supabase not configured")
+            supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+            month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+            usage = (
+                supabase.table("shopify_blocker_actions")
+                .select("id", count="exact")
+                .eq("user_id", user_id)
+                .gte("created_at", month_start)
+                .execute()
+            )
+            used = usage.count or 0
+            if used >= 50:
+                raise HTTPException(status_code=403, detail="Limite mensuelle atteinte (50 actions Pro)")
 
         shop_domain, access_token = _get_shopify_connection(user_id)
         headers = {
@@ -2508,6 +2601,7 @@ async def track_shopify_pixel_event(req: PixelEventRequest, request: Request):
             result = action_engine.apply_price_change(req.product_id, new_price)
             if not result.get("success"):
                 raise HTTPException(status_code=400, detail=result.get("error", "Échec modification prix"))
+            _log_blocker_action(user_id, shop_domain, req.product_id, action_type)
             return {"success": True, "action": "price", "new_price": new_price}
 
         if action_type == "title":
@@ -2516,6 +2610,7 @@ async def track_shopify_pixel_event(req: PixelEventRequest, request: Request):
             result = action_engine.update_product_content(req.product_id, title=new_title)
             if not result.get("success"):
                 raise HTTPException(status_code=400, detail=result.get("error", "Échec modification titre"))
+            _log_blocker_action(user_id, shop_domain, req.product_id, action_type)
             return {"success": True, "action": "title", "new_title": new_title}
 
         if action_type == "description":
@@ -2524,9 +2619,23 @@ async def track_shopify_pixel_event(req: PixelEventRequest, request: Request):
             result = action_engine.update_product_content(req.product_id, description=new_description)
             if not result.get("success"):
                 raise HTTPException(status_code=400, detail=result.get("error", "Échec modification description"))
+            _log_blocker_action(user_id, shop_domain, req.product_id, action_type)
             return {"success": True, "action": "description"}
 
         raise HTTPException(status_code=400, detail="Action non supportée")
+
+
+def _log_blocker_action(user_id: str, shop_domain: str, product_id: str, action_type: str) -> None:
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        return
+    supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    payload = {
+        "user_id": user_id,
+        "shop_domain": shop_domain,
+        "product_id": str(product_id),
+        "action_type": action_type,
+    }
+    supabase.table("shopify_blocker_actions").insert(payload).execute()
 
 
 def _generate_invoice_pdf(order: dict, invoice_number: str, language: str, shop_domain: str) -> bytes:
