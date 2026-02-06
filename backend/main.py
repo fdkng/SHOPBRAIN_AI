@@ -1931,9 +1931,16 @@ async def get_shopify_insights(request: Request, range: str = "30d"):
             "description_len": len(description_text),
         }
 
-    # Blockers: low orders vs median (orders-based proxy for conversion signals)
+    event_counts = _fetch_shopify_event_counts(user_id, shop_domain, days)
+
+    # Blockers: orders + pixel signals
     order_counts = [p.get("orders", 0) for p in product_stats.values()]
     median_orders = sorted(order_counts)[len(order_counts) // 2] if order_counts else 0
+    avg_views = 0
+    avg_add_to_cart = 0
+    if event_counts:
+        avg_views = sum(v.get("views", 0) for v in event_counts.values()) / max(1, len(event_counts))
+        avg_add_to_cart = sum(v.get("add_to_cart", 0) for v in event_counts.values()) / max(1, len(event_counts))
 
     def _classify_blocker(stats: dict, median: int):
         orders_count = stats.get("orders", 0)
@@ -1964,39 +1971,66 @@ async def get_shopify_insights(request: Request, range: str = "30d"):
             score -= 10
         return max(0, min(100, score))
 
-    blockers = [
-        {
+    blockers = []
+    for p in product_stats.values():
+        product_id = str(p.get("product_id"))
+        signals = event_counts.get(product_id, {"views": 0, "add_to_cart": 0})
+        views = int(signals.get("views", 0))
+        add_to_cart = int(signals.get("add_to_cart", 0))
+        orders_count = p.get("orders", 0)
+        view_to_cart = (add_to_cart / views) if views else None
+        cart_to_order = (orders_count / add_to_cart) if add_to_cart else None
+
+        if orders_count > max(1, median_orders // 2):
+            continue
+
+        actions = []
+        if views >= max(10, avg_views) and view_to_cart is not None and view_to_cart < 0.03:
+            actions.extend([
+                "Optimiser le titre",
+                "Renforcer la description",
+            ])
+        if add_to_cart >= max(5, avg_add_to_cart) and cart_to_order is not None and cart_to_order < 0.2:
+            actions.append("Tester un prix inférieur")
+        if inventory_map.get(product_id, 0) > 50 and orders_count < max(1, median_orders // 2):
+            actions.append("Mettre en avant avec preuve sociale")
+
+        blockers.append({
             **p,
             "category": _classify_blocker(p, median_orders),
             "score": _score_blocker(p, median_orders),
             "reason": "Sous-performance vs moyenne",
             "signals": {
-                "orders": p.get("orders", 0),
+                "orders": orders_count,
                 "revenue": p.get("revenue", 0),
-                "inventory": inventory_map.get(p.get("product_id"), 0),
-                "benchmark": {"median_orders": median_orders}
+                "inventory": inventory_map.get(product_id, 0),
+                "views": views,
+                "add_to_cart": add_to_cart,
+                "view_to_cart_rate": round(view_to_cart, 4) if view_to_cart is not None else None,
+                "cart_to_order_rate": round(cart_to_order, 4) if cart_to_order is not None else None,
+                "benchmark": {"median_orders": median_orders},
             },
-            "actions": [
-                "Refaire le titre",
-                "Optimiser la description",
-                "Changer l’image principale",
-                "Ajuster le prix",
-                "Ajouter preuve sociale",
-            ],
-            "data_basis": "orders_only"
-        }
-        for p in product_stats.values()
-        if p.get("orders", 0) <= max(1, median_orders // 2)
-    ][:10]
+            "actions": actions or ["Optimiser le titre", "Renforcer la description"],
+            "data_basis": "orders_plus_pixel",
+        })
+
+    blockers = sorted(blockers, key=lambda item: item.get("score", 0), reverse=True)[:10]
 
     # Image risks: too few images or missing alt
     image_risks = []
     for pid, imgs in images_map.items():
-        if len(imgs) <= 1 or any(not (img.get("alt") or "").strip() for img in imgs):
+        signals = event_counts.get(pid, {"views": 0, "add_to_cart": 0})
+        views = int(signals.get("views", 0))
+        add_to_cart = int(signals.get("add_to_cart", 0))
+        view_to_cart = (add_to_cart / views) if views else None
+        if len(imgs) <= 1 or any(not (img.get("alt") or "").strip() for img in imgs) or (view_to_cart is not None and view_to_cart < 0.02):
             image_risks.append({
                 "product_id": pid,
                 "images_count": len(imgs),
                 "missing_alt": any(not (img.get("alt") or "").strip() for img in imgs),
+                "views": views,
+                "add_to_cart": add_to_cart,
+                "view_to_cart_rate": round(view_to_cart, 4) if view_to_cart is not None else None,
             })
     image_risks = image_risks[:10]
 
@@ -2080,20 +2114,28 @@ async def get_shopify_insights(request: Request, range: str = "30d"):
             for j in range(i + 1, len(ids)):
                 pair = tuple(sorted([ids[i], ids[j]]))
                 pair_counts[pair] = pair_counts.get(pair, 0) + 1
-    bundles = [
-        {"pair": pair, "count": count}
-        for pair, count in sorted(pair_counts.items(), key=lambda x: x[1], reverse=True)[:10]
-    ]
+    bundles = []
+    for pair, count in sorted(pair_counts.items(), key=lambda x: x[1], reverse=True)[:10]:
+        left = product_stats.get(pair[0], {}).get("title") or products_by_id.get(pair[0], {}).get("title")
+        right = product_stats.get(pair[1], {}).get("title") or products_by_id.get(pair[1], {}).get("title")
+        bundles.append({
+            "pair": pair,
+            "count": count,
+            "titles": [left or pair[0], right or pair[1]],
+        })
 
     # Return/chargeback risks: refund count
     return_risks = []
     for pid, count in refunds_by_product.items():
         stats = product_stats.get(pid, {})
+        orders_count = stats.get("orders", 0)
+        rate = (count / orders_count) if orders_count else None
         if count >= 2:
             return_risks.append({
                 "product_id": pid,
                 "title": stats.get("title"),
                 "refunds": count,
+                "refund_rate": round(rate, 4) if rate is not None else None,
             })
     return_risks = return_risks[:10]
 

@@ -2618,7 +2618,10 @@ export default function Dashboard() {
                 insightsData?.image_risks?.slice(0, 8).map((item, index) => (
                   <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
                     <p className="text-white font-semibold">Produit #{item.product_id}</p>
-                    <p className="text-xs text-gray-500">{item.images_count} images{item.missing_alt ? ' • alt manquant' : ''}</p>
+                    <p className="text-xs text-gray-500">
+                      {item.images_count} images{item.missing_alt ? ' • alt manquant' : ''}
+                      {item.view_to_cart_rate !== null && item.view_to_cart_rate !== undefined ? ` • v→panier ${Math.round(item.view_to_cart_rate * 100)}%` : ''}
+                    </p>
                   </div>
                 ))
               )}
@@ -2649,7 +2652,9 @@ export default function Dashboard() {
               ) : (
                 insightsData?.bundle_suggestions?.slice(0, 8).map((item, index) => (
                   <div key={index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
-                    <p className="text-white font-semibold">#{item.pair?.[0] || 'A'} + #{item.pair?.[1] || 'B'}</p>
+                    <p className="text-white font-semibold">
+                      {item.titles?.[0] || `#${item.pair?.[0] || 'A'}`} + {item.titles?.[1] || `#${item.pair?.[1] || 'B'}`}
+                    </p>
                     <p className="text-xs text-gray-500">{item.count || 0} commandes</p>
                   </div>
                 ))
@@ -2714,7 +2719,9 @@ export default function Dashboard() {
                 insightsData?.return_risks?.slice(0, 8).map((item, index) => (
                   <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
                     <p className="text-white font-semibold">{item.title || item.product_id}</p>
-                    <p className="text-xs text-gray-500">{item.refunds || 0} retours</p>
+                    <p className="text-xs text-gray-500">
+                      {item.refunds || 0} retours{item.refund_rate !== null && item.refund_rate !== undefined ? ` • taux ${Math.round(item.refund_rate * 100)}%` : ''}
+                    </p>
                   </div>
                 ))
               )}
