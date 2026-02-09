@@ -2429,11 +2429,12 @@ export default function Dashboard() {
                               onClick={() => handleApplyBlockerAction(item.product_id, action)}
                               className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-white"
                               disabled={applyingBlockerActionId === `${item.product_id}-${action.type}`}
+                              title={action.reason || action.label}
                             >
                               {action.label}
                             </button>
                           ) : (
-                            <span key={action.type} className="px-2 py-1 rounded bg-gray-900/70 text-xs text-gray-400">
+                            <span key={action.type} className="px-2 py-1 rounded bg-gray-900/70 text-xs text-gray-400" title={action.reason || action.label}>
                               {action.label}
                             </span>
                           )
@@ -2486,11 +2487,12 @@ export default function Dashboard() {
                               onClick={() => handleApplyBlockerAction(item.product_id, action)}
                               className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-white"
                               disabled={applyingBlockerActionId === `${item.product_id}-${action.type}`}
+                              title={action.reason || action.label}
                             >
                               {action.label}
                             </button>
                           ) : (
-                            <span key={action.type} className="px-2 py-1 rounded bg-gray-900/70 text-xs text-gray-400">
+                            <span key={action.type} className="px-2 py-1 rounded bg-gray-900/70 text-xs text-gray-400" title={action.reason || action.label}>
                               {action.label}
                             </span>
                           )
