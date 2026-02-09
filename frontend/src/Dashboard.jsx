@@ -1268,7 +1268,7 @@ export default function Dashboard() {
     }
   }
 
-  const loadInsights = async (rangeOverride) => {
+  const loadInsights = async (rangeOverride, includeAi = false) => {
     try {
       const rangeValue = rangeOverride || analyticsRange
       setInsightsLoading(true)
@@ -1280,7 +1280,8 @@ export default function Dashboard() {
         return
       }
 
-      const response = await fetch(`${API_URL}/api/shopify/insights?range=${rangeValue}`, {
+      const aiParam = includeAi ? '&include_ai=true' : ''
+      const response = await fetch(`${API_URL}/api/shopify/insights?range=${rangeValue}${aiParam}`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
@@ -1351,7 +1352,8 @@ export default function Dashboard() {
       if (actionKey === 'action-blockers') {
         await loadBlockers()
       } else {
-        await loadInsights()
+        const includeAi = actionKey === 'action-rewrite'
+        await loadInsights(undefined, includeAi)
       }
       setStatus(actionKey, 'success', 'Analyse terminée.')
     } catch (err) {
@@ -2525,6 +2527,11 @@ export default function Dashboard() {
               </button>
             </div>
             {renderStatus('action-rewrite')}
+            {insightsData?.rewrite_ai?.notes?.length ? (
+              <div className="text-xs text-amber-300 bg-amber-900/20 border border-amber-700/40 rounded px-3 py-2">
+                {insightsData.rewrite_ai.notes.join(' · ')}
+              </div>
+            ) : null}
             <div className="space-y-3">
               {!insightsLoading && (!insightsData?.rewrite_opportunities || insightsData.rewrite_opportunities.length === 0) ? (
                 <p className="text-sm text-gray-500">Aucun signal détecté.</p>
@@ -2535,6 +2542,16 @@ export default function Dashboard() {
                       <div>
                         <p className="text-white font-semibold">{item.title || 'Produit'}</p>
                         <p className="text-xs text-gray-500">{(item.reasons || []).join(', ')}</p>
+                        {item.suggested_title && (
+                          <p className="mt-2 text-xs text-gray-300">
+                            <span className="text-gray-500">Titre suggéré:</span> {item.suggested_title}
+                          </p>
+                        )}
+                        {item.suggested_description && (
+                          <p className="mt-2 text-xs text-gray-400 line-clamp-3">
+                            <span className="text-gray-500">Description suggérée:</span> {item.suggested_description}
+                          </p>
+                        )}
                       </div>
                       <div className="flex gap-2">
                         {(item.recommendations || []).includes('title') && (

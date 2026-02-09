@@ -1871,9 +1871,10 @@ async def get_shopify_analytics(request: Request, range: str = "30d"):
 
 
 @app.get("/api/shopify/insights")
-async def get_shopify_insights(request: Request, range: str = "30d"):
+async def get_shopify_insights(request: Request, range: str = "30d", include_ai: bool = False):
     """🧠 Insights: produits freins, images faibles, bundles, stocks, prix, retours"""
     user_id = get_user_id(request)
+    tier = get_user_tier(user_id)
     shop_domain, access_token = _get_shopify_connection(user_id)
 
     range_map = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}
@@ -1912,6 +1913,7 @@ async def get_shopify_insights(request: Request, range: str = "30d"):
     products_resp = get_shopify_products
     products_payload = await products_resp(request)
     products = products_payload.get("products", [])
+    products_by_id = {str(product.get("id")): product for product in products}
 
     inventory_map = {}
     images_map = {}
@@ -2203,6 +2205,31 @@ async def get_shopify_insights(request: Request, range: str = "30d"):
                 "recommendations": recommendations,
             })
 
+    rewrite_ai_enabled = False
+    rewrite_ai_notes = []
+    rewrite_generated = 0
+    if include_ai:
+        if tier not in {"pro", "premium"}:
+            rewrite_ai_notes.append("Plan requis: Pro ou Premium")
+        elif not OPENAI_API_KEY:
+            rewrite_ai_notes.append("OpenAI non configuré")
+        else:
+            try:
+                ensure_feature_allowed(tier, "content_generation")
+                engine = get_ai_engine()
+                rewrite_ai_enabled = True
+                for item in rewrite_opportunities[:8]:
+                    product = products_by_id.get(str(item.get("product_id")))
+                    if not product:
+                        continue
+                    if "title" in (item.get("recommendations") or []):
+                        item["suggested_title"] = engine.content_gen.generate_title(product, tier)
+                    if "description" in (item.get("recommendations") or []):
+                        item["suggested_description"] = engine.content_gen.generate_description(product, tier)
+                    rewrite_generated += 1
+            except Exception as e:
+                rewrite_ai_notes.append(f"Erreur IA: {str(e)[:120]}")
+
     # Bundle suggestions: co-occurrence pairs
     pair_counts = {}
     for order in orders:
@@ -2252,6 +2279,11 @@ async def get_shopify_insights(request: Request, range: str = "30d"):
         "has_pixel_data": bool(event_counts),
         "blockers": blockers,
         "rewrite_opportunities": rewrite_opportunities[:10],
+        "rewrite_ai": {
+            "enabled": rewrite_ai_enabled,
+            "generated": rewrite_generated,
+            "notes": rewrite_ai_notes,
+        },
         "image_risks": image_risks,
         "bundle_suggestions": bundles,
         "stock_risks": stock_risks,
@@ -2329,8 +2361,6 @@ def _resolve_invoice_language(country_code: str | None, province_code: str | Non
     if (country_code or "").upper() == "CH":
         return "en"
     return "en"
-
-
 def _invoice_strings(language: str) -> dict:
     if language == "fr":
         return {
