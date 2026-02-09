@@ -1361,10 +1361,10 @@ export default function Dashboard() {
     }
   }
 
-  const handleApplyBlockerAction = async (productId, action) => {
+  const handleApplyBlockerAction = async (productId, action, statusKey = 'blockers') => {
     const plan = String(subscription?.plan || '').toLowerCase()
     if (!['pro', 'premium'].includes(plan)) {
-      setStatus('blockers', 'warning', 'Fonctionnalité réservée aux plans Pro/Premium')
+      setStatus(statusKey, 'warning', 'Fonctionnalité réservée aux plans Pro/Premium')
       return
     }
 
@@ -1373,7 +1373,7 @@ export default function Dashboard() {
       const { data: { session } } = await supabase.auth.getSession()
 
       if (!session) {
-        setStatus('blockers', 'error', 'Session expirée, reconnectez-vous')
+        setStatus(statusKey, 'error', 'Session expirée, reconnectez-vous')
         return
       }
 
@@ -1386,7 +1386,9 @@ export default function Dashboard() {
         body: JSON.stringify({
           product_id: productId,
           action_type: action.type,
-          suggested_price: action.suggested_price
+          suggested_price: action.suggested_price,
+          suggested_title: action.suggested_title,
+          suggested_description: action.suggested_description
         })
       })
 
@@ -1395,11 +1397,11 @@ export default function Dashboard() {
         throw new Error(errorData.detail || `HTTP ${response.status}`)
       }
 
-      setStatus('blockers', 'success', 'Action appliquée sur Shopify')
+      setStatus(statusKey, 'success', 'Action appliquée sur Shopify')
       loadBlockers()
     } catch (err) {
       console.error('Error applying blocker action:', err)
-      setStatus('blockers', 'error', err.message)
+      setStatus(statusKey, 'error', err.message)
     } finally {
       setApplyingBlockerActionId(null)
     }
@@ -2556,7 +2558,7 @@ export default function Dashboard() {
                       <div className="flex gap-2">
                         {(item.recommendations || []).includes('title') && (
                           <button
-                            onClick={() => handleApplyBlockerAction(item.product_id, { type: 'title' })}
+                            onClick={() => handleApplyBlockerAction(item.product_id, { type: 'title', suggested_title: item.suggested_title }, 'action-rewrite')}
                             className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-white"
                             disabled={applyingBlockerActionId === `${item.product_id}-title`}
                           >
@@ -2565,7 +2567,7 @@ export default function Dashboard() {
                         )}
                         {(item.recommendations || []).includes('description') && (
                           <button
-                            onClick={() => handleApplyBlockerAction(item.product_id, { type: 'description' })}
+                            onClick={() => handleApplyBlockerAction(item.product_id, { type: 'description', suggested_description: item.suggested_description }, 'action-rewrite')}
                             className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-white"
                             disabled={applyingBlockerActionId === `${item.product_id}-description`}
                           >

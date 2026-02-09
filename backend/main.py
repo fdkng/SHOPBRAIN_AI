@@ -2831,6 +2831,8 @@ class BlockerApplyRequest(BaseModel):
     product_id: str
     action_type: str
     suggested_price: float | None = None
+    suggested_title: str | None = None
+    suggested_description: str | None = None
 
 
 @app.post("/api/shopify/blockers/apply")
@@ -2891,8 +2893,11 @@ async def apply_blocker_action(req: BlockerApplyRequest, request: Request):
         return {"success": True, "action": "price", "new_price": new_price}
 
     if action_type == "title":
-        engine = get_ai_engine()
-        new_title = engine.content_gen.generate_title(product, tier)
+        if req.suggested_title:
+            new_title = req.suggested_title
+        else:
+            engine = get_ai_engine()
+            new_title = engine.content_gen.generate_title(product, tier)
         result = action_engine.update_product_content(req.product_id, title=new_title)
         if not result.get("success"):
             raise HTTPException(status_code=400, detail=result.get("error", "Échec modification titre"))
@@ -2900,8 +2905,11 @@ async def apply_blocker_action(req: BlockerApplyRequest, request: Request):
         return {"success": True, "action": "title", "new_title": new_title}
 
     if action_type == "description":
-        engine = get_ai_engine()
-        new_description = engine.content_gen.generate_description(product, tier)
+        if req.suggested_description:
+            new_description = req.suggested_description
+        else:
+            engine = get_ai_engine()
+            new_description = engine.content_gen.generate_description(product, tier)
         result = action_engine.update_product_content(req.product_id, description=new_description)
         if not result.get("success"):
             raise HTTPException(status_code=400, detail=result.get("error", "Échec modification description"))
