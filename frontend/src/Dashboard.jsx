@@ -2464,7 +2464,7 @@ export default function Dashboard() {
                 disabled={blockersLoading}
                 className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
               >
-                {blockersLoading ? 'Analyse en cours...' : 'Lancer l\'analyse IA'}
+                {blockersLoading ? 'Analyse en cours...' : 'Analyser les produits freins'}
               </button>
             </div>
             {renderStatus('action-blockers')}

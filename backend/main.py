@@ -2504,17 +2504,124 @@ async def get_shopify_blockers(request: Request, range: str = "30d", limit: int 
             stat["revenue"] += revenue
 
     product_ids = list(product_stats.keys())
+    event_counts = _fetch_shopify_event_counts(user_id, shop_domain, days)
     if not product_ids:
+        products_payload = await get_shopify_products(request)
+        products = products_payload.get("products", [])
+        if not products:
+            return {
+                "success": True,
+                "shop": shop_domain,
+                "range": range,
+                "currency": None,
+                "blockers": [],
+                "notes": ["Aucun produit trouvé dans la boutique."],
+            }
+
+        blockers = []
+        prices = []
+        for product in products:
+            variants = product.get("variants", []) or []
+            if variants:
+                prices.append(_safe_float(variants[0].get("price"), 0.0))
+        avg_price = sum(prices) / len(prices) if prices else 0
+
+        for product in products:
+            product_id = str(product.get("id"))
+            title = product.get("title") or ""
+            description_text = _strip_html(product.get("body_html") or "")
+            description_len = len(description_text)
+            images_count = len(product.get("images", []) or [])
+            variants = product.get("variants", []) or []
+            price_current = _safe_float(variants[0].get("price"), 0.0) if variants else 0.0
+            inventory_total = sum(v.get("inventory_quantity", 0) or 0 for v in variants) if variants else 0
+
+            signals = event_counts.get(product_id, {"views": 0, "add_to_cart": 0})
+            views = int(signals.get("views", 0))
+            add_to_cart = int(signals.get("add_to_cart", 0))
+            view_to_cart = (add_to_cart / views) if views else None
+
+            score = 0
+            if description_len < 120:
+                score += 1
+            if len(title) < 20 or len(title) > 70:
+                score += 1
+            if images_count < 2:
+                score += 1
+            if avg_price and price_current > avg_price * 1.3:
+                score += 1
+            if inventory_total > 20:
+                score += 1
+            if views >= 10 and view_to_cart is not None and view_to_cart < 0.03:
+                score += 2
+
+            if score < 2:
+                continue
+
+            actions = []
+            if len(title) < 20 or len(title) > 70:
+                actions.append({
+                    "type": "title",
+                    "label": "Optimiser le titre",
+                    "reason": f"Titre {len(title)} caractères",
+                    "can_apply": True,
+                })
+            if description_len < 120:
+                actions.append({
+                    "type": "description",
+                    "label": "Réécrire la description",
+                    "reason": f"Description courte ({description_len} caractères)",
+                    "can_apply": True,
+                })
+            if images_count < 2:
+                actions.append({
+                    "type": "image",
+                    "label": "Ajouter des images",
+                    "reason": "Moins de 2 images",
+                    "can_apply": False,
+                })
+            if avg_price and price_current > avg_price * 1.3:
+                suggested_price = round(price_current * 0.9, 2)
+                actions.append({
+                    "type": "price",
+                    "label": f"Baisser le prix à {suggested_price}",
+                    "reason": "Prix élevé vs moyenne boutique",
+                    "can_apply": True,
+                    "suggested_price": suggested_price,
+                })
+
+            blockers.append({
+                "product_id": product_id,
+                "title": title or f"Produit {product_id}",
+                "orders": 0,
+                "quantity": 0,
+                "revenue": 0.0,
+                "price": price_current,
+                "inventory": inventory_total,
+                "images": images_count,
+                "views": views,
+                "add_to_cart": add_to_cart,
+                "view_to_cart_rate": round(view_to_cart, 4) if view_to_cart is not None else None,
+                "cart_to_order_rate": None,
+                "score": score,
+                "actions": actions,
+            })
+
+        blockers.sort(key=lambda item: item["score"], reverse=True)
+
+        notes = [
+            "Analyse basée sur qualité des fiches + inventaire (aucune vente sur la période).",
+            "Ajoutez le Shopify Pixel pour enrichir les signaux vues/panier.",
+        ]
+
         return {
             "success": True,
             "shop": shop_domain,
             "range": range,
             "currency": None,
-            "blockers": [],
-            "notes": ["Aucune vente sur la période sélectionnée."],
+            "blockers": blockers[: max(1, min(limit, 50))],
+            "notes": notes,
         }
-
-    event_counts = _fetch_shopify_event_counts(user_id, shop_domain, days)
 
     products_by_id = {}
     batch_size = 50
