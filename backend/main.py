@@ -2192,23 +2192,84 @@ async def get_shopify_insights(
             })
     stock_risks = sorted(stock_risks, key=lambda x: x.get("days_cover", 0))[:10]
 
-    # Price opportunities: low sales/high inventory or high sales/low inventory
+    # Price opportunities: data-driven pricing signals
     price_opportunities = []
     for pid, stats in product_stats.items():
         inventory = inventory_map.get(pid, 0)
         orders_count = stats.get("orders", 0)
-        if inventory > 50 and orders_count < max(1, median_orders // 3):
-            price_opportunities.append({
-                "product_id": pid,
-                "title": stats.get("title"),
-                "suggestion": "Baisser le prix de 5-10%",
-            })
+        price_current = price_map.get(pid, 0)
+        if not price_current:
+            continue
+
+        signals = event_counts.get(pid, {"views": 0, "add_to_cart": 0})
+        views = int(signals.get("views", 0))
+        add_to_cart = int(signals.get("add_to_cart", 0))
+        view_to_cart = (add_to_cart / views) if views else None
+        cart_to_order = (orders_count / add_to_cart) if add_to_cart else None
+
+        score_down = 0
+        score_up = 0
+        reasons_down = []
+        reasons_up = []
+
+        if avg_view_to_cart and view_to_cart is not None and views >= max(20, avg_views):
+            if view_to_cart < avg_view_to_cart * 0.7:
+                score_down += 2
+                reasons_down.append(f"Vue→panier faible ({view_to_cart:.1%} vs {avg_view_to_cart:.1%})")
+        if avg_cart_to_order and cart_to_order is not None and add_to_cart >= max(10, avg_add_to_cart):
+            if cart_to_order < avg_cart_to_order * 0.7:
+                score_down += 2
+                reasons_down.append(f"Panier→achat faible ({cart_to_order:.1%} vs {avg_cart_to_order:.1%})")
+        if avg_price and price_current > avg_price * 1.2 and orders_count < max(1, median_orders // 2):
+            score_down += 1
+            reasons_down.append(f"Prix élevé ({price_current:.2f} > {avg_price:.2f})")
+        if inventory > 30 and orders_count < max(1, median_orders // 2):
+            score_down += 1
+            reasons_down.append(f"Surstock ({inventory}) + faible demande")
+
         if inventory < 5 and orders_count > median_orders:
-            price_opportunities.append({
-                "product_id": pid,
-                "title": stats.get("title"),
-                "suggestion": "Augmenter le prix de 3-7%",
-            })
+            score_up += 2
+            reasons_up.append(f"Forte demande ({orders_count} cmd) + stock faible ({inventory})")
+        if avg_price and price_current < avg_price * 0.8 and orders_count > median_orders:
+            score_up += 1
+            reasons_up.append(f"Prix bas ({price_current:.2f} < {avg_price:.2f})")
+        if avg_view_to_cart and view_to_cart is not None and view_to_cart > avg_view_to_cart * 1.2 and orders_count > median_orders:
+            score_up += 1
+            reasons_up.append(f"Conversion élevée ({view_to_cart:.1%})")
+
+        if score_down == 0 and score_up == 0:
+            continue
+
+        if score_down >= score_up:
+            direction = "down"
+            strength = min(0.15, 0.05 + 0.02 * score_down)
+            suggested_price = round(price_current * (1 - strength), 2)
+            reasons = reasons_down
+        else:
+            direction = "up"
+            strength = min(0.1, 0.03 + 0.02 * score_up)
+            suggested_price = round(price_current * (1 + strength), 2)
+            reasons = reasons_up
+
+        delta_percent = round(((suggested_price - price_current) / price_current) * 100, 1)
+
+        price_opportunities.append({
+            "product_id": pid,
+            "title": stats.get("title"),
+            "current_price": round(price_current, 2),
+            "suggested_price": suggested_price,
+            "direction": direction,
+            "delta_percent": delta_percent,
+            "reason": " • ".join(reasons) if reasons else "Ajustement recommandé",
+            "metrics": {
+                "orders": orders_count,
+                "inventory": inventory,
+                "views": views,
+                "add_to_cart": add_to_cart,
+                "view_to_cart_rate": round(view_to_cart, 4) if view_to_cart is not None else None,
+                "cart_to_order_rate": round(cart_to_order, 4) if cart_to_order is not None else None,
+            },
+        })
 
     # Rewrite opportunities: low performance + weak content signals
     rewrite_opportunities = []

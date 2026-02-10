@@ -1445,7 +1445,11 @@ export default function Dashboard() {
       }
 
       setStatus(statusKey, 'success', 'Succès: modification appliquée sur Shopify')
-      loadBlockers()
+      if (statusKey === 'action-price') {
+        loadInsights()
+      } else {
+        loadBlockers()
+      }
     } catch (err) {
       console.error('Error applying blocker action:', err)
       setStatus(statusKey, 'error', err.message)
@@ -2733,8 +2737,25 @@ export default function Dashboard() {
               ) : (
                 insightsData?.price_opportunities?.slice(0, 8).map((item, index) => (
                   <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
-                    <p className="text-white font-semibold">{item.title || item.product_id}</p>
-                    <p className="text-xs text-gray-500">{item.suggestion || 'Ajuster le prix'}</p>
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                      <div>
+                        <p className="text-white font-semibold">{item.title || item.product_id}</p>
+                        <p className="text-xs text-gray-500">{item.reason || 'Ajustement recommandé'}</p>
+                        <p className="text-xs text-gray-400 mt-1">
+                          Prix actuel: {item.current_price ?? '—'} → suggéré: {item.suggested_price ?? '—'}
+                          {item.delta_percent ? ` (${item.delta_percent > 0 ? '+' : ''}${item.delta_percent}%)` : ''}
+                        </p>
+                      </div>
+                      {item.suggested_price ? (
+                        <button
+                          onClick={() => handleApplyBlockerAction(item.product_id, { type: 'price', suggested_price: item.suggested_price }, 'action-price')}
+                          className="bg-emerald-500/90 hover:bg-emerald-400 text-black font-semibold px-3 py-2 rounded-md text-sm"
+                          disabled={applyingBlockerActionId === `${item.product_id}-price`}
+                        >
+                          {applyingBlockerActionId === `${item.product_id}-price` ? 'Application...' : 'Appliquer prix'}
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                 ))
               )}
