@@ -1444,7 +1444,7 @@ export default function Dashboard() {
         throw new Error(errorData.detail || `HTTP ${response.status}`)
       }
 
-      setStatus(statusKey, 'success', 'Action appliquée sur Shopify')
+      setStatus(statusKey, 'success', 'Succès: modification appliquée sur Shopify')
       loadBlockers()
     } catch (err) {
       console.error('Error applying blocker action:', err)
@@ -2655,7 +2655,11 @@ export default function Dashboard() {
                         {(item.recommendations || []).includes('title') && (
                           <button
                             onClick={() => handleApplyBlockerAction(item.product_id, { type: 'title', suggested_title: item.suggested_title }, 'action-rewrite')}
-                            className="px-3 py-2 rounded bg-gray-700 hover:bg-gray-600 text-sm text-white"
+                            className={`px-3 py-2 rounded text-sm font-semibold transition ${
+                              applyingBlockerActionId === `${item.product_id}-title`
+                                ? 'bg-amber-500 text-black shadow-[0_0_18px_rgba(245,158,11,0.8)]'
+                                : 'bg-amber-400/90 hover:bg-amber-300 text-black'
+                            }`}
                             disabled={applyingBlockerActionId === `${item.product_id}-title`}
                           >
                             Appliquer titre
@@ -2664,7 +2668,11 @@ export default function Dashboard() {
                         {(item.recommendations || []).includes('description') && (
                           <button
                             onClick={() => handleApplyBlockerAction(item.product_id, { type: 'description', suggested_description: item.suggested_description }, 'action-rewrite')}
-                            className="px-3 py-2 rounded bg-gray-700 hover:bg-gray-600 text-sm text-white"
+                            className={`px-3 py-2 rounded text-sm font-semibold transition ${
+                              applyingBlockerActionId === `${item.product_id}-description`
+                                ? 'bg-amber-500 text-black shadow-[0_0_18px_rgba(245,158,11,0.8)]'
+                                : 'bg-amber-400/90 hover:bg-amber-300 text-black'
+                            }`}
                             disabled={applyingBlockerActionId === `${item.product_id}-description`}
                           >
                             Appliquer description
