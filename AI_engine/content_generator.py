@@ -28,6 +28,15 @@ class ContentGenerator:
         current_title = product.get('title', '')
         product_type = product.get('product_type', '')
         vendor = product.get('vendor', '')
+        tags = product.get('tags', '')
+        variants = product.get('variants', []) or []
+        options = product.get('options', []) or []
+        prices = [float(v.get('price') or 0) for v in variants if v.get('price')]
+        compare_prices = [float(v.get('compare_at_price') or 0) for v in variants if v.get('compare_at_price')]
+        price_min = min(prices) if prices else 0
+        price_max = max(prices) if prices else 0
+        compare_max = max(compare_prices) if compare_prices else 0
+        option_summary = ", ".join([o.get('name', '') for o in options if o.get('name')])
         
         complexity = {
             'standard': "simple et clair",
@@ -35,19 +44,24 @@ class ContentGenerator:
             'premium': "ultra-optimisé avec storytelling et émotions"
         }
         
-        prompt = f"""Réécris ce titre de produit e-commerce de manière {complexity.get(tier, 'simple')}:
+        prompt = f"""Réécris ce titre de produit e-commerce en français, de manière {complexity.get(tier, 'simple')}.
 
-Titre actuel: {current_title}
-Type: {product_type}
-Marque: {vendor}
+    Contexte produit:
+    - Titre actuel: {current_title}
+    - Type: {product_type}
+    - Marque: {vendor}
+    - Tags: {tags}
+    - Options: {option_summary}
+    - Prix: {price_min:.2f} à {price_max:.2f} (comparé max: {compare_max:.2f} si dispo)
 
-Contraintes:
-- Maximum 70 caractères
-- Inclure mots-clés pertinents
-- Attirer l'attention
-- Optimisé pour Google Shopping
+    Contraintes strictes:
+    - 60 à 70 caractères maximum
+    - Sans emojis
+    - 1 seul titre final
+    - Clair, précis, orienté bénéfice
+    - N'invente pas de caractéristiques non présentes dans le contexte
 
-Nouveau titre:"""
+    Nouveau titre:"""
 
         try:
             response = self.client.chat.completions.create(
@@ -56,8 +70,8 @@ Nouveau titre:"""
                     {"role": "system", "content": "Tu es un expert en copywriting e-commerce et SEO."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.7,
-                max_tokens=100
+                temperature=0.65,
+                max_tokens=120
             )
             
             new_title = response.choices[0].message.content.strip()
@@ -84,29 +98,51 @@ Nouveau titre:"""
         title = product.get('title', '')
         current_desc = product.get('body_html', '')
         product_type = product.get('product_type', '')
-        price = product.get('variants', [{}])[0].get('price', '0')
+        vendor = product.get('vendor', '')
+        tags = product.get('tags', '')
+        variants = product.get('variants', []) or []
+        options = product.get('options', []) or []
+        prices = [float(v.get('price') or 0) for v in variants if v.get('price')]
+        compare_prices = [float(v.get('compare_at_price') or 0) for v in variants if v.get('compare_at_price')]
+        price_min = min(prices) if prices else 0
+        price_max = max(prices) if prices else 0
+        compare_max = max(compare_prices) if compare_prices else 0
+        option_summary = ", ".join([o.get('name', '') for o in options if o.get('name')])
         
         style = {
             'pro': "persuasive avec bénéfices clairs",
             'premium': "storytelling captivant avec urgence et émotions"
         }
         
-        prompt = f"""Crée une description de produit {style.get(tier, 'basique')} pour:
+        prompt = f"""Crée une description de produit en français, très détaillée et professionnelle.
 
-Produit: {title}
-Type: {product_type}
-Prix: ${price}
-Description actuelle: {current_desc[:200]}...
+    Contexte produit:
+    - Titre: {title}
+    - Type: {product_type}
+    - Marque: {vendor}
+    - Tags: {tags}
+    - Options: {option_summary}
+    - Prix: {price_min:.2f} à {price_max:.2f} (comparé max: {compare_max:.2f} si dispo)
+    - Extrait description actuelle: {current_desc[:300]}...
 
-Inclure:
-- Accroche puissante
-- 3-5 bénéfices clés
-- Caractéristiques techniques
-- Appel à l'action
-{'- Storytelling émotionnel' if tier == 'premium' else ''}
-{'- Sentiment d\'urgence/rareté' if tier == 'premium' else ''}
+    Exigences:
+    - N'invente pas de caractéristiques non présentes dans le contexte.
+    - Si une info manque, utilise une formulation prudente (ex: « conçu pour », « idéal pour »).
+    - Ton: {style.get(tier, 'basique')}.
+    - Sans emojis.
+    - Longueur: {'450-700 mots' if tier == 'premium' else '300-500 mots'}.
 
-Format: HTML simple (p, ul, li, strong)"""
+    Structure attendue (HTML simple):
+    1) <p><strong>Accroche</strong> ...</p>
+    2) <p>Résumé valeur (2-3 phrases)</p>
+    3) <h3>Bénéfices clés</h3><ul><li>...</li></ul>
+    4) <h3>Caractéristiques</h3><ul><li>...</li></ul>
+    5) <h3>Pour qui / usages</h3><p>...</p>
+    6) <h3>Pourquoi ce produit</h3><p>...</p>
+    7) <h3>FAQ</h3><ul><li><strong>Q:</strong> ... <strong>R:</strong> ...</li></ul>
+    8) <p><strong>Appel à l'action</strong> ...</p>
+
+    Retourne uniquement le HTML."""
 
         try:
             response = self.client.chat.completions.create(
@@ -115,8 +151,8 @@ Format: HTML simple (p, ul, li, strong)"""
                     {"role": "system", "content": "Tu es un copywriter e-commerce expert qui booste les conversions."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.8,
-                max_tokens=500 if tier == "premium" else 300
+                temperature=0.75,
+                max_tokens=900 if tier == "premium" else 600
             )
             
             description = response.choices[0].message.content.strip()

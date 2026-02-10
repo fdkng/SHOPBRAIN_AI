@@ -1351,6 +1351,9 @@ export default function Dashboard() {
   const runActionAnalysis = async (actionKey, options = {}) => {
     try {
       setStatus(actionKey, 'info', 'Analyse en cours...')
+      if (actionKey === 'action-rewrite') {
+        setInsightsData(null)
+      }
       if (actionKey === 'action-blockers') {
         await loadBlockers()
       } else if (actionKey === 'action-rewrite') {
@@ -1385,7 +1388,9 @@ export default function Dashboard() {
             reasons: data.reasons,
             recommendations: data.recommendations,
             suggested_title: data.suggested_title,
-            suggested_description: data.suggested_description
+            suggested_description: data.suggested_description,
+            current_title: data.current_title,
+            current_description: data.current_description
           }],
           rewrite_ai: {
             enabled: true,
@@ -2640,41 +2645,54 @@ export default function Dashboard() {
                 <p className="text-sm text-gray-500">Aucune suggestion disponible pour l'instant.</p>
               ) : (
                 insightsData?.rewrite_opportunities?.slice(0, 1).map((item, index) => (
-                  <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
+                  <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-6 space-y-4">
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <p className="text-white font-semibold">{item.title || 'Produit'}</p>
-                        <p className="text-xs text-gray-500">{(item.reasons || []).join(', ')}</p>
-                        {item.suggested_title && (
-                          <p className="mt-2 text-xs text-gray-300">
-                            <span className="text-gray-500">Titre suggéré:</span> {item.suggested_title}
-                          </p>
-                        )}
-                        {item.suggested_description && (
-                          <p className="mt-2 text-xs text-gray-400 line-clamp-3">
-                            <span className="text-gray-500">Description suggérée:</span> {item.suggested_description}
-                          </p>
-                        )}
+                        <p className="text-white font-semibold text-lg">{item.title || 'Produit'}</p>
+                        <p className="text-sm text-gray-400">{(item.reasons || []).join(' · ')}</p>
                       </div>
                       <div className="flex gap-2">
                         {(item.recommendations || []).includes('title') && (
                           <button
                             onClick={() => handleApplyBlockerAction(item.product_id, { type: 'title', suggested_title: item.suggested_title }, 'action-rewrite')}
-                            className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-white"
+                            className="px-3 py-2 rounded bg-gray-700 hover:bg-gray-600 text-sm text-white"
                             disabled={applyingBlockerActionId === `${item.product_id}-title`}
                           >
-                            Titre
+                            Appliquer titre
                           </button>
                         )}
                         {(item.recommendations || []).includes('description') && (
                           <button
                             onClick={() => handleApplyBlockerAction(item.product_id, { type: 'description', suggested_description: item.suggested_description }, 'action-rewrite')}
-                            className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-white"
+                            className="px-3 py-2 rounded bg-gray-700 hover:bg-gray-600 text-sm text-white"
                             disabled={applyingBlockerActionId === `${item.product_id}-description`}
                           >
-                            Description
+                            Appliquer description
                           </button>
                         )}
+                      </div>
+                    </div>
+
+                    <div className="grid md:grid-cols-2 gap-4">
+                      <div className="bg-gray-950/60 border border-gray-800 rounded-lg p-4">
+                        <p className="text-sm font-semibold text-gray-300 mb-2">Contenu actuel</p>
+                        <div className="text-sm text-gray-400 space-y-2">
+                          <p><span className="text-gray-500">Titre:</span> {item.current_title || '—'}</p>
+                          <div className="max-h-56 overflow-y-auto pr-2 text-base text-gray-300 whitespace-pre-wrap">
+                            {item.current_description || '—'}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="bg-gray-950/60 border border-gray-800 rounded-lg p-4">
+                        <p className="text-sm font-semibold text-gray-300 mb-2">Suggestions IA</p>
+                        <div className="text-sm text-gray-300 space-y-3">
+                          {item.suggested_title ? (
+                            <p className="text-base"><span className="text-gray-500">Titre suggéré:</span> {item.suggested_title}</p>
+                          ) : null}
+                          <div className="max-h-72 overflow-y-auto pr-2 text-base text-gray-200 whitespace-pre-wrap">
+                            {item.suggested_description || '—'}
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
