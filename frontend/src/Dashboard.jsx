@@ -1957,7 +1957,7 @@ export default function Dashboard() {
               { key: 'underperforming', label: 'Produits sous-performants' },
               { key: 'action-blockers', label: 'Produits freins' },
               { key: 'action-rewrite', label: 'Réécriture intelligente' },
-              { key: 'action-price', label: 'Optimisation dynamique des prix' },
+              { key: 'action-price', label: 'Optimisation des prix' },
               { key: 'action-images', label: 'Images non convertissantes' },
               { key: 'action-bundles', label: 'Bundles & cross-sell' },
               { key: 'action-stock', label: 'Prévision ruptures' },
@@ -2232,7 +2232,7 @@ export default function Dashboard() {
                 <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-4">Activité récente</h4>
                 <ul className="space-y-3 text-sm text-gray-300">
                   <li className="flex items-center justify-between">
-                    <span>Optimisation dynamique des prix</span>
+                    <span>Optimisation des prix</span>
                     <span className="text-gray-500">Aujourd’hui</span>
                   </li>
                   <li className="flex items-center justify-between">
@@ -2768,7 +2768,7 @@ export default function Dashboard() {
         {activeTab === 'action-price' && (
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 space-y-6">
             <div>
-              <h2 className="text-white text-xl font-bold mb-2">Optimisation dynamique des prix</h2>
+              <h2 className="text-white text-xl font-bold mb-2">Optimisation des prix</h2>
               <p className="text-gray-400">Ajuste les prix selon élasticité et performance.</p>
             </div>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -2784,13 +2784,18 @@ export default function Dashboard() {
                 <button
                   onClick={handleApplyPriceBatch}
                   disabled={applyingPriceBatch || insightsLoading}
-                  className="bg-emerald-500/90 hover:bg-emerald-400 text-black font-bold py-3 px-6 rounded-lg disabled:opacity-50"
+                  className="bg-amber-400 hover:bg-amber-300 text-black font-bold py-3 px-6 rounded-lg disabled:opacity-50"
                 >
                   {applyingPriceBatch ? 'Application...' : 'Faire les modifications'}
                 </button>
               </div>
             </div>
             {renderStatus('action-price')}
+            {insightsData?.price_ai?.notes?.length ? (
+              <div className="text-xs text-gray-500">
+                {insightsData.price_ai.notes.join(' • ')}
+              </div>
+            ) : null}
             <div className="space-y-3">
               {!insightsLoading && (!insightsData?.price_opportunities || insightsData.price_opportunities.length === 0) ? (
                 <p className="text-sm text-gray-500">Aucune opportunité détectée.</p>

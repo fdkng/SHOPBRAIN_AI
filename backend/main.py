@@ -2271,6 +2271,65 @@ async def get_shopify_insights(
             },
         })
 
+    if not price_opportunities:
+        fallback_candidates = sorted(
+            product_stats.values(),
+            key=lambda item: item.get("revenue", 0),
+            reverse=True,
+        )[:10]
+        for stats in fallback_candidates:
+            pid = str(stats.get("product_id"))
+            price_current = price_map.get(pid, 0)
+            if not price_current:
+                continue
+            orders_count = stats.get("orders", 0)
+            inventory = inventory_map.get(pid, 0)
+            views = int(event_counts.get(pid, {}).get("views", 0))
+            add_to_cart = int(event_counts.get(pid, {}).get("add_to_cart", 0))
+            view_to_cart = (add_to_cart / views) if views else None
+
+            reasons = []
+            direction = None
+            suggested_price = None
+
+            if avg_price and price_current > avg_price * 1.1 and orders_count < max(1, median_orders // 2):
+                direction = "down"
+                suggested_price = round(price_current * 0.95, 2)
+                reasons.append(f"Prix > moyenne ({price_current:.2f} > {avg_price:.2f})")
+            elif avg_price and price_current < avg_price * 0.9 and orders_count > median_orders:
+                direction = "up"
+                suggested_price = round(price_current * 1.05, 2)
+                reasons.append(f"Prix < moyenne ({price_current:.2f} < {avg_price:.2f})")
+            elif inventory > 20 and orders_count < max(1, median_orders // 2):
+                direction = "down"
+                suggested_price = round(price_current * 0.97, 2)
+                reasons.append("Surstock + faible demande")
+            elif inventory < 5 and orders_count > median_orders:
+                direction = "up"
+                suggested_price = round(price_current * 1.03, 2)
+                reasons.append("Stock faible + forte demande")
+
+            if not suggested_price:
+                continue
+
+            delta_percent = round(((suggested_price - price_current) / price_current) * 100, 1)
+            price_opportunities.append({
+                "product_id": pid,
+                "title": stats.get("title"),
+                "current_price": round(price_current, 2),
+                "suggested_price": suggested_price,
+                "direction": direction,
+                "delta_percent": delta_percent,
+                "reason": " • ".join(reasons) if reasons else "Ajustement recommandé",
+                "metrics": {
+                    "orders": orders_count,
+                    "inventory": inventory,
+                    "views": views,
+                    "add_to_cart": add_to_cart,
+                    "view_to_cart_rate": round(view_to_cart, 4) if view_to_cart is not None else None,
+                },
+            })
+
     price_ai = {
         "enabled": False,
         "generated": 0,
