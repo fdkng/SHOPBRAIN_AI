@@ -54,6 +54,7 @@ export default function Dashboard() {
   const [showApplyModal, setShowApplyModal] = useState(false)
   const [selectedActions, setSelectedActions] = useState([])
   const [applyingActions, setApplyingActions] = useState(false)
+  const [applyingPriceBatch, setApplyingPriceBatch] = useState(false)
   const [analysisResults, setAnalysisResults] = useState(null)
   const defaultChatMessages = [
     { role: 'assistant', text: 'Bonjour, je suis ton assistant IA e-commerce. Pose-moi des questions sur tes produits, ta stratégie, ou ta boutique Shopify.' }
@@ -1399,7 +1400,7 @@ export default function Dashboard() {
           }
         })
       } else {
-        const includeAi = actionKey === 'action-rewrite'
+        const includeAi = actionKey === 'action-rewrite' || actionKey === 'action-price'
         await loadInsights(undefined, includeAi, options.productId)
       }
       setStatus(actionKey, 'success', 'Analyse terminée.')
@@ -1455,6 +1456,56 @@ export default function Dashboard() {
       setStatus(statusKey, 'error', err.message)
     } finally {
       setApplyingBlockerActionId(null)
+    }
+  }
+
+  const handleApplyPriceBatch = async () => {
+    const plan = String(subscription?.plan || '').toLowerCase()
+    if (!['pro', 'premium'].includes(plan)) {
+      setStatus('action-price', 'warning', 'Fonctionnalité réservée aux plans Pro/Premium')
+      return
+    }
+
+    const items = (insightsData?.price_opportunities || [])
+      .filter(item => item?.product_id && item?.suggested_price)
+      .map(item => ({ product_id: item.product_id, suggested_price: item.suggested_price }))
+
+    if (!items.length) {
+      setStatus('action-price', 'warning', 'Aucune recommandation de prix à appliquer')
+      return
+    }
+
+    try {
+      setApplyingPriceBatch(true)
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        setStatus('action-price', 'error', 'Session expirée, reconnectez-vous')
+        return
+      }
+
+      const response = await fetch(`${API_URL}/api/shopify/pricing/apply-batch`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ items })
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.detail || `HTTP ${response.status}`)
+      }
+
+      const data = await response.json()
+      const successCount = data?.results?.filter(r => r?.success).length || 0
+      setStatus('action-price', 'success', `Prix appliqués: ${successCount}/${items.length}`)
+      loadInsights(undefined, true)
+    } catch (err) {
+      console.error('Error applying price batch:', err)
+      setStatus('action-price', 'error', err.message)
+    } finally {
+      setApplyingPriceBatch(false)
     }
   }
 
@@ -1906,7 +1957,7 @@ export default function Dashboard() {
               { key: 'underperforming', label: 'Produits sous-performants' },
               { key: 'action-blockers', label: 'Produits freins' },
               { key: 'action-rewrite', label: 'Réécriture intelligente' },
-              { key: 'action-price', label: 'Optimisation prix' },
+              { key: 'action-price', label: 'Optimisation dynamique des prix' },
               { key: 'action-images', label: 'Images non convertissantes' },
               { key: 'action-bundles', label: 'Bundles & cross-sell' },
               { key: 'action-stock', label: 'Prévision ruptures' },
@@ -2181,7 +2232,7 @@ export default function Dashboard() {
                 <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-4">Activité récente</h4>
                 <ul className="space-y-3 text-sm text-gray-300">
                   <li className="flex items-center justify-between">
-                    <span>Optimisation prix</span>
+                    <span>Optimisation dynamique des prix</span>
                     <span className="text-gray-500">Aujourd’hui</span>
                   </li>
                   <li className="flex items-center justify-between">
@@ -2722,13 +2773,22 @@ export default function Dashboard() {
             </div>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <p className="text-sm text-gray-400">{getInsightCount(insightsData?.price_opportunities)} opportunités</p>
-              <button
-                onClick={() => runActionAnalysis('action-price')}
-                disabled={insightsLoading}
-                className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
-              >
-                {insightsLoading ? 'Analyse en cours...' : 'Lancer l\'analyse IA'}
-              </button>
+              <div className="flex flex-wrap gap-3">
+                <button
+                  onClick={() => runActionAnalysis('action-price')}
+                  disabled={insightsLoading}
+                  className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
+                >
+                  {insightsLoading ? 'Analyse en cours...' : 'Lancer l\'analyse IA'}
+                </button>
+                <button
+                  onClick={handleApplyPriceBatch}
+                  disabled={applyingPriceBatch || insightsLoading}
+                  className="bg-emerald-500/90 hover:bg-emerald-400 text-black font-bold py-3 px-6 rounded-lg disabled:opacity-50"
+                >
+                  {applyingPriceBatch ? 'Application...' : 'Faire les modifications'}
+                </button>
+              </div>
             </div>
             {renderStatus('action-price')}
             <div className="space-y-3">

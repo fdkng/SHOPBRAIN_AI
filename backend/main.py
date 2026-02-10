@@ -2271,6 +2271,70 @@ async def get_shopify_insights(
             },
         })
 
+    price_ai = {
+        "enabled": False,
+        "generated": 0,
+        "notes": [],
+    }
+    if include_ai:
+        if tier not in {"pro", "premium"}:
+            price_ai["notes"].append("Plan requis: Pro ou Premium")
+        elif not OPENAI_API_KEY:
+            price_ai["notes"].append("OpenAI non configuré")
+        else:
+            try:
+                client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
+                price_ai["enabled"] = True
+
+                def _clamp_price(value: float, current: float) -> float:
+                    lower = round(current * 0.7, 2)
+                    upper = round(current * 1.3, 2)
+                    return max(lower, min(upper, round(value, 2)))
+
+                for item in price_opportunities[:8]:
+                    current_price = item.get("current_price")
+                    if not current_price:
+                        continue
+                    metrics = item.get("metrics", {})
+                    prompt = (
+                        "Tu es un expert pricing e-commerce. Donne un prix recommandé basé sur les faits.\n"
+                        f"Prix actuel: {current_price}\n"
+                        f"Commandes: {metrics.get('orders', 0)}\n"
+                        f"Stock: {metrics.get('inventory', 0)}\n"
+                        f"Vues: {metrics.get('views', 0)}\n"
+                        f"Ajouts panier: {metrics.get('add_to_cart', 0)}\n"
+                        f"Taux vue→panier: {metrics.get('view_to_cart_rate')}\n"
+                        f"Taux panier→achat: {metrics.get('cart_to_order_rate')}\n"
+                        f"Moyenne boutique: {avg_price}\n"
+                        "Retourne JSON: {\"suggested_price\": number, \"rationale\": string}.\n"
+                        "Contrainte: variation max ±30% du prix actuel."
+                    )
+
+                    response = client.chat.completions.create(
+                        model="gpt-4",
+                        messages=[
+                            {"role": "system", "content": "Tu optimises les prix avec rigueur et prudence."},
+                            {"role": "user", "content": prompt},
+                        ],
+                        temperature=0.2,
+                        max_tokens=120,
+                        response_format={"type": "json_object"},
+                    )
+                    content = response.choices[0].message.content
+                    parsed = json.loads(content)
+                    suggested = _safe_float(parsed.get("suggested_price"), None)
+                    if suggested:
+                        suggested = _clamp_price(suggested, current_price)
+                        item["suggested_price"] = suggested
+                        item["delta_percent"] = round(((suggested - current_price) / current_price) * 100, 1)
+                        item["direction"] = "up" if suggested > current_price else "down"
+                        rationale = parsed.get("rationale")
+                        if rationale:
+                            item["reason"] = f"{item.get('reason') or ''} • {rationale}".strip(" •")
+                        price_ai["generated"] += 1
+            except Exception as e:
+                price_ai["notes"].append(f"Erreur IA: {str(e)[:120]}")
+
     # Rewrite opportunities: low performance + weak content signals
     rewrite_opportunities = []
     for pid, stats in product_stats.items():
@@ -2395,6 +2459,7 @@ async def get_shopify_insights(
         "bundle_suggestions": bundles,
         "stock_risks": stock_risks,
         "price_opportunities": price_opportunities[:10],
+        "price_ai": price_ai,
         "return_risks": return_risks,
     }
 
@@ -2994,6 +3059,15 @@ class BlockerApplyRequest(BaseModel):
     suggested_description: str | None = None
 
 
+class PriceBatchItem(BaseModel):
+    product_id: str
+    suggested_price: float
+
+
+class PriceBatchApplyRequest(BaseModel):
+    items: list[PriceBatchItem]
+
+
 @app.post("/api/shopify/blockers/apply")
 async def apply_blocker_action(req: BlockerApplyRequest, request: Request):
     """⚡ Applique une action sur un produit frein (Pro/Premium)."""
@@ -3076,6 +3150,50 @@ async def apply_blocker_action(req: BlockerApplyRequest, request: Request):
         return {"success": True, "action": "description"}
 
     raise HTTPException(status_code=400, detail="Action non supportée")
+
+
+@app.post("/api/shopify/pricing/apply-batch")
+async def apply_price_batch(req: PriceBatchApplyRequest, request: Request):
+    """⚡ Applique des prix suggérés en lot (Pro/Premium)."""
+    user_id = get_user_id(request)
+    tier = get_user_tier(user_id)
+    if tier not in {"pro", "premium"}:
+        raise HTTPException(status_code=403, detail="Fonctionnalité réservée aux plans Pro/Premium")
+
+    items = req.items or []
+    if not items:
+        raise HTTPException(status_code=400, detail="Aucune recommandation fournie")
+    if len(items) > 50:
+        raise HTTPException(status_code=400, detail="Maximum 50 changements par lot")
+
+    shop_domain, access_token = _get_shopify_connection(user_id)
+    from AI_engine.action_engine import ActionEngine
+    action_engine = ActionEngine(shop_domain, access_token)
+
+    results = []
+    for item in items:
+        product_id = str(item.product_id)
+        new_price = _safe_float(item.suggested_price, None)
+        if not new_price or new_price <= 0:
+            results.append({"product_id": product_id, "success": False, "error": "Prix invalide"})
+            continue
+
+        result = action_engine.apply_price_change(product_id, new_price)
+        if not result.get("success"):
+            results.append({
+                "product_id": product_id,
+                "success": False,
+                "error": result.get("error", "Échec modification prix"),
+            })
+            continue
+
+        results.append({"product_id": product_id, "success": True, "new_price": new_price})
+
+    return {
+        "success": True,
+        "shop": shop_domain,
+        "results": results,
+    }
 
 
 def _log_blocker_action(user_id: str, shop_domain: str, product_id: str, action_type: str) -> None:
