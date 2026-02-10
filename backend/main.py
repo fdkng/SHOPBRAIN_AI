@@ -2326,6 +2326,58 @@ async def get_shopify_insights(
     }
 
 
+@app.get("/api/shopify/rewrite")
+async def get_shopify_rewrite(request: Request, product_id: str):
+    """Réécriture intelligente d'un produit spécifique."""
+    user_id = get_user_id(request)
+    tier = get_user_tier(user_id)
+    if tier not in {"pro", "premium"}:
+        raise HTTPException(status_code=403, detail="Fonctionnalité réservée aux plans Pro/Premium")
+
+    if not product_id:
+        raise HTTPException(status_code=400, detail="product_id requis")
+
+    shop_domain, access_token = _get_shopify_connection(user_id)
+    headers = {
+        "X-Shopify-Access-Token": access_token,
+        "Content-Type": "application/json",
+    }
+
+    product_resp = requests.get(
+        f"https://{shop_domain}/admin/api/2024-10/products/{product_id}.json",
+        headers=headers,
+        timeout=30,
+    )
+    if product_resp.status_code == 401:
+        raise HTTPException(status_code=401, detail="Token Shopify expiré ou invalide. Reconnectez-vous.")
+    if product_resp.status_code == 404:
+        raise HTTPException(status_code=404, detail="Produit Shopify introuvable")
+    if product_resp.status_code != 200:
+        raise HTTPException(status_code=product_resp.status_code, detail=f"Erreur Shopify: {product_resp.text[:300]}")
+
+    product = product_resp.json().get("product", {})
+    if not product:
+        raise HTTPException(status_code=404, detail="Produit Shopify introuvable")
+
+    ensure_feature_allowed(tier, "content_generation")
+    engine = get_ai_engine()
+    suggested_title = engine.content_gen.generate_title(product, tier)
+    suggested_description = engine.content_gen.generate_description(product, tier)
+
+    return {
+        "success": True,
+        "shop": shop_domain,
+        "product_id": product_id,
+        "title": product.get("title") or "Produit",
+        "current_title": product.get("title") or "",
+        "current_description": _strip_html(product.get("body_html") or ""),
+        "suggested_title": suggested_title,
+        "suggested_description": suggested_description,
+        "reasons": ["Réécriture demandée"],
+        "recommendations": ["title", "description"],
+    }
+
+
 class DraftOrderRequest(BaseModel):
     customer_id: str | None = None
     email: str | None = None

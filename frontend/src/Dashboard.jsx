@@ -1353,6 +1353,46 @@ export default function Dashboard() {
       setStatus(actionKey, 'info', 'Analyse en cours...')
       if (actionKey === 'action-blockers') {
         await loadBlockers()
+      } else if (actionKey === 'action-rewrite') {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session) {
+          setStatus(actionKey, 'error', 'Session expirée, reconnectez-vous')
+          return
+        }
+        if (!options.productId) {
+          setStatus(actionKey, 'warning', 'Sélectionne un produit à analyser')
+          return
+        }
+        const response = await fetch(`${API_URL}/api/shopify/rewrite?product_id=${encodeURIComponent(options.productId)}`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json'
+          }
+        })
+        if (!response.ok) {
+          const errorData = await response.json()
+          throw new Error(errorData.detail || `HTTP ${response.status}`)
+        }
+        const data = await response.json()
+        if (!data.success) {
+          throw new Error(data.error || 'Erreur réécriture')
+        }
+        setInsightsData({
+          rewrite_opportunities: [{
+            product_id: data.product_id,
+            title: data.title,
+            reasons: data.reasons,
+            recommendations: data.recommendations,
+            suggested_title: data.suggested_title,
+            suggested_description: data.suggested_description
+          }],
+          rewrite_ai: {
+            enabled: true,
+            generated: 1,
+            notes: []
+          }
+        })
       } else {
         const includeAi = actionKey === 'action-rewrite'
         await loadInsights(undefined, includeAi, options.productId)
@@ -2597,7 +2637,7 @@ export default function Dashboard() {
               {!rewriteProductId ? (
                 <p className="text-sm text-gray-500">Sélectionne un produit pour lancer l'analyse.</p>
               ) : !insightsLoading && (!insightsData?.rewrite_opportunities || insightsData.rewrite_opportunities.length === 0) ? (
-                <p className="text-sm text-gray-500">Aucun signal détecté pour ce produit.</p>
+                <p className="text-sm text-gray-500">Aucune suggestion disponible pour l'instant.</p>
               ) : (
                 insightsData?.rewrite_opportunities?.slice(0, 1).map((item, index) => (
                   <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
