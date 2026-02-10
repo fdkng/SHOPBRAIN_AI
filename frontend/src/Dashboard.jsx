@@ -2813,6 +2813,7 @@ export default function Dashboard() {
                       </div>
                       {item.suggested_price ? (
                         <button
+                          onMouseEnter={() => handleApplyBlockerAction(item.product_id, { type: 'price', suggested_price: item.suggested_price }, 'action-price')}
                           onClick={() => handleApplyBlockerAction(item.product_id, { type: 'price', suggested_price: item.suggested_price }, 'action-price')}
                           className="bg-emerald-500/90 hover:bg-emerald-400 text-black font-semibold px-3 py-2 rounded-md text-sm"
                           disabled={applyingBlockerActionId === `${item.product_id}-price`}
