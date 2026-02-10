@@ -1558,6 +1558,46 @@ export default function Dashboard() {
     }
   }, [activeTab])
 
+  useEffect(() => {
+    if (!user) return
+    let intervalId
+
+    const checkShopifyConnection = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session) return
+
+        const response = await fetch(`${API_URL}/api/shopify/keep-alive`, {
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json'
+          }
+        })
+
+        if (!response.ok) return
+        const data = await response.json()
+        if (data.success && data.connected) {
+          if (data.shop) {
+            setShopifyUrl(data.shop)
+          }
+          setShopifyConnected(true)
+        } else if (data.success && data.connected === false) {
+          setShopifyConnected(false)
+          setStatus('shopify', 'warning', 'Connexion Shopify expirée. Reconnecte ta boutique.')
+        }
+      } catch (err) {
+        console.error('Shopify keep-alive failed:', err)
+      }
+    }
+
+    checkShopifyConnection()
+    intervalId = window.setInterval(checkShopifyConnection, 5 * 60 * 1000)
+
+    return () => {
+      if (intervalId) window.clearInterval(intervalId)
+    }
+  }, [user])
+
   const analyzeProducts = async () => {
     if (!products || products.length === 0) {
       setStatus('analyze', 'warning', 'Charge tes produits d\'abord')

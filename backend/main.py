@@ -1247,6 +1247,32 @@ async def get_shopify_connection(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/shopify/keep-alive")
+async def keep_shopify_connection(request: Request):
+    """Ping Shopify pour vérifier que le token est toujours valide."""
+    user_id = get_user_id(request)
+    shop_domain, access_token = _get_shopify_connection(user_id)
+
+    headers = {
+        "X-Shopify-Access-Token": access_token,
+        "Content-Type": "application/json",
+    }
+
+    try:
+        response = requests.get(
+            f"https://{shop_domain}/admin/api/2024-10/shop.json",
+            headers=headers,
+            timeout=20,
+        )
+        if response.status_code == 401:
+            return {"success": True, "connected": False, "reason": "token_invalid"}
+        if response.status_code != 200:
+            raise HTTPException(status_code=response.status_code, detail=f"Erreur Shopify: {response.text[:200]}")
+        return {"success": True, "connected": True, "shop": shop_domain}
+    except requests.exceptions.Timeout:
+        return {"success": True, "connected": True, "shop": shop_domain, "note": "timeout"}
+
+
 @app.post("/api/shopify/test-connection")
 async def test_shopify_connection(payload: dict, request: Request):
     """🧪 TEST: Valide la connexion Shopify AVANT de l'utiliser
