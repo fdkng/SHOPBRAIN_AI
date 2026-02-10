@@ -106,6 +106,7 @@ export default function Dashboard() {
   const [insightsData, setInsightsData] = useState(null)
   const [insightsLoading, setInsightsLoading] = useState(false)
   const [insightsError, setInsightsError] = useState('')
+  const [rewriteProductId, setRewriteProductId] = useState('')
   const [blockersData, setBlockersData] = useState(null)
   const [blockersLoading, setBlockersLoading] = useState(false)
   const [customers, setCustomers] = useState([])
@@ -1268,7 +1269,7 @@ export default function Dashboard() {
     }
   }
 
-  const loadInsights = async (rangeOverride, includeAi = false) => {
+  const loadInsights = async (rangeOverride, includeAi = false, productId) => {
     try {
       const rangeValue = rangeOverride || analyticsRange
       setInsightsLoading(true)
@@ -1281,7 +1282,8 @@ export default function Dashboard() {
       }
 
       const aiParam = includeAi ? '&include_ai=true' : ''
-      const response = await fetch(`${API_URL}/api/shopify/insights?range=${rangeValue}${aiParam}`, {
+      const productParam = productId ? `&product_id=${encodeURIComponent(productId)}` : ''
+      const response = await fetch(`${API_URL}/api/shopify/insights?range=${rangeValue}${aiParam}${productParam}`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
@@ -1346,14 +1348,14 @@ export default function Dashboard() {
     }
   }
 
-  const runActionAnalysis = async (actionKey) => {
+  const runActionAnalysis = async (actionKey, options = {}) => {
     try {
       setStatus(actionKey, 'info', 'Analyse en cours...')
       if (actionKey === 'action-blockers') {
         await loadBlockers()
       } else {
         const includeAi = actionKey === 'action-rewrite'
-        await loadInsights(undefined, includeAi)
+        await loadInsights(undefined, includeAi, options.productId)
       }
       setStatus(actionKey, 'success', 'Analyse terminée.')
     } catch (err) {
@@ -1549,6 +1551,9 @@ export default function Dashboard() {
       loadCustomers()
     }
     if (activeTab === 'invoices' && (!products || products.length === 0)) {
+      loadProducts()
+    }
+    if (activeTab === 'action-rewrite' && (!products || products.length === 0)) {
       loadProducts()
     }
   }, [activeTab])
@@ -1811,7 +1816,7 @@ export default function Dashboard() {
               { key: 'overview', label: 'Vue d\'ensemble' },
               { key: 'underperforming', label: 'Produits sous-performants' },
               { key: 'action-blockers', label: 'Produits freins' },
-              { key: 'action-rewrite', label: 'Réécriture continue' },
+              { key: 'action-rewrite', label: 'Réécriture intelligente' },
               { key: 'action-price', label: 'Optimisation prix' },
               { key: 'action-images', label: 'Images non convertissantes' },
               { key: 'action-bundles', label: 'Bundles & cross-sell' },
@@ -2520,13 +2525,27 @@ export default function Dashboard() {
             </div>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <p className="text-sm text-gray-400">{getInsightCount(insightsData?.rewrite_opportunities)} produits analysés</p>
-              <button
-                onClick={() => runActionAnalysis('action-rewrite')}
-                disabled={insightsLoading}
-                className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
-              >
-                {insightsLoading ? 'Analyse en cours...' : 'Lancer l\'analyse IA'}
-              </button>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <select
+                  value={rewriteProductId}
+                  onChange={(event) => setRewriteProductId(event.target.value)}
+                  className="bg-gray-900 border border-gray-700 text-sm text-white rounded-lg px-3 py-2 min-w-[240px]"
+                >
+                  <option value="">Sélectionner un produit</option>
+                  {(products || []).map((product) => (
+                    <option key={product.id} value={product.id}>
+                      {product.title || product.name || `Produit ${product.id}`}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => runActionAnalysis('action-rewrite', { productId: rewriteProductId })}
+                  disabled={insightsLoading || !rewriteProductId}
+                  className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
+                >
+                  {insightsLoading ? 'Analyse en cours...' : 'Lancer l\'analyse de réécriture'}
+                </button>
+              </div>
             </div>
             {renderStatus('action-rewrite')}
             {insightsData?.rewrite_ai?.notes?.length ? (
@@ -2535,10 +2554,12 @@ export default function Dashboard() {
               </div>
             ) : null}
             <div className="space-y-3">
-              {!insightsLoading && (!insightsData?.rewrite_opportunities || insightsData.rewrite_opportunities.length === 0) ? (
-                <p className="text-sm text-gray-500">Aucun signal détecté.</p>
+              {!rewriteProductId ? (
+                <p className="text-sm text-gray-500">Sélectionne un produit pour lancer l'analyse.</p>
+              ) : !insightsLoading && (!insightsData?.rewrite_opportunities || insightsData.rewrite_opportunities.length === 0) ? (
+                <p className="text-sm text-gray-500">Aucun signal détecté pour ce produit.</p>
               ) : (
-                insightsData?.rewrite_opportunities?.slice(0, 8).map((item, index) => (
+                insightsData?.rewrite_opportunities?.slice(0, 1).map((item, index) => (
                   <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
                     <div className="flex items-center justify-between gap-3">
                       <div>

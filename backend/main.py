@@ -1871,7 +1871,12 @@ async def get_shopify_analytics(request: Request, range: str = "30d"):
 
 
 @app.get("/api/shopify/insights")
-async def get_shopify_insights(request: Request, range: str = "30d", include_ai: bool = False):
+async def get_shopify_insights(
+    request: Request,
+    range: str = "30d",
+    include_ai: bool = False,
+    product_id: str | None = None,
+):
     """🧠 Insights: produits freins, images faibles, bundles, stocks, prix, retours"""
     user_id = get_user_id(request)
     tier = get_user_tier(user_id)
@@ -2170,6 +2175,8 @@ async def get_shopify_insights(request: Request, range: str = "30d", include_ai:
     # Rewrite opportunities: low performance + weak content signals
     rewrite_opportunities = []
     for pid, stats in product_stats.items():
+        if product_id and str(pid) != str(product_id):
+            continue
         orders_count = stats.get("orders", 0)
         revenue = stats.get("revenue", 0)
         content = content_map.get(pid, {})
@@ -2186,16 +2193,16 @@ async def get_shopify_insights(request: Request, range: str = "30d", include_ai:
         if title_len < 20 or title_len > 70:
             reasons.append("Titre à optimiser")
 
-        if not reasons:
-            continue
-
         recommendations = []
         if description_len < 120:
             recommendations.append("description")
         if title_len < 20 or title_len > 70:
             recommendations.append("title")
 
-        if recommendations:
+        if not reasons and product_id:
+            reasons = ["Contenu déjà optimisé"]
+
+        if recommendations or product_id:
             rewrite_opportunities.append({
                 "product_id": pid,
                 "title": stats.get("title") or content.get("title") or "Produit",
