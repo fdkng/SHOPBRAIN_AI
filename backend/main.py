@@ -2330,6 +2330,48 @@ async def get_shopify_insights(
                 },
             })
 
+    if not price_opportunities and products_by_id:
+        for pid, product in list(products_by_id.items())[:10]:
+            variants = product.get("variants", []) or []
+            price_current = _safe_float(variants[0].get("price"), 0.0) if variants else 0.0
+            if not price_current:
+                continue
+            inventory = inventory_map.get(pid, 0)
+            if avg_price and price_current > avg_price * 1.1:
+                suggested_price = round(price_current * 0.95, 2)
+                reason = f"Prix > moyenne ({price_current:.2f} > {avg_price:.2f})"
+                direction = "down"
+            elif avg_price and price_current < avg_price * 0.9:
+                suggested_price = round(price_current * 1.05, 2)
+                reason = f"Prix < moyenne ({price_current:.2f} < {avg_price:.2f})"
+                direction = "up"
+            elif inventory > 20:
+                suggested_price = round(price_current * 0.97, 2)
+                reason = "Surstock + faible demande"
+                direction = "down"
+            else:
+                suggested_price = round(price_current * 1.03, 2)
+                reason = "Test d'élasticité"
+                direction = "up"
+
+            delta_percent = round(((suggested_price - price_current) / price_current) * 100, 1)
+            price_opportunities.append({
+                "product_id": pid,
+                "title": product.get("title") or pid,
+                "current_price": round(price_current, 2),
+                "suggested_price": suggested_price,
+                "direction": direction,
+                "delta_percent": delta_percent,
+                "reason": reason,
+                "metrics": {
+                    "orders": 0,
+                    "inventory": inventory,
+                    "views": 0,
+                    "add_to_cart": 0,
+                    "view_to_cart_rate": None,
+                },
+            })
+
     price_ai = {
         "enabled": False,
         "generated": 0,
