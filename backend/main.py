@@ -101,7 +101,7 @@ print("\n🚀 ========== BACKEND STARTUP ==========")
 print(f"✅ FastAPI initializing...")
 app = FastAPI()
 
-# Allow CORS from GitHub Pages and local development
+# Allow CORS from configured frontend and local development
 allowed_origins = [
     "https://fdkng.github.io",
     "https://fdkng.github.io/SHOPBRAIN_AI",
@@ -109,9 +109,21 @@ allowed_origins = [
     "http://localhost:3000",
 ]
 
+frontend_origin = os.getenv("FRONTEND_ORIGIN")
+if frontend_origin:
+    allowed_origins.append(frontend_origin)
+
+extra_origins = [
+    origin.strip()
+    for origin in os.getenv("FRONTEND_ORIGINS", "").split(",")
+    if origin.strip()
+]
+allowed_origins.extend(extra_origins)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
+    allow_origin_regex=r"^https://.*$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
