@@ -2192,15 +2192,16 @@ async def get_shopify_insights(
             reasons.append("Description courte")
         if title_len < 20 or title_len > 70:
             reasons.append("Titre à optimiser")
+        if product_id:
+            reasons.append("Réécriture demandée")
 
         recommendations = []
         if description_len < 120:
             recommendations.append("description")
         if title_len < 20 or title_len > 70:
             recommendations.append("title")
-
-        if not reasons and product_id:
-            reasons = ["Contenu déjà optimisé"]
+        if product_id:
+            recommendations = ["title", "description"]
 
         if recommendations or product_id:
             rewrite_opportunities.append({
