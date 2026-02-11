@@ -163,6 +163,13 @@ export default function Dashboard() {
 
   const getInsightCount = (items) => (Array.isArray(items) ? items.length : 0)
 
+  const getPriceCurrency = () => insightsData?.price_summary?.currency || analyticsData?.currency || 'EUR'
+
+  const getTotalPriceImpact = (items) => {
+    if (!Array.isArray(items)) return 0
+    return items.reduce((acc, item) => acc + (Number(item?.impact_estimate) || 0), 0)
+  }
+
   const renderInsightItems = (items, formatter) => {
     if (insightsLoading) {
       return <p className="text-xs text-gray-500 mt-2">Chargement...</p>
@@ -1378,7 +1385,10 @@ export default function Dashboard() {
         setInsightsData(prev => ({
           ...(prev || {}),
           price_opportunities: data.items || [],
-          price_ai: data.price_ai || { enabled: false, generated: 0, notes: [] }
+          price_ai: data.price_ai || { enabled: false, generated: 0, notes: [] },
+          price_summary: data.summary || null,
+          price_insights: data.insights || [],
+          price_guardrails: data.guardrails || []
         }))
         setStatus(actionKey, 'success', 'Analyse terminée.')
         return
@@ -2831,6 +2841,60 @@ export default function Dashboard() {
                 {insightsData.price_ai.notes.join(' • ')}
               </div>
             ) : null}
+            {insightsData?.price_summary ? (
+              <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                <div className="bg-gray-900/70 border border-gray-700 rounded-lg p-3">
+                  <p className="text-[11px] text-gray-500">Prix moyen</p>
+                  <p className="text-white text-lg font-semibold">
+                    {formatCurrency(insightsData.price_summary.avg_price, getPriceCurrency())}
+                  </p>
+                </div>
+                <div className="bg-gray-900/70 border border-gray-700 rounded-lg p-3">
+                  <p className="text-[11px] text-gray-500">Prix médian</p>
+                  <p className="text-white text-lg font-semibold">
+                    {formatCurrency(insightsData.price_summary.median_price, getPriceCurrency())}
+                  </p>
+                </div>
+                <div className="bg-gray-900/70 border border-gray-700 rounded-lg p-3">
+                  <p className="text-[11px] text-gray-500">Dispersion</p>
+                  <p className="text-white text-lg font-semibold">
+                    {insightsData.price_summary.price_dispersion ?? '—'}
+                  </p>
+                </div>
+                <div className="bg-gray-900/70 border border-gray-700 rounded-lg p-3">
+                  <p className="text-[11px] text-gray-500">Produits actifs</p>
+                  <p className="text-white text-lg font-semibold">
+                    {insightsData.price_summary.products_with_sales ?? 0}/{insightsData.price_summary.total_products ?? 0}
+                  </p>
+                </div>
+                <div className="bg-gray-900/70 border border-gray-700 rounded-lg p-3">
+                  <p className="text-[11px] text-gray-500">Impact 30j estimé</p>
+                  <p className="text-white text-lg font-semibold">
+                    {formatCurrency(getTotalPriceImpact(insightsData?.price_opportunities || []), getPriceCurrency())}
+                  </p>
+                </div>
+              </div>
+            ) : null}
+            {insightsData?.price_insights?.length ? (
+              <div className="bg-gray-900/60 border border-gray-700 rounded-lg p-4">
+                <p className="text-sm text-gray-300 font-semibold mb-2">Lecture IA</p>
+                <ul className="text-xs text-gray-400 space-y-1">
+                  {insightsData.price_insights.map((note, index) => (
+                    <li key={`price-insight-${index}`}>{note}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {insightsData?.price_guardrails?.length ? (
+              <div className="bg-gray-900/60 border border-gray-700 rounded-lg p-4">
+                <p className="text-sm text-gray-300 font-semibold mb-2">Garde-fous</p>
+                <ul className="text-xs text-gray-400 space-y-1">
+                  {insightsData.price_guardrails.map((rule, index) => (
+                    <li key={`price-guard-${index}`}>{rule}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
             <div className="space-y-3">
               {!insightsLoading && (!insightsData?.price_opportunities || insightsData.price_opportunities.length === 0) ? (
                 <p className="text-sm text-gray-500">Aucune opportunité détectée.</p>
@@ -2840,15 +2904,36 @@ export default function Dashboard() {
                     <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                       <div>
                         <p className="text-white font-semibold">{item.title || item.product_id}</p>
-                        <p className="text-xs text-gray-500">{item.reason || 'Ajustement recommandé'}</p>
+                        {Array.isArray(item.signals) && item.signals.length ? (
+                          <div className="flex flex-wrap gap-2 mt-2">
+                            {item.signals.map((signal, signalIndex) => (
+                              <span key={`${item.product_id}-signal-${signalIndex}`} className="text-[11px] text-gray-200 bg-gray-800/80 border border-gray-700 px-2 py-1 rounded-full">
+                                {signal}
+                              </span>
+                            ))}
+                            {item.confidence ? (
+                              <span className="text-[11px] text-emerald-200 bg-emerald-500/10 border border-emerald-500/30 px-2 py-1 rounded-full">
+                                Confiance {Math.round(item.confidence * 100)}%
+                              </span>
+                            ) : null}
+                            {item.impact_estimate !== null && item.impact_estimate !== undefined ? (
+                              <span className="text-[11px] text-amber-200 bg-amber-500/10 border border-amber-500/30 px-2 py-1 rounded-full">
+                                Impact {formatCurrency(item.impact_estimate, getPriceCurrency())}
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        <p className="text-xs text-gray-500 mt-2">{item.reason || 'Ajustement recommandé'}</p>
                         <p className="text-xs text-gray-400 mt-1">
-                          Prix actuel: {item.current_price ?? '—'} → suggéré: {item.suggested_price ?? '—'}
+                          Prix actuel: {formatCurrency(item.current_price, getPriceCurrency())} → suggéré: {formatCurrency(item.suggested_price, getPriceCurrency())}
                           {item.delta_percent ? ` (${item.delta_percent > 0 ? '+' : ''}${item.delta_percent}%)` : ''}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          Ventes 30j: {item.metrics?.units_sold ?? 0} • Vitesse: {item.metrics?.velocity_per_day ?? '—'}/j • Stock: {item.metrics?.inventory ?? '—'}
                         </p>
                       </div>
                       {item.suggested_price ? (
                         <button
-                          onMouseEnter={() => handleApplyBlockerAction(item.product_id, { type: 'price', suggested_price: item.suggested_price }, 'action-price')}
                           onClick={() => handleApplyBlockerAction(item.product_id, { type: 'price', suggested_price: item.suggested_price }, 'action-price')}
                           className="bg-emerald-500/90 hover:bg-emerald-400 text-black font-semibold px-3 py-2 rounded-md text-sm"
                           disabled={applyingBlockerActionId === `${item.product_id}-price`}

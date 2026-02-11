@@ -20,6 +20,7 @@ import base64
 import requests
 import json
 import sys
+import math
 from datetime import datetime, timedelta
 from supabase import create_client
 from io import BytesIO
@@ -2604,7 +2605,51 @@ async def get_shopify_pricing_analysis(
 
     products = response.json().get("products", [])
     if not products:
-        return {"success": True, "shop": shop_domain, "items": [], "price_ai": {"enabled": False, "generated": 0, "notes": ["Aucun produit"]}}
+        return {
+            "success": True,
+            "shop": shop_domain,
+            "summary": {"total_products": 0, "currency": "USD"},
+            "insights": [],
+            "guardrails": [],
+            "items": [],
+            "price_ai": {"enabled": False, "generated": 0, "notes": ["Aucun produit"]},
+        }
+
+    range_days = 30
+    orders = _fetch_shopify_orders(shop_domain, access_token, range_days)
+    sales_by_product = {}
+    currency = "USD"
+
+    for order in orders:
+        currency = order.get("currency") or currency
+        for item in order.get("line_items", []):
+            product_id = _normalize_shopify_id(item.get("product_id") or item.get("id"))
+            if not product_id:
+                continue
+            quantity = int(item.get("quantity") or 0)
+            price_paid = _safe_float(item.get("price"), 0.0)
+            stats = sales_by_product.setdefault(product_id, {"units": 0, "revenue": 0.0, "orders": 0, "prices": []})
+            stats["units"] += quantity
+            stats["revenue"] += price_paid * quantity
+            stats["orders"] += 1
+            if price_paid:
+                stats["prices"].append(price_paid)
+
+    def _median(values):
+        if not values:
+            return None
+        values_sorted = sorted(values)
+        mid = len(values_sorted) // 2
+        if len(values_sorted) % 2:
+            return values_sorted[mid]
+        return (values_sorted[mid - 1] + values_sorted[mid]) / 2
+
+    def _percentile(values, pct):
+        if not values:
+            return None
+        values_sorted = sorted(values)
+        index = int(round((pct / 100) * (len(values_sorted) - 1)))
+        return values_sorted[index]
 
     prices = []
     for product in products:
@@ -2613,7 +2658,14 @@ async def get_shopify_pricing_analysis(
             price_current = _safe_float(variants[0].get("price"), 0.0)
             if price_current:
                 prices.append(price_current)
+
     avg_price = (sum(prices) / len(prices)) if prices else None
+    median_price = _median(prices)
+    p10 = _percentile(prices, 10)
+    p90 = _percentile(prices, 90)
+    dispersion = None
+    if median_price and p10 is not None and p90 is not None:
+        dispersion = round((p90 - p10) / median_price, 3)
 
     items = []
     for product in products:
@@ -2624,40 +2676,100 @@ async def get_shopify_pricing_analysis(
         if not price_current:
             continue
         inventory = sum(int(v.get("inventory_quantity") or 0) for v in variants)
+        product_id = str(product.get("id"))
+        sales = sales_by_product.get(product_id, {"units": 0, "revenue": 0.0, "orders": 0, "prices": []})
+        units_sold = sales.get("units", 0)
+        revenue = sales.get("revenue", 0.0)
+        orders_count = sales.get("orders", 0)
+        prices_paid = sales.get("prices", [])
+        avg_paid = (revenue / units_sold) if units_sold else None
+        min_paid = min(prices_paid) if prices_paid else None
+        max_paid = max(prices_paid) if prices_paid else None
+        velocity = round(units_sold / range_days, 3) if range_days else 0
 
-        if avg_price and price_current > avg_price * 1.1:
+        direction = "up"
+        suggested_price = price_current * 1.02
+        reason = "Test d'élasticité"
+        signals = ["Test marché"]
+
+        if avg_paid and units_sold >= 3 and price_current > avg_paid * 1.12:
             direction = "down"
-            suggested_price = round(price_current * 0.95, 2)
+            suggested_price = price_current * 0.94
+            reason = "Prix au-dessus du prix payé"
+            signals = ["Prix > historique"]
+            if velocity < 0.2:
+                signals.append("Rotation lente")
+        elif avg_paid and units_sold >= 5 and price_current < avg_paid * 0.9:
+            direction = "up"
+            suggested_price = price_current * 1.06
+            reason = "Sous-évalué vs historique"
+            signals = ["Sous-évalué", "Demande solide" if velocity > 0.35 else "Demande stable"]
+        elif inventory > 25 and velocity < 0.2:
+            direction = "down"
+            suggested_price = price_current * 0.95
+            reason = "Surstock & rotation lente"
+            signals = ["Surstock", "Rotation lente"]
+        elif inventory < 6 and velocity > 0.35:
+            direction = "up"
+            suggested_price = price_current * 1.05
+            reason = "Stock faible & demande forte"
+            signals = ["Risque de rupture", "Demande forte"]
+        elif avg_price and price_current > avg_price * 1.1:
+            direction = "down"
+            suggested_price = price_current * 0.96
             reason = f"Prix > moyenne ({price_current:.2f} > {avg_price:.2f})"
+            signals = ["Prix au-dessus de la moyenne"]
         elif avg_price and price_current < avg_price * 0.9:
             direction = "up"
-            suggested_price = round(price_current * 1.05, 2)
+            suggested_price = price_current * 1.04
             reason = f"Prix < moyenne ({price_current:.2f} < {avg_price:.2f})"
-        elif inventory > 20:
-            direction = "down"
-            suggested_price = round(price_current * 0.97, 2)
-            reason = "Surstock + faible demande"
-        else:
-            direction = "up"
-            suggested_price = round(price_current * 1.03, 2)
-            reason = "Test d'élasticité"
+            signals = ["Prix en dessous de la moyenne"]
 
+        min_allowed = round(price_current * 0.88, 2)
+        max_allowed = round(price_current * 1.12, 2)
+        suggested_price = round(max(min_allowed, min(max_allowed, suggested_price)), 2)
         delta_percent = round(((suggested_price - price_current) / price_current) * 100, 1)
 
+        confidence = 0.35
+        confidence += min(units_sold, 60) / 120
+        if avg_paid:
+            confidence += 0.1
+        if avg_paid and abs(price_current - avg_paid) / price_current > 0.08:
+            confidence += 0.05
+        if inventory > 25 or velocity > 0.3:
+            confidence += 0.05
+        confidence = round(min(0.92, max(0.2, confidence)), 2)
+
+        expected_units_month = max(velocity * 30, 1)
+        impact_estimate = round((suggested_price - price_current) * expected_units_month, 2)
+        priority_score = abs(impact_estimate) + (confidence * 10)
+
         items.append({
-            "product_id": str(product.get("id")),
-            "title": product.get("title") or str(product.get("id")),
+            "product_id": product_id,
+            "title": product.get("title") or product_id,
             "current_price": round(price_current, 2),
             "suggested_price": suggested_price,
             "direction": direction,
             "delta_percent": delta_percent,
             "reason": reason,
+            "signals": signals,
+            "confidence": confidence,
+            "impact_estimate": impact_estimate,
+            "priority_score": priority_score,
             "metrics": {
                 "inventory": inventory,
                 "avg_price": round(avg_price, 2) if avg_price is not None else None,
+                "avg_paid": round(avg_paid, 2) if avg_paid is not None else None,
+                "min_paid": round(min_paid, 2) if min_paid is not None else None,
+                "max_paid": round(max_paid, 2) if max_paid is not None else None,
+                "orders": orders_count,
+                "units_sold": units_sold,
+                "velocity_per_day": velocity,
+                "revenue": round(revenue, 2),
             },
         })
 
+    items = sorted(items, key=lambda item: item.get("priority_score", 0), reverse=True)
     items = items[: max(1, min(limit, 25))]
 
     price_ai = {"enabled": False, "generated": 0, "notes": []}
@@ -2678,12 +2790,20 @@ async def get_shopify_pricing_analysis(
 
                 for item in items:
                     current_price = item.get("current_price")
+                    metrics = item.get("metrics", {})
+                    avg_paid = metrics.get("avg_paid")
+                    units_sold = metrics.get("units_sold")
+                    velocity = metrics.get("velocity_per_day")
+                    inventory = metrics.get("inventory")
                     prompt = (
                         "Tu es un expert pricing e-commerce.\n"
                         f"Produit: {item.get('title')}\n"
                         f"Prix actuel: {current_price}\n"
-                        f"Prix moyen boutique: {item.get('metrics', {}).get('avg_price')}\n"
-                        f"Stock: {item.get('metrics', {}).get('inventory')}\n"
+                        f"Prix moyen boutique: {metrics.get('avg_price')}\n"
+                        f"Prix payé moyen (30j): {avg_paid}\n"
+                        f"Unités vendues (30j): {units_sold}\n"
+                        f"Vitesse (unités/jour): {velocity}\n"
+                        f"Stock: {inventory}\n"
                         "Retourne JSON: {\"suggested_price\": number, \"rationale\": string}."
                     )
                     response = client.chat.completions.create(
@@ -2713,9 +2833,44 @@ async def get_shopify_pricing_analysis(
             except Exception as e:
                 price_ai["notes"].append(f"Erreur IA: {str(e)[:120]}")
 
+    total_units = sum(stats.get("units", 0) for stats in sales_by_product.values())
+    total_revenue = sum(stats.get("revenue", 0.0) for stats in sales_by_product.values())
+    products_with_sales = len([pid for pid, stats in sales_by_product.items() if stats.get("units")])
+
+    insights = []
+    if median_price is not None:
+        insights.append(f"Prix médian: {median_price:.2f} {currency}")
+    if avg_price is not None:
+        insights.append(f"Prix moyen: {avg_price:.2f} {currency}")
+    if dispersion is not None and dispersion > 0.6:
+        insights.append("Dispersion élevée: segmentation prix recommandée")
+    if products and products_with_sales / len(products) < 0.25:
+        insights.append("Peu de produits vendent régulièrement: focus sur le top sellers")
+
+    guardrails = [
+        "Variation max ±12% par cycle",
+        "Minimum 1 unité/mois pour estimer l'impact",
+        "Priorité: marges, rotation, stock",
+    ]
+
+    summary = {
+        "range_days": range_days,
+        "total_products": len(products),
+        "products_with_sales": products_with_sales,
+        "avg_price": round(avg_price, 2) if avg_price is not None else None,
+        "median_price": round(median_price, 2) if median_price is not None else None,
+        "price_dispersion": dispersion,
+        "revenue_30d": round(total_revenue, 2),
+        "units_30d": total_units,
+        "currency": currency,
+    }
+
     return {
         "success": True,
         "shop": shop_domain,
+        "summary": summary,
+        "insights": insights,
+        "guardrails": guardrails,
         "items": items,
         "price_ai": price_ai,
     }
