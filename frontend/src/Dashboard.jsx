@@ -54,7 +54,6 @@ export default function Dashboard() {
   const [showApplyModal, setShowApplyModal] = useState(false)
   const [selectedActions, setSelectedActions] = useState([])
   const [applyingActions, setApplyingActions] = useState(false)
-  const [applyingPriceBatch, setApplyingPriceBatch] = useState(false)
   const [analysisResults, setAnalysisResults] = useState(null)
   const defaultChatMessages = [
     { role: 'assistant', text: 'Bonjour, je suis ton assistant IA e-commerce. Pose-moi des questions sur tes produits, ta stratégie, ou ta boutique Shopify.' }
@@ -162,13 +161,6 @@ export default function Dashboard() {
   }
 
   const getInsightCount = (items) => (Array.isArray(items) ? items.length : 0)
-
-  const getPriceCurrency = () => insightsData?.price_summary?.currency || analyticsData?.currency || 'EUR'
-
-  const getTotalPriceImpact = (items) => {
-    if (!Array.isArray(items)) return 0
-    return items.reduce((acc, item) => acc + (Number(item?.impact_estimate) || 0), 0)
-  }
 
   const renderInsightItems = (items, formatter) => {
     if (insightsLoading) {
@@ -1359,40 +1351,6 @@ export default function Dashboard() {
   const runActionAnalysis = async (actionKey, options = {}) => {
     try {
       setStatus(actionKey, 'info', 'Analyse en cours...')
-      if (actionKey === 'action-price') {
-        setInsightsLoading(true)
-        setInsightsError('')
-        const { data: { session } } = await supabase.auth.getSession()
-        if (!session) {
-          setStatus(actionKey, 'error', 'Session expirée, reconnectez-vous')
-          return
-        }
-        const response = await fetch(`${API_URL}/api/shopify/pricing-analyze?limit=10&include_ai=true`, {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${session.access_token}`,
-            'Content-Type': 'application/json'
-          }
-        })
-        if (!response.ok) {
-          const errorData = await response.json()
-          throw new Error(errorData.detail || `HTTP ${response.status}`)
-        }
-        const data = await response.json()
-        if (!data.success) {
-          throw new Error(data.error || 'Analyse prix indisponible')
-        }
-        setInsightsData(prev => ({
-          ...(prev || {}),
-          price_opportunities: data.items || [],
-          price_ai: data.price_ai || { enabled: false, generated: 0, notes: [] },
-          price_summary: data.summary || null,
-          price_insights: data.insights || [],
-          price_guardrails: data.guardrails || []
-        }))
-        setStatus(actionKey, 'success', 'Analyse terminée.')
-        return
-      }
       if (actionKey === 'action-rewrite') {
         setInsightsData(null)
       }
@@ -1441,16 +1399,12 @@ export default function Dashboard() {
           }
         })
       } else {
-        const includeAi = actionKey === 'action-rewrite' || actionKey === 'action-price'
+        const includeAi = actionKey === 'action-rewrite'
         await loadInsights(undefined, includeAi, options.productId)
       }
       setStatus(actionKey, 'success', 'Analyse terminée.')
     } catch (err) {
       setStatus(actionKey, 'error', err.message || 'Erreur analyse')
-    } finally {
-      if (actionKey === 'action-price') {
-        setInsightsLoading(false)
-      }
     }
   }
 
@@ -1491,66 +1445,12 @@ export default function Dashboard() {
       }
 
       setStatus(statusKey, 'success', 'Succès: modification appliquée sur Shopify')
-      if (statusKey === 'action-price') {
-        loadInsights()
-      } else {
-        loadBlockers()
-      }
+      loadBlockers()
     } catch (err) {
       console.error('Error applying blocker action:', err)
       setStatus(statusKey, 'error', err.message)
     } finally {
       setApplyingBlockerActionId(null)
-    }
-  }
-
-  const handleApplyPriceBatch = async () => {
-    const plan = String(subscription?.plan || '').toLowerCase()
-    if (!['pro', 'premium'].includes(plan)) {
-      setStatus('action-price', 'warning', 'Fonctionnalité réservée aux plans Pro/Premium')
-      return
-    }
-
-    const items = (insightsData?.price_opportunities || [])
-      .filter(item => item?.product_id && item?.suggested_price)
-      .map(item => ({ product_id: item.product_id, suggested_price: item.suggested_price }))
-
-    if (!items.length) {
-      setStatus('action-price', 'warning', 'Aucune recommandation de prix à appliquer')
-      return
-    }
-
-    try {
-      setApplyingPriceBatch(true)
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) {
-        setStatus('action-price', 'error', 'Session expirée, reconnectez-vous')
-        return
-      }
-
-      const response = await fetch(`${API_URL}/api/shopify/pricing/apply-batch`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ items })
-      })
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.detail || `HTTP ${response.status}`)
-      }
-
-      const data = await response.json()
-      const successCount = data?.results?.filter(r => r?.success).length || 0
-      setStatus('action-price', 'success', `Prix appliqués: ${successCount}/${items.length}`)
-      loadInsights(undefined, true)
-    } catch (err) {
-      console.error('Error applying price batch:', err)
-      setStatus('action-price', 'error', err.message)
-    } finally {
-      setApplyingPriceBatch(false)
     }
   }
 
@@ -1793,11 +1693,19 @@ export default function Dashboard() {
     // Add price optimizations
     if (analysisResults.pricing_strategy?.optimizations) {
       analysisResults.pricing_strategy.optimizations.forEach(opt => {
+        // Try to resolve a matching product id from loaded products using title or known fields
+        const match = (products || []).find(p => (
+          p.title === opt.product || p.title === opt.product_name || String(p.id) === String(opt.product_id)
+        ))
+        if (!match) {
+          // If no matching product found, skip — applying without a product_id is unsafe
+          return
+        }
         actions.push({
-          type: 'price',
-          product: opt.product,
-          current: opt.current_price,
-          new: opt.suggested_price,
+          action: 'price',
+          product_id: String(match.id),
+          current_price: opt.current_price,
+          new_price: opt.suggested_price,
           reason: opt.reason
         })
       })
@@ -2002,7 +1910,7 @@ export default function Dashboard() {
               { key: 'underperforming', label: 'Produits sous-performants' },
               { key: 'action-blockers', label: 'Produits freins' },
               { key: 'action-rewrite', label: 'Réécriture intelligente' },
-              { key: 'action-price', label: 'Optimisation des prix' },
+              { key: 'action-price', label: 'Optimisation prix' },
               { key: 'action-images', label: 'Images non convertissantes' },
               { key: 'action-bundles', label: 'Bundles & cross-sell' },
               { key: 'action-stock', label: 'Prévision ruptures' },
@@ -2277,7 +2185,7 @@ export default function Dashboard() {
                 <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-4">Activité récente</h4>
                 <ul className="space-y-3 text-sm text-gray-300">
                   <li className="flex items-center justify-between">
-                    <span>Optimisation des prix</span>
+                    <span>Optimisation prix</span>
                     <span className="text-gray-500">Aujourd’hui</span>
                   </li>
                   <li className="flex items-center justify-between">
@@ -2813,159 +2721,28 @@ export default function Dashboard() {
         {activeTab === 'action-price' && (
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 space-y-6">
             <div>
-              <h2 className="text-white text-xl font-bold mb-2">Optimisation des prix</h2>
+              <h2 className="text-white text-xl font-bold mb-2">Optimisation dynamique des prix</h2>
               <p className="text-gray-400">Ajuste les prix selon élasticité et performance.</p>
             </div>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <p className="text-sm text-gray-400">{getInsightCount(insightsData?.price_opportunities)} opportunités</p>
-              <div className="flex flex-wrap gap-3">
-                <button
-                  onClick={() => runActionAnalysis('action-price')}
-                  disabled={insightsLoading}
-                  className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
-                >
-                  {insightsLoading ? 'Analyse en cours...' : 'Lancer l\'analyse IA'}
-                </button>
-                <button
-                  onClick={handleApplyPriceBatch}
-                  disabled={applyingPriceBatch || insightsLoading}
-                  className="bg-amber-400 hover:bg-amber-300 text-black font-bold py-3 px-6 rounded-lg disabled:opacity-50"
-                >
-                  {applyingPriceBatch ? 'Application...' : 'Faire les modifications'}
-                </button>
-              </div>
+              <button
+                onClick={() => runActionAnalysis('action-price')}
+                disabled={insightsLoading}
+                className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
+              >
+                {insightsLoading ? 'Analyse en cours...' : 'Lancer l\'analyse IA'}
+              </button>
             </div>
             {renderStatus('action-price')}
-            {insightsData?.price_ai?.notes?.length ? (
-              <div className="text-xs text-gray-500">
-                {insightsData.price_ai.notes.join(' • ')}
-              </div>
-            ) : null}
-            {insightsData?.price_summary ? (
-              <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-                <div className="bg-gray-900/70 border border-gray-700 rounded-lg p-3">
-                  <p className="text-[11px] text-gray-500">Prix moyen</p>
-                  <p className="text-white text-lg font-semibold">
-                    {formatCurrency(insightsData.price_summary.avg_price, getPriceCurrency())}
-                  </p>
-                </div>
-                <div className="bg-gray-900/70 border border-gray-700 rounded-lg p-3">
-                  <p className="text-[11px] text-gray-500">Prix médian</p>
-                  <p className="text-white text-lg font-semibold">
-                    {formatCurrency(insightsData.price_summary.median_price, getPriceCurrency())}
-                  </p>
-                </div>
-                <div className="bg-gray-900/70 border border-gray-700 rounded-lg p-3">
-                  <p className="text-[11px] text-gray-500">Dispersion</p>
-                  <p className="text-white text-lg font-semibold">
-                    {insightsData.price_summary.price_dispersion ?? '—'}
-                  </p>
-                </div>
-                <div className="bg-gray-900/70 border border-gray-700 rounded-lg p-3">
-                  <p className="text-[11px] text-gray-500">Produits actifs</p>
-                  <p className="text-white text-lg font-semibold">
-                    {insightsData.price_summary.products_with_sales ?? 0}/{insightsData.price_summary.total_products ?? 0}
-                  </p>
-                </div>
-                <div className="bg-gray-900/70 border border-gray-700 rounded-lg p-3">
-                  <p className="text-[11px] text-gray-500">Impact 30j estimé</p>
-                  <p className="text-white text-lg font-semibold">
-                    {formatCurrency(getTotalPriceImpact(insightsData?.price_opportunities || []), getPriceCurrency())}
-                  </p>
-                </div>
-              </div>
-            ) : null}
-            {insightsData?.price_insights?.length ? (
-              <div className="bg-gray-900/60 border border-gray-700 rounded-lg p-4">
-                <p className="text-sm text-gray-300 font-semibold mb-2">Lecture IA</p>
-                <ul className="text-xs text-gray-400 space-y-1">
-                  {insightsData.price_insights.map((note, index) => (
-                    <li key={`price-insight-${index}`}>{note}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-            {insightsData?.price_guardrails?.length ? (
-              <div className="bg-gray-900/60 border border-gray-700 rounded-lg p-4">
-                <p className="text-sm text-gray-300 font-semibold mb-2">Garde-fous</p>
-                <ul className="text-xs text-gray-400 space-y-1">
-                  {insightsData.price_guardrails.map((rule, index) => (
-                    <li key={`price-guard-${index}`}>{rule}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
             <div className="space-y-3">
               {!insightsLoading && (!insightsData?.price_opportunities || insightsData.price_opportunities.length === 0) ? (
                 <p className="text-sm text-gray-500">Aucune opportunité détectée.</p>
               ) : (
                 insightsData?.price_opportunities?.slice(0, 8).map((item, index) => (
                   <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
-                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                      <div>
-                        <p className="text-white font-semibold">{item.title || item.product_id}</p>
-                        {Array.isArray(item.signals) && item.signals.length ? (
-                          <div className="flex flex-wrap gap-2 mt-2">
-                            {item.signals.map((signal, signalIndex) => (
-                              <span key={`${item.product_id}-signal-${signalIndex}`} className="text-[11px] text-gray-200 bg-gray-800/80 border border-gray-700 px-2 py-1 rounded-full">
-                                {signal}
-                              </span>
-                            ))}
-                            {item.confidence ? (
-                              <span className="text-[11px] text-emerald-200 bg-emerald-500/10 border border-emerald-500/30 px-2 py-1 rounded-full">
-                                Confiance {Math.round(item.confidence * 100)}%
-                              </span>
-                            ) : null}
-                            {item.impact_estimate !== null && item.impact_estimate !== undefined ? (
-                              <span className="text-[11px] text-amber-200 bg-amber-500/10 border border-amber-500/30 px-2 py-1 rounded-full">
-                                Impact {formatCurrency(item.impact_estimate, getPriceCurrency())}
-                              </span>
-                            ) : null}
-                            {item.source ? (
-                              <span className={`text-[11px] px-2 py-1 rounded-full border ${item.source === 'ai' ? 'text-cyan-200 bg-cyan-500/10 border-cyan-500/30' : 'text-gray-300 bg-gray-800/70 border-gray-700'}`}>
-                                {item.source === 'ai' ? 'IA' : 'Signal boutique'}
-                              </span>
-                            ) : null}
-                          </div>
-                        ) : null}
-                        <p className="text-xs text-gray-500 mt-2">{item.reason || 'Ajustement recommandé'}</p>
-                        <p className="text-xs text-gray-400 mt-1">
-                          Prix actuel: {formatCurrency(item.current_price, getPriceCurrency())} → suggéré: {formatCurrency(item.suggested_price, getPriceCurrency())}
-                          {item.delta_percent ? ` (${item.delta_percent > 0 ? '+' : ''}${item.delta_percent}%)` : ''}
-                        </p>
-                        <p className="text-xs text-gray-500 mt-1">
-                          Ventes 30j: {item.metrics?.units_sold ?? 0} • Vitesse: {item.metrics?.velocity_per_day ?? '—'}/j • Stock: {item.metrics?.inventory ?? '—'}
-                        </p>
-                        <div className="mt-3 bg-gray-950/50 border border-gray-800 rounded-lg p-3">
-                          <p className="text-[11px] text-gray-400 font-semibold mb-1">Pourquoi ce prix ?</p>
-                          <p className="text-xs text-gray-300">
-                            {item.ai?.rationale || item.reason || 'Ajustement recommandé'}
-                          </p>
-                          {item.metrics?.description_excerpt ? (
-                            <p className="text-[11px] text-gray-400 mt-2">
-                              Description produit: {item.metrics.description_excerpt}
-                            </p>
-                          ) : null}
-                          <div className="text-[11px] text-gray-500 mt-2 space-y-1">
-                            {item.metrics?.avg_paid ? (
-                              <p>Comparé au prix payé moyen: {formatCurrency(item.metrics.avg_paid, getPriceCurrency())}</p>
-                            ) : null}
-                            {item.metrics?.avg_price ? (
-                              <p>Comparé au prix moyen boutique: {formatCurrency(item.metrics.avg_price, getPriceCurrency())}</p>
-                            ) : null}
-                          </div>
-                        </div>
-                      </div>
-                      {item.suggested_price ? (
-                        <button
-                          onClick={() => handleApplyBlockerAction(item.product_id, { type: 'price', suggested_price: item.suggested_price }, 'action-price')}
-                          className="bg-emerald-500/90 hover:bg-emerald-400 text-black font-semibold px-3 py-2 rounded-md text-sm"
-                          disabled={applyingBlockerActionId === `${item.product_id}-price`}
-                        >
-                          {applyingBlockerActionId === `${item.product_id}-price` ? 'Application...' : 'Appliquer prix'}
-                        </button>
-                      ) : null}
-                    </div>
+                    <p className="text-white font-semibold">{item.title || item.product_id}</p>
+                    <p className="text-xs text-gray-500">{item.suggestion || 'Ajuster le prix'}</p>
                   </div>
                 ))
               )}

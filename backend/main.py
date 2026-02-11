@@ -20,7 +20,6 @@ import base64
 import requests
 import json
 import sys
-import math
 from datetime import datetime, timedelta
 from supabase import create_client
 from io import BytesIO
@@ -1929,8 +1928,6 @@ async def get_shopify_insights(
     # Build product stats
     product_stats = {}
     refunds_by_product = {}
-    order_price_map = {}
-    order_qty_map = {}
 
     for order in orders:
         for item in order.get("line_items", []):
@@ -1948,9 +1945,6 @@ async def get_shopify_insights(
             product_stats[pid]["orders"] += 1
             product_stats[pid]["quantity"] += qty
             product_stats[pid]["revenue"] += price * qty
-            if price > 0:
-                order_price_map[pid] = order_price_map.get(pid, 0.0) + price * qty
-                order_qty_map[pid] = order_qty_map.get(pid, 0) + qty
 
         for refund in order.get("refunds", []) or []:
             for refund_line in refund.get("refund_line_items", []) or []:
@@ -2198,257 +2192,23 @@ async def get_shopify_insights(
             })
     stock_risks = sorted(stock_risks, key=lambda x: x.get("days_cover", 0))[:10]
 
-    # Price opportunities: data-driven pricing signals
+    # Price opportunities: low sales/high inventory or high sales/low inventory
     price_opportunities = []
     for pid, stats in product_stats.items():
         inventory = inventory_map.get(pid, 0)
         orders_count = stats.get("orders", 0)
-        price_current = price_map.get(pid, 0) or (
-            (order_price_map.get(pid, 0.0) / order_qty_map.get(pid, 1)) if order_qty_map.get(pid, 0) else 0
-        )
-        if not price_current:
-            continue
-
-        signals = event_counts.get(pid, {"views": 0, "add_to_cart": 0})
-        views = int(signals.get("views", 0))
-        add_to_cart = int(signals.get("add_to_cart", 0))
-        view_to_cart = (add_to_cart / views) if views else None
-        cart_to_order = (orders_count / add_to_cart) if add_to_cart else None
-
-        score_down = 0
-        score_up = 0
-        reasons_down = []
-        reasons_up = []
-
-        if avg_view_to_cart and view_to_cart is not None and views >= max(20, avg_views):
-            if view_to_cart < avg_view_to_cart * 0.7:
-                score_down += 2
-                reasons_down.append(f"Vue→panier faible ({view_to_cart:.1%} vs {avg_view_to_cart:.1%})")
-        if avg_cart_to_order and cart_to_order is not None and add_to_cart >= max(10, avg_add_to_cart):
-            if cart_to_order < avg_cart_to_order * 0.7:
-                score_down += 2
-                reasons_down.append(f"Panier→achat faible ({cart_to_order:.1%} vs {avg_cart_to_order:.1%})")
-        if avg_price and price_current > avg_price * 1.2 and orders_count < max(1, median_orders // 2):
-            score_down += 1
-            reasons_down.append(f"Prix élevé ({price_current:.2f} > {avg_price:.2f})")
-        if inventory > 30 and orders_count < max(1, median_orders // 2):
-            score_down += 1
-            reasons_down.append(f"Surstock ({inventory}) + faible demande")
-
-        if inventory < 5 and orders_count > median_orders:
-            score_up += 2
-            reasons_up.append(f"Forte demande ({orders_count} cmd) + stock faible ({inventory})")
-        if avg_price and price_current < avg_price * 0.8 and orders_count > median_orders:
-            score_up += 1
-            reasons_up.append(f"Prix bas ({price_current:.2f} < {avg_price:.2f})")
-        if avg_view_to_cart and view_to_cart is not None and view_to_cart > avg_view_to_cart * 1.2 and orders_count > median_orders:
-            score_up += 1
-            reasons_up.append(f"Conversion élevée ({view_to_cart:.1%})")
-
-        if score_down == 0 and score_up == 0:
-            continue
-
-        if score_down >= score_up:
-            direction = "down"
-            strength = min(0.15, 0.05 + 0.02 * score_down)
-            suggested_price = round(price_current * (1 - strength), 2)
-            reasons = reasons_down
-        else:
-            direction = "up"
-            strength = min(0.1, 0.03 + 0.02 * score_up)
-            suggested_price = round(price_current * (1 + strength), 2)
-            reasons = reasons_up
-
-        delta_percent = round(((suggested_price - price_current) / price_current) * 100, 1)
-
-        price_opportunities.append({
-            "product_id": pid,
-            "title": stats.get("title"),
-            "current_price": round(price_current, 2),
-            "suggested_price": suggested_price,
-            "direction": direction,
-            "delta_percent": delta_percent,
-            "reason": " • ".join(reasons) if reasons else "Ajustement recommandé",
-            "metrics": {
-                "orders": orders_count,
-                "inventory": inventory,
-                "views": views,
-                "add_to_cart": add_to_cart,
-                "view_to_cart_rate": round(view_to_cart, 4) if view_to_cart is not None else None,
-                "cart_to_order_rate": round(cart_to_order, 4) if cart_to_order is not None else None,
-            },
-        })
-
-    if not price_opportunities:
-        fallback_candidates = sorted(
-            product_stats.values(),
-            key=lambda item: item.get("revenue", 0),
-            reverse=True,
-        )[:10]
-        for stats in fallback_candidates:
-            pid = str(stats.get("product_id"))
-            price_current = price_map.get(pid, 0) or (
-                (order_price_map.get(pid, 0.0) / order_qty_map.get(pid, 1)) if order_qty_map.get(pid, 0) else 0
-            )
-            if not price_current:
-                continue
-            orders_count = stats.get("orders", 0)
-            inventory = inventory_map.get(pid, 0)
-            views = int(event_counts.get(pid, {}).get("views", 0))
-            add_to_cart = int(event_counts.get(pid, {}).get("add_to_cart", 0))
-            view_to_cart = (add_to_cart / views) if views else None
-
-            reasons = []
-            direction = None
-            suggested_price = None
-
-            if avg_price and price_current > avg_price * 1.1 and orders_count < max(1, median_orders // 2):
-                direction = "down"
-                suggested_price = round(price_current * 0.95, 2)
-                reasons.append(f"Prix > moyenne ({price_current:.2f} > {avg_price:.2f})")
-            elif avg_price and price_current < avg_price * 0.9 and orders_count > median_orders:
-                direction = "up"
-                suggested_price = round(price_current * 1.05, 2)
-                reasons.append(f"Prix < moyenne ({price_current:.2f} < {avg_price:.2f})")
-            elif inventory > 20 and orders_count < max(1, median_orders // 2):
-                direction = "down"
-                suggested_price = round(price_current * 0.97, 2)
-                reasons.append("Surstock + faible demande")
-            elif inventory < 5 and orders_count > median_orders:
-                direction = "up"
-                suggested_price = round(price_current * 1.03, 2)
-                reasons.append("Stock faible + forte demande")
-
-            if not suggested_price:
-                continue
-
-            delta_percent = round(((suggested_price - price_current) / price_current) * 100, 1)
+        if inventory > 50 and orders_count < max(1, median_orders // 3):
             price_opportunities.append({
                 "product_id": pid,
                 "title": stats.get("title"),
-                "current_price": round(price_current, 2),
-                "suggested_price": suggested_price,
-                "direction": direction,
-                "delta_percent": delta_percent,
-                "reason": " • ".join(reasons) if reasons else "Ajustement recommandé",
-                "metrics": {
-                    "orders": orders_count,
-                    "inventory": inventory,
-                    "views": views,
-                    "add_to_cart": add_to_cart,
-                    "view_to_cart_rate": round(view_to_cart, 4) if view_to_cart is not None else None,
-                },
+                "suggestion": "Baisser le prix de 5-10%",
             })
-
-    if not price_opportunities and products_by_id:
-        for pid, product in list(products_by_id.items())[:10]:
-            variants = product.get("variants", []) or []
-            price_current = _safe_float(variants[0].get("price"), 0.0) if variants else 0.0
-            if not price_current:
-                price_current = (order_price_map.get(pid, 0.0) / order_qty_map.get(pid, 1)) if order_qty_map.get(pid, 0) else 0
-            if not price_current:
-                continue
-            inventory = inventory_map.get(pid, 0)
-            if avg_price and price_current > avg_price * 1.1:
-                suggested_price = round(price_current * 0.95, 2)
-                reason = f"Prix > moyenne ({price_current:.2f} > {avg_price:.2f})"
-                direction = "down"
-            elif avg_price and price_current < avg_price * 0.9:
-                suggested_price = round(price_current * 1.05, 2)
-                reason = f"Prix < moyenne ({price_current:.2f} < {avg_price:.2f})"
-                direction = "up"
-            elif inventory > 20:
-                suggested_price = round(price_current * 0.97, 2)
-                reason = "Surstock + faible demande"
-                direction = "down"
-            else:
-                suggested_price = round(price_current * 1.03, 2)
-                reason = "Test d'élasticité"
-                direction = "up"
-
-            delta_percent = round(((suggested_price - price_current) / price_current) * 100, 1)
+        if inventory < 5 and orders_count > median_orders:
             price_opportunities.append({
                 "product_id": pid,
-                "title": product.get("title") or pid,
-                "current_price": round(price_current, 2),
-                "suggested_price": suggested_price,
-                "direction": direction,
-                "delta_percent": delta_percent,
-                "reason": reason,
-                "metrics": {
-                    "orders": 0,
-                    "inventory": inventory,
-                    "views": 0,
-                    "add_to_cart": 0,
-                    "view_to_cart_rate": None,
-                },
+                "title": stats.get("title"),
+                "suggestion": "Augmenter le prix de 3-7%",
             })
-
-    price_ai = {
-        "enabled": False,
-        "generated": 0,
-        "notes": [],
-    }
-    if include_ai:
-        if tier not in {"pro", "premium"}:
-            price_ai["notes"].append("Plan requis: Pro ou Premium")
-        elif not OPENAI_API_KEY:
-            price_ai["notes"].append("OpenAI non configuré")
-        else:
-            try:
-                client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
-                price_ai["enabled"] = True
-
-                def _clamp_price(value: float, current: float) -> float:
-                    lower = round(current * 0.7, 2)
-                    upper = round(current * 1.3, 2)
-                    return max(lower, min(upper, round(value, 2)))
-
-                for item in price_opportunities[:8]:
-                    current_price = item.get("current_price")
-                    if not current_price:
-                        continue
-                    metrics = item.get("metrics", {})
-                    prompt = (
-                        "Tu es un expert pricing e-commerce. Donne un prix recommandé basé sur les faits.\n"
-                        f"Prix actuel: {current_price}\n"
-                        f"Commandes: {metrics.get('orders', 0)}\n"
-                        f"Stock: {metrics.get('inventory', 0)}\n"
-                        f"Vues: {metrics.get('views', 0)}\n"
-                        f"Ajouts panier: {metrics.get('add_to_cart', 0)}\n"
-                        f"Taux vue→panier: {metrics.get('view_to_cart_rate')}\n"
-                        f"Taux panier→achat: {metrics.get('cart_to_order_rate')}\n"
-                        f"Moyenne boutique: {avg_price}\n"
-                        "Retourne JSON: {\"suggested_price\": number, \"rationale\": string}.\n"
-                        "Contrainte: variation max ±30% du prix actuel."
-                    )
-
-                    response = client.chat.completions.create(
-                        model="gpt-4",
-                        messages=[
-                            {"role": "system", "content": "Tu optimises les prix avec rigueur et prudence."},
-                            {"role": "user", "content": prompt},
-                        ],
-                        temperature=0.2,
-                        max_tokens=120,
-                    )
-                    content = response.choices[0].message.content or ""
-                    try:
-                        parsed = json.loads(content)
-                    except Exception:
-                        parsed = {}
-                    suggested = _safe_float(parsed.get("suggested_price"), None)
-                    if suggested:
-                        suggested = _clamp_price(suggested, current_price)
-                        item["suggested_price"] = suggested
-                        item["delta_percent"] = round(((suggested - current_price) / current_price) * 100, 1)
-                        item["direction"] = "up" if suggested > current_price else "down"
-                        rationale = parsed.get("rationale")
-                        if rationale:
-                            item["reason"] = f"{item.get('reason') or ''} • {rationale}".strip(" •")
-                        price_ai["generated"] += 1
-            except Exception as e:
-                price_ai["notes"].append(f"Erreur IA: {str(e)[:120]}")
 
     # Rewrite opportunities: low performance + weak content signals
     rewrite_opportunities = []
@@ -2574,346 +2334,7 @@ async def get_shopify_insights(
         "bundle_suggestions": bundles,
         "stock_risks": stock_risks,
         "price_opportunities": price_opportunities[:10],
-        "price_ai": price_ai,
         "return_risks": return_risks,
-    }
-
-
-@app.get("/api/shopify/pricing-analyze")
-async def get_shopify_pricing_analysis(
-    request: Request,
-    limit: int = 10,
-    include_ai: bool = False,
-    ai_only: bool = False,
-):
-    """💰 Analyse prix dédiée (avec fallback basé sur produits Shopify)."""
-    user_id = get_user_id(request)
-    tier = get_user_tier(user_id)
-    shop_domain, access_token = _get_shopify_connection(user_id)
-
-    headers = {
-        "X-Shopify-Access-Token": access_token,
-        "Content-Type": "application/json",
-    }
-
-    response = requests.get(
-        f"https://{shop_domain}/admin/api/2024-10/products.json?limit=250&fields=id,title,body_html,variants,product_type,vendor",
-        headers=headers,
-        timeout=30,
-    )
-    if response.status_code != 200:
-        raise HTTPException(status_code=response.status_code, detail=f"Erreur Shopify: {response.text[:300]}")
-
-    products = response.json().get("products", [])
-    if not products:
-        return {
-            "success": True,
-            "shop": shop_domain,
-            "summary": {"total_products": 0, "currency": "USD"},
-            "insights": [],
-            "guardrails": [],
-            "items": [],
-            "price_ai": {"enabled": False, "generated": 0, "notes": ["Aucun produit"]},
-        }
-
-    range_days = 30
-    orders = _fetch_shopify_orders(shop_domain, access_token, range_days)
-    sales_by_product = {}
-    currency = "USD"
-
-    for order in orders:
-        currency = order.get("currency") or currency
-        for item in order.get("line_items", []):
-            product_id = _normalize_shopify_id(item.get("product_id") or item.get("id"))
-            if not product_id:
-                continue
-            quantity = int(item.get("quantity") or 0)
-            price_paid = _safe_float(item.get("price"), 0.0)
-            stats = sales_by_product.setdefault(product_id, {"units": 0, "revenue": 0.0, "orders": 0, "prices": []})
-            stats["units"] += quantity
-            stats["revenue"] += price_paid * quantity
-            stats["orders"] += 1
-            if price_paid:
-                stats["prices"].append(price_paid)
-
-    def _median(values):
-        if not values:
-            return None
-        values_sorted = sorted(values)
-        mid = len(values_sorted) // 2
-        if len(values_sorted) % 2:
-            return values_sorted[mid]
-        return (values_sorted[mid - 1] + values_sorted[mid]) / 2
-
-    def _percentile(values, pct):
-        if not values:
-            return None
-        values_sorted = sorted(values)
-        index = int(round((pct / 100) * (len(values_sorted) - 1)))
-        return values_sorted[index]
-
-    prices = []
-    for product in products:
-        variants = product.get("variants", []) or []
-        if variants:
-            price_current = _safe_float(variants[0].get("price"), 0.0)
-            if price_current:
-                prices.append(price_current)
-
-    avg_price = (sum(prices) / len(prices)) if prices else None
-    median_price = _median(prices)
-    p10 = _percentile(prices, 10)
-    p90 = _percentile(prices, 90)
-    dispersion = None
-    if median_price and p10 is not None and p90 is not None:
-        dispersion = round((p90 - p10) / median_price, 3)
-
-    items = []
-    for product in products:
-        variants = product.get("variants", []) or []
-        if not variants:
-            continue
-        price_current = _safe_float(variants[0].get("price"), 0.0)
-        if not price_current:
-            continue
-        inventory = sum(int(v.get("inventory_quantity") or 0) for v in variants)
-        product_id = str(product.get("id"))
-        description_excerpt = _strip_html(product.get("body_html"))[:400]
-        sales = sales_by_product.get(product_id, {"units": 0, "revenue": 0.0, "orders": 0, "prices": []})
-        units_sold = sales.get("units", 0)
-        revenue = sales.get("revenue", 0.0)
-        orders_count = sales.get("orders", 0)
-        prices_paid = sales.get("prices", [])
-        avg_paid = (revenue / units_sold) if units_sold else None
-        min_paid = min(prices_paid) if prices_paid else None
-        max_paid = max(prices_paid) if prices_paid else None
-        velocity = round(units_sold / range_days, 3) if range_days else 0
-
-        direction = "up"
-        suggested_price = price_current * 1.02
-        reason = "Test d'élasticité"
-        signals = ["Test marché"]
-
-        if avg_paid and units_sold >= 3 and price_current > avg_paid * 1.12:
-            direction = "down"
-            suggested_price = price_current * 0.94
-            reason = "Prix au-dessus du prix payé"
-            signals = ["Prix > historique"]
-            if velocity < 0.2:
-                signals.append("Rotation lente")
-        elif avg_paid and units_sold >= 5 and price_current < avg_paid * 0.9:
-            direction = "up"
-            suggested_price = price_current * 1.06
-            reason = "Sous-évalué vs historique"
-            signals = ["Sous-évalué", "Demande solide" if velocity > 0.35 else "Demande stable"]
-        elif inventory > 25 and velocity < 0.2:
-            direction = "down"
-            suggested_price = price_current * 0.95
-            reason = "Surstock & rotation lente"
-            signals = ["Surstock", "Rotation lente"]
-        elif inventory < 6 and velocity > 0.35:
-            direction = "up"
-            suggested_price = price_current * 1.05
-            reason = "Stock faible & demande forte"
-            signals = ["Risque de rupture", "Demande forte"]
-        elif avg_price and price_current > avg_price * 1.1:
-            direction = "down"
-            suggested_price = price_current * 0.96
-            reason = f"Prix > moyenne ({price_current:.2f} > {avg_price:.2f})"
-            signals = ["Prix au-dessus de la moyenne"]
-        elif avg_price and price_current < avg_price * 0.9:
-            direction = "up"
-            suggested_price = price_current * 1.04
-            reason = f"Prix < moyenne ({price_current:.2f} < {avg_price:.2f})"
-            signals = ["Prix en dessous de la moyenne"]
-
-        min_allowed = round(price_current * 0.88, 2)
-        max_allowed = round(price_current * 1.12, 2)
-        suggested_price = round(max(min_allowed, min(max_allowed, suggested_price)), 2)
-        delta_percent = round(((suggested_price - price_current) / price_current) * 100, 1)
-
-        confidence = 0.35
-        confidence += min(units_sold, 60) / 120
-        if avg_paid:
-            confidence += 0.1
-        if avg_paid and abs(price_current - avg_paid) / price_current > 0.08:
-            confidence += 0.05
-        if inventory > 25 or velocity > 0.3:
-            confidence += 0.05
-        confidence = round(min(0.92, max(0.2, confidence)), 2)
-
-        expected_units_month = max(velocity * 30, 1)
-        impact_estimate = round((suggested_price - price_current) * expected_units_month, 2)
-        priority_score = abs(impact_estimate) + (confidence * 10)
-
-        items.append({
-            "product_id": product_id,
-            "title": product.get("title") or product_id,
-            "current_price": round(price_current, 2),
-            "suggested_price": suggested_price,
-            "direction": direction,
-            "delta_percent": delta_percent,
-            "reason": reason,
-            "signals": signals,
-            "confidence": confidence,
-            "impact_estimate": impact_estimate,
-            "priority_score": priority_score,
-            "source": "heuristic",
-            "ai": None,
-            "metrics": {
-                "inventory": inventory,
-                "avg_price": round(avg_price, 2) if avg_price is not None else None,
-                "avg_paid": round(avg_paid, 2) if avg_paid is not None else None,
-                "min_paid": round(min_paid, 2) if min_paid is not None else None,
-                "max_paid": round(max_paid, 2) if max_paid is not None else None,
-                "orders": orders_count,
-                "units_sold": units_sold,
-                "velocity_per_day": velocity,
-                "revenue": round(revenue, 2),
-                "description_excerpt": description_excerpt,
-            },
-        })
-
-    items = sorted(items, key=lambda item: item.get("priority_score", 0), reverse=True)
-    items = items[: max(1, min(limit, 25))]
-
-    price_ai = {"enabled": False, "generated": 0, "notes": []}
-    if include_ai:
-        if tier not in {"pro", "premium"}:
-            price_ai["notes"].append("Plan requis: Pro ou Premium")
-        elif not OPENAI_API_KEY:
-            price_ai["notes"].append("OpenAI non configuré")
-        else:
-            try:
-                client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
-                price_ai["enabled"] = True
-
-                def _clamp_price(value: float, current: float) -> float:
-                    lower = round(current * 0.8, 2)
-                    upper = round(current * 1.2, 2)
-                    return max(lower, min(upper, round(value, 2)))
-
-                for item in items:
-                    current_price = item.get("current_price")
-                    metrics = item.get("metrics", {})
-                    avg_paid = metrics.get("avg_paid")
-                    units_sold = metrics.get("units_sold")
-                    velocity = metrics.get("velocity_per_day")
-                    inventory = metrics.get("inventory")
-                    description_excerpt = metrics.get("description_excerpt")
-                    prompt = (
-                        "Tu es un expert pricing e-commerce.\n"
-                        f"Produit: {item.get('title')}\n"
-                        f"Description: {description_excerpt}\n"
-                        f"Prix actuel: {current_price}\n"
-                        f"Prix moyen boutique: {metrics.get('avg_price')}\n"
-                        f"Prix payé moyen (30j): {avg_paid}\n"
-                        f"Unités vendues (30j): {units_sold}\n"
-                        f"Vitesse (unités/jour): {velocity}\n"
-                        f"Stock: {inventory}\n"
-                        "Retourne JSON: {\"suggested_price\": number, \"confidence\": number (0-1), \"rationale\": string, \"signals\": [string]}.\n"
-                        "La rationale doit inclure: (1) le prix cible exact, (2) pourquoi (trop cher/pas assez cher) vs prix moyen/paiement moyen,"
-                        " (3) un lien direct avec la description du produit."
-                    )
-                    response = client.chat.completions.create(
-                        model="gpt-4",
-                        messages=[
-                            {"role": "system", "content": "Tu proposes un prix réaliste et prudent."},
-                            {"role": "user", "content": prompt},
-                        ],
-                        temperature=0.2,
-                        max_tokens=120,
-                    )
-                    content = response.choices[0].message.content or ""
-                    try:
-                        parsed = json.loads(content)
-                    except Exception:
-                        parsed = {}
-                        try:
-                            start = content.find("{")
-                            end = content.rfind("}")
-                            if start != -1 and end != -1 and end > start:
-                                parsed = json.loads(content[start:end + 1])
-                        except Exception:
-                            parsed = {}
-                    suggested = _safe_float(parsed.get("suggested_price"), None)
-                    if suggested:
-                        suggested = _clamp_price(suggested, current_price)
-                        item["suggested_price"] = suggested
-                        item["delta_percent"] = round(((suggested - current_price) / current_price) * 100, 1)
-                        item["direction"] = "up" if suggested > current_price else "down"
-                        item["source"] = "ai"
-                    ai_confidence = _safe_float(parsed.get("confidence"), None)
-                    if ai_confidence is not None and ai_confidence > 0:
-                        item["confidence"] = round(min(0.95, max(0.2, ai_confidence)), 2)
-                    ai_signals = parsed.get("signals")
-                    if isinstance(ai_signals, list) and ai_signals:
-                        item["signals"] = [str(signal)[:40] for signal in ai_signals][:4]
-                    rationale = parsed.get("rationale")
-                    if rationale:
-                        item["reason"] = str(rationale)[:240]
-                        item["ai"] = {
-                            "rationale": item["reason"],
-                            "confidence": item.get("confidence"),
-                            "signals": item.get("signals"),
-                        }
-                    elif suggested:
-                        avg_paid_text = f" vs prix payé moyen {avg_paid}" if avg_paid else ""
-                        avg_price_text = f" vs prix moyen boutique {metrics.get('avg_price')}" if metrics.get("avg_price") else ""
-                        item["reason"] = (
-                            f"Prix cible {suggested} car {('trop cher' if suggested < current_price else 'pas assez cher')}{avg_paid_text}{avg_price_text}."
-                        )
-                        item["ai"] = {
-                            "rationale": item["reason"],
-                            "confidence": item.get("confidence"),
-                            "signals": item.get("signals"),
-                        }
-                    price_ai["generated"] += 1
-            except Exception as e:
-                price_ai["notes"].append(f"Erreur IA: {str(e)[:120]}")
-    if include_ai and ai_only:
-        items = [item for item in items if item.get("source") == "ai"]
-
-    total_units = sum(stats.get("units", 0) for stats in sales_by_product.values())
-    total_revenue = sum(stats.get("revenue", 0.0) for stats in sales_by_product.values())
-    products_with_sales = len([pid for pid, stats in sales_by_product.items() if stats.get("units")])
-
-    insights = []
-    if median_price is not None:
-        insights.append(f"Prix médian: {median_price:.2f} {currency}")
-    if avg_price is not None:
-        insights.append(f"Prix moyen: {avg_price:.2f} {currency}")
-    if dispersion is not None and dispersion > 0.6:
-        insights.append("Dispersion élevée: segmentation prix recommandée")
-    if products and products_with_sales / len(products) < 0.25:
-        insights.append("Peu de produits vendent régulièrement: focus sur le top sellers")
-
-    guardrails = [
-        "Variation max ±12% par cycle",
-        "Minimum 1 unité/mois pour estimer l'impact",
-        "Priorité: marges, rotation, stock",
-    ]
-
-    summary = {
-        "range_days": range_days,
-        "total_products": len(products),
-        "products_with_sales": products_with_sales,
-        "avg_price": round(avg_price, 2) if avg_price is not None else None,
-        "median_price": round(median_price, 2) if median_price is not None else None,
-        "price_dispersion": dispersion,
-        "revenue_30d": round(total_revenue, 2),
-        "units_30d": total_units,
-        "currency": currency,
-    }
-
-    return {
-        "success": True,
-        "shop": shop_domain,
-        "summary": summary,
-        "insights": insights,
-        "guardrails": guardrails,
-        "items": items,
-        "price_ai": price_ai,
     }
 
 
@@ -3512,15 +2933,6 @@ class BlockerApplyRequest(BaseModel):
     suggested_description: str | None = None
 
 
-class PriceBatchItem(BaseModel):
-    product_id: str
-    suggested_price: float
-
-
-class PriceBatchApplyRequest(BaseModel):
-    items: list[PriceBatchItem]
-
-
 @app.post("/api/shopify/blockers/apply")
 async def apply_blocker_action(req: BlockerApplyRequest, request: Request):
     """⚡ Applique une action sur un produit frein (Pro/Premium)."""
@@ -3571,7 +2983,28 @@ async def apply_blocker_action(req: BlockerApplyRequest, request: Request):
         current_price = _safe_float(variants[0].get("price"), 0.0)
         if current_price <= 0:
             raise HTTPException(status_code=400, detail="Prix actuel invalide")
-        new_price = req.suggested_price if req.suggested_price else round(current_price * 0.9, 2)
+        # Require an explicit suggested_price to avoid accidental automatic decreases
+        if req.suggested_price is None:
+            raise HTTPException(status_code=400, detail="Veuillez fournir un 'suggested_price' pour appliquer un changement de prix.")
+
+        try:
+            new_price = float(req.suggested_price)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Prix suggéré invalide")
+
+        if new_price <= 0:
+            raise HTTPException(status_code=400, detail="Prix suggéré invalide")
+
+        # Safety: prevent extreme price changes (e.g. >3x or <50%) to avoid mistakes
+        try:
+            ratio = new_price / current_price if current_price > 0 else 1.0
+            if ratio < 0.5 or ratio > 3.0:
+                raise HTTPException(status_code=400, detail="Écart de prix trop important; vérifie la suggestion.")
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+
         result = action_engine.apply_price_change(req.product_id, new_price)
         if not result.get("success"):
             raise HTTPException(status_code=400, detail=result.get("error", "Échec modification prix"))
@@ -3603,50 +3036,6 @@ async def apply_blocker_action(req: BlockerApplyRequest, request: Request):
         return {"success": True, "action": "description"}
 
     raise HTTPException(status_code=400, detail="Action non supportée")
-
-
-@app.post("/api/shopify/pricing/apply-batch")
-async def apply_price_batch(req: PriceBatchApplyRequest, request: Request):
-    """⚡ Applique des prix suggérés en lot (Pro/Premium)."""
-    user_id = get_user_id(request)
-    tier = get_user_tier(user_id)
-    if tier not in {"pro", "premium"}:
-        raise HTTPException(status_code=403, detail="Fonctionnalité réservée aux plans Pro/Premium")
-
-    items = req.items or []
-    if not items:
-        raise HTTPException(status_code=400, detail="Aucune recommandation fournie")
-    if len(items) > 50:
-        raise HTTPException(status_code=400, detail="Maximum 50 changements par lot")
-
-    shop_domain, access_token = _get_shopify_connection(user_id)
-    from AI_engine.action_engine import ActionEngine
-    action_engine = ActionEngine(shop_domain, access_token)
-
-    results = []
-    for item in items:
-        product_id = str(item.product_id)
-        new_price = _safe_float(item.suggested_price, None)
-        if not new_price or new_price <= 0:
-            results.append({"product_id": product_id, "success": False, "error": "Prix invalide"})
-            continue
-
-        result = action_engine.apply_price_change(product_id, new_price)
-        if not result.get("success"):
-            results.append({
-                "product_id": product_id,
-                "success": False,
-                "error": result.get("error", "Échec modification prix"),
-            })
-            continue
-
-        results.append({"product_id": product_id, "success": True, "new_price": new_price})
-
-    return {
-        "success": True,
-        "shop": shop_domain,
-        "results": results,
-    }
 
 
 def _log_blocker_action(user_id: str, shop_domain: str, product_id: str, action_type: str) -> None:
