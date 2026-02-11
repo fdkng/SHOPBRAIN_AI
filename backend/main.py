@@ -1928,6 +1928,8 @@ async def get_shopify_insights(
     # Build product stats
     product_stats = {}
     refunds_by_product = {}
+    order_price_map = {}
+    order_qty_map = {}
 
     for order in orders:
         for item in order.get("line_items", []):
@@ -1945,6 +1947,9 @@ async def get_shopify_insights(
             product_stats[pid]["orders"] += 1
             product_stats[pid]["quantity"] += qty
             product_stats[pid]["revenue"] += price * qty
+            if price > 0:
+                order_price_map[pid] = order_price_map.get(pid, 0.0) + price * qty
+                order_qty_map[pid] = order_qty_map.get(pid, 0) + qty
 
         for refund in order.get("refunds", []) or []:
             for refund_line in refund.get("refund_line_items", []) or []:
@@ -2197,7 +2202,9 @@ async def get_shopify_insights(
     for pid, stats in product_stats.items():
         inventory = inventory_map.get(pid, 0)
         orders_count = stats.get("orders", 0)
-        price_current = price_map.get(pid, 0)
+        price_current = price_map.get(pid, 0) or (
+            (order_price_map.get(pid, 0.0) / order_qty_map.get(pid, 1)) if order_qty_map.get(pid, 0) else 0
+        )
         if not price_current:
             continue
 
@@ -2279,7 +2286,9 @@ async def get_shopify_insights(
         )[:10]
         for stats in fallback_candidates:
             pid = str(stats.get("product_id"))
-            price_current = price_map.get(pid, 0)
+            price_current = price_map.get(pid, 0) or (
+                (order_price_map.get(pid, 0.0) / order_qty_map.get(pid, 1)) if order_qty_map.get(pid, 0) else 0
+            )
             if not price_current:
                 continue
             orders_count = stats.get("orders", 0)
@@ -2334,6 +2343,8 @@ async def get_shopify_insights(
         for pid, product in list(products_by_id.items())[:10]:
             variants = product.get("variants", []) or []
             price_current = _safe_float(variants[0].get("price"), 0.0) if variants else 0.0
+            if not price_current:
+                price_current = (order_price_map.get(pid, 0.0) / order_qty_map.get(pid, 1)) if order_qty_map.get(pid, 0) else 0
             if not price_current:
                 continue
             inventory = inventory_map.get(pid, 0)
