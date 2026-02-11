@@ -2596,7 +2596,7 @@ async def get_shopify_pricing_analysis(
     }
 
     response = requests.get(
-        f"https://{shop_domain}/admin/api/2024-10/products.json?limit=250&fields=id,title,variants,product_type,vendor",
+        f"https://{shop_domain}/admin/api/2024-10/products.json?limit=250&fields=id,title,body_html,variants,product_type,vendor",
         headers=headers,
         timeout=30,
     )
@@ -2677,6 +2677,7 @@ async def get_shopify_pricing_analysis(
             continue
         inventory = sum(int(v.get("inventory_quantity") or 0) for v in variants)
         product_id = str(product.get("id"))
+        description_excerpt = _strip_html(product.get("body_html"))[:400]
         sales = sales_by_product.get(product_id, {"units": 0, "revenue": 0.0, "orders": 0, "prices": []})
         units_sold = sales.get("units", 0)
         revenue = sales.get("revenue", 0.0)
@@ -2768,6 +2769,7 @@ async def get_shopify_pricing_analysis(
                 "units_sold": units_sold,
                 "velocity_per_day": velocity,
                 "revenue": round(revenue, 2),
+                "description_excerpt": description_excerpt,
             },
         })
 
@@ -2778,8 +2780,10 @@ async def get_shopify_pricing_analysis(
     if include_ai:
         if tier not in {"pro", "premium"}:
             price_ai["notes"].append("Plan requis: Pro ou Premium")
+            items = []
         elif not OPENAI_API_KEY:
             price_ai["notes"].append("OpenAI non configuré")
+            items = []
         else:
             try:
                 client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
@@ -2797,16 +2801,19 @@ async def get_shopify_pricing_analysis(
                     units_sold = metrics.get("units_sold")
                     velocity = metrics.get("velocity_per_day")
                     inventory = metrics.get("inventory")
+                    description_excerpt = metrics.get("description_excerpt")
                     prompt = (
                         "Tu es un expert pricing e-commerce.\n"
                         f"Produit: {item.get('title')}\n"
+                        f"Description: {description_excerpt}\n"
                         f"Prix actuel: {current_price}\n"
                         f"Prix moyen boutique: {metrics.get('avg_price')}\n"
                         f"Prix payé moyen (30j): {avg_paid}\n"
                         f"Unités vendues (30j): {units_sold}\n"
                         f"Vitesse (unités/jour): {velocity}\n"
                         f"Stock: {inventory}\n"
-                        "Retourne JSON: {\"suggested_price\": number, \"confidence\": number (0-1), \"rationale\": string, \"signals\": [string]}."
+                        "Retourne JSON: {\"suggested_price\": number, \"confidence\": number (0-1), \"rationale\": string, \"signals\": [string]}.\n"
+                        "La rationale doit citer le positionnement prix et la description du produit."
                     )
                     response = client.chat.completions.create(
                         model="gpt-4",
@@ -2851,6 +2858,7 @@ async def get_shopify_pricing_analysis(
                             "signals": item.get("signals"),
                         }
                     price_ai["generated"] += 1
+                items = [item for item in items if item.get("source") == "ai"]
             except Exception as e:
                 price_ai["notes"].append(f"Erreur IA: {str(e)[:120]}")
 
