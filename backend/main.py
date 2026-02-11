@@ -2584,6 +2584,7 @@ async def get_shopify_pricing_analysis(
     request: Request,
     limit: int = 10,
     include_ai: bool = False,
+    ai_only: bool = False,
 ):
     """💰 Analyse prix dédiée (avec fallback basé sur produits Shopify)."""
     user_id = get_user_id(request)
@@ -2780,10 +2781,8 @@ async def get_shopify_pricing_analysis(
     if include_ai:
         if tier not in {"pro", "premium"}:
             price_ai["notes"].append("Plan requis: Pro ou Premium")
-            items = []
         elif not OPENAI_API_KEY:
             price_ai["notes"].append("OpenAI non configuré")
-            items = []
         else:
             try:
                 client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
@@ -2858,9 +2857,10 @@ async def get_shopify_pricing_analysis(
                             "signals": item.get("signals"),
                         }
                     price_ai["generated"] += 1
-                items = [item for item in items if item.get("source") == "ai"]
             except Exception as e:
                 price_ai["notes"].append(f"Erreur IA: {str(e)[:120]}")
+    if include_ai and ai_only:
+        items = [item for item in items if item.get("source") == "ai"]
 
     total_units = sum(stats.get("units", 0) for stats in sales_by_product.values())
     total_revenue = sum(stats.get("revenue", 0.0) for stats in sales_by_product.values())
