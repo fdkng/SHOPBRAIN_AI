@@ -2576,6 +2576,146 @@ async def get_shopify_insights(
     }
 
 
+@app.get("/api/shopify/pricing-analyze")
+async def get_shopify_pricing_analysis(
+    request: Request,
+    limit: int = 10,
+    include_ai: bool = False,
+):
+    """💰 Analyse prix dédiée (avec fallback basé sur produits Shopify)."""
+    user_id = get_user_id(request)
+    tier = get_user_tier(user_id)
+    shop_domain, access_token = _get_shopify_connection(user_id)
+
+    headers = {
+        "X-Shopify-Access-Token": access_token,
+        "Content-Type": "application/json",
+    }
+
+    response = requests.get(
+        f"https://{shop_domain}/admin/api/2024-10/products.json?limit=250&fields=id,title,variants,product_type,vendor",
+        headers=headers,
+        timeout=30,
+    )
+    if response.status_code != 200:
+        raise HTTPException(status_code=response.status_code, detail=f"Erreur Shopify: {response.text[:300]}")
+
+    products = response.json().get("products", [])
+    if not products:
+        return {"success": True, "shop": shop_domain, "items": [], "price_ai": {"enabled": False, "generated": 0, "notes": ["Aucun produit"]}}
+
+    prices = []
+    for product in products:
+        variants = product.get("variants", []) or []
+        if variants:
+            price_current = _safe_float(variants[0].get("price"), 0.0)
+            if price_current:
+                prices.append(price_current)
+    avg_price = (sum(prices) / len(prices)) if prices else None
+
+    items = []
+    for product in products:
+        variants = product.get("variants", []) or []
+        if not variants:
+            continue
+        price_current = _safe_float(variants[0].get("price"), 0.0)
+        if not price_current:
+            continue
+        inventory = sum(int(v.get("inventory_quantity") or 0) for v in variants)
+
+        if avg_price and price_current > avg_price * 1.1:
+            direction = "down"
+            suggested_price = round(price_current * 0.95, 2)
+            reason = f"Prix > moyenne ({price_current:.2f} > {avg_price:.2f})"
+        elif avg_price and price_current < avg_price * 0.9:
+            direction = "up"
+            suggested_price = round(price_current * 1.05, 2)
+            reason = f"Prix < moyenne ({price_current:.2f} < {avg_price:.2f})"
+        elif inventory > 20:
+            direction = "down"
+            suggested_price = round(price_current * 0.97, 2)
+            reason = "Surstock + faible demande"
+        else:
+            direction = "up"
+            suggested_price = round(price_current * 1.03, 2)
+            reason = "Test d'élasticité"
+
+        delta_percent = round(((suggested_price - price_current) / price_current) * 100, 1)
+
+        items.append({
+            "product_id": str(product.get("id")),
+            "title": product.get("title") or str(product.get("id")),
+            "current_price": round(price_current, 2),
+            "suggested_price": suggested_price,
+            "direction": direction,
+            "delta_percent": delta_percent,
+            "reason": reason,
+            "metrics": {
+                "inventory": inventory,
+                "avg_price": round(avg_price, 2) if avg_price is not None else None,
+            },
+        })
+
+    items = items[: max(1, min(limit, 25))]
+
+    price_ai = {"enabled": False, "generated": 0, "notes": []}
+    if include_ai:
+        if tier not in {"pro", "premium"}:
+            price_ai["notes"].append("Plan requis: Pro ou Premium")
+        elif not OPENAI_API_KEY:
+            price_ai["notes"].append("OpenAI non configuré")
+        else:
+            try:
+                client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
+                price_ai["enabled"] = True
+
+                def _clamp_price(value: float, current: float) -> float:
+                    lower = round(current * 0.8, 2)
+                    upper = round(current * 1.2, 2)
+                    return max(lower, min(upper, round(value, 2)))
+
+                for item in items:
+                    current_price = item.get("current_price")
+                    prompt = (
+                        "Tu es un expert pricing e-commerce.\n"
+                        f"Produit: {item.get('title')}\n"
+                        f"Prix actuel: {current_price}\n"
+                        f"Prix moyen boutique: {item.get('metrics', {}).get('avg_price')}\n"
+                        f"Stock: {item.get('metrics', {}).get('inventory')}\n"
+                        "Retourne JSON: {\"suggested_price\": number, \"rationale\": string}."
+                    )
+                    response = client.chat.completions.create(
+                        model="gpt-4",
+                        messages=[
+                            {"role": "system", "content": "Tu proposes un prix réaliste et prudent."},
+                            {"role": "user", "content": prompt},
+                        ],
+                        temperature=0.2,
+                        max_tokens=120,
+                        response_format={"type": "json_object"},
+                    )
+                    parsed = json.loads(response.choices[0].message.content)
+                    suggested = _safe_float(parsed.get("suggested_price"), None)
+                    if suggested:
+                        suggested = _clamp_price(suggested, current_price)
+                        item["suggested_price"] = suggested
+                        item["delta_percent"] = round(((suggested - current_price) / current_price) * 100, 1)
+                        item["direction"] = "up" if suggested > current_price else "down"
+                    rationale = parsed.get("rationale")
+                    if rationale:
+                        item["reason"] = f"{item.get('reason') or ''} • {rationale}".strip(" •")
+                    price_ai["generated"] += 1
+            except Exception as e:
+                price_ai["notes"].append(f"Erreur IA: {str(e)[:120]}")
+
+    return {
+        "success": True,
+        "shop": shop_domain,
+        "items": items,
+        "price_ai": price_ai,
+    }
+
+
 @app.get("/api/shopify/rewrite")
 async def get_shopify_rewrite(request: Request, product_id: str):
     """Réécriture intelligente d'un produit spécifique."""

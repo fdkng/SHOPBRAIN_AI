@@ -1352,6 +1352,37 @@ export default function Dashboard() {
   const runActionAnalysis = async (actionKey, options = {}) => {
     try {
       setStatus(actionKey, 'info', 'Analyse en cours...')
+      if (actionKey === 'action-price') {
+        setInsightsLoading(true)
+        setInsightsError('')
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session) {
+          setStatus(actionKey, 'error', 'Session expirée, reconnectez-vous')
+          return
+        }
+        const response = await fetch(`${API_URL}/api/shopify/pricing-analyze?limit=10&include_ai=true`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json'
+          }
+        })
+        if (!response.ok) {
+          const errorData = await response.json()
+          throw new Error(errorData.detail || `HTTP ${response.status}`)
+        }
+        const data = await response.json()
+        if (!data.success) {
+          throw new Error(data.error || 'Analyse prix indisponible')
+        }
+        setInsightsData(prev => ({
+          ...(prev || {}),
+          price_opportunities: data.items || [],
+          price_ai: data.price_ai || { enabled: false, generated: 0, notes: [] }
+        }))
+        setStatus(actionKey, 'success', 'Analyse terminée.')
+        return
+      }
       if (actionKey === 'action-rewrite') {
         setInsightsData(null)
       }
@@ -1406,6 +1437,10 @@ export default function Dashboard() {
       setStatus(actionKey, 'success', 'Analyse terminée.')
     } catch (err) {
       setStatus(actionKey, 'error', err.message || 'Erreur analyse')
+    } finally {
+      if (actionKey === 'action-price') {
+        setInsightsLoading(false)
+      }
     }
   }
 
