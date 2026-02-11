@@ -2812,7 +2812,8 @@ async def get_shopify_pricing_analysis(
                         f"Vitesse (unités/jour): {velocity}\n"
                         f"Stock: {inventory}\n"
                         "Retourne JSON: {\"suggested_price\": number, \"confidence\": number (0-1), \"rationale\": string, \"signals\": [string]}.\n"
-                        "La rationale doit citer le positionnement prix et la description du produit."
+                        "La rationale doit inclure: (1) le prix cible exact, (2) pourquoi (trop cher/pas assez cher) vs prix moyen/paiement moyen,"
+                        " (3) un lien direct avec la description du produit."
                     )
                     response = client.chat.completions.create(
                         model="gpt-4",
@@ -2850,7 +2851,18 @@ async def get_shopify_pricing_analysis(
                         item["signals"] = [str(signal)[:40] for signal in ai_signals][:4]
                     rationale = parsed.get("rationale")
                     if rationale:
-                        item["reason"] = str(rationale)[:160]
+                        item["reason"] = str(rationale)[:240]
+                        item["ai"] = {
+                            "rationale": item["reason"],
+                            "confidence": item.get("confidence"),
+                            "signals": item.get("signals"),
+                        }
+                    elif suggested:
+                        avg_paid_text = f" vs prix payé moyen {avg_paid}" if avg_paid else ""
+                        avg_price_text = f" vs prix moyen boutique {metrics.get('avg_price')}" if metrics.get("avg_price") else ""
+                        item["reason"] = (
+                            f"Prix cible {suggested} car {('trop cher' if suggested < current_price else 'pas assez cher')}{avg_paid_text}{avg_price_text}."
+                        )
                         item["ai"] = {
                             "rationale": item["reason"],
                             "confidence": item.get("confidence"),
