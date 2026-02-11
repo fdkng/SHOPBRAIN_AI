@@ -2430,10 +2430,12 @@ async def get_shopify_insights(
                         ],
                         temperature=0.2,
                         max_tokens=120,
-                        response_format={"type": "json_object"},
                     )
-                    content = response.choices[0].message.content
-                    parsed = json.loads(content)
+                    content = response.choices[0].message.content or ""
+                    try:
+                        parsed = json.loads(content)
+                    except Exception:
+                        parsed = {}
                     suggested = _safe_float(parsed.get("suggested_price"), None)
                     if suggested:
                         suggested = _clamp_price(suggested, current_price)
@@ -2692,9 +2694,12 @@ async def get_shopify_pricing_analysis(
                         ],
                         temperature=0.2,
                         max_tokens=120,
-                        response_format={"type": "json_object"},
                     )
-                    parsed = json.loads(response.choices[0].message.content)
+                    content = response.choices[0].message.content or ""
+                    try:
+                        parsed = json.loads(content)
+                    except Exception:
+                        parsed = {}
                     suggested = _safe_float(parsed.get("suggested_price"), None)
                     if suggested:
                         suggested = _clamp_price(suggested, current_price)
