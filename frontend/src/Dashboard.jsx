@@ -2936,6 +2936,20 @@ export default function Dashboard() {
                         <p className="text-xs text-gray-500 mt-1">
                           Ventes 30j: {item.metrics?.units_sold ?? 0} • Vitesse: {item.metrics?.velocity_per_day ?? '—'}/j • Stock: {item.metrics?.inventory ?? '—'}
                         </p>
+                        <div className="mt-3 bg-gray-950/50 border border-gray-800 rounded-lg p-3">
+                          <p className="text-[11px] text-gray-400 font-semibold mb-1">Pourquoi ce prix ?</p>
+                          <p className="text-xs text-gray-300">
+                            {item.ai?.rationale || item.reason || 'Ajustement recommandé'}
+                          </p>
+                          <div className="text-[11px] text-gray-500 mt-2 space-y-1">
+                            {item.metrics?.avg_paid ? (
+                              <p>Comparé au prix payé moyen: {formatCurrency(item.metrics.avg_paid, getPriceCurrency())}</p>
+                            ) : null}
+                            {item.metrics?.avg_price ? (
+                              <p>Comparé au prix moyen boutique: {formatCurrency(item.metrics.avg_price, getPriceCurrency())}</p>
+                            ) : null}
+                          </div>
+                        </div>
                       </div>
                       {item.suggested_price ? (
                         <button
