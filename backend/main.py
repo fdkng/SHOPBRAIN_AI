@@ -2756,6 +2756,8 @@ async def get_shopify_pricing_analysis(
             "confidence": confidence,
             "impact_estimate": impact_estimate,
             "priority_score": priority_score,
+            "source": "heuristic",
+            "ai": None,
             "metrics": {
                 "inventory": inventory,
                 "avg_price": round(avg_price, 2) if avg_price is not None else None,
@@ -2804,7 +2806,7 @@ async def get_shopify_pricing_analysis(
                         f"Unités vendues (30j): {units_sold}\n"
                         f"Vitesse (unités/jour): {velocity}\n"
                         f"Stock: {inventory}\n"
-                        "Retourne JSON: {\"suggested_price\": number, \"rationale\": string}."
+                        "Retourne JSON: {\"suggested_price\": number, \"confidence\": number (0-1), \"rationale\": string, \"signals\": [string]}."
                     )
                     response = client.chat.completions.create(
                         model="gpt-4",
@@ -2820,15 +2822,34 @@ async def get_shopify_pricing_analysis(
                         parsed = json.loads(content)
                     except Exception:
                         parsed = {}
+                        try:
+                            start = content.find("{")
+                            end = content.rfind("}")
+                            if start != -1 and end != -1 and end > start:
+                                parsed = json.loads(content[start:end + 1])
+                        except Exception:
+                            parsed = {}
                     suggested = _safe_float(parsed.get("suggested_price"), None)
                     if suggested:
                         suggested = _clamp_price(suggested, current_price)
                         item["suggested_price"] = suggested
                         item["delta_percent"] = round(((suggested - current_price) / current_price) * 100, 1)
                         item["direction"] = "up" if suggested > current_price else "down"
+                        item["source"] = "ai"
+                    ai_confidence = _safe_float(parsed.get("confidence"), None)
+                    if ai_confidence is not None and ai_confidence > 0:
+                        item["confidence"] = round(min(0.95, max(0.2, ai_confidence)), 2)
+                    ai_signals = parsed.get("signals")
+                    if isinstance(ai_signals, list) and ai_signals:
+                        item["signals"] = [str(signal)[:40] for signal in ai_signals][:4]
                     rationale = parsed.get("rationale")
                     if rationale:
-                        item["reason"] = f"{item.get('reason') or ''} • {rationale}".strip(" •")
+                        item["reason"] = str(rationale)[:160]
+                        item["ai"] = {
+                            "rationale": item["reason"],
+                            "confidence": item.get("confidence"),
+                            "signals": item.get("signals"),
+                        }
                     price_ai["generated"] += 1
             except Exception as e:
                 price_ai["notes"].append(f"Erreur IA: {str(e)[:120]}")

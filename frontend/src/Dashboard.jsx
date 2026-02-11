@@ -2921,6 +2921,11 @@ export default function Dashboard() {
                                 Impact {formatCurrency(item.impact_estimate, getPriceCurrency())}
                               </span>
                             ) : null}
+                            {item.source ? (
+                              <span className={`text-[11px] px-2 py-1 rounded-full border ${item.source === 'ai' ? 'text-cyan-200 bg-cyan-500/10 border-cyan-500/30' : 'text-gray-300 bg-gray-800/70 border-gray-700'}`}>
+                                {item.source === 'ai' ? 'IA' : 'Signal boutique'}
+                              </span>
+                            ) : null}
                           </div>
                         ) : null}
                         <p className="text-xs text-gray-500 mt-2">{item.reason || 'Ajustement recommandé'}</p>
