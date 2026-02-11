@@ -2941,6 +2941,11 @@ export default function Dashboard() {
                           <p className="text-xs text-gray-300">
                             {item.ai?.rationale || item.reason || 'Ajustement recommandé'}
                           </p>
+                          {item.metrics?.description_excerpt ? (
+                            <p className="text-[11px] text-gray-400 mt-2">
+                              Description produit: {item.metrics.description_excerpt}
+                            </p>
+                          ) : null}
                           <div className="text-[11px] text-gray-500 mt-2 space-y-1">
                             {item.metrics?.avg_paid ? (
                               <p>Comparé au prix payé moyen: {formatCurrency(item.metrics.avg_paid, getPriceCurrency())}</p>
