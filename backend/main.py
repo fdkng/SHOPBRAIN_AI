@@ -2318,6 +2318,49 @@ async def get_shopify_insights(
                 "suggestion": suggestion,
             })
 
+    # Fallback: if no opportunities matched heuristics, still provide actionable pricing guidance
+    # for top products (prevents "0 opportunités" when data is sparse).
+    if not price_opportunities:
+        ranked = sorted(
+            product_stats.items(),
+            key=lambda kv: (float(kv[1].get("revenue", 0) or 0), int(kv[1].get("orders", 0) or 0)),
+            reverse=True,
+        )
+        for pid, stats in ranked[: min(5, len(ranked))]:
+            current_price = float(price_map.get(pid, 0) or 0)
+            if current_price <= 0:
+                continue
+            title = stats.get("title")
+            market = _get_market_price_snapshot(str(title)[:120]) if title else None
+
+            suggestion = "Tester une plage de prix (A/B) et mesurer conversion + marge."
+            band = {"down": round(current_price * 0.97, 2), "up": round(current_price * 1.05, 2)}
+
+            median = None
+            try:
+                median = float(market.get("median")) if isinstance(market, dict) and market.get("median") else None
+            except Exception:
+                median = None
+
+            if median:
+                if current_price > median * 1.12:
+                    suggestion = f"Prix au-dessus du marché (médiane ~{median}). Tester une baisse contrôlée vers {round(median, 2)}."
+                    band = {"down": round(min(current_price * 0.97, median), 2), "up": round(current_price * 1.0, 2)}
+                elif current_price < median * 0.88:
+                    suggestion = f"Prix sous le marché (médiane ~{median}). Tester une hausse contrôlée."
+                    band = {"down": round(current_price * 1.0, 2), "up": round(max(current_price * 1.05, median), 2)}
+                else:
+                    suggestion = f"Prix proche du marché (médiane ~{median}). Tester micro-ajustement + amélioration offre/contenu."
+
+            price_opportunities.append({
+                "product_id": pid,
+                "title": title,
+                "current_price": round(current_price, 2),
+                "test_band": band,
+                "market": market,
+                "suggestion": suggestion,
+            })
+
     # Rewrite opportunities: low performance + weak content signals
     rewrite_opportunities = []
     for pid, stats in product_stats.items():
