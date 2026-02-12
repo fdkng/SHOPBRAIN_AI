@@ -2011,6 +2011,64 @@ async def get_shopify_insights(
     price_values = [value for value in price_map.values() if value and value > 0]
     avg_price = (sum(price_values) / len(price_values)) if price_values else None
 
+    def _parse_price_to_float(raw: str | None) -> float | None:
+        if not raw:
+            return None
+        cleaned = "".join(ch for ch in str(raw) if (ch.isdigit() or ch in ".,"))
+        cleaned = cleaned.replace(",", ".")
+        try:
+            value = float(cleaned)
+            return value if value > 0 else None
+        except Exception:
+            return None
+
+    def _get_market_price_snapshot(query: str) -> dict | None:
+        api_key = os.getenv("SERPAPI_API_KEY")
+        if not api_key or not query:
+            return None
+        try:
+            resp = requests.get(
+                "https://serpapi.com/search.json",
+                params={
+                    "engine": "google_shopping",
+                    "q": query,
+                    "hl": "fr",
+                    "gl": "ca",
+                    "api_key": api_key,
+                },
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                return None
+            data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else None
+            if not isinstance(data, dict):
+                return None
+            results = data.get("shopping_results") or []
+            prices: list[float] = []
+            for item in results[:12]:
+                price_value = _parse_price_to_float(item.get("extracted_price"))
+                if price_value is None:
+                    price_value = _parse_price_to_float(item.get("price"))
+                if price_value is not None:
+                    prices.append(price_value)
+            if len(prices) < 3:
+                return None
+            prices_sorted = sorted(prices)
+            mid = len(prices_sorted) // 2
+            if len(prices_sorted) % 2 == 0:
+                median = (prices_sorted[mid - 1] + prices_sorted[mid]) / 2
+            else:
+                median = prices_sorted[mid]
+            return {
+                "source": "serpapi_google_shopping",
+                "count": len(prices_sorted),
+                "min": round(prices_sorted[0], 2),
+                "median": round(median, 2),
+                "max": round(prices_sorted[-1], 2),
+            }
+        except Exception:
+            return None
+
     def _classify_blocker(stats: dict, median: int):
         orders_count = stats.get("orders", 0)
         revenue = stats.get("revenue", 0)
@@ -2197,17 +2255,54 @@ async def get_shopify_insights(
     for pid, stats in product_stats.items():
         inventory = inventory_map.get(pid, 0)
         orders_count = stats.get("orders", 0)
+        current_price = price_map.get(pid, 0) or 0
+
+        # Optional market snapshot (requires SERPAPI_API_KEY)
+        market = None
+        if current_price and stats.get("title"):
+            market = _get_market_price_snapshot(str(stats.get("title"))[:120])
+
+        def _test_band(price: float, down: float, up: float) -> dict:
+            return {
+                "down": round(price * (1 - down), 2),
+                "up": round(price * (1 + up), 2),
+            }
+
         if inventory > 50 and orders_count < max(1, median_orders // 3):
+            # Low sales + high inventory: price *might* be an issue, but not always.
+            suggestion = "Tester une plage de prix (A/B) plutôt que baisser systématiquement."
+            band = _test_band(current_price, down=0.05, up=0.03) if current_price else None
+            if market and current_price:
+                median = float(market.get("median") or 0)
+                if median:
+                    if current_price > median * 1.15:
+                        suggestion = f"Prix au-dessus du marché (médiane ~{median}). Tester une baisse vers {round(median, 2)}."
+                    elif current_price < median * 0.85:
+                        suggestion = f"Prix sous le marché (médiane ~{median}). Tester une hausse contrôlée."
+                    else:
+                        suggestion = f"Prix proche du marché (médiane ~{median}). Tester plutôt contenu/offre + micro-ajustement."
             price_opportunities.append({
                 "product_id": pid,
                 "title": stats.get("title"),
-                "suggestion": "Baisser le prix de 5-10%",
+                "current_price": round(current_price, 2) if current_price else None,
+                "test_band": band,
+                "market": market,
+                "suggestion": suggestion,
             })
         if inventory < 5 and orders_count > median_orders:
+            band = _test_band(current_price, down=0.0, up=0.07) if current_price else None
+            suggestion = "Augmenter le prix de 3-7% (test)"
+            if market and current_price:
+                median = float(market.get("median") or 0)
+                if median and current_price < median * 0.9:
+                    suggestion = f"Demande forte + stock faible. Prix sous marché (médiane ~{median}): hausse recommandée."
             price_opportunities.append({
                 "product_id": pid,
                 "title": stats.get("title"),
-                "suggestion": "Augmenter le prix de 3-7%",
+                "current_price": round(current_price, 2) if current_price else None,
+                "test_band": band,
+                "market": market,
+                "suggestion": suggestion,
             })
 
     # Rewrite opportunities: low performance + weak content signals
@@ -2855,10 +2950,10 @@ async def get_shopify_blockers(request: Request, range: str = "30d", limit: int 
         if add_to_cart >= max(5, avg_add_to_cart) and cart_to_order is not None and cart_to_order < 0.2:
             actions.append({
                 "type": "price",
-                "label": "Tester un prix inférieur",
+                "label": "Tester -5% (A/B)",
                 "reason": f"Panier→achat faible ({cart_to_order:.1%})",
                 "can_apply": True,
-                "suggested_price": round(price_current * 0.9, 2) if price_current else None,
+                "suggested_price": round(price_current * 0.95, 2) if price_current else None,
             })
         if description_len < 120:
             actions.append({
@@ -2875,10 +2970,10 @@ async def get_shopify_blockers(request: Request, range: str = "30d", limit: int 
                 "can_apply": True,
             })
         if avg_price and price_current > avg_price * 1.3 and orders_count < avg_orders:
-            suggested_price = round(price_current * 0.9, 2)
+            suggested_price = round(price_current * 0.95, 2)
             actions.append({
                 "type": "price",
-                "label": f"Baisser le prix à {suggested_price}",
+                "label": f"Tester -5% (A/B) → {suggested_price}",
                 "reason": "Prix élevé vs moyenne boutique",
                 "can_apply": True,
                 "suggested_price": suggested_price,

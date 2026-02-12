@@ -94,6 +94,7 @@ export default function Dashboard() {
   const [apiLoading, setApiLoading] = useState(false)
   const [applyingRecommendationId, setApplyingRecommendationId] = useState(null)
   const [applyingBlockerActionId, setApplyingBlockerActionId] = useState(null)
+  const [pendingPriceConfirmByProduct, setPendingPriceConfirmByProduct] = useState({})
   const [statusByKey, setStatusByKey] = useState({})
   const [pendingRevokeKeyId, setPendingRevokeKeyId] = useState(null)
   const [pendingCancelSubscription, setPendingCancelSubscription] = useState(false)
@@ -1408,11 +1409,36 @@ export default function Dashboard() {
     }
   }
 
-  const handleApplyBlockerAction = async (productId, action, statusKey = 'blockers') => {
+  const handleApplyBlockerAction = async (productId, action, statusKey = 'blockers', currentPrice) => {
     const plan = String(subscription?.plan || '').toLowerCase()
     if (!['pro', 'premium'].includes(plan)) {
       setStatus(statusKey, 'warning', 'Fonctionnalité réservée aux plans Pro/Premium')
       return
+    }
+
+    const actionType = (action?.type || '').toLowerCase()
+    const suggested = Number(action?.suggested_price)
+    const current = Number(currentPrice)
+    const isPriceDecrease = actionType === 'price' && Number.isFinite(suggested) && Number.isFinite(current) && suggested > 0 && current > 0 && suggested < current
+    if (isPriceDecrease) {
+      const key = `${productId}`
+      if (!pendingPriceConfirmByProduct[key]) {
+        setPendingPriceConfirmByProduct((prev) => ({ ...prev, [key]: Date.now() }))
+        setStatus(statusKey, 'warning', `Confirme: baisser le prix de ${formatCurrency(current, analyticsData?.currency || 'EUR')} à ${formatCurrency(suggested, analyticsData?.currency || 'EUR')}. Clique une seconde fois.`)
+        window.setTimeout(() => {
+          setPendingPriceConfirmByProduct((prev) => {
+            const next = { ...prev }
+            delete next[key]
+            return next
+          })
+        }, 10_000)
+        return
+      }
+      setPendingPriceConfirmByProduct((prev) => {
+        const next = { ...prev }
+        delete next[key]
+        return next
+      })
     }
 
     try {
@@ -2528,7 +2554,7 @@ export default function Dashboard() {
                           action.can_apply ? (
                             <button
                               key={action.type}
-                              onClick={() => handleApplyBlockerAction(item.product_id, action)}
+                              onClick={() => handleApplyBlockerAction(item.product_id, action, 'blockers', item.price)}
                               className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-white"
                               disabled={applyingBlockerActionId === `${item.product_id}-${action.type}`}
                               title={action.reason || action.label}
@@ -2586,7 +2612,7 @@ export default function Dashboard() {
                           action.can_apply ? (
                             <button
                               key={action.type}
-                              onClick={() => handleApplyBlockerAction(item.product_id, action)}
+                              onClick={() => handleApplyBlockerAction(item.product_id, action, 'action-blockers', item.price)}
                               className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-white"
                               disabled={applyingBlockerActionId === `${item.product_id}-${action.type}`}
                               title={action.reason || action.label}
