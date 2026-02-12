@@ -2767,8 +2767,49 @@ export default function Dashboard() {
               ) : (
                 insightsData?.price_opportunities?.slice(0, 8).map((item, index) => (
                   <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
-                    <p className="text-white font-semibold">{item.title || item.product_id}</p>
-                    <p className="text-xs text-gray-500">{item.suggestion || 'Ajuster le prix'}</p>
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <p className="text-white font-semibold truncate">{item.title || item.product_id}</p>
+                        <p className="text-xs text-gray-500 mt-1">{item.suggestion || 'Ajuster le prix'}</p>
+                      </div>
+                      {item.current_price ? (
+                        <div className="shrink-0 text-right">
+                          <div className="text-xs uppercase tracking-[0.2em] text-gray-500">Actuel</div>
+                          <div className="text-sm font-semibold text-gray-200">
+                            {formatCurrency(item.current_price, analyticsData?.currency || 'EUR')}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    {(item.test_band || item.market) ? (
+                      <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div className="bg-gray-950/60 border border-gray-800 rounded-lg p-3">
+                          <div className="text-xs uppercase tracking-[0.2em] text-gray-500">Test (A/B)</div>
+                          {item.test_band?.down && item.test_band?.up ? (
+                            <div className="mt-1 text-sm text-gray-200">
+                              {formatCurrency(item.test_band.down, analyticsData?.currency || 'EUR')} → {formatCurrency(item.test_band.up, analyticsData?.currency || 'EUR')}
+                            </div>
+                          ) : (
+                            <div className="mt-1 text-xs text-gray-500">Plage non disponible.</div>
+                          )}
+                        </div>
+
+                        <div className="bg-gray-950/60 border border-gray-800 rounded-lg p-3">
+                          <div className="text-xs uppercase tracking-[0.2em] text-gray-500">Marché</div>
+                          {item.market?.median ? (
+                            <div className="mt-1 text-sm text-gray-200">
+                              Médiane {formatCurrency(item.market.median, analyticsData?.currency || 'EUR')} · min {formatCurrency(item.market.min, analyticsData?.currency || 'EUR')} · max {formatCurrency(item.market.max, analyticsData?.currency || 'EUR')}
+                              {item.market?.count ? <span className="text-xs text-gray-500"> · n={item.market.count}</span> : null}
+                            </div>
+                          ) : (
+                            <div className="mt-1 text-xs text-gray-500">
+                              Configure <span className="text-gray-300">SERPAPI_API_KEY</span> pour activer la comparaison Google Shopping.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 ))
               )}
