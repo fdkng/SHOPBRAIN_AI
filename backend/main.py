@@ -3318,6 +3318,19 @@ def _log_action_event(payload: dict) -> None:
     supabase.table("action_events").insert(payload).execute()
 
 
+@app.get("/api/debug/serpapi")
+async def debug_serpapi_env(request: Request):
+    """Debug endpoint (auth-required) to confirm SERPAPI env wiring without exposing secrets."""
+    _ = get_user_id(request)
+    key = os.getenv("SERPAPI_API_KEY")
+    return {
+        "success": True,
+        "enabled": bool(key),
+        "key_length": len(key) if isinstance(key, str) else 0,
+        "env_var_name": "SERPAPI_API_KEY",
+    }
+
+
 @app.post("/api/shopify/webhook/orders-paid")
 async def shopify_orders_paid_webhook(request: Request):
     raw_body = await request.body()
