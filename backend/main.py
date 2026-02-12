@@ -2038,9 +2038,17 @@ async def get_shopify_insights(
                 },
                 timeout=15,
             )
+            content_type = resp.headers.get("content-type", "")
+            data = resp.json() if content_type.startswith("application/json") else None
             if resp.status_code != 200:
-                return None
-            data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else None
+                err = None
+                if isinstance(data, dict):
+                    err = data.get("error") or data.get("message")
+                return {
+                    "source": "serpapi_google_shopping",
+                    "status_code": resp.status_code,
+                    "error": (str(err)[:180] if err else "SerpAPI request failed"),
+                }
             if not isinstance(data, dict):
                 return None
             results = data.get("shopping_results") or []
@@ -2052,7 +2060,12 @@ async def get_shopify_insights(
                 if price_value is not None:
                     prices.append(price_value)
             if len(prices) < 3:
-                return None
+                return {
+                    "source": "serpapi_google_shopping",
+                    "status_code": 200,
+                    "error": "Not enough price points returned",
+                    "count": len(prices),
+                }
             prices_sorted = sorted(prices)
             mid = len(prices_sorted) // 2
             if len(prices_sorted) % 2 == 0:
@@ -2409,6 +2422,12 @@ async def get_shopify_insights(
         "success": True,
         "shop": shop_domain,
         "range": range,
+        "market_comparison": {
+            "enabled": bool(os.getenv("SERPAPI_API_KEY")),
+            "source": "serpapi_google_shopping",
+            "hl": "fr",
+            "gl": "ca",
+        },
         "benchmarks": {
             "median_orders": median_orders,
             "avg_views": round(avg_views, 2) if avg_views else 0,

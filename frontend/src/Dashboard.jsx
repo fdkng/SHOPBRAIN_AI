@@ -2749,6 +2749,17 @@ export default function Dashboard() {
             <div>
               <h2 className="text-white text-xl font-bold mb-2">Optimisation dynamique des prix</h2>
               <p className="text-gray-400">Ajuste les prix selon élasticité et performance.</p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className="text-xs uppercase tracking-[0.2em] text-gray-500">Comparaison marché</span>
+                {insightsData?.market_comparison?.enabled ? (
+                  <span className="text-xs px-2 py-1 rounded-full bg-green-900/30 border border-green-700/40 text-green-300">Activée</span>
+                ) : (
+                  <span className="text-xs px-2 py-1 rounded-full bg-gray-900/60 border border-gray-700 text-gray-300">Désactivée</span>
+                )}
+                {!insightsData?.market_comparison?.enabled && (
+                  <span className="text-xs text-gray-500">(ajoute `SERPAPI_API_KEY` sur le backend Render)</span>
+                )}
+              </div>
             </div>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <p className="text-sm text-gray-400">{getInsightCount(insightsData?.price_opportunities)} opportunités</p>
@@ -2801,6 +2812,10 @@ export default function Dashboard() {
                             <div className="mt-1 text-sm text-gray-200">
                               Médiane {formatCurrency(item.market.median, analyticsData?.currency || 'EUR')} · min {formatCurrency(item.market.min, analyticsData?.currency || 'EUR')} · max {formatCurrency(item.market.max, analyticsData?.currency || 'EUR')}
                               {item.market?.count ? <span className="text-xs text-gray-500"> · n={item.market.count}</span> : null}
+                            </div>
+                          ) : item.market?.error ? (
+                            <div className="mt-1 text-xs text-amber-300">
+                              SerpAPI: {String(item.market.error)}{item.market?.status_code ? ` (HTTP ${item.market.status_code})` : ''}
                             </div>
                           ) : (
                             <div className="mt-1 text-xs text-gray-500">
