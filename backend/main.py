@@ -2265,58 +2265,63 @@ async def get_shopify_insights(
 
     # Price opportunities: low sales/high inventory or high sales/low inventory
     price_opportunities = []
+
+    def _test_band(price: float, down: float, up: float) -> dict:
+        return {
+            "down": round(price * (1 - down), 2),
+            "up": round(price * (1 + up), 2),
+        }
+
     for pid, stats in product_stats.items():
         inventory = inventory_map.get(pid, 0)
         orders_count = stats.get("orders", 0)
-        current_price = price_map.get(pid, 0) or 0
-
-        # Optional market snapshot (requires SERPAPI_API_KEY)
-        market = None
-        if current_price and stats.get("title"):
-            market = _get_market_price_snapshot(str(stats.get("title"))[:120])
-
-        def _test_band(price: float, down: float, up: float) -> dict:
-            return {
-                "down": round(price * (1 - down), 2),
-                "up": round(price * (1 + up), 2),
-            }
+        current_price = float(price_map.get(pid, 0) or 0)
 
         if inventory > 50 and orders_count < max(1, median_orders // 3):
-            # Low sales + high inventory: price *might* be an issue, but not always.
-            suggestion = "Tester une plage de prix (A/B) plutôt que baisser systématiquement."
-            band = _test_band(current_price, down=0.05, up=0.03) if current_price else None
-            if market and current_price:
-                median = float(market.get("median") or 0)
-                if median:
-                    if current_price > median * 1.15:
-                        suggestion = f"Prix au-dessus du marché (médiane ~{median}). Tester une baisse vers {round(median, 2)}."
-                    elif current_price < median * 0.85:
-                        suggestion = f"Prix sous le marché (médiane ~{median}). Tester une hausse contrôlée."
-                    else:
-                        suggestion = f"Prix proche du marché (médiane ~{median}). Tester plutôt contenu/offre + micro-ajustement."
             price_opportunities.append({
                 "product_id": pid,
                 "title": stats.get("title"),
                 "current_price": round(current_price, 2) if current_price else None,
-                "test_band": band,
-                "market": market,
-                "suggestion": suggestion,
+                "test_band": _test_band(current_price, down=0.05, up=0.03) if current_price else None,
+                "market": None,
+                "suggestion": "Tester une plage de prix (A/B) plutôt que baisser systématiquement.",
             })
         if inventory < 5 and orders_count > median_orders:
-            band = _test_band(current_price, down=0.0, up=0.07) if current_price else None
-            suggestion = "Augmenter le prix de 3-7% (test)"
-            if market and current_price:
-                median = float(market.get("median") or 0)
-                if median and current_price < median * 0.9:
-                    suggestion = f"Demande forte + stock faible. Prix sous marché (médiane ~{median}): hausse recommandée."
             price_opportunities.append({
                 "product_id": pid,
                 "title": stats.get("title"),
                 "current_price": round(current_price, 2) if current_price else None,
-                "test_band": band,
-                "market": market,
-                "suggestion": suggestion,
+                "test_band": _test_band(current_price, down=0.0, up=0.07) if current_price else None,
+                "market": None,
+                "suggestion": "Augmenter le prix de 3-7% (test)",
             })
+
+    def _enrich_price_opps_with_market(opps: list[dict], max_calls: int = 5) -> None:
+        if not os.getenv("SERPAPI_API_KEY"):
+            return
+        calls = 0
+        for item in opps:
+            if calls >= max_calls:
+                break
+            title = item.get("title")
+            current_price = float(item.get("current_price") or 0)
+            if not title or current_price <= 0:
+                continue
+            market = _get_market_price_snapshot(str(title)[:120])
+            item["market"] = market
+            calls += 1
+
+            if isinstance(market, dict) and market.get("median"):
+                try:
+                    median = float(market.get("median"))
+                except Exception:
+                    continue
+                if current_price > median * 1.15:
+                    item["suggestion"] = f"Prix au-dessus du marché (médiane ~{median}). Tester une baisse vers {round(median, 2)}."
+                elif current_price < median * 0.85:
+                    item["suggestion"] = f"Prix sous le marché (médiane ~{median}). Tester une hausse contrôlée."
+                else:
+                    item["suggestion"] = f"Prix proche du marché (médiane ~{median}). Tester plutôt offre/contenu + micro-ajustement."
 
     # Fallback: if no opportunities matched heuristics, still provide actionable pricing guidance
     # for top products (prevents "0 opportunités" when data is sparse).
@@ -2331,35 +2336,19 @@ async def get_shopify_insights(
             if current_price <= 0:
                 continue
             title = stats.get("title")
-            market = _get_market_price_snapshot(str(title)[:120]) if title else None
-
             suggestion = "Tester une plage de prix (A/B) et mesurer conversion + marge."
             band = {"down": round(current_price * 0.97, 2), "up": round(current_price * 1.05, 2)}
-
-            median = None
-            try:
-                median = float(market.get("median")) if isinstance(market, dict) and market.get("median") else None
-            except Exception:
-                median = None
-
-            if median:
-                if current_price > median * 1.12:
-                    suggestion = f"Prix au-dessus du marché (médiane ~{median}). Tester une baisse contrôlée vers {round(median, 2)}."
-                    band = {"down": round(min(current_price * 0.97, median), 2), "up": round(current_price * 1.0, 2)}
-                elif current_price < median * 0.88:
-                    suggestion = f"Prix sous le marché (médiane ~{median}). Tester une hausse contrôlée."
-                    band = {"down": round(current_price * 1.0, 2), "up": round(max(current_price * 1.05, median), 2)}
-                else:
-                    suggestion = f"Prix proche du marché (médiane ~{median}). Tester micro-ajustement + amélioration offre/contenu."
 
             price_opportunities.append({
                 "product_id": pid,
                 "title": title,
                 "current_price": round(current_price, 2),
                 "test_band": band,
-                "market": market,
+                "market": None,
                 "suggestion": suggestion,
             })
+
+    _enrich_price_opps_with_market(price_opportunities, max_calls=5)
 
     # Rewrite opportunities: low performance + weak content signals
     rewrite_opportunities = []
