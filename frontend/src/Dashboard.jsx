@@ -94,7 +94,6 @@ export default function Dashboard() {
   const [apiLoading, setApiLoading] = useState(false)
   const [applyingRecommendationId, setApplyingRecommendationId] = useState(null)
   const [applyingBlockerActionId, setApplyingBlockerActionId] = useState(null)
-  const [pendingPriceConfirmByProduct, setPendingPriceConfirmByProduct] = useState({})
   const [statusByKey, setStatusByKey] = useState({})
   const [pendingRevokeKeyId, setPendingRevokeKeyId] = useState(null)
   const [pendingCancelSubscription, setPendingCancelSubscription] = useState(false)
@@ -162,6 +161,16 @@ export default function Dashboard() {
   }
 
   const getInsightCount = (items) => (Array.isArray(items) ? items.length : 0)
+
+  const getPriceItems = (data) => {
+    if (Array.isArray(data?.price_opportunities) && data.price_opportunities.length > 0) {
+      return data.price_opportunities
+    }
+    if (Array.isArray(data?.price_analysis?.items)) {
+      return data.price_analysis.items
+    }
+    return []
+  }
 
   const renderInsightItems = (items, formatter) => {
     if (insightsLoading) {
@@ -1278,8 +1287,7 @@ export default function Dashboard() {
       const { data: { session } } = await supabase.auth.getSession()
 
       if (!session) {
-        setInsightsError('Session expirée, reconnectez-vous')
-        return
+        throw new Error('Session expirée, reconnectez-vous')
       }
 
       const aiParam = includeAi ? '&include_ai=true' : ''
@@ -1298,14 +1306,16 @@ export default function Dashboard() {
       }
 
       const data = await response.json()
-      if (data.success) {
-        setInsightsData(data)
-      } else {
-        setInsightsError('Analyse indisponible')
+      if (!data.success) {
+        throw new Error(data.detail || 'Analyse indisponible')
       }
+
+      setInsightsData(data)
+      return data
     } catch (err) {
       console.error('Error loading insights:', err)
       setInsightsError(err.message)
+      throw err
     } finally {
       setInsightsLoading(false)
     }
@@ -1400,8 +1410,22 @@ export default function Dashboard() {
           }
         })
       } else {
-        const includeAi = actionKey === 'action-rewrite'
-        await loadInsights(undefined, includeAi, options.productId)
+        const data = await loadInsights(undefined, false, options.productId)
+        const priceItems = getPriceItems(data)
+
+        const listByActionKey = {
+          'action-price': priceItems,
+          'action-images': data.image_risks,
+          'action-bundles': data.bundle_suggestions,
+          'action-stock': data.stock_risks,
+          'action-returns': data.return_risks,
+        }
+
+        const maybeList = listByActionKey[actionKey]
+        if (Array.isArray(maybeList) && maybeList.length === 0) {
+          setStatus(actionKey, 'warning', 'Analyse terminée: aucune opportunité détectée.')
+          return
+        }
       }
       setStatus(actionKey, 'success', 'Analyse terminée.')
     } catch (err) {
@@ -1409,36 +1433,11 @@ export default function Dashboard() {
     }
   }
 
-  const handleApplyBlockerAction = async (productId, action, statusKey = 'blockers', currentPrice) => {
+  const handleApplyBlockerAction = async (productId, action, statusKey = 'blockers') => {
     const plan = String(subscription?.plan || '').toLowerCase()
     if (!['pro', 'premium'].includes(plan)) {
       setStatus(statusKey, 'warning', 'Fonctionnalité réservée aux plans Pro/Premium')
       return
-    }
-
-    const actionType = (action?.type || '').toLowerCase()
-    const suggested = Number(action?.suggested_price)
-    const current = Number(currentPrice)
-    const isPriceDecrease = actionType === 'price' && Number.isFinite(suggested) && Number.isFinite(current) && suggested > 0 && current > 0 && suggested < current
-    if (isPriceDecrease) {
-      const key = `${productId}`
-      if (!pendingPriceConfirmByProduct[key]) {
-        setPendingPriceConfirmByProduct((prev) => ({ ...prev, [key]: Date.now() }))
-        setStatus(statusKey, 'warning', `Confirme: baisser le prix de ${formatCurrency(current, analyticsData?.currency || 'EUR')} à ${formatCurrency(suggested, analyticsData?.currency || 'EUR')}. Clique une seconde fois.`)
-        window.setTimeout(() => {
-          setPendingPriceConfirmByProduct((prev) => {
-            const next = { ...prev }
-            delete next[key]
-            return next
-          })
-        }, 10_000)
-        return
-      }
-      setPendingPriceConfirmByProduct((prev) => {
-        const next = { ...prev }
-        delete next[key]
-        return next
-      })
     }
 
     try {
@@ -1719,19 +1718,11 @@ export default function Dashboard() {
     // Add price optimizations
     if (analysisResults.pricing_strategy?.optimizations) {
       analysisResults.pricing_strategy.optimizations.forEach(opt => {
-        // Try to resolve a matching product id from loaded products using title or known fields
-        const match = (products || []).find(p => (
-          p.title === opt.product || p.title === opt.product_name || String(p.id) === String(opt.product_id)
-        ))
-        if (!match) {
-          // If no matching product found, skip — applying without a product_id is unsafe
-          return
-        }
         actions.push({
-          action: 'price',
-          product_id: String(match.id),
-          current_price: opt.current_price,
-          new_price: opt.suggested_price,
+          type: 'price',
+          product: opt.product,
+          current: opt.current_price,
+          new: opt.suggested_price,
           reason: opt.reason
         })
       })
@@ -2554,7 +2545,7 @@ export default function Dashboard() {
                           action.can_apply ? (
                             <button
                               key={action.type}
-                              onClick={() => handleApplyBlockerAction(item.product_id, action, 'blockers', item.price)}
+                              onClick={() => handleApplyBlockerAction(item.product_id, action)}
                               className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-white"
                               disabled={applyingBlockerActionId === `${item.product_id}-${action.type}`}
                               title={action.reason || action.label}
@@ -2612,7 +2603,7 @@ export default function Dashboard() {
                           action.can_apply ? (
                             <button
                               key={action.type}
-                              onClick={() => handleApplyBlockerAction(item.product_id, action, 'action-blockers', item.price)}
+                              onClick={() => handleApplyBlockerAction(item.product_id, action)}
                               className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-white"
                               disabled={applyingBlockerActionId === `${item.product_id}-${action.type}`}
                               title={action.reason || action.label}
@@ -2746,23 +2737,23 @@ export default function Dashboard() {
 
         {activeTab === 'action-price' && (
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 space-y-6">
+            {(() => {
+              const priceItems = getPriceItems(insightsData)
+              const marketStatus = insightsData?.market_comparison || insightsData?.price_analysis?.market_comparison || null
+              return (
+                <>
             <div>
               <h2 className="text-white text-xl font-bold mb-2">Optimisation dynamique des prix</h2>
               <p className="text-gray-400">Ajuste les prix selon élasticité et performance.</p>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <span className="text-xs uppercase tracking-[0.2em] text-gray-500">Comparaison marché</span>
-                {insightsData?.market_comparison?.enabled ? (
-                  <span className="text-xs px-2 py-1 rounded-full bg-green-900/30 border border-green-700/40 text-green-300">Activée</span>
-                ) : (
-                  <span className="text-xs px-2 py-1 rounded-full bg-gray-900/60 border border-gray-700 text-gray-300">Désactivée</span>
-                )}
-                {!insightsData?.market_comparison?.enabled && (
-                  <span className="text-xs text-gray-500">(ajoute `SERPAPI_API_KEY` sur le backend Render)</span>
-                )}
-              </div>
             </div>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <p className="text-sm text-gray-400">{getInsightCount(insightsData?.price_opportunities)} opportunités</p>
+              <div className="space-y-1">
+                <p className="text-sm text-gray-400">{getInsightCount(priceItems)} opportunités</p>
+                <p className={`text-xs ${marketStatus?.enabled ? 'text-green-400' : 'text-yellow-400'}`}>
+                  Comparaison marché: {marketStatus?.enabled ? 'Activée' : 'Désactivée'}
+                  {marketStatus?.source ? ` (${marketStatus.source})` : ''}
+                </p>
+              </div>
               <button
                 onClick={() => runActionAnalysis('action-price')}
                 disabled={insightsLoading}
@@ -2773,62 +2764,27 @@ export default function Dashboard() {
             </div>
             {renderStatus('action-price')}
             <div className="space-y-3">
-              {!insightsLoading && (!insightsData?.price_opportunities || insightsData.price_opportunities.length === 0) ? (
+              {!insightsLoading && priceItems.length === 0 ? (
                 <p className="text-sm text-gray-500">Aucune opportunité détectée.</p>
               ) : (
-                insightsData?.price_opportunities?.slice(0, 8).map((item, index) => (
+                priceItems.slice(0, 8).map((item, index) => (
                   <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="min-w-0">
-                        <p className="text-white font-semibold truncate">{item.title || item.product_id}</p>
-                        <p className="text-xs text-gray-500 mt-1">{item.suggestion || 'Ajuster le prix'}</p>
-                      </div>
-                      {item.current_price ? (
-                        <div className="shrink-0 text-right">
-                          <div className="text-xs uppercase tracking-[0.2em] text-gray-500">Actuel</div>
-                          <div className="text-sm font-semibold text-gray-200">
-                            {formatCurrency(item.current_price, analyticsData?.currency || 'EUR')}
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
-
-                    {(item.test_band || item.market) ? (
-                      <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <div className="bg-gray-950/60 border border-gray-800 rounded-lg p-3">
-                          <div className="text-xs uppercase tracking-[0.2em] text-gray-500">Test (A/B)</div>
-                          {item.test_band?.down && item.test_band?.up ? (
-                            <div className="mt-1 text-sm text-gray-200">
-                              {formatCurrency(item.test_band.down, analyticsData?.currency || 'EUR')} → {formatCurrency(item.test_band.up, analyticsData?.currency || 'EUR')}
-                            </div>
-                          ) : (
-                            <div className="mt-1 text-xs text-gray-500">Plage non disponible.</div>
-                          )}
-                        </div>
-
-                        <div className="bg-gray-950/60 border border-gray-800 rounded-lg p-3">
-                          <div className="text-xs uppercase tracking-[0.2em] text-gray-500">Marché</div>
-                          {item.market?.median ? (
-                            <div className="mt-1 text-sm text-gray-200">
-                              Médiane {formatCurrency(item.market.median, analyticsData?.currency || 'EUR')} · min {formatCurrency(item.market.min, analyticsData?.currency || 'EUR')} · max {formatCurrency(item.market.max, analyticsData?.currency || 'EUR')}
-                              {item.market?.count ? <span className="text-xs text-gray-500"> · n={item.market.count}</span> : null}
-                            </div>
-                          ) : item.market?.error ? (
-                            <div className="mt-1 text-xs text-amber-300">
-                              SerpAPI: {String(item.market.error)}{item.market?.status_code ? ` (HTTP ${item.market.status_code})` : ''}
-                            </div>
-                          ) : (
-                            <div className="mt-1 text-xs text-gray-500">
-                              Configure <span className="text-gray-300">SERPAPI_API_KEY</span> pour activer la comparaison Google Shopping.
-                            </div>
-                          )}
-                        </div>
-                      </div>
+                    <p className="text-white font-semibold">{item.title || item.product_id}</p>
+                    <p className="text-xs text-gray-500">{item.suggestion || 'Ajuster le prix'}</p>
+                    {(item.current_price !== undefined && item.current_price !== null) ? (
+                      <p className="text-xs text-gray-400 mt-1">
+                        Prix actuel: {formatCurrency(item.current_price)}
+                        {item.suggested_price !== undefined && item.suggested_price !== null ? ` • Prix suggéré: ${formatCurrency(item.suggested_price)}` : ''}
+                      </p>
                     ) : null}
+                    {item.reason ? <p className="text-xs text-gray-500 mt-1">{item.reason}</p> : null}
                   </div>
                 ))
               )}
             </div>
+                </>
+              )
+            })()}
           </div>
         )}
 

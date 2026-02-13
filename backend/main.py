@@ -81,6 +81,32 @@ SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
 FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
 
+
+def _get_market_comparison_status() -> dict:
+    provider_keys = [
+        ("MARKET_API_KEY", "market_api"),
+        ("SERPAPI_KEY", "serpapi"),
+        ("RAPIDAPI_KEY", "rapidapi"),
+        ("GOOGLE_SHOPPING_API_KEY", "google_shopping"),
+        ("PRICE_API_KEY", "price_api"),
+        ("OPENAI_API_KEY", "openai"),
+    ]
+
+    for env_key, provider in provider_keys:
+        if os.getenv(env_key):
+            return {
+                "enabled": True,
+                "provider": provider,
+                "source": env_key,
+            }
+
+    return {
+        "enabled": False,
+        "provider": None,
+        "source": None,
+        "reason": "Aucune clé API marché détectée",
+    }
+
 # Shopify OAuth credentials
 SHOPIFY_API_KEY = os.getenv("SHOPIFY_API_KEY")
 SHOPIFY_API_SECRET = os.getenv("SHOPIFY_API_SECRET")
@@ -539,7 +565,6 @@ async def dev_check_db(user_id: str):
 
     try:
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
-            import urllib.parse
             filter_str = f'user_id=eq.{user_id}'
             
             headers = {
@@ -547,7 +572,7 @@ async def dev_check_db(user_id: str):
                 'apikey': SUPABASE_SERVICE_KEY,
                 'Content-Type': 'application/json',
             }
-            
+
             resp = requests.get(
                 f'{SUPABASE_URL}/rest/v1/subscriptions?{filter_str}',
                 headers=headers,
@@ -567,162 +592,6 @@ async def dev_check_db(user_id: str):
 
     except Exception as e:
         print(f"Dev check-db error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/dev/simulate-webhook")
-async def dev_simulate_webhook(session_id: str):
-    """
-    DEV ONLY: Simulate a Stripe webhook event for testing.
-    This mimics what happens when Stripe sends checkout.session.completed event.
-    """
-    allow = os.getenv("DEV_ALLOW_UNAUTH_VERIFY", "false").lower() == "true"
-    if not allow:
-        raise HTTPException(status_code=403, detail="Dev verify disabled")
-
-    if not session_id:
-        raise HTTPException(status_code=400, detail="session_id required")
-
-    try:
-        # Fetch session from Stripe
-        session = stripe.checkout.Session.retrieve(session_id)
-        
-        if session.payment_status != "paid":
-            return {"success": False, "message": f"Payment not confirmed: {session.payment_status}"}
-
-        user_id = session.get("metadata", {}).get("user_id") if session.metadata else None
-        
-        if not user_id:
-            return {"success": False, "message": "user_id not in session metadata"}
-
-        # Persist subscription (use HTTP directly to avoid SDK UUID parsing issues)
-        if SUPABASE_URL and SUPABASE_SERVICE_KEY and user_id:
-            plan_tier = session.get("metadata", {}).get("plan") if session.metadata else "standard"
-            if not plan_tier:
-                plan_tier = "standard"
-            
-            subscription_payload = {
-                "user_id": user_id,
-                "email": session.get("customer_email"),
-                "stripe_session_id": session.get("id"),
-                "stripe_subscription_id": session.get("subscription"),
-                "stripe_customer_id": session.get("customer"),
-                "plan_tier": plan_tier,
-                "status": "active",
-            }
-
-            headers = {
-                'Authorization': f'Bearer {SUPABASE_SERVICE_KEY}',
-                'apikey': SUPABASE_SERVICE_KEY,
-                'Content-Type': 'application/json',
-                'Prefer': 'return=representation'
-            }
-
-            # Check if subscription exists with this user_id (HTTP GET)
-            filter_str = f'user_id=eq.{user_id}'
-            resp = requests.get(
-                f'{SUPABASE_URL}/rest/v1/subscriptions?{filter_str}&select=id',
-                headers=headers,
-                timeout=5
-            )
-            
-            existing_data = resp.json() if resp.status_code == 200 else []
-            
-            if existing_data and len(existing_data) > 0:
-                # Update existing (HTTP PATCH)
-                resp = requests.patch(
-                    f'{SUPABASE_URL}/rest/v1/subscriptions?{filter_str}',
-                    headers=headers,
-                    json=subscription_payload,
-                    timeout=5
-                )
-                print(f"✅ [DEV Webhook Simulation] Subscription updated: user_id={user_id}, plan={plan_tier}")
-            else:
-                # Insert new (HTTP POST)
-                resp = requests.post(
-                    f'{SUPABASE_URL}/rest/v1/subscriptions',
-                    headers=headers,
-                    json=subscription_payload,
-                    timeout=5
-                )
-                print(f"✅ [DEV Webhook Simulation] Subscription inserted: user_id={user_id}, plan={plan_tier}")
-            
-            return {
-                "success": True,
-                "message": "Subscription persisted via webhook simulation",
-                "user_id": user_id,
-                "plan": plan_tier
-            }
-
-        return {"success": False, "message": "Supabase not configured or user_id missing"}
-
-    except Exception as e:
-        print(f"Dev simulate-webhook error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/dev/verify-session")
-async def dev_verify_session(payload: dict):
-    """
-    DEV helper: verify a Stripe checkout session and persist subscription without requiring user JWT.
-    Enabled only when environment variable `DEV_ALLOW_UNAUTH_VERIFY` is set to 'true'.
-    Body: { "session_id": "cs_...", "user_id": "..." (optional) }
-    """
-    allow = os.getenv("DEV_ALLOW_UNAUTH_VERIFY", "false").lower() == "true"
-    if not allow:
-        raise HTTPException(status_code=403, detail="Dev verify disabled")
-
-    session_id = payload.get("session_id")
-    if not session_id:
-        raise HTTPException(status_code=400, detail="session_id required")
-
-    try:
-        session = stripe.checkout.Session.retrieve(session_id)
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
-
-        if session.payment_status != "paid":
-            return {"success": False, "message": "Paiement non confirmé"}
-
-        subscription = None
-        if session.subscription:
-            try:
-                subscription = stripe.Subscription.retrieve(session.subscription)
-            except Exception:
-                subscription = None
-
-        # Determine user_id from metadata or payload
-        user_id = (session.metadata or {}).get("user_id") or payload.get("user_id")
-
-        if SUPABASE_URL and SUPABASE_SERVICE_KEY and user_id:
-            supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-            plan = (session.metadata or {}).get("plan") or "standard"
-
-            supabase.table("subscriptions").insert({
-                "user_id": user_id,
-                "email": session.get("customer_email"),
-                "stripe_session_id": session.get("id"),
-                "stripe_subscription_id": session.get("subscription"),
-                "stripe_customer_id": session.get("customer"),
-                "plan_tier": plan,
-                "status": "active",
-            }).execute()
-
-            supabase.table("user_profiles").upsert({
-                "id": user_id,
-                "subscription_tier": plan,
-                "subscription_plan": plan,
-                "subscription_status": "active"
-            }).execute()
-
-            return {"success": True, "message": "Subscription persisted (dev)"}
-
-        return {"success": False, "message": "Supabase not configured or user_id missing"}
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Dev verify error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -2011,77 +1880,6 @@ async def get_shopify_insights(
     price_values = [value for value in price_map.values() if value and value > 0]
     avg_price = (sum(price_values) / len(price_values)) if price_values else None
 
-    def _parse_price_to_float(raw: str | None) -> float | None:
-        if not raw:
-            return None
-        cleaned = "".join(ch for ch in str(raw) if (ch.isdigit() or ch in ".,"))
-        cleaned = cleaned.replace(",", ".")
-        try:
-            value = float(cleaned)
-            return value if value > 0 else None
-        except Exception:
-            return None
-
-    def _get_market_price_snapshot(query: str) -> dict | None:
-        api_key = os.getenv("SERPAPI_API_KEY")
-        if not api_key or not query:
-            return None
-        try:
-            resp = requests.get(
-                "https://serpapi.com/search.json",
-                params={
-                    "engine": "google_shopping",
-                    "q": query,
-                    "hl": "fr",
-                    "gl": "ca",
-                    "api_key": api_key,
-                },
-                timeout=15,
-            )
-            content_type = resp.headers.get("content-type", "")
-            data = resp.json() if content_type.startswith("application/json") else None
-            if resp.status_code != 200:
-                err = None
-                if isinstance(data, dict):
-                    err = data.get("error") or data.get("message")
-                return {
-                    "source": "serpapi_google_shopping",
-                    "status_code": resp.status_code,
-                    "error": (str(err)[:180] if err else "SerpAPI request failed"),
-                }
-            if not isinstance(data, dict):
-                return None
-            results = data.get("shopping_results") or []
-            prices: list[float] = []
-            for item in results[:12]:
-                price_value = _parse_price_to_float(item.get("extracted_price"))
-                if price_value is None:
-                    price_value = _parse_price_to_float(item.get("price"))
-                if price_value is not None:
-                    prices.append(price_value)
-            if len(prices) < 3:
-                return {
-                    "source": "serpapi_google_shopping",
-                    "status_code": 200,
-                    "error": "Not enough price points returned",
-                    "count": len(prices),
-                }
-            prices_sorted = sorted(prices)
-            mid = len(prices_sorted) // 2
-            if len(prices_sorted) % 2 == 0:
-                median = (prices_sorted[mid - 1] + prices_sorted[mid]) / 2
-            else:
-                median = prices_sorted[mid]
-            return {
-                "source": "serpapi_google_shopping",
-                "count": len(prices_sorted),
-                "min": round(prices_sorted[0], 2),
-                "median": round(median, 2),
-                "max": round(prices_sorted[-1], 2),
-            }
-        except Exception:
-            return None
-
     def _classify_blocker(stats: dict, median: int):
         orders_count = stats.get("orders", 0)
         revenue = stats.get("revenue", 0)
@@ -2265,90 +2063,61 @@ async def get_shopify_insights(
 
     # Price opportunities: low sales/high inventory or high sales/low inventory
     price_opportunities = []
-
-    def _test_band(price: float, down: float, up: float) -> dict:
-        return {
-            "down": round(price * (1 - down), 2),
-            "up": round(price * (1 + up), 2),
-        }
-
     for pid, stats in product_stats.items():
         inventory = inventory_map.get(pid, 0)
         orders_count = stats.get("orders", 0)
-        current_price = float(price_map.get(pid, 0) or 0)
-
+        current_price = price_map.get(pid, 0.0)
         if inventory > 50 and orders_count < max(1, median_orders // 3):
             price_opportunities.append({
                 "product_id": pid,
                 "title": stats.get("title"),
+                "suggestion": "Baisser le prix de 5-10%",
                 "current_price": round(current_price, 2) if current_price else None,
-                "test_band": _test_band(current_price, down=0.05, up=0.03) if current_price else None,
-                "market": None,
-                "suggestion": "Tester une plage de prix (A/B) plutôt que baisser systématiquement.",
+                "target_delta_pct": -8,
+                "reason": "Stock élevé avec faible volume de commandes",
             })
         if inventory < 5 and orders_count > median_orders:
             price_opportunities.append({
                 "product_id": pid,
                 "title": stats.get("title"),
+                "suggestion": "Augmenter le prix de 3-7%",
                 "current_price": round(current_price, 2) if current_price else None,
-                "test_band": _test_band(current_price, down=0.0, up=0.07) if current_price else None,
-                "market": None,
-                "suggestion": "Augmenter le prix de 3-7% (test)",
+                "target_delta_pct": 5,
+                "reason": "Stock faible avec forte demande",
             })
 
-    def _enrich_price_opps_with_market(opps: list[dict], max_calls: int = 5) -> None:
-        if not os.getenv("SERPAPI_API_KEY"):
-            return
-        calls = 0
-        for item in opps:
-            if calls >= max_calls:
-                break
-            title = item.get("title")
-            current_price = float(item.get("current_price") or 0)
-            if not title or current_price <= 0:
-                continue
-            market = _get_market_price_snapshot(str(title)[:120])
-            item["market"] = market
-            calls += 1
-
-            if isinstance(market, dict) and market.get("median"):
-                try:
-                    median = float(market.get("median"))
-                except Exception:
-                    continue
-                if current_price > median * 1.15:
-                    item["suggestion"] = f"Prix au-dessus du marché (médiane ~{median}). Tester une baisse vers {round(median, 2)}."
-                elif current_price < median * 0.85:
-                    item["suggestion"] = f"Prix sous le marché (médiane ~{median}). Tester une hausse contrôlée."
-                else:
-                    item["suggestion"] = f"Prix proche du marché (médiane ~{median}). Tester plutôt offre/contenu + micro-ajustement."
-
-    # Fallback: if no opportunities matched heuristics, still provide actionable pricing guidance
-    # for top products (prevents "0 opportunités" when data is sparse).
-    if not price_opportunities:
-        ranked = sorted(
-            product_stats.items(),
-            key=lambda kv: (float(kv[1].get("revenue", 0) or 0), int(kv[1].get("orders", 0) or 0)),
-            reverse=True,
+    if not price_opportunities and product_stats:
+        fallback_candidates = sorted(
+            product_stats.values(),
+            key=lambda item: (item.get("orders", 0), -inventory_map.get(str(item.get("product_id")), 0))
         )
-        for pid, stats in ranked[: min(5, len(ranked))]:
-            current_price = float(price_map.get(pid, 0) or 0)
+        for stats in fallback_candidates[:5]:
+            pid = str(stats.get("product_id"))
+            current_price = price_map.get(pid, 0.0)
             if current_price <= 0:
                 continue
-            title = stats.get("title")
-            suggestion = "Tester une plage de prix (A/B) et mesurer conversion + marge."
-            band = {"down": round(current_price * 0.97, 2), "up": round(current_price * 1.05, 2)}
-
             price_opportunities.append({
                 "product_id": pid,
-                "title": title,
+                "title": stats.get("title") or "Produit",
+                "suggestion": "Tester -5% pendant 7 jours pour valider l'élasticité",
                 "current_price": round(current_price, 2),
-                "test_band": band,
-                "market": None,
-                "suggestion": suggestion,
+                "target_delta_pct": -5,
+                "reason": "Aucun signal fort détecté, test contrôlé recommandé",
             })
 
-    _enrich_price_opps_with_market(price_opportunities, max_calls=5)
+    market_comparison = _get_market_comparison_status()
+    price_analysis_items = []
+    for item in price_opportunities[:10]:
+        current_price = item.get("current_price")
+        delta_pct = item.get("target_delta_pct")
+        suggested_price = None
+        if current_price is not None and isinstance(delta_pct, (int, float)):
+            suggested_price = round(current_price * (1 + (delta_pct / 100.0)), 2)
+        price_analysis_items.append({
+            **item,
+            "suggested_price": suggested_price,
+            "market_comparison_enabled": market_comparison.get("enabled", False),
+        })
 
     # Rewrite opportunities: low performance + weak content signals
     rewrite_opportunities = []
@@ -2454,12 +2223,6 @@ async def get_shopify_insights(
         "success": True,
         "shop": shop_domain,
         "range": range,
-        "market_comparison": {
-            "enabled": bool(os.getenv("SERPAPI_API_KEY")),
-            "source": "serpapi_google_shopping",
-            "hl": "fr",
-            "gl": "ca",
-        },
         "benchmarks": {
             "median_orders": median_orders,
             "avg_views": round(avg_views, 2) if avg_views else 0,
@@ -2479,7 +2242,12 @@ async def get_shopify_insights(
         "image_risks": image_risks,
         "bundle_suggestions": bundles,
         "stock_risks": stock_risks,
-        "price_opportunities": price_opportunities[:10],
+        "price_opportunities": price_analysis_items,
+        "price_analysis": {
+            "items": price_analysis_items,
+            "market_comparison": market_comparison,
+        },
+        "market_comparison": market_comparison,
         "return_risks": return_risks,
     }
 
@@ -3001,10 +2769,10 @@ async def get_shopify_blockers(request: Request, range: str = "30d", limit: int 
         if add_to_cart >= max(5, avg_add_to_cart) and cart_to_order is not None and cart_to_order < 0.2:
             actions.append({
                 "type": "price",
-                "label": "Tester -5% (A/B)",
+                "label": "Tester un prix inférieur",
                 "reason": f"Panier→achat faible ({cart_to_order:.1%})",
                 "can_apply": True,
-                "suggested_price": round(price_current * 0.95, 2) if price_current else None,
+                "suggested_price": round(price_current * 0.9, 2) if price_current else None,
             })
         if description_len < 120:
             actions.append({
@@ -3021,10 +2789,10 @@ async def get_shopify_blockers(request: Request, range: str = "30d", limit: int 
                 "can_apply": True,
             })
         if avg_price and price_current > avg_price * 1.3 and orders_count < avg_orders:
-            suggested_price = round(price_current * 0.95, 2)
+            suggested_price = round(price_current * 0.9, 2)
             actions.append({
                 "type": "price",
-                "label": f"Tester -5% (A/B) → {suggested_price}",
+                "label": f"Baisser le prix à {suggested_price}",
                 "reason": "Prix élevé vs moyenne boutique",
                 "can_apply": True,
                 "suggested_price": suggested_price,
@@ -3129,28 +2897,7 @@ async def apply_blocker_action(req: BlockerApplyRequest, request: Request):
         current_price = _safe_float(variants[0].get("price"), 0.0)
         if current_price <= 0:
             raise HTTPException(status_code=400, detail="Prix actuel invalide")
-        # Require an explicit suggested_price to avoid accidental automatic decreases
-        if req.suggested_price is None:
-            raise HTTPException(status_code=400, detail="Veuillez fournir un 'suggested_price' pour appliquer un changement de prix.")
-
-        try:
-            new_price = float(req.suggested_price)
-        except Exception:
-            raise HTTPException(status_code=400, detail="Prix suggéré invalide")
-
-        if new_price <= 0:
-            raise HTTPException(status_code=400, detail="Prix suggéré invalide")
-
-        # Safety: prevent extreme price changes (e.g. >3x or <50%) to avoid mistakes
-        try:
-            ratio = new_price / current_price if current_price > 0 else 1.0
-            if ratio < 0.5 or ratio > 3.0:
-                raise HTTPException(status_code=400, detail="Écart de prix trop important; vérifie la suggestion.")
-        except HTTPException:
-            raise
-        except Exception:
-            pass
-
+        new_price = req.suggested_price if req.suggested_price else round(current_price * 0.9, 2)
         result = action_engine.apply_price_change(req.product_id, new_price)
         if not result.get("success"):
             raise HTTPException(status_code=400, detail=result.get("error", "Échec modification prix"))
@@ -3348,19 +3095,6 @@ def _log_action_event(payload: dict) -> None:
         return
     supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
     supabase.table("action_events").insert(payload).execute()
-
-
-@app.get("/api/debug/serpapi")
-async def debug_serpapi_env(request: Request):
-    """Debug endpoint (auth-required) to confirm SERPAPI env wiring without exposing secrets."""
-    _ = get_user_id(request)
-    key = os.getenv("SERPAPI_API_KEY")
-    return {
-        "success": True,
-        "enabled": bool(key),
-        "key_length": len(key) if isinstance(key, str) else 0,
-        "env_var_name": "SERPAPI_API_KEY",
-    }
 
 
 @app.post("/api/shopify/webhook/orders-paid")
