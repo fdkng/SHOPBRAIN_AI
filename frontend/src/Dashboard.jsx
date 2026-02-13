@@ -1283,6 +1283,7 @@ export default function Dashboard() {
     const retries = config.retries ?? 2
     const retryDelayMs = config.retryDelayMs ?? 1200
     const timeoutMs = config.timeoutMs ?? 25000
+    const retryStatuses = config.retryStatuses ?? [429, 500, 502, 503, 504]
 
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
     let lastError = null
@@ -1299,7 +1300,7 @@ export default function Dashboard() {
 
         clearTimeout(timeoutId)
 
-        if ([502, 503, 504].includes(response.status) && attempt < retries) {
+        if (retryStatuses.includes(response.status) && attempt < retries) {
           await sleep(retryDelayMs)
           continue
         }
@@ -1328,6 +1329,26 @@ export default function Dashboard() {
     throw lastError || new Error('Network request failed')
   }
 
+  const warmupBackend = async (accessToken) => {
+    const warmupUrl = `${API_URL}/api/shopify/keep-alive`
+    try {
+      await fetchJsonWithRetry(warmupUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      }, {
+        retries: 4,
+        retryDelayMs: 1800,
+        timeoutMs: 30000,
+        retryStatuses: [429, 500, 502, 503, 504]
+      })
+    } catch (err) {
+      console.warn('Backend warmup failed, continuing to insights:', err)
+    }
+  }
+
   const loadInsights = async (rangeOverride, includeAi = false, productId) => {
     try {
       const rangeValue = rangeOverride || analyticsRange
@@ -1338,6 +1359,8 @@ export default function Dashboard() {
       if (!session) {
         throw new Error('Session expirée, reconnectez-vous')
       }
+
+      await warmupBackend(session.access_token)
 
       const aiParam = includeAi ? '&include_ai=true' : ''
       const productParam = productId ? `&product_id=${encodeURIComponent(productId)}` : ''
@@ -1367,7 +1390,10 @@ export default function Dashboard() {
       return data
     } catch (err) {
       console.error('Error loading insights:', err)
-      setInsightsError(err.message)
+      const errorMessage = (err?.name === 'AbortError' || /Failed to fetch/i.test(err?.message || ''))
+        ? 'Connexion au backend impossible pour le moment (serveur en réveil). Réessaie dans 10-20 secondes.'
+        : (err.message || 'Erreur réseau')
+      setInsightsError(errorMessage)
       throw err
     } finally {
       setInsightsLoading(false)
