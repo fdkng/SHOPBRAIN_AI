@@ -1279,6 +1279,55 @@ export default function Dashboard() {
     }
   }
 
+  const fetchJsonWithRetry = async (url, options = {}, config = {}) => {
+    const retries = config.retries ?? 2
+    const retryDelayMs = config.retryDelayMs ?? 1200
+    const timeoutMs = config.timeoutMs ?? 25000
+
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    let lastError = null
+
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+
+      try {
+        const response = await fetch(url, {
+          ...options,
+          signal: controller.signal
+        })
+
+        clearTimeout(timeoutId)
+
+        if ([502, 503, 504].includes(response.status) && attempt < retries) {
+          await sleep(retryDelayMs)
+          continue
+        }
+
+        let data = null
+        try {
+          data = await response.json()
+        } catch {
+          data = null
+        }
+
+        return { response, data }
+      } catch (err) {
+        clearTimeout(timeoutId)
+        lastError = err
+
+        const isTransient = err?.name === 'AbortError' || err instanceof TypeError
+        if (isTransient && attempt < retries) {
+          await sleep(retryDelayMs)
+          continue
+        }
+        throw err
+      }
+    }
+
+    throw lastError || new Error('Network request failed')
+  }
+
   const loadInsights = async (rangeOverride, includeAi = false, productId) => {
     try {
       const rangeValue = rangeOverride || analyticsRange
@@ -1292,20 +1341,24 @@ export default function Dashboard() {
 
       const aiParam = includeAi ? '&include_ai=true' : ''
       const productParam = productId ? `&product_id=${encodeURIComponent(productId)}` : ''
-      const response = await fetch(`${API_URL}/api/shopify/insights?range=${rangeValue}${aiParam}${productParam}`, {
+      const insightsUrl = `${API_URL}/api/shopify/insights?range=${rangeValue}${aiParam}${productParam}`
+      const { response, data } = await fetchJsonWithRetry(insightsUrl, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
           'Content-Type': 'application/json'
         }
+      }, {
+        retries: 2,
+        retryDelayMs: 1200,
+        timeoutMs: 25000
       })
 
       if (!response.ok) {
-        const errorData = await response.json()
+        const errorData = data || {}
         throw new Error(errorData.detail || `HTTP ${response.status}`)
       }
 
-      const data = await response.json()
       if (!data.success) {
         throw new Error(data.detail || 'Analyse indisponible')
       }

@@ -2252,6 +2252,19 @@ async def get_shopify_insights(
     }
 
 
+@app.get("/api/shopify/market-status")
+async def get_shopify_market_status(request: Request):
+    user_id = get_user_id(request)
+    shop_domain, _ = _get_shopify_connection(user_id)
+    market_comparison = _get_market_comparison_status()
+
+    return {
+        "success": True,
+        "shop": shop_domain,
+        "market_comparison": market_comparison,
+    }
+
+
 @app.get("/api/shopify/rewrite")
 async def get_shopify_rewrite(request: Request, product_id: str):
     """Réécriture intelligente d'un produit spécifique."""
