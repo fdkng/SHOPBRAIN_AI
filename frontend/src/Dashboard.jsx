@@ -1413,11 +1413,11 @@ export default function Dashboard() {
     }
   }
 
-  const loadInsights = async (rangeOverride, includeAi = false, productId) => {
+  const loadInsights = async (rangeOverride, includeAi = false, productId, config = {}) => {
     try {
       const rangeValue = rangeOverride || analyticsRange
       setInsightsLoading(true)
-      setInsightsError('')
+      if (!config?.silent) setInsightsError('')
       const { data: { session } } = await supabase.auth.getSession()
 
       if (!session) {
@@ -1464,7 +1464,7 @@ export default function Dashboard() {
     } catch (err) {
       console.error('Error loading insights:', err)
       const errorMessage = normalizeNetworkErrorMessage(err)
-      setInsightsError(errorMessage)
+      if (!config?.silent) setInsightsError(errorMessage)
       throw new Error(errorMessage)
     } finally {
       setInsightsLoading(false)
@@ -1472,8 +1472,28 @@ export default function Dashboard() {
   }
 
   useEffect(() => {
-    // Passive health probe to reduce first-click failures.
-    fetchBackendHealth().catch(() => {})
+    // Passive health probe to stabilize “Comparaison marché externe” status.
+    // Also refresh periodically so status doesn't only change after a click.
+    let cancelled = false
+
+    const probe = async () => {
+      try {
+        await fetchBackendHealth({ retries: 2, retryDelayMs: 1500, timeoutMs: 20000 })
+      } catch {
+        // Keep silent: UI status uses last known value.
+      }
+    }
+
+    probe()
+    const intervalId = setInterval(() => {
+      if (cancelled) return
+      probe()
+    }, 60_000)
+
+    return () => {
+      cancelled = true
+      clearInterval(intervalId)
+    }
   }, [])
 
   const loadBlockers = async (rangeOverride) => {
@@ -1526,7 +1546,11 @@ export default function Dashboard() {
           const { data: { session } } = await supabase.auth.getSession()
           if (!session || !Array.isArray(products) || products.length === 0) return []
 
-          const response = await fetch(`${API_URL}/api/ai/analyze-store`, {
+          // Reduce cold-start failures before calling an authenticated endpoint.
+          await waitForBackendReady({ retries: 8, retryDelayMs: 2000, timeoutMs: 22000 })
+          await warmupBackend(session.access_token)
+
+          const { response, data: payload } = await fetchJsonWithRetry(`${API_URL}/api/ai/analyze-store`, {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${session.access_token}`,
@@ -1534,13 +1558,24 @@ export default function Dashboard() {
             },
             body: JSON.stringify({
               products: products.slice(0, 120),
-              analytics: {},
+              analytics: { timestamp: new Date().toISOString() },
               tier: subscription?.plan || 'standard'
             })
+          }, {
+            retries: 2,
+            retryDelayMs: 2000,
+            timeoutMs: 180000,
+            retryStatuses: [429, 500, 502, 503, 504]
           })
 
-          const payload = await response.json()
-          if (!payload?.success) return []
+          if (!response?.ok) {
+            const detail = payload?.detail || payload?.error
+            throw new Error(detail || `HTTP ${response?.status || 'ERR'}`)
+          }
+
+          if (!payload?.success) {
+            throw new Error(payload?.detail || 'Analyse IA indisponible')
+          }
 
           const optimizations = payload?.analysis?.pricing_strategy?.optimizations
           if (!Array.isArray(optimizations) || optimizations.length === 0) return []
@@ -1622,33 +1657,41 @@ export default function Dashboard() {
       } else {
         const includeAi = actionKey === 'action-price'
 
-        let data
-        try {
-          data = await loadInsights(undefined, includeAi, options.productId)
-        } catch (err) {
-          // Price tab should still function even if Shopify insights is slow/unreachable.
-          if (actionKey === 'action-price') {
-            setStatus(actionKey, 'warning', 'Insights Shopify indisponibles. Génération d’opportunités via IA...')
-            const aiPriceItems = await loadAiPriceInsights()
-            if (Array.isArray(aiPriceItems) && aiPriceItems.length > 0) {
-              const healthSaysOpenAI = backendHealth?.services?.openai === 'configured'
-              const inferredMarket = healthSaysOpenAI ? { enabled: true, provider: 'openai', source: 'openai', inferred: true } : null
-              const enriched = {
-                success: true,
-                price_opportunities: aiPriceItems,
-                price_analysis: {
-                  items: aiPriceItems,
-                  market_comparison: inferredMarket
-                },
+        // For pricing, generate AI opportunities first to avoid blocking on slow Shopify insights.
+        if (actionKey === 'action-price') {
+          setStatus(actionKey, 'info', 'Génération IA des opportunités de prix...')
+          const aiPriceItems = await loadAiPriceInsights()
+          if (Array.isArray(aiPriceItems) && aiPriceItems.length > 0) {
+            const healthSaysOpenAI = backendHealth?.services?.openai === 'configured'
+            const inferredMarket = healthSaysOpenAI ? { enabled: true, provider: 'openai', source: 'openai', inferred: true } : null
+            const enriched = {
+              success: true,
+              price_opportunities: aiPriceItems,
+              price_analysis: {
+                items: aiPriceItems,
                 market_comparison: inferredMarket
-              }
-              setInsightsData(enriched)
-              setStatus(actionKey, 'success', 'Analyse terminée (IA).')
-              return
+              },
+              market_comparison: inferredMarket
             }
+
+            setInsightsData(enriched)
+            setStatus(actionKey, 'success', 'Analyse terminée (IA).')
+
+            // Best-effort: try to fetch Shopify insights in background to enrich, but never fail the UI.
+            loadInsights(undefined, true, options.productId, { silent: true }).then((data) => {
+              if (!data) return
+              const mergedPriceItems = getPriceItems(data)
+              if (Array.isArray(mergedPriceItems) && mergedPriceItems.length > 0) {
+                setInsightsData(data)
+              }
+            }).catch(() => {})
+
+            return
           }
-          throw err
         }
+
+        let data
+        data = await loadInsights(undefined, includeAi, options.productId)
 
         let enrichedData = data
         let priceItems = getPriceItems(data)
