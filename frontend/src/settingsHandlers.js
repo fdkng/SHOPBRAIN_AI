@@ -1,5 +1,14 @@
 // Settings handlers for Dashboard component
 export const createSettingsHandlers = (state, setState, supabase, API_URL) => {
+
+  const formatUserFacingError = (err, fallback = 'Une erreur est survenue') => {
+    const raw = String(err?.message || '').trim()
+    const isNetwork = err?.name === 'AbortError' || /Failed to fetch|NetworkError|Load failed|fetch/i.test(raw)
+    if (isNetwork) {
+      return 'Connexion au backend impossible pour le moment (serveur en réveil). Réessaie dans 10-20 secondes.'
+    }
+    return raw || fallback
+  }
   
   const handleSaveProfile = async () => {
     try {
@@ -27,7 +36,7 @@ export const createSettingsHandlers = (state, setState, supabase, API_URL) => {
         alert('❌ Erreur: ' + (data.detail || 'Erreur'))
       }
     } catch (err) {
-      alert('❌ Erreur: ' + err.message)
+      alert('❌ ' + formatUserFacingError(err, 'Erreur'))
     } finally {
       setState(prev => ({ ...prev, saveLoading: false }))
     }
@@ -76,7 +85,7 @@ export const createSettingsHandlers = (state, setState, supabase, API_URL) => {
         alert('❌ Erreur: ' + (data.detail || 'Erreur'))
       }
     } catch (err) {
-      alert('❌ Erreur: ' + err.message)
+      alert('❌ ' + formatUserFacingError(err, 'Erreur'))
     } finally {
       setState(prev => ({ ...prev, saveLoading: false }))
     }
@@ -104,7 +113,7 @@ export const createSettingsHandlers = (state, setState, supabase, API_URL) => {
         alert('❌ Erreur: ' + (data.detail || 'Erreur'))
       }
     } catch (err) {
-      alert('❌ Erreur: ' + err.message)
+      alert('❌ ' + formatUserFacingError(err, 'Erreur'))
     } finally {
       setState(prev => ({ ...prev, saveLoading: false }))
     }
@@ -136,7 +145,7 @@ export const createSettingsHandlers = (state, setState, supabase, API_URL) => {
         alert('❌ Erreur: ' + (data.detail || 'Erreur'))
       }
     } catch (err) {
-      alert('❌ Erreur: ' + err.message)
+      alert('❌ ' + formatUserFacingError(err, 'Erreur'))
     } finally {
       setState(prev => ({ ...prev, saveLoading: false }))
     }
@@ -163,7 +172,7 @@ export const createSettingsHandlers = (state, setState, supabase, API_URL) => {
         alert('❌ Erreur: ' + (data.detail || 'Erreur'))
       }
     } catch (err) {
-      alert('❌ Erreur: ' + err.message)
+      alert('❌ ' + formatUserFacingError(err, 'Erreur'))
     } finally {
       setState(prev => ({ ...prev, saveLoading: false }))
     }
@@ -192,7 +201,7 @@ export const createSettingsHandlers = (state, setState, supabase, API_URL) => {
         alert('❌ Erreur: ' + (data.detail || 'Erreur'))
       }
     } catch (err) {
-      alert('❌ Erreur: ' + err.message)
+      alert('❌ ' + formatUserFacingError(err, 'Erreur'))
     } finally {
       setState(prev => ({ ...prev, saveLoading: false }))
     }
@@ -218,7 +227,7 @@ export const createSettingsHandlers = (state, setState, supabase, API_URL) => {
         alert('❌ Erreur: ' + (data.detail || 'Erreur'))
       }
     } catch (err) {
-      alert('❌ Erreur: ' + err.message)
+      alert('❌ ' + formatUserFacingError(err, 'Erreur'))
     } finally {
       setState(prev => ({ ...prev, saveLoading: false }))
     }

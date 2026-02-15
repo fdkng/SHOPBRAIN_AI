@@ -250,6 +250,11 @@ export default function Dashboard() {
     return raw || fallback
   }
 
+  const formatUserFacingError = (err, fallback = 'Une erreur est survenue') => {
+    const message = normalizeNetworkErrorMessage(err, fallback)
+    return message || fallback
+  }
+
   const renderStatus = (key) => {
     const status = statusByKey[key]
     if (!status?.message) return null
@@ -835,7 +840,7 @@ export default function Dashboard() {
     } catch (err) {
       setChatMessages(prev => [...prev, { 
         role: 'assistant', 
-        text: 'Erreur de connexion: ' + err.message 
+        text: formatUserFacingError(err, 'Erreur de connexion')
       }])
     } finally {
       setChatLoading(false)
@@ -918,7 +923,7 @@ export default function Dashboard() {
         setStatus('profile', 'error', 'Erreur: ' + (data.detail || 'Erreur'))
       }
     } catch (err) {
-      setStatus('profile', 'error', 'Erreur: ' + err.message)
+      setStatus('profile', 'error', formatUserFacingError(err, 'Erreur profil'))
     } finally {
       setSaveLoading(false)
     }
@@ -961,7 +966,7 @@ export default function Dashboard() {
         setStatus('password', 'error', 'Erreur: ' + (data.detail || 'Erreur'))
       }
     } catch (err) {
-      setStatus('password', 'error', 'Erreur: ' + err.message)
+      setStatus('password', 'error', formatUserFacingError(err, 'Erreur mot de passe'))
     } finally {
       setSaveLoading(false)
     }
@@ -987,7 +992,7 @@ export default function Dashboard() {
         setStatus('2fa', 'error', 'Erreur: ' + (data.detail || 'Erreur'))
       }
     } catch (err) {
-      setStatus('2fa', 'error', 'Erreur: ' + err.message)
+      setStatus('2fa', 'error', formatUserFacingError(err, 'Erreur 2FA'))
     } finally {
       setSaveLoading(false)
     }
@@ -1016,7 +1021,7 @@ export default function Dashboard() {
         setStatus('interface', 'error', 'Erreur: ' + (data.detail || 'Erreur'))
       }
     } catch (err) {
-      setStatus('interface', 'error', 'Erreur: ' + err.message)
+      setStatus('interface', 'error', formatUserFacingError(err, 'Erreur paramètres'))
     } finally {
       setSaveLoading(false)
     }
@@ -1041,7 +1046,7 @@ export default function Dashboard() {
         setStatus('notifications', 'error', 'Erreur: ' + (data.detail || 'Erreur'))
       }
     } catch (err) {
-      setStatus('notifications', 'error', 'Erreur: ' + err.message)
+      setStatus('notifications', 'error', formatUserFacingError(err, 'Erreur notifications'))
     } finally {
       setSaveLoading(false)
     }
@@ -1072,7 +1077,7 @@ export default function Dashboard() {
         setStatus('billing-cancel', 'error', 'Erreur: ' + (data.detail || 'Erreur'))
       }
     } catch (err) {
-      setStatus('billing-cancel', 'error', 'Erreur: ' + err.message)
+      setStatus('billing-cancel', 'error', formatUserFacingError(err, 'Erreur annulation'))
     } finally {
       setSaveLoading(false)
     }
@@ -1096,7 +1101,7 @@ export default function Dashboard() {
         setStatus('billing-payment', 'error', 'Erreur: ' + (data.detail || 'Erreur'))
       }
     } catch (err) {
-      setStatus('billing-payment', 'error', 'Erreur: ' + err.message)
+      setStatus('billing-payment', 'error', formatUserFacingError(err, 'Erreur paiement'))
     } finally {
       setSaveLoading(false)
     }
@@ -1193,8 +1198,9 @@ export default function Dashboard() {
       }
     } catch (err) {
       console.error('Error:', err)
-      setStatus('shopify', 'error', 'Erreur: ' + err.message)
-      setError(err.message)
+      const message = formatUserFacingError(err, 'Erreur Shopify')
+      setStatus('shopify', 'error', message)
+      setError(message)
     } finally {
       setLoading(false)
     }
@@ -1242,7 +1248,7 @@ export default function Dashboard() {
       }
     } catch (err) {
       console.error('Error loading products:', err)
-      setError('Erreur: ' + err.message)
+      setError(formatUserFacingError(err, 'Erreur chargement produits'))
       setProducts([])
     } finally {
       setLoading(false)
@@ -1282,7 +1288,7 @@ export default function Dashboard() {
       }
     } catch (err) {
       console.error('Error loading analytics:', err)
-      setAnalyticsError(err.message)
+      setAnalyticsError(formatUserFacingError(err, 'Erreur analytics'))
     } finally {
       setAnalyticsLoading(false)
     }
@@ -1440,7 +1446,7 @@ export default function Dashboard() {
       }
     } catch (err) {
       console.error('Error loading blockers:', err)
-      setStatus('blockers', 'error', err.message)
+      setStatus('blockers', 'error', formatUserFacingError(err, 'Erreur analyse'))
     } finally {
       setBlockersLoading(false)
     }
@@ -1634,7 +1640,7 @@ export default function Dashboard() {
       loadBlockers()
     } catch (err) {
       console.error('Error applying blocker action:', err)
-      setStatus(statusKey, 'error', err.message)
+      setStatus(statusKey, 'error', formatUserFacingError(err, 'Erreur application'))
     } finally {
       setApplyingBlockerActionId(null)
     }
@@ -1669,7 +1675,7 @@ export default function Dashboard() {
       }
     } catch (err) {
       console.error('Error loading customers:', err)
-      setStatus('invoice', 'error', err.message)
+      setStatus('invoice', 'error', formatUserFacingError(err, 'Erreur chargement clients'))
     } finally {
       setCustomersLoading(false)
     }
@@ -1761,7 +1767,7 @@ export default function Dashboard() {
       }
     } catch (err) {
       console.error('Error creating invoice:', err)
-      setStatus('invoice', 'error', err.message)
+      setStatus('invoice', 'error', formatUserFacingError(err, 'Erreur facture'))
     } finally {
       setInvoiceSubmitting(false)
     }
@@ -1865,7 +1871,7 @@ export default function Dashboard() {
       }
     } catch (err) {
       console.error('Erreur analyse:', err)
-      setStatus('analyze', 'error', 'Erreur analyse: ' + err.message)
+      setStatus('analyze', 'error', formatUserFacingError(err, 'Erreur analyse'))
     } finally {
       setLoading(false)
     }
@@ -1941,7 +1947,7 @@ export default function Dashboard() {
       }
     } catch (err) {
       console.error('Error applying actions:', err)
-      setStatus('apply-actions', 'error', 'Erreur: ' + err.message)
+      setStatus('apply-actions', 'error', formatUserFacingError(err, 'Erreur application'))
     } finally {
       setApplyingActions(false)
     }
@@ -1975,7 +1981,7 @@ export default function Dashboard() {
         setStatus(`rec-${productId}-${recommendationType}`, 'error', 'Erreur: ' + formatErrorDetail(data.detail))
       }
     } catch (err) {
-      setStatus(`rec-${productId}-${recommendationType}`, 'error', 'Erreur: ' + err.message)
+      setStatus(`rec-${productId}-${recommendationType}`, 'error', formatUserFacingError(err, 'Erreur application'))
     } finally {
       setApplyingRecommendationId(null)
     }
