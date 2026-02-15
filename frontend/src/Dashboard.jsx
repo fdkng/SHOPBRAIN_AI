@@ -106,6 +106,8 @@ export default function Dashboard() {
   const [insightsData, setInsightsData] = useState(null)
   const [insightsLoading, setInsightsLoading] = useState(false)
   const [insightsError, setInsightsError] = useState('')
+  const [backendHealth, setBackendHealth] = useState(null)
+  const [backendHealthTs, setBackendHealthTs] = useState(0)
   const [rewriteProductId, setRewriteProductId] = useState('')
   const [blockersData, setBlockersData] = useState(null)
   const [blockersLoading, setBlockersLoading] = useState(false)
@@ -1344,19 +1346,52 @@ export default function Dashboard() {
     throw lastError || new Error('Network request failed')
   }
 
-  const warmupBackend = async (accessToken) => {
+  const fetchBackendHealth = async (config = {}) => {
     const healthUrl = `${API_URL}/health`
+    const { data } = await fetchJsonWithRetry(healthUrl, { method: 'GET' }, {
+      retries: config.retries ?? 3,
+      retryDelayMs: config.retryDelayMs ?? 1500,
+      timeoutMs: config.timeoutMs ?? 20000,
+      retryStatuses: config.retryStatuses ?? [429, 500, 502, 503, 504]
+    })
+    setBackendHealth(data)
+    setBackendHealthTs(Date.now())
+    return data
+  }
+
+  const waitForBackendReady = async (config = {}) => {
+    const freshnessMs = config.freshnessMs ?? 2 * 60 * 1000
+    if (backendHealth && backendHealthTs && Date.now() - backendHealthTs < freshnessMs) {
+      return backendHealth
+    }
+
+    const retries = config.retries ?? 6
+    const retryDelayMs = config.retryDelayMs ?? 2000
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    let lastErr = null
+
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      try {
+        return await fetchBackendHealth({
+          retries: 0,
+          timeoutMs: config.timeoutMs ?? 20000
+        })
+      } catch (err) {
+        lastErr = err
+        if (attempt < retries) {
+          await sleep(retryDelayMs)
+          continue
+        }
+      }
+    }
+
+    throw lastErr || new Error('Backend unreachable')
+  }
+
+  const warmupBackend = async (accessToken) => {
     const warmupUrl = `${API_URL}/api/shopify/keep-alive`
     try {
-      // Wake Render without requiring auth.
-      await fetchJsonWithRetry(healthUrl, {
-        method: 'GET'
-      }, {
-        retries: 5,
-        retryDelayMs: 1800,
-        timeoutMs: 25000,
-        retryStatuses: [429, 500, 502, 503, 504]
-      })
+      await waitForBackendReady({ retries: 8, retryDelayMs: 2000, timeoutMs: 22000 })
 
       await fetchJsonWithRetry(warmupUrl, {
         method: 'GET',
@@ -1365,9 +1400,9 @@ export default function Dashboard() {
           'Content-Type': 'application/json'
         }
       }, {
-        retries: 4,
-        retryDelayMs: 1800,
-        timeoutMs: 30000,
+        retries: 6,
+        retryDelayMs: 2000,
+        timeoutMs: 35000,
         retryStatuses: [429, 500, 502, 503, 504]
       })
     } catch (err) {
@@ -1385,6 +1420,9 @@ export default function Dashboard() {
       if (!session) {
         throw new Error('Session expirée, reconnectez-vous')
       }
+
+      // Ensure backend is reachable before authenticated calls.
+      await waitForBackendReady({ retries: 8, retryDelayMs: 2000, timeoutMs: 22000 })
 
       await warmupBackend(session.access_token)
 
@@ -1414,6 +1452,8 @@ export default function Dashboard() {
       }
 
       setInsightsData(data)
+      // Cache health when a request succeeds.
+      setBackendHealthTs(Date.now())
       return data
     } catch (err) {
       console.error('Error loading insights:', err)
@@ -1424,6 +1464,11 @@ export default function Dashboard() {
       setInsightsLoading(false)
     }
   }
+
+  useEffect(() => {
+    // Passive health probe to reduce first-click failures.
+    fetchBackendHealth().catch(() => {})
+  }, [])
 
   const loadBlockers = async (rangeOverride) => {
     try {
@@ -2918,7 +2963,11 @@ export default function Dashboard() {
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 space-y-6">
             {(() => {
               const priceItems = getPriceItems(insightsData)
-              const marketStatus = insightsData?.market_comparison || insightsData?.price_analysis?.market_comparison || null
+              const rawMarketStatus = insightsData?.market_comparison || insightsData?.price_analysis?.market_comparison || null
+              const healthSaysOpenAI = backendHealth?.services?.openai === 'configured'
+              const marketStatus = rawMarketStatus || (healthSaysOpenAI
+                ? { enabled: true, provider: 'openai', source: 'openai', inferred: true }
+                : null)
               const withDelta = priceItems.filter((item) => Number.isFinite(Number(item.target_delta_pct)))
               const avgDelta = withDelta.length > 0
                 ? (withDelta.reduce((sum, item) => sum + Number(item.target_delta_pct), 0) / withDelta.length)
