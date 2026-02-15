@@ -241,6 +241,15 @@ export default function Dashboard() {
     }
   }
 
+  const normalizeNetworkErrorMessage = (err, fallback = 'Erreur réseau') => {
+    const raw = String(err?.message || '').trim()
+    const isNetwork = err?.name === 'AbortError' || /Failed to fetch|NetworkError|Load failed|fetch/i.test(raw)
+    if (isNetwork) {
+      return 'Connexion au backend impossible pour le moment (serveur en réveil). Réessaie dans 10-20 secondes.'
+    }
+    return raw || fallback
+  }
+
   const renderStatus = (key) => {
     const status = statusByKey[key]
     if (!status?.message) return null
@@ -1372,9 +1381,10 @@ export default function Dashboard() {
           'Content-Type': 'application/json'
         }
       }, {
-        retries: 2,
-        retryDelayMs: 1200,
-        timeoutMs: 25000
+        retries: 4,
+        retryDelayMs: 1800,
+        timeoutMs: 40000,
+        retryStatuses: [429, 500, 502, 503, 504]
       })
 
       if (!response.ok) {
@@ -1390,9 +1400,7 @@ export default function Dashboard() {
       return data
     } catch (err) {
       console.error('Error loading insights:', err)
-      const errorMessage = (err?.name === 'AbortError' || /Failed to fetch/i.test(err?.message || ''))
-        ? 'Connexion au backend impossible pour le moment (serveur en réveil). Réessaie dans 10-20 secondes.'
-        : (err.message || 'Erreur réseau')
+      const errorMessage = normalizeNetworkErrorMessage(err)
       setInsightsError(errorMessage)
       throw new Error(errorMessage)
     } finally {
@@ -1582,7 +1590,7 @@ export default function Dashboard() {
       }
       setStatus(actionKey, 'success', 'Analyse terminée.')
     } catch (err) {
-      setStatus(actionKey, 'error', err.message || 'Erreur analyse')
+      setStatus(actionKey, 'error', normalizeNetworkErrorMessage(err, 'Erreur analyse'))
     }
   }
 
@@ -2906,12 +2914,12 @@ export default function Dashboard() {
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <div className="space-y-1">
                 <p className="text-sm text-gray-400">{getInsightCount(priceItems)} opportunités</p>
-                <p className={`text-xs ${marketStatus?.enabled ? 'text-green-400' : 'text-yellow-400'}`}>
-                  Comparaison marché: {marketStatus?.enabled ? 'Activée' : 'Désactivée'}
+                <p className={`text-xs ${marketStatus?.enabled ? 'text-green-400' : 'text-gray-400'}`}>
+                  Comparaison marché externe: {marketStatus?.enabled ? 'Activée' : 'Non configurée'}
                   {marketStatus?.source ? ` (${marketStatus.source})` : ''}
                 </p>
                 {!marketStatus?.enabled ? (
-                  <p className="text-xs text-gray-500">L’analyse reste active via les données Shopify (commandes, stock, prix, conversion).</p>
+                  <p className="text-xs text-gray-500">Analyse prix active via Shopify (commandes, stock, prix, conversion), même sans API marché externe.</p>
                 ) : null}
               </div>
               <button
