@@ -1345,8 +1345,19 @@ export default function Dashboard() {
   }
 
   const warmupBackend = async (accessToken) => {
+    const healthUrl = `${API_URL}/health`
     const warmupUrl = `${API_URL}/api/shopify/keep-alive`
     try {
+      // Wake Render without requiring auth.
+      await fetchJsonWithRetry(healthUrl, {
+        method: 'GET'
+      }, {
+        retries: 5,
+        retryDelayMs: 1800,
+        timeoutMs: 25000,
+        retryStatuses: [429, 500, 502, 503, 504]
+      })
+
       await fetchJsonWithRetry(warmupUrl, {
         method: 'GET',
         headers: {
@@ -1558,7 +1569,8 @@ export default function Dashboard() {
           }
         })
       } else {
-        const data = await loadInsights(undefined, false, options.productId)
+        const includeAi = actionKey === 'action-price'
+        const data = await loadInsights(undefined, includeAi, options.productId)
         let enrichedData = data
         let priceItems = getPriceItems(data)
 
@@ -2922,7 +2934,7 @@ export default function Dashboard() {
                 <p className="text-sm text-gray-400">{getInsightCount(priceItems)} opportunités</p>
                 <p className={`text-xs ${marketStatus?.enabled ? 'text-green-400' : 'text-gray-400'}`}>
                   Comparaison marché externe: {marketStatus?.enabled ? 'Activée' : 'Non configurée'}
-                  {marketStatus?.source ? ` (${marketStatus.source})` : ''}
+                  {marketStatus?.provider ? ` (${marketStatus.provider})` : ''}
                 </p>
                 {!marketStatus?.enabled ? (
                   <p className="text-xs text-gray-500">Analyse prix active via Shopify (commandes, stock, prix, conversion), même sans API marché externe.</p>

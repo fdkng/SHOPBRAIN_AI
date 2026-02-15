@@ -89,23 +89,125 @@ def _get_market_comparison_status() -> dict:
         ("RAPIDAPI_KEY", "rapidapi"),
         ("GOOGLE_SHOPPING_API_KEY", "google_shopping"),
         ("PRICE_API_KEY", "price_api"),
+        ("OPENAI_API_KEY_CLEAN", "openai"),
+        ("OPENAI_API_KEY_ALT", "openai"),
         ("OPENAI_API_KEY", "openai"),
     ]
 
     for env_key, provider in provider_keys:
-        if os.getenv(env_key):
+        value = os.getenv(env_key)
+        if env_key == "OPENAI_API_KEY" and not value:
+            # Support sanitized key stored in OPENAI_API_KEY variable.
+            value = OPENAI_API_KEY
+
+        if value:
             return {
                 "enabled": True,
                 "provider": provider,
-                "source": env_key,
+                # UI should not display env var names.
+                "source": provider,
+                "source_env": env_key,
+                "mode": "external_api" if provider != "openai" else "ai_estimate",
             }
 
     return {
         "enabled": False,
         "provider": None,
         "source": None,
+        "source_env": None,
+        "mode": None,
         "reason": "Aucune clé API marché détectée",
     }
+
+
+def _ai_market_price_estimates(items: list[dict], products_by_id: dict[str, dict]) -> dict[str, dict]:
+    """Return market price range estimates keyed by product_id.
+
+    Note: This is an AI estimation (no live web). It is used as a lightweight
+    'market comparison' signal when OpenAI is configured.
+    """
+    if not OPENAI_API_KEY or not items:
+        return {}
+
+    # Only estimate a small set to control latency/cost.
+    sample = []
+    for item in items[:8]:
+        pid = str(item.get("product_id") or "")
+        if not pid:
+            continue
+        product = products_by_id.get(pid) or {}
+        sample.append({
+            "product_id": pid,
+            "title": item.get("title") or product.get("title") or "",
+            "product_type": product.get("product_type") or "",
+            "vendor": product.get("vendor") or "",
+            "tags": product.get("tags") or "",
+            "current_price": item.get("current_price"),
+            "suggested_price": item.get("suggested_price"),
+            "currency": "EUR",
+        })
+
+    if not sample:
+        return {}
+
+    prompt = {
+        "task": "Estimate plausible market price ranges for similar products.",
+        "constraints": [
+            "Do NOT browse the web.",
+            "Base estimates on general market knowledge and the provided product context.",
+            "Return numeric prices in the provided currency.",
+        ],
+        "output": {
+            "items": [
+                {
+                    "product_id": "string",
+                    "market_min": 0.0,
+                    "market_max": 0.0,
+                    "positioning": "low|mid|high",
+                    "confidence": 0,
+                    "notes": "string"
+                }
+            ]
+        },
+        "products": sample,
+    }
+
+    try:
+        client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "Tu es un analyste pricing e-commerce. Tu fournis des estimations prudentes et chiffrées."},
+                {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+            ],
+            temperature=0.2,
+            max_tokens=650,
+            response_format={"type": "json_object"},
+        )
+
+        payload = json.loads(response.choices[0].message.content or "{}")
+        out = {}
+        for row in payload.get("items", []) if isinstance(payload, dict) else []:
+            pid = str(row.get("product_id") or "")
+            if not pid:
+                continue
+            market_min = row.get("market_min")
+            market_max = row.get("market_max")
+            if not isinstance(market_min, (int, float)) or not isinstance(market_max, (int, float)):
+                continue
+            if market_min <= 0 or market_max <= 0 or market_max < market_min:
+                continue
+            out[pid] = {
+                "market_min": float(round(market_min, 2)),
+                "market_max": float(round(market_max, 2)),
+                "positioning": row.get("positioning"),
+                "confidence": row.get("confidence"),
+                "notes": row.get("notes"),
+            }
+        return out
+    except Exception as e:
+        print(f"⚠️ market estimate AI error: {type(e).__name__}: {str(e)[:140]}")
+        return {}
 
 # Shopify OAuth credentials
 SHOPIFY_API_KEY = os.getenv("SHOPIFY_API_KEY")
@@ -2118,6 +2220,22 @@ async def get_shopify_insights(
             "suggested_price": suggested_price,
             "market_comparison_enabled": market_comparison.get("enabled", False),
         })
+
+    if include_ai and market_comparison.get("enabled") and market_comparison.get("provider") == "openai" and OPENAI_API_KEY:
+        estimates = _ai_market_price_estimates(price_analysis_items, products_by_id)
+        if estimates:
+            for row in price_analysis_items:
+                pid = str(row.get("product_id") or "")
+                est = estimates.get(pid)
+                if not est:
+                    continue
+                row["market_estimate"] = {
+                    "min": est.get("market_min"),
+                    "max": est.get("market_max"),
+                    "positioning": est.get("positioning"),
+                    "confidence": est.get("confidence"),
+                    "notes": est.get("notes"),
+                }
 
     # Rewrite opportunities: low performance + weak content signals
     rewrite_opportunities = []
