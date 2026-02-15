@@ -21,6 +21,7 @@ import requests
 import json
 import sys
 from datetime import datetime, timedelta
+import time
 from supabase import create_client
 from io import BytesIO
 from email.message import EmailMessage
@@ -1728,7 +1729,45 @@ def _get_user_id_by_shop_domain(shop_domain: str) -> str | None:
     return None
 
 
+_ORDERS_CACHE: dict[tuple[str, int, str], tuple[float, list[dict]]] = {}
+
+
+def _cache_get_orders(shop_domain: str, range_days: int, access_token: str) -> list[dict] | None:
+    ttl = int(os.getenv("SHOPIFY_ORDERS_CACHE_TTL", "300"))
+    if ttl <= 0:
+        return None
+    token_sig = hashlib.sha256(access_token.encode("utf-8")).hexdigest()[:12]
+    key = (shop_domain, int(range_days), token_sig)
+    entry = _ORDERS_CACHE.get(key)
+    if not entry:
+        return None
+    ts, data = entry
+    if time.time() - ts > ttl:
+        _ORDERS_CACHE.pop(key, None)
+        return None
+    return data
+
+
+def _cache_set_orders(shop_domain: str, range_days: int, access_token: str, orders: list[dict]) -> None:
+    ttl = int(os.getenv("SHOPIFY_ORDERS_CACHE_TTL", "300"))
+    if ttl <= 0:
+        return
+    token_sig = hashlib.sha256(access_token.encode("utf-8")).hexdigest()[:12]
+    key = (shop_domain, int(range_days), token_sig)
+    _ORDERS_CACHE[key] = (time.time(), orders)
+
+
 def _fetch_shopify_orders(shop_domain: str, access_token: str, range_days: int = 30):
+    """Fetch Shopify orders with bounded pagination.
+
+    Note: This endpoint runs behind Cloudflare/Render; overly long requests may
+    be terminated and surface as browser-level `Failed to fetch`. Keep this
+    bounded.
+    """
+    cached = _cache_get_orders(shop_domain, range_days, access_token)
+    if cached is not None:
+        return cached
+
     start_date = (datetime.utcnow() - timedelta(days=range_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
     headers = {
         "X-Shopify-Access-Token": access_token,
@@ -1742,9 +1781,11 @@ def _fetch_shopify_orders(shop_domain: str, access_token: str, range_days: int =
         f"&fields=id,created_at,total_price,financial_status,currency,line_items,refunds,order_number,name"
     )
     page_count = 0
+    max_pages = int(os.getenv("SHOPIFY_ORDERS_MAX_PAGES", "3"))
+    per_request_timeout = int(os.getenv("SHOPIFY_REQUEST_TIMEOUT", "25"))
 
-    while next_url and page_count < 6:
-        response = requests.get(next_url, headers=headers, timeout=30)
+    while next_url and page_count < max_pages:
+        response = requests.get(next_url, headers=headers, timeout=per_request_timeout)
         if response.status_code == 401:
             raise HTTPException(status_code=401, detail="Token Shopify expiré ou invalide. Reconnectez-vous.")
         if response.status_code == 404:
@@ -1757,6 +1798,7 @@ def _fetch_shopify_orders(shop_domain: str, access_token: str, range_days: int =
         next_url = _parse_shopify_next_link(response.headers.get("Link"))
         page_count += 1
 
+    _cache_set_orders(shop_domain, range_days, access_token, orders)
     return orders
 
 

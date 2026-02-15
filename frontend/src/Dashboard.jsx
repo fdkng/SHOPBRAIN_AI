@@ -1434,7 +1434,7 @@ export default function Dashboard() {
       const insightsUrl = `${API_URL}/api/shopify/insights?range=${rangeValue}${aiParam}${productParam}`
 
       // AI insights can take longer (Shopify + AI market estimates).
-      const insightsTimeoutMs = includeAi ? 120000 : 70000
+      const insightsTimeoutMs = includeAi ? 180000 : 70000
       const { response, data } = await fetchJsonWithRetry(insightsUrl, {
         method: 'GET',
         headers: {
@@ -1442,7 +1442,7 @@ export default function Dashboard() {
           'Content-Type': 'application/json'
         }
       }, {
-        retries: includeAi ? 2 : 4,
+        retries: includeAi ? 1 : 4,
         retryDelayMs: 2000,
         timeoutMs: insightsTimeoutMs,
         retryStatuses: [429, 500, 502, 503, 504]
