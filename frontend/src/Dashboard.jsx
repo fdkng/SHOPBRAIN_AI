@@ -245,7 +245,10 @@ export default function Dashboard() {
 
   const normalizeNetworkErrorMessage = (err, fallback = 'Erreur réseau') => {
     const raw = String(err?.message || '').trim()
-    const isNetwork = err?.name === 'AbortError' || /Failed to fetch|NetworkError|Load failed|fetch/i.test(raw)
+    if (err?.name === 'AbortError') {
+      return 'L’analyse prend plus de temps que prévu (délai dépassé). Réessaie — le backend est joignable, mais la requête est trop lente.'
+    }
+    const isNetwork = /Failed to fetch|NetworkError|Load failed|fetch/i.test(raw)
     if (isNetwork) {
       return 'Connexion au backend impossible pour le moment (serveur en réveil). Réessaie dans 10-20 secondes.'
     }
@@ -1402,7 +1405,7 @@ export default function Dashboard() {
       }, {
         retries: 6,
         retryDelayMs: 2000,
-        timeoutMs: 35000,
+        timeoutMs: 60000,
         retryStatuses: [429, 500, 502, 503, 504]
       })
     } catch (err) {
@@ -1429,6 +1432,9 @@ export default function Dashboard() {
       const aiParam = includeAi ? '&include_ai=true' : ''
       const productParam = productId ? `&product_id=${encodeURIComponent(productId)}` : ''
       const insightsUrl = `${API_URL}/api/shopify/insights?range=${rangeValue}${aiParam}${productParam}`
+
+      // AI insights can take longer (Shopify + AI market estimates).
+      const insightsTimeoutMs = includeAi ? 120000 : 70000
       const { response, data } = await fetchJsonWithRetry(insightsUrl, {
         method: 'GET',
         headers: {
@@ -1436,9 +1442,9 @@ export default function Dashboard() {
           'Content-Type': 'application/json'
         }
       }, {
-        retries: 4,
-        retryDelayMs: 1800,
-        timeoutMs: 40000,
+        retries: includeAi ? 2 : 4,
+        retryDelayMs: 2000,
+        timeoutMs: insightsTimeoutMs,
         retryStatuses: [429, 500, 502, 503, 504]
       })
 
