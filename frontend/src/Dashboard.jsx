@@ -1394,7 +1394,7 @@ export default function Dashboard() {
         ? 'Connexion au backend impossible pour le moment (serveur en réveil). Réessaie dans 10-20 secondes.'
         : (err.message || 'Erreur réseau')
       setInsightsError(errorMessage)
-      throw err
+      throw new Error(errorMessage)
     } finally {
       setInsightsLoading(false)
     }
@@ -1444,6 +1444,61 @@ export default function Dashboard() {
       if (actionKey === 'action-rewrite') {
         setInsightsData(null)
       }
+
+      const loadAiPriceInsights = async () => {
+        try {
+          const { data: { session } } = await supabase.auth.getSession()
+          if (!session || !Array.isArray(products) || products.length === 0) return []
+
+          const response = await fetch(`${API_URL}/api/ai/analyze-store`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${session.access_token}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              products: products.slice(0, 120),
+              analytics: {},
+              tier: subscription?.plan || 'standard'
+            })
+          })
+
+          const payload = await response.json()
+          if (!payload?.success) return []
+
+          const optimizations = payload?.analysis?.pricing_strategy?.optimizations
+          if (!Array.isArray(optimizations) || optimizations.length === 0) return []
+
+          const byTitle = new Map(
+            (products || []).map((product) => [String(product?.title || '').trim().toLowerCase(), product])
+          )
+
+          return optimizations.slice(0, 10).map((opt, index) => {
+            const title = String(opt?.product || '').trim()
+            const product = byTitle.get(title.toLowerCase())
+            const currentPrice = Number(opt?.current_price)
+            const suggestedPrice = Number(opt?.suggested_price)
+            const targetDeltaPct = Number.isFinite(currentPrice) && currentPrice > 0 && Number.isFinite(suggestedPrice)
+              ? Number((((suggestedPrice - currentPrice) / currentPrice) * 100).toFixed(2))
+              : null
+
+            return {
+              product_id: product?.id ? String(product.id) : `ai-${index}`,
+              title: title || product?.title || `Produit ${index + 1}`,
+              suggestion: opt?.reason || 'Ajustement recommandé par analyse IA',
+              current_price: Number.isFinite(currentPrice) ? currentPrice : null,
+              suggested_price: Number.isFinite(suggestedPrice) ? suggestedPrice : null,
+              target_delta_pct: Number.isFinite(targetDeltaPct) ? targetDeltaPct : null,
+              reason: opt?.expected_impact || opt?.reason || 'Opportunité détectée par l’IA',
+              source: 'ai_analyze_store'
+            }
+          })
+        } catch (err) {
+          console.warn('AI price fallback failed:', err)
+          return []
+        }
+      }
+
       if (actionKey === 'action-blockers') {
         await loadBlockers()
       } else if (actionKey === 'action-rewrite') {
@@ -1490,14 +1545,33 @@ export default function Dashboard() {
         })
       } else {
         const data = await loadInsights(undefined, false, options.productId)
-        const priceItems = getPriceItems(data)
+        let enrichedData = data
+        let priceItems = getPriceItems(data)
+
+        if (actionKey === 'action-price' && priceItems.length === 0) {
+          setStatus(actionKey, 'info', 'Analyse IA avancée des prix en cours...')
+          const aiPriceItems = await loadAiPriceInsights()
+          if (Array.isArray(aiPriceItems) && aiPriceItems.length > 0) {
+            enrichedData = {
+              ...data,
+              price_opportunities: aiPriceItems,
+              price_analysis: {
+                ...(data?.price_analysis || {}),
+                items: aiPriceItems,
+                market_comparison: data?.market_comparison || data?.price_analysis?.market_comparison || null
+              }
+            }
+            setInsightsData(enrichedData)
+            priceItems = aiPriceItems
+          }
+        }
 
         const listByActionKey = {
           'action-price': priceItems,
-          'action-images': data.image_risks,
-          'action-bundles': data.bundle_suggestions,
-          'action-stock': data.stock_risks,
-          'action-returns': data.return_risks,
+          'action-images': enrichedData.image_risks,
+          'action-bundles': enrichedData.bundle_suggestions,
+          'action-stock': enrichedData.stock_risks,
+          'action-returns': enrichedData.return_risks,
         }
 
         const maybeList = listByActionKey[actionKey]
@@ -2819,11 +2893,15 @@ export default function Dashboard() {
             {(() => {
               const priceItems = getPriceItems(insightsData)
               const marketStatus = insightsData?.market_comparison || insightsData?.price_analysis?.market_comparison || null
+              const withDelta = priceItems.filter((item) => Number.isFinite(Number(item.target_delta_pct)))
+              const avgDelta = withDelta.length > 0
+                ? (withDelta.reduce((sum, item) => sum + Number(item.target_delta_pct), 0) / withDelta.length)
+                : null
               return (
                 <>
             <div>
               <h2 className="text-white text-xl font-bold mb-2">Optimisation dynamique des prix</h2>
-              <p className="text-gray-400">Ajuste les prix selon élasticité et performance.</p>
+              <p className="text-gray-400">Analyse réelle de la performance prix puis recommandations actionnables.</p>
             </div>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <div className="space-y-1">
@@ -2832,6 +2910,9 @@ export default function Dashboard() {
                   Comparaison marché: {marketStatus?.enabled ? 'Activée' : 'Désactivée'}
                   {marketStatus?.source ? ` (${marketStatus.source})` : ''}
                 </p>
+                {!marketStatus?.enabled ? (
+                  <p className="text-xs text-gray-500">L’analyse reste active via les données Shopify (commandes, stock, prix, conversion).</p>
+                ) : null}
               </div>
               <button
                 onClick={() => runActionAnalysis('action-price')}
@@ -2842,21 +2923,54 @@ export default function Dashboard() {
               </button>
             </div>
             {renderStatus('action-price')}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Produits analysés</p>
+                <p className="text-2xl text-white font-bold mt-2">{formatCompactNumber(products?.length || 0)}</p>
+              </div>
+              <div className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Opportunités prix</p>
+                <p className="text-2xl text-white font-bold mt-2">{formatCompactNumber(priceItems.length)}</p>
+              </div>
+              <div className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Ajustement moyen</p>
+                <p className="text-2xl text-white font-bold mt-2">{avgDelta === null ? '—' : `${avgDelta > 0 ? '+' : ''}${avgDelta.toFixed(1)}%`}</p>
+              </div>
+            </div>
             <div className="space-y-3">
               {!insightsLoading && priceItems.length === 0 ? (
                 <p className="text-sm text-gray-500">Aucune opportunité détectée.</p>
               ) : (
                 priceItems.slice(0, 8).map((item, index) => (
                   <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
-                    <p className="text-white font-semibold">{item.title || item.product_id}</p>
-                    <p className="text-xs text-gray-500">{item.suggestion || 'Ajuster le prix'}</p>
-                    {(item.current_price !== undefined && item.current_price !== null) ? (
-                      <p className="text-xs text-gray-400 mt-1">
-                        Prix actuel: {formatCurrency(item.current_price)}
-                        {item.suggested_price !== undefined && item.suggested_price !== null ? ` • Prix suggéré: ${formatCurrency(item.suggested_price)}` : ''}
-                      </p>
-                    ) : null}
-                    {item.reason ? <p className="text-xs text-gray-500 mt-1">{item.reason}</p> : null}
+                    <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+                      <div className="space-y-1">
+                        <p className="text-white font-semibold">{item.title || item.product_id}</p>
+                        <p className="text-xs text-gray-500">{item.suggestion || 'Ajuster le prix'}</p>
+                        {(item.current_price !== undefined && item.current_price !== null) ? (
+                          <p className="text-xs text-gray-400 mt-1">
+                            Prix actuel: {formatCurrency(item.current_price)}
+                            {item.suggested_price !== undefined && item.suggested_price !== null ? ` • Prix suggéré: ${formatCurrency(item.suggested_price)}` : ''}
+                          </p>
+                        ) : null}
+                        {Number.isFinite(Number(item.target_delta_pct)) ? (
+                          <p className={`text-xs font-semibold ${Number(item.target_delta_pct) > 0 ? 'text-green-400' : 'text-yellow-300'}`}>
+                            Variation cible: {Number(item.target_delta_pct) > 0 ? '+' : ''}{Number(item.target_delta_pct).toFixed(1)}%
+                          </p>
+                        ) : null}
+                        {item.reason ? <p className="text-xs text-gray-500 mt-1">{item.reason}</p> : null}
+                      </div>
+                      <div className="flex flex-col items-start md:items-end gap-2">
+                        <button
+                          onClick={() => handleApplyRecommendation(item.product_id, 'Prix')}
+                          disabled={!item.product_id || applyingRecommendationId === `${item.product_id}-Prix`}
+                          className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold px-3 py-2 rounded"
+                        >
+                          {applyingRecommendationId === `${item.product_id}-Prix` ? 'Application...' : 'Appliquer prix'}
+                        </button>
+                        {renderStatus(`rec-${item.product_id}-Prix`)}
+                      </div>
+                    </div>
                   </div>
                 ))
               )}
