@@ -1621,7 +1621,35 @@ export default function Dashboard() {
         })
       } else {
         const includeAi = actionKey === 'action-price'
-        const data = await loadInsights(undefined, includeAi, options.productId)
+
+        let data
+        try {
+          data = await loadInsights(undefined, includeAi, options.productId)
+        } catch (err) {
+          // Price tab should still function even if Shopify insights is slow/unreachable.
+          if (actionKey === 'action-price') {
+            setStatus(actionKey, 'warning', 'Insights Shopify indisponibles. Génération d’opportunités via IA...')
+            const aiPriceItems = await loadAiPriceInsights()
+            if (Array.isArray(aiPriceItems) && aiPriceItems.length > 0) {
+              const healthSaysOpenAI = backendHealth?.services?.openai === 'configured'
+              const inferredMarket = healthSaysOpenAI ? { enabled: true, provider: 'openai', source: 'openai', inferred: true } : null
+              const enriched = {
+                success: true,
+                price_opportunities: aiPriceItems,
+                price_analysis: {
+                  items: aiPriceItems,
+                  market_comparison: inferredMarket
+                },
+                market_comparison: inferredMarket
+              }
+              setInsightsData(enriched)
+              setStatus(actionKey, 'success', 'Analyse terminée (IA).')
+              return
+            }
+          }
+          throw err
+        }
+
         let enrichedData = data
         let priceItems = getPriceItems(data)
 
