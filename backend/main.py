@@ -3109,6 +3109,209 @@ def _fetch_shopify_event_counts(user_id: str, shop_domain: str, days: int) -> di
 
     return counts
 
+
+def _infer_image_category(title: str) -> str:
+    t = (title or "").lower()
+    patterns = [
+        ("apparel", r"\b(t-?shirt|tee|hoodie|sweat|pull|pantalon|jean|robe|jupe|chemise|chausset|legging|veste|manteau|casquette|bonnet)\b"),
+        ("beauty", r"\b(parfum|eau de parfum|eau de toilette|cr[eè]me|serum|s[eé]rum|shampoing|savon|gel douche|maquillage|rouge|mascara|skincare|cosm[eé]tique)\b"),
+        ("jewelry", r"\b(bague|collier|bracelet|boucle|bijou|or|argent|gold|silver)\b"),
+        ("bottle", r"\b(bouteille|gourde|flasque|thermos|shaker)\b"),
+        ("electronics", r"\b(casque|ecouteur|chargeur|c[âa]ble|clavier|souris|cam[eé]ra|smart|iphone|android|usb|bluetooth)\b"),
+        ("home", r"\b(canap[eé]|chaise|table|lampe|coussin|tapis|drap|linge|d[eé]co|d[ée]coration|meuble)\b"),
+        ("food", r"\b(th[eé]|cafe|caf[eé]|chocolat|snack|protein|protéine|barre|miel|huile|epice|[eé]pice)\b"),
+    ]
+    for cat, pat in patterns:
+        try:
+            if re.search(pat, t, flags=re.IGNORECASE):
+                return cat
+        except Exception:
+            continue
+    return "general"
+
+
+def _image_target_count(category: str) -> int:
+    # Conservative, ecommerce-pro targets.
+    if category in {"apparel"}:
+        return 9
+    if category in {"jewelry", "beauty"}:
+        return 8
+    if category in {"electronics", "home"}:
+        return 8
+    if category in {"food", "bottle"}:
+        return 7
+    return 7
+
+
+def _build_image_shot_list(category: str) -> list[dict]:
+    # Each shot: what, why, setup. Kept short but concrete.
+    base = [
+        {
+            "shot": "Hero e-commerce (packshot)",
+            "purpose": "Image principale (confiance + lisibilité)",
+            "composition": "Produit centré, 70–85% du cadre, ombre douce",
+            "background": "Blanc ou gris très clair (#F6F6F6)",
+            "color_tone": "Neutre, fidèle au produit",
+            "lighting": "Softbox / lumière diffuse, reflets contrôlés",
+        },
+        {
+            "shot": "3/4 angle", 
+            "purpose": "Donner du volume et de la profondeur",
+            "composition": "Angle 30–45°, même fond que le hero",
+            "background": "Blanc/clair cohérent",
+            "color_tone": "Neutre",
+            "lighting": "Diffuse + fill léger",
+        },
+        {
+            "shot": "Zoom détails", 
+            "purpose": "Justifier le prix (matière, finition, texture)",
+            "composition": "Macro net, 1 détail par image",
+            "background": "Neutre",
+            "color_tone": "Neutre",
+            "lighting": "Latérale douce pour révéler texture",
+        },
+        {
+            "shot": "Image "
+                    "preuve" ,
+            "purpose": "Réduire l’incertitude (taille/usage/benefit)",
+            "composition": "Infographie simple: 1 bénéfice + 1 donnée",
+            "background": "Blanc/clair avec accent couleur de marque",
+            "color_tone": "Accents limités (1–2 couleurs)",
+            "lighting": "N/A",
+        },
+        {
+            "shot": "Contexte/lifestyle", 
+            "purpose": "Projection (désir + usage réel)",
+            "composition": "Scène simple, sujet principal = produit",
+            "background": "Décor minimal, propre, sans désordre",
+            "color_tone": "Chaud ou neutre selon marque",
+            "lighting": "Naturelle douce (fenêtre) ou studio diffus",
+        },
+        {
+            "shot": "Packaging / contenu du lot", 
+            "purpose": "Clarifier ce qui est inclus",
+            "composition": "Flat lay propre, étiquettes lisibles",
+            "background": "Clair, cohérent",
+            "color_tone": "Neutre",
+            "lighting": "Diffuse",
+        },
+        {
+            "shot": "UGC / social proof (option)",
+            "purpose": "Crédibilité et conversion",
+            "composition": "Photo utilisateur cadrée propre",
+            "background": "Réel mais épuré",
+            "color_tone": "Naturel",
+            "lighting": "Naturelle",
+        },
+    ]
+
+    if category == "apparel":
+        extra = [
+            {
+                "shot": "Sur modèle (face)",
+                "purpose": "Fit + style",
+                "composition": "Plan buste, fond uni",
+                "background": "Uni (blanc, gris, beige)",
+                "color_tone": "Neutre",
+                "lighting": "Diffuse, peau naturelle",
+            },
+            {
+                "shot": "Sur modèle (dos)",
+                "purpose": "Coupe complète",
+                "composition": "Même setup que face",
+                "background": "Uni",
+                "color_tone": "Neutre",
+                "lighting": "Diffuse",
+            },
+            {
+                "shot": "Guide tailles / mesures", 
+                "purpose": "Réduire retours",
+                "composition": "Schéma simple + mesures",
+                "background": "Blanc/clair",
+                "color_tone": "Accents marque",
+                "lighting": "N/A",
+            },
+        ]
+        return base[:3] + extra[:2] + base[3:6] + extra[2:]
+
+    if category in {"beauty", "jewelry"}:
+        extra = [
+            {
+                "shot": "Texture / application (si pertinent)",
+                "purpose": "Compréhension immédiate",
+                "composition": "Macro propre",
+                "background": "Neutre",
+                "color_tone": "Légèrement premium (contraste doux)",
+                "lighting": "Diffuse + highlights contrôlés",
+            },
+            {
+                "shot": "Mood premium (option)",
+                "purpose": "Désir / positionnement",
+                "composition": "Produit + 1 prop max",
+                "background": "Dégradé sombre / pierre / marbre discret",
+                "color_tone": "Froid neutre ou chaud doux",
+                "lighting": "Contraste modéré, reflets maîtrisés",
+            },
+        ]
+        return base[:2] + [extra[1]] + base[2:5] + [extra[0]] + base[5:]
+
+    return base
+
+
+def _build_image_recommendations(title: str, images_count: int, missing_alt: bool, view_to_cart_rate: float | None) -> dict:
+    category = _infer_image_category(title)
+    target = _image_target_count(category)
+    # If pixel says conversion is weak, push for more proof shots.
+    if view_to_cart_rate is not None and view_to_cart_rate < 0.02:
+        target = min(10, max(target, 9))
+
+    shots = _build_image_shot_list(category)
+    priority_shots = shots[: min(len(shots), target)]
+
+    alt_guidance = "" if not missing_alt else (
+        "Ajoutez des alts descriptifs: [type produit] + [matière/couleur] + [usage] + [vue]. Exemple: 'T-shirt coton noir, vue 3/4, logo brodé'."
+    )
+
+    # AI prompt pack: usable in DALL·E / Midjourney / SD.
+    product_label = (title or "Produit").strip()[:80]
+    prompt_pack = []
+    for s in priority_shots[:6]:
+        prompt_pack.append({
+            "shot": s.get("shot"),
+            "prompt": (
+                f"Photo produit e-commerce professionnelle: {product_label}. "
+                f"Type: {s.get('shot')}. Composition: {s.get('composition')}. "
+                f"Fond: {s.get('background')}. Ton couleur: {s.get('color_tone')}. "
+                f"Lumière: {s.get('lighting')}. Ultra réaliste, haute résolution, netteté parfaite, pas de texte, pas de watermark."
+            )
+        })
+
+    style_guidelines = [
+        "Cohérence: même ratio, même lumière et fond sur la série.",
+        "Lisibilité mobile: produit grand, contraste doux, arrière-plan propre.",
+        "Couleurs: base neutre + 1 couleur d’accent max (badge/infographie).",
+        "Arrière-plan: éviter les textures chargées; props limités (0–1) et pertinents.",
+    ]
+    if category in {"jewelry", "beauty"}:
+        style_guidelines.append("Premium: contraste modéré, reflets contrôlés, matériaux nobles (marbre discret / pierre / dégradé).")
+
+    if category == "apparel":
+        style_guidelines.append("Vêtements: inclure face/dos + détail matière + guide taille pour limiter les retours.")
+
+    return {
+        "category": category,
+        "target_total_images": target,
+        "recommended_new_images": max(0, target - int(images_count or 0)),
+        "priority_shots": priority_shots,
+        "style_guidelines": style_guidelines,
+        "alt_text_guidance": alt_guidance,
+        "prompt_pack": prompt_pack,
+        "do_dont": [
+            "DO: fond propre, angles cohérents, détails nets, preuves (tailles, inclus, bénéfices).",
+            "DON'T: texte illisible sur image, filtres lourds, ombres dures, décors encombrés.",
+        ],
+    }
+
 @app.get("/api/shopify/image-risks")
 async def get_shopify_image_risks(request: Request, range: str = "30d", limit: int = 50):
     """🖼️ Analyse rapide des images produits (signaux de conversion visuels).
@@ -3200,6 +3403,12 @@ async def get_shopify_image_risks(request: Request, range: str = "30d", limit: i
                 "add_to_cart": add_to_cart,
                 "view_to_cart_rate": round(view_to_cart, 4) if view_to_cart is not None else None,
                 "score": score,
+                "recommendations": _build_image_recommendations(
+                    title=p.get("title") or "",
+                    images_count=images_count,
+                    missing_alt=bool(missing_alt),
+                    view_to_cart_rate=view_to_cart,
+                ),
             })
 
         items.sort(key=lambda x: (x.get("score", 0), x.get("views", 0)), reverse=True)
@@ -3211,12 +3420,40 @@ async def get_shopify_image_risks(request: Request, range: str = "30d", limit: i
         if not event_counts:
             notes.append("Ajoutez le Shopify Pixel pour enrichir les signaux vues/panier.")
 
+        playbook = {
+            "recommended_min_images": 6,
+            "recommended_ideal_images": 8,
+            "what_to_produce": [
+                "1 hero packshot (fond clair)",
+                "1 angle 3/4",
+                "2 détails macro",
+                "1 lifestyle propre",
+                "1 preuve (taille/usage/bénéfice)",
+                "1 packaging / inclus",
+            ],
+            "background_guidelines": [
+                "Base: blanc/gris très clair pour la cohérence e-commerce.",
+                "Option premium: dégradé sombre ou surface noble (marbre discret) pour 1–2 images max.",
+                "Éviter: décors chargés, textures fortes, arrière-plans colorés agressifs.",
+            ],
+            "color_guidelines": [
+                "Couleurs fidèles au produit (balance des blancs cohérente).",
+                "Accents: 1–2 couleurs de marque max (icônes/infographie), pas de rainbow.",
+            ],
+            "workflow": [
+                "Étape 1: produire les 3 images de base (hero + angle + détail).",
+                "Étape 2: ajouter preuve + lifestyle + packaging.",
+                "Étape 3: optimiser alts + ordre des images (hero → preuve → détails → lifestyle).",
+            ],
+        }
+
         return {
             "success": True,
             "shop": shop_domain,
             "range": range,
             "image_risks": items,
             "notes": notes,
+            "playbook": playbook,
         }
     except HTTPException:
         raise

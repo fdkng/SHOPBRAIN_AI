@@ -1793,7 +1793,8 @@ export default function Dashboard() {
           setInsightsData({
             success: true,
             image_risks: Array.isArray(data?.image_risks) ? data.image_risks : [],
-            notes: Array.isArray(data?.notes) ? data.notes : []
+            notes: Array.isArray(data?.notes) ? data.notes : [],
+            playbook: data?.playbook || null
           })
           setStatus(actionKey, 'success', 'Analyse terminée.')
         } catch (err) {
@@ -2419,7 +2420,7 @@ export default function Dashboard() {
               { key: 'action-blockers', label: 'Produits freins' },
               { key: 'action-rewrite', label: 'Réécriture intelligente' },
               { key: 'action-price', label: 'Optimisation prix' },
-              { key: 'action-images', label: 'Audit images' },
+              { key: 'action-images', label: 'Assistance images' },
               { key: 'action-bundles', label: 'Bundles & cross-sell' },
               { key: 'action-stock', label: 'Prévision ruptures' },
               { key: 'action-returns', label: 'Anti-retours / chargebacks' },
@@ -3335,8 +3336,8 @@ export default function Dashboard() {
         {activeTab === 'action-images' && (
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 space-y-6">
             <div>
-              <h2 className="text-white text-xl font-bold mb-2">Audit images</h2>
-              <p className="text-gray-400">Détecte les fiches avec images insuffisantes, alt manquant, et signaux vue→panier faibles (si Pixel).</p>
+              <h2 className="text-white text-xl font-bold mb-2">Assistance images</h2>
+              <p className="text-gray-400">Recommandations détaillées: nombre d’images cible, types d’images à produire, style (fond, ton couleur, background) et prompts.</p>
             </div>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <p className="text-sm text-gray-400">{getInsightCount(insightsData?.image_risks)} produits analysés</p>
@@ -3356,6 +3357,21 @@ export default function Dashboard() {
                 ))}
               </div>
             ) : null}
+
+            {insightsData?.playbook ? (
+              <div className="bg-gray-900/60 border border-gray-700 rounded-lg p-4 space-y-3">
+                <div className="text-white font-semibold">Playbook visuel (standard pro)</div>
+                <div className="text-xs text-gray-400">Minimum recommandé: {insightsData.playbook.recommended_min_images} images • Idéal: {insightsData.playbook.recommended_ideal_images} images</div>
+                {Array.isArray(insightsData.playbook.what_to_produce) ? (
+                  <div className="text-xs text-gray-400 space-y-1">
+                    {insightsData.playbook.what_to_produce.slice(0, 6).map((line, idx) => (
+                      <div key={idx}>• {line}</div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
             <div className="space-y-3">
               {!insightsLoading && (!insightsData?.image_risks || insightsData.image_risks.length === 0) ? (
                 <p className="text-sm text-gray-500">Aucun signal détecté.</p>
@@ -3367,6 +3383,44 @@ export default function Dashboard() {
                       {item.images_count} images{item.missing_alt ? ' • alt manquant' : ''}
                       {item.view_to_cart_rate !== null && item.view_to_cart_rate !== undefined ? ` • v→panier ${Math.round(item.view_to_cart_rate * 100)}%` : ''}
                     </p>
+
+                    {item?.recommendations ? (
+                      <div className="mt-3 space-y-2">
+                        <div className="text-xs text-gray-300">
+                          Cible: <span className="text-white font-semibold">{item.recommendations.target_total_images}</span> images
+                          {Number.isFinite(Number(item.recommendations.recommended_new_images)) && item.recommendations.recommended_new_images > 0
+                            ? <span className="text-gray-400"> • à produire: {item.recommendations.recommended_new_images}</span>
+                            : <span className="text-gray-400"> • OK sur la quantité</span>
+                          }
+                        </div>
+
+                        {Array.isArray(item.recommendations.priority_shots) && item.recommendations.priority_shots.length > 0 ? (
+                          <div className="text-xs text-gray-400 space-y-1">
+                            <div className="text-gray-300 font-semibold">Shots à produire (priorité)</div>
+                            {item.recommendations.priority_shots.slice(0, 5).map((s, idx) => (
+                              <div key={idx}>• <span className="text-white">{s.shot}</span> — {s.purpose} (fond: {s.background})</div>
+                            ))}
+                          </div>
+                        ) : null}
+
+                        {Array.isArray(item.recommendations.style_guidelines) && item.recommendations.style_guidelines.length > 0 ? (
+                          <div className="text-xs text-gray-500 space-y-1">
+                            {item.recommendations.style_guidelines.slice(0, 3).map((line, idx) => (
+                              <div key={idx}>• {line}</div>
+                            ))}
+                          </div>
+                        ) : null}
+
+                        {Array.isArray(item.recommendations.prompt_pack) && item.recommendations.prompt_pack.length > 0 ? (
+                          <div className="text-xs text-gray-500">
+                            <div className="text-gray-300 font-semibold mb-1">Prompt (génération d’images)</div>
+                            <div className="bg-black/30 border border-gray-700 rounded p-2 font-mono whitespace-pre-wrap break-words">
+                              {item.recommendations.prompt_pack[0]?.prompt}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                 ))
               )}
