@@ -4173,6 +4173,11 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50):
         shop_domain = connection.data[0]["shop_domain"]
         access_token = connection.data[0]["access_token"]
 
+        headers = {
+            "X-Shopify-Access-Token": access_token,
+            "Content-Type": "application/json",
+        }
+
         # Also fetch shop currency so UI formats correctly and SERP uses matching currency.
         shop_currency = None
         try:
@@ -4186,11 +4191,11 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50):
         except Exception:
             shop_currency = None
 
-        products_url = f"https://{shop_domain}/admin/api/2024-10/products.json?limit=250"
-        headers = {
-            "X-Shopify-Access-Token": access_token,
-            "Content-Type": "application/json",
-        }
+        # Fetch only the fields we need to keep the payload small and reliable.
+        products_url = (
+            f"https://{shop_domain}/admin/api/2024-10/products.json"
+            f"?limit=250&fields=id,title,body_html,vendor,product_type,variants"
+        )
         resp = requests.get(products_url, headers=headers, timeout=25)
         if resp.status_code == 401:
             raise HTTPException(status_code=401, detail="Token Shopify expiré ou invalide. Reconnectez-vous.")
@@ -4198,18 +4203,27 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50):
             raise HTTPException(status_code=resp.status_code, detail=f"Erreur Shopify: {resp.text[:300]}")
 
         products = (resp.json() or {}).get("products", [])
+        market_status = _get_market_comparison_status()
+
         if not products:
             return {
                 "success": True,
+                "tier": tier,
                 "products_analyzed": 0,
                 "price_opportunities": [],
+                "market_comparison": market_status,
+                "currency_code": shop_currency,
             }
 
-        effective_limit = max(1, int(limit))
+        effective_limit = max(1, min(int(limit), 250))
 
         # Build minimal items for the UI.
         candidates = []
-        for p in products[:effective_limit]:
+        # NOTE: We scan up to 250 products to fill enough priced candidates. Some catalogs
+        # start with draft/archived/free items; slicing the first N can yield 0 results.
+        for p in products:
+            if len(candidates) >= effective_limit:
+                break
             variants = p.get("variants") or []
             if not variants:
                 continue
@@ -4373,7 +4387,7 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50):
                 "tier": tier,
                 "products_analyzed": len(subset),
                 "price_opportunities": opportunities,
-                "market_comparison": _get_market_comparison_status(),
+                "market_comparison": market_status,
                 "currency_code": shop_currency,
                 **({"note": note} if note else {}),
             }
@@ -4400,9 +4414,9 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50):
         return {
             "success": True,
             "tier": tier,
-            "products_analyzed": min(len(candidates), effective_limit),
+            "products_analyzed": len(candidates),
             "price_opportunities": opportunities,
-            "market_comparison": _get_market_comparison_status(),
+            "market_comparison": market_status,
             "currency_code": shop_currency,
         }
 
