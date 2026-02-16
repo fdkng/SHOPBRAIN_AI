@@ -71,6 +71,8 @@ export default function Dashboard() {
   })
   const [chatInput, setChatInput] = useState('')
   const [chatLoading, setChatLoading] = useState(false)
+
+  const blockersRequestIdRef = useRef(0)
   
   // Settings form states
   const [profileFirstName, setProfileFirstName] = useState(profile?.first_name || '')
@@ -265,6 +267,15 @@ export default function Dashboard() {
       ...prev,
       [key]: { type, message, ts: Date.now() }
     }))
+  }
+
+  const clearStatus = (key) => {
+    setStatusByKey((prev) => {
+      if (!prev || !prev[key]) return prev
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
   }
 
   const formatErrorDetail = (detail, fallback = 'Erreur') => {
@@ -1563,6 +1574,7 @@ export default function Dashboard() {
   }, [])
 
   const loadBlockers = async (rangeOverride) => {
+    const requestId = (blockersRequestIdRef.current += 1)
     try {
       const rangeValue = rangeOverride || analyticsRange
       setBlockersLoading(true)
@@ -1595,15 +1607,22 @@ export default function Dashboard() {
       }
 
       if (data.success) {
+        if (requestId !== blockersRequestIdRef.current) return
         setBlockersData(data)
+        clearStatus('blockers')
       } else {
         setStatus('blockers', 'error', 'Analyse indisponible')
       }
     } catch (err) {
       console.error('Error loading blockers:', err)
-      setStatus('blockers', 'error', formatUserFacingError(err, 'Erreur analyse'))
+      if (requestId !== blockersRequestIdRef.current) return
+      const hasData = Array.isArray(blockersData?.blockers) && blockersData.blockers.length > 0
+      const message = formatUserFacingError(err, 'Erreur analyse')
+      setStatus('blockers', hasData ? 'warning' : 'error', message)
     } finally {
-      setBlockersLoading(false)
+      if (requestId === blockersRequestIdRef.current) {
+        setBlockersLoading(false)
+      }
     }
   }
 
