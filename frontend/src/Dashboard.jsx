@@ -108,6 +108,10 @@ export default function Dashboard() {
   const [insightsError, setInsightsError] = useState('')
   const [backendHealth, setBackendHealth] = useState(null)
   const [backendHealthTs, setBackendHealthTs] = useState(0)
+  const [shopCurrency, setShopCurrency] = useState(() => {
+    if (typeof window === 'undefined') return ''
+    return localStorage.getItem('shopCurrencyCache') || ''
+  })
   const [rewriteProductId, setRewriteProductId] = useState('')
   const [blockersData, setBlockersData] = useState(null)
   const [blockersLoading, setBlockersLoading] = useState(false)
@@ -129,15 +133,46 @@ export default function Dashboard() {
     return date.toLocaleDateString('fr-FR')
   }
 
-  const formatCurrency = (value, currency = 'EUR') => {
+  const currencyLocale = (currency) => {
+    const code = String(currency || '').toUpperCase()
+    if (code === 'CAD') return 'fr-CA'
+    if (code === 'USD') return 'fr-CA'
+    return 'fr-FR'
+  }
+
+  const formatCurrency = (value, currency) => {
     if (value === null || value === undefined || Number.isNaN(Number(value))) return '—'
+    const effectiveCurrency = currency || shopCurrency || 'CAD'
     try {
-      return new Intl.NumberFormat('fr-FR', {
+      return new Intl.NumberFormat(currencyLocale(effectiveCurrency), {
         style: 'currency',
-        currency
+        currency: effectiveCurrency
       }).format(Number(value))
     } catch {
-      return `${value} ${currency}`
+      return `${value} ${effectiveCurrency}`
+    }
+  }
+
+  const loadShopCurrency = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+      const resp = await fetch(`${API_URL}/api/shopify/shop`, {
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`
+        }
+      })
+      if (!resp.ok) return
+      const data = await resp.json()
+      const currency = String(data?.currency_code || '').toUpperCase()
+      if (currency) {
+        setShopCurrency(currency)
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('shopCurrencyCache', currency)
+        }
+      }
+    } catch (e) {
+      // best-effort only
     }
   }
 
@@ -619,6 +654,18 @@ export default function Dashboard() {
       localStorage.setItem('subscriptionCache', JSON.stringify(subscription))
     }
   }, [subscription])
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && shopCurrency) {
+      localStorage.setItem('shopCurrencyCache', shopCurrency)
+    }
+  }, [shopCurrency])
+
+  useEffect(() => {
+    if (shopifyConnected) {
+      loadShopCurrency()
+    }
+  }, [shopifyConnected])
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
@@ -3171,8 +3218,8 @@ export default function Dashboard() {
                         <p className="text-xs text-gray-500">{item.suggestion || 'Ajuster le prix'}</p>
                         {(item.current_price !== undefined && item.current_price !== null) ? (
                           <p className="text-xs text-gray-400 mt-1">
-                            Prix actuel: {formatCurrency(item.current_price)}
-                            {item.suggested_price !== undefined && item.suggested_price !== null ? ` • Prix suggéré: ${formatCurrency(item.suggested_price)}` : ''}
+                            Prix actuel: {formatCurrency(item.current_price, item.currency_code)}
+                            {item.suggested_price !== undefined && item.suggested_price !== null ? ` • Prix suggéré: ${formatCurrency(item.suggested_price, item.currency_code)}` : ''}
                           </p>
                         ) : null}
                         {Number.isFinite(Number(item.target_delta_pct)) ? (

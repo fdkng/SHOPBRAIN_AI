@@ -88,6 +88,9 @@ SERP_MAX_PRODUCTS = int(os.getenv("SERP_MAX_PRODUCTS", "8"))
 # Small in-memory cache to reduce SERP API calls
 _SERP_CACHE: dict[str, tuple[float, dict]] = {}
 
+# Small in-memory cache to reduce Shopify shop.json calls
+_SHOP_CACHE: dict[str, tuple[float, dict]] = {}
+
 
 def _cache_get_serp(key: str, ttl_s: int = 3600) -> dict | None:
     try:
@@ -104,6 +107,101 @@ def _cache_set_serp(key: str, value: dict):
         _SERP_CACHE[key] = (time.time(), value)
     except Exception:
         pass
+
+
+def _cache_get_shop(key: str, ttl_s: int = 3600) -> dict | None:
+    try:
+        ts, value = _SHOP_CACHE.get(key, (0.0, None))
+        if value is not None and (time.time() - ts) < ttl_s:
+            return value
+    except Exception:
+        return None
+    return None
+
+
+def _cache_set_shop(key: str, value: dict):
+    try:
+        _SHOP_CACHE[key] = (time.time(), value)
+    except Exception:
+        pass
+
+
+def _strip_html(raw: str) -> str:
+    if not raw:
+        return ""
+    text = re.sub(r"<[^>]+>", " ", str(raw))
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _keywords_from_text(text: str, max_words: int = 12) -> str:
+    if not text:
+        return ""
+    words = re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ0-9]{3,}", text.lower())
+    if not words:
+        return ""
+    stop = {
+        "avec", "sans", "pour", "dans", "vous", "votre", "vos", "notre", "nos", "leur", "leurs",
+        "plus", "moins", "très", "tres", "comme", "sur", "sous", "entre", "afin", "chez",
+        "this", "that", "with", "without", "from", "your", "ours", "their", "the", "and",
+    }
+    out = []
+    seen = set()
+    for w in words:
+        if w in stop:
+            continue
+        if w in seen:
+            continue
+        seen.add(w)
+        out.append(w)
+        if len(out) >= max_words:
+            break
+    return " ".join(out)
+
+
+def _gl_for_currency(currency_code: str | None) -> str:
+    code = (currency_code or "").upper().strip()
+    if code == "CAD":
+        return "ca"
+    if code == "USD":
+        return "us"
+    if code == "EUR":
+        return "fr"
+    return "ca"
+
+
+def _currency_label(currency_code: str | None) -> str:
+    code = (currency_code or "").upper().strip()
+    if code == "CAD":
+        return "dollars canadiens (CAD)"
+    if code == "USD":
+        return "dollars US (USD)"
+    if code == "EUR":
+        return "euros (EUR)"
+    return f"{code or 'devise inconnue'}"
+
+
+def _parse_price_and_currency(raw: str) -> tuple[float | None, str | None]:
+    if raw is None:
+        return (None, None)
+    text = str(raw)
+    upper = text.upper()
+
+    currency = None
+    if "CA$" in upper or "CAD" in upper or "C$" in upper:
+        currency = "CAD"
+    elif "US$" in upper or "USD" in upper:
+        currency = "USD"
+    elif "€" in text or " EUR" in upper:
+        currency = "EUR"
+    elif "£" in text or " GBP" in upper:
+        currency = "GBP"
+    elif "$" in text:
+        # Ambiguous dollar sign: default to USD unless we later constrain by requested currency.
+        currency = "USD"
+
+    value = _parse_price_value(text)
+    return (value, currency)
 
 
 def _parse_price_value(raw: str) -> float | None:
@@ -132,15 +230,15 @@ def _parse_price_value(raw: str) -> float | None:
         return None
 
 
-def _serpapi_price_snapshot(query: str, gl: str = "fr", hl: str = "fr") -> dict:
+def _serpapi_price_snapshot(query: str, gl: str = "ca", hl: str = "fr", currency_code: str | None = None) -> dict:
     """Fetch competitor prices via SerpApi (Google Shopping engine).
 
-    Returns: {count, min, median, max, refs:[{title,source,price,link}]}
+    Returns: {count, min, median, max, refs:[{title,source,price,link,currency_code}], currency_code}
     """
     if not SERPAPI_KEY:
         return {"count": 0, "refs": []}
 
-    cache_key = f"{gl}:{hl}:{query}".strip().lower()
+    cache_key = f"{gl}:{hl}:{(currency_code or '').upper()}:{query}".strip().lower()
     cached = _cache_get_serp(cache_key)
     if cached is not None:
         return cached
@@ -170,18 +268,31 @@ def _serpapi_price_snapshot(query: str, gl: str = "fr", hl: str = "fr") -> dict:
     results = payload.get("shopping_results") or []
     refs = []
     prices = []
+    wanted = (currency_code or "").upper().strip() or None
+    seen_currencies = set()
     for item in results[:10]:
         title = item.get("title") or item.get("name") or ""
         source = item.get("source") or item.get("merchant") or ""
         link = item.get("link") or item.get("product_link") or item.get("thumbnail")
         price_raw = item.get("price") or item.get("extracted_price")
         price = None
+        curr = None
         if isinstance(price_raw, (int, float)):
             price = float(price_raw)
         else:
-            price = _parse_price_value(price_raw)
+            price, curr = _parse_price_and_currency(price_raw)
+
+        if curr:
+            seen_currencies.add(curr)
 
         if price is None:
+            continue
+
+        # If we know the shop currency, only keep offers in the same currency.
+        if wanted and curr and curr != wanted:
+            continue
+        if wanted and curr is None:
+            # Unknown currency string: skip to avoid mixing.
             continue
 
         prices.append(price)
@@ -189,6 +300,7 @@ def _serpapi_price_snapshot(query: str, gl: str = "fr", hl: str = "fr") -> dict:
             "title": title[:140],
             "source": source[:60],
             "price": round(price, 2),
+            "currency_code": curr or wanted,
             "link": link,
         })
 
@@ -202,12 +314,61 @@ def _serpapi_price_snapshot(query: str, gl: str = "fr", hl: str = "fr") -> dict:
             "median": round(median, 2),
             "max": round(prices[-1], 2),
             "refs": refs[:5],
+            "currency_code": wanted,
         }
     else:
-        snapshot = {"count": 0, "refs": []}
+        snapshot = {
+            "count": 0,
+            "refs": [],
+            "currency_code": wanted,
+            **({"seen_currencies": sorted(list(seen_currencies))} if seen_currencies else {}),
+        }
 
     _cache_set_serp(cache_key, snapshot)
     return snapshot
+
+
+def _market_reason_text(
+    *,
+    action: str,
+    current_price: float,
+    suggested_price: float,
+    snapshot: dict,
+    currency_code: str | None,
+) -> str:
+    count = int(snapshot.get("count") or 0)
+    curr_label = _currency_label(currency_code)
+
+    if count < 3:
+        seen = snapshot.get("seen_currencies")
+        if isinstance(seen, list) and seen and currency_code and currency_code.upper() not in seen:
+            return (
+                f"Je n’ai pas trouvé assez d’offres comparables dans la même devise ({curr_label}). "
+                "Je garde donc le prix pour éviter une recommandation hasardeuse."
+            )
+        return (
+            "Je n’ai pas trouvé assez d’offres comparables fiables (moins de 3). "
+            "Je garde donc le prix pour éviter une recommandation hasardeuse."
+        )
+
+    median = snapshot.get("median")
+    if not isinstance(median, (int, float)) or median <= 0:
+        return "Les résultats marché ne contiennent pas de prix exploitable; je garde le prix actuel."
+
+    if action == "keep":
+        return (
+            f"Sur {count} offres similaires ({curr_label}), ton prix est déjà dans la zone du marché. "
+            "Aucun changement recommandé."
+        )
+    if action == "increase":
+        return (
+            f"Sur {count} offres similaires ({curr_label}), ton prix est plutôt en dessous du niveau du marché. "
+            f"Je recommande d’augmenter vers {round(float(suggested_price), 2)} pour mieux s’aligner."
+        )
+    return (
+        f"Sur {count} offres similaires ({curr_label}), ton prix est plutôt au-dessus du niveau du marché. "
+        f"Je recommande de baisser vers {round(float(suggested_price), 2)} pour mieux s’aligner."
+    )
 
 
 def _market_price_decision(current_price: float, snapshot: dict) -> dict:
@@ -1410,6 +1571,53 @@ async def keep_shopify_connection(request: Request):
         return {"success": True, "connected": True, "shop": shop_domain}
     except requests.exceptions.Timeout:
         return {"success": True, "connected": True, "shop": shop_domain, "note": "timeout"}
+
+
+@app.get("/api/shopify/shop")
+async def get_shopify_shop(request: Request):
+    """Retourne les infos de boutique nécessaires au frontend (ex: devise).
+
+    Ne renvoie jamais le token.
+    """
+    user_id = get_user_id(request)
+    shop_domain, access_token = _get_shopify_connection(user_id)
+
+    cache_key = f"{user_id}:{shop_domain}".lower()
+    cached = _cache_get_shop(cache_key, ttl_s=3600)
+    if cached is not None:
+        return {"success": True, **cached, "cached": True}
+
+    headers = {
+        "X-Shopify-Access-Token": access_token,
+        "Content-Type": "application/json",
+    }
+
+    try:
+        response = requests.get(
+            f"https://{shop_domain}/admin/api/2024-10/shop.json",
+            headers=headers,
+            timeout=20,
+        )
+        if response.status_code == 401:
+            raise HTTPException(status_code=401, detail="Token Shopify expiré ou invalide. Reconnectez-vous.")
+        if response.status_code != 200:
+            raise HTTPException(status_code=response.status_code, detail=f"Erreur Shopify: {response.text[:200]}")
+
+        shop = (response.json() or {}).get("shop") or {}
+        payload = {
+            "shop_domain": shop_domain,
+            "name": shop.get("name"),
+            "currency_code": shop.get("currency"),
+            "money_format": shop.get("money_format"),
+            "money_with_currency_format": shop.get("money_with_currency_format"),
+            "timezone": shop.get("timezone"),
+        }
+        _cache_set_shop(cache_key, payload)
+        return {"success": True, **payload, "cached": False}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/shopify/test-connection")
@@ -3892,6 +4100,19 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50):
         shop_domain = connection.data[0]["shop_domain"]
         access_token = connection.data[0]["access_token"]
 
+        # Also fetch shop currency so UI formats correctly and SERP uses matching currency.
+        shop_currency = None
+        try:
+            shop_resp = requests.get(
+                f"https://{shop_domain}/admin/api/2024-10/shop.json",
+                headers=headers,
+                timeout=20,
+            )
+            if shop_resp.status_code == 200:
+                shop_currency = ((shop_resp.json() or {}).get("shop") or {}).get("currency")
+        except Exception:
+            shop_currency = None
+
         products_url = f"https://{shop_domain}/admin/api/2024-10/products.json?limit=250"
         headers = {
             "X-Shopify-Access-Token": access_token,
@@ -3925,12 +4146,16 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50):
                 current_price = 0.0
             if current_price <= 0:
                 continue
+
+            desc = _strip_html(p.get("body_html") or "")
+            desc_kw = _keywords_from_text(desc, max_words=10)
             candidates.append(
                 {
                     "product_id": str(p.get("id") or ""),
                     "title": p.get("title") or "Produit",
                     "vendor": p.get("vendor") or "",
                     "product_type": p.get("product_type") or "",
+                    "desc_kw": desc_kw,
                     "current_price": round(current_price, 2),
                 }
             )
@@ -3948,6 +4173,8 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50):
                     parts.append(str(item.get("vendor")).strip())
                 if item.get("product_type"):
                     parts.append(str(item.get("product_type")).strip())
+                if item.get("desc_kw"):
+                    parts.append(str(item.get("desc_kw")).strip())
                 return " ".join([p for p in parts if p])
 
             # Small parallelization to reduce overall latency.
@@ -3957,7 +4184,8 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50):
             with ThreadPoolExecutor(max_workers=4) as ex:
                 for item in subset:
                     q = _query_for(item)
-                    futures[ex.submit(_serpapi_price_snapshot, q, "fr", "fr")] = (item, q)
+                    gl = _gl_for_currency(shop_currency)
+                    futures[ex.submit(_serpapi_price_snapshot, q, gl, "fr", shop_currency)] = (item, q)
 
                 for fut in as_completed(futures):
                     item, q = futures[fut]
@@ -3968,37 +4196,26 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50):
                     suggested = float(decision.get("suggested_price", item["current_price"]))
                     delta_pct = float(decision.get("delta_pct", 0.0))
 
-                    median = snapshot.get("median")
-                    min_p = snapshot.get("min")
-                    max_p = snapshot.get("max")
-
+                    # Not enough market signals -> don't force a change.
                     if snapshot.get("count", 0) < 3:
-                        # Not enough market signals -> don't force a change.
                         action = "keep"
                         suggested = float(item["current_price"])
                         delta_pct = 0.0
 
                     if action == "keep":
                         suggestion = "Prix aligné au marché"
-                        reason = (
-                            f"Comparaison marché (SERP) sur produits similaires: {snapshot.get('count', 0)} offres. "
-                            f"Range ≈ {min_p}–{max_p} (médiane {median}). "
-                            f"Prix actuel {item['current_price']} ≈ médiane (±{MARKET_TOLERANCE_PCT}%)."
-                        )
                     elif action == "increase":
                         suggestion = "Prix trop bas vs marché"
-                        reason = (
-                            f"Comparaison marché (SERP) sur produits similaires: {snapshot.get('count', 0)} offres. "
-                            f"Range ≈ {min_p}–{max_p} (médiane {median}). "
-                            f"Ton prix {item['current_price']} est sous la médiane → suggéré {round(suggested,2)} (+{abs(delta_pct)}%)."
-                        )
                     else:
                         suggestion = "Prix trop haut vs marché"
-                        reason = (
-                            f"Comparaison marché (SERP) sur produits similaires: {snapshot.get('count', 0)} offres. "
-                            f"Range ≈ {min_p}–{max_p} (médiane {median}). "
-                            f"Ton prix {item['current_price']} est au-dessus de la médiane → suggéré {round(suggested,2)} (-{abs(delta_pct)}%)."
-                        )
+
+                    reason = _market_reason_text(
+                        action=action,
+                        current_price=float(item["current_price"]),
+                        suggested_price=float(suggested),
+                        snapshot=snapshot,
+                        currency_code=shop_currency,
+                    )
 
                     opportunities.append(
                         {
@@ -4013,6 +4230,7 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50):
                             "market_snapshot": snapshot,
                             "market_query": q,
                             "source": "serpapi",
+                            "currency_code": shop_currency,
                         }
                     )
 
@@ -4027,6 +4245,7 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50):
                 "products_analyzed": len(subset),
                 "price_opportunities": opportunities,
                 "market_comparison": _get_market_comparison_status(),
+                "currency_code": shop_currency,
                 **({"note": note} if note else {}),
             }
 
@@ -4045,6 +4264,7 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50):
                     "target_delta_pct": target_delta_pct,
                     "reason": "SERP API non configurée: suggestion heuristique (+25%).",
                     "source": "heuristic",
+                    "currency_code": shop_currency,
                 }
             )
 
@@ -4054,6 +4274,7 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50):
             "products_analyzed": min(len(candidates), effective_limit),
             "price_opportunities": opportunities,
             "market_comparison": _get_market_comparison_status(),
+            "currency_code": shop_currency,
         }
 
     except HTTPException:
@@ -4093,7 +4314,8 @@ async def analyze_store_endpoint(req: AnalyzeStoreRequest, request: Request):
                     if not title:
                         continue
 
-                    snapshot = _serpapi_price_snapshot(title, gl="fr", hl="fr")
+                    # Best-effort: default to Canada context; if frontend passes currency later, it will be used.
+                    snapshot = _serpapi_price_snapshot(title, gl="ca", hl="fr", currency_code="CAD")
                     if snapshot.get("count", 0) < 3:
                         continue
 
@@ -4117,29 +4339,31 @@ async def analyze_store_endpoint(req: AnalyzeStoreRequest, request: Request):
                     opt["suggested_price"] = suggested
                     opt["increase"] = round(float(suggested) - float(current_price), 2)
 
-                    median = snapshot.get("median")
-                    min_p = snapshot.get("min")
-                    max_p = snapshot.get("max")
-
                     if action == "keep":
-                        opt["reason"] = (
-                            f"Comparaison marché (SERP): {snapshot.get('count')} offres trouvées. "
-                            f"Prix observés ≈ {min_p}–{max_p} (médiane {median}). "
-                            f"Ton prix ({current_price}) est déjà aligné (±{MARKET_TOLERANCE_PCT}%)."
+                        opt["reason"] = _market_reason_text(
+                            action="keep",
+                            current_price=current_price,
+                            suggested_price=float(suggested),
+                            snapshot=snapshot,
+                            currency_code="CAD",
                         )
                         opt["expected_impact"] = "Prix jugé correct vs produits similaires: pas de changement recommandé."
                     elif action == "increase":
-                        opt["reason"] = (
-                            f"Comparaison marché (SERP): {snapshot.get('count')} offres trouvées. "
-                            f"Prix observés ≈ {min_p}–{max_p} (médiane {median}). "
-                            f"Ton prix ({current_price}) est inférieur au marché → suggéré {suggested} (+{abs(delta_pct)}%)."
+                        opt["reason"] = _market_reason_text(
+                            action="increase",
+                            current_price=current_price,
+                            suggested_price=float(suggested),
+                            snapshot=snapshot,
+                            currency_code="CAD",
                         )
                         opt["expected_impact"] = "Augmenter pour se rapprocher du marché et améliorer la marge, à valider avec vos conversions."
                     else:
-                        opt["reason"] = (
-                            f"Comparaison marché (SERP): {snapshot.get('count')} offres trouvées. "
-                            f"Prix observés ≈ {min_p}–{max_p} (médiane {median}). "
-                            f"Ton prix ({current_price}) est supérieur au marché → suggéré {suggested} (-{abs(delta_pct)}%)."
+                        opt["reason"] = _market_reason_text(
+                            action="decrease",
+                            current_price=current_price,
+                            suggested_price=float(suggested),
+                            snapshot=snapshot,
+                            currency_code="CAD",
                         )
                         opt["expected_impact"] = "Baisser pour se rapprocher du marché et réduire le risque de perte de conversion."
             except Exception as e:
