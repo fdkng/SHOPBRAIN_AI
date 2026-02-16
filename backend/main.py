@@ -197,8 +197,8 @@ def _parse_price_and_currency(raw: str) -> tuple[float | None, str | None]:
     elif "£" in text or " GBP" in upper:
         currency = "GBP"
     elif "$" in text:
-        # Ambiguous dollar sign: default to USD unless we later constrain by requested currency.
-        currency = "USD"
+        # Dollar sign is ambiguous across countries; keep as unknown and let caller assume based on context.
+        currency = None
 
     value = _parse_price_value(text)
     return (value, currency)
@@ -233,7 +233,7 @@ def _parse_price_value(raw: str) -> float | None:
 def _serpapi_price_snapshot(query: str, gl: str = "ca", hl: str = "fr", currency_code: str | None = None) -> dict:
     """Fetch competitor prices via SerpApi (Google Shopping engine).
 
-    Returns: {count, min, median, max, refs:[{title,source,price,link,currency_code}], currency_code}
+    Returns: {count, min, median, max, refs:[{title,source,price,link,currency_code}], currency_code, prices}
     """
     if not SERPAPI_KEY:
         return {"count": 0, "refs": []}
@@ -265,7 +265,7 @@ def _serpapi_price_snapshot(query: str, gl: str = "ca", hl: str = "fr", currency
         _cache_set_serp(cache_key, snapshot)
         return snapshot
 
-    results = payload.get("shopping_results") or []
+    results = payload.get("shopping_results") or payload.get("inline_shopping_results") or []
     refs = []
     prices = []
     wanted = (currency_code or "").upper().strip() or None
@@ -288,12 +288,12 @@ def _serpapi_price_snapshot(query: str, gl: str = "ca", hl: str = "fr", currency
         if price is None:
             continue
 
-        # If we know the shop currency, only keep offers in the same currency.
+        # If we know the shop currency, keep only offers in the same currency.
+        # If currency is unknown (common for "$"), assume it matches the shop currency.
         if wanted and curr and curr != wanted:
             continue
         if wanted and curr is None:
-            # Unknown currency string: skip to avoid mixing.
-            continue
+            curr = wanted
 
         prices.append(price)
         refs.append({
@@ -315,12 +315,15 @@ def _serpapi_price_snapshot(query: str, gl: str = "ca", hl: str = "fr", currency
             "max": round(prices[-1], 2),
             "refs": refs[:5],
             "currency_code": wanted,
+            # keep a small list for possible merging/fallback queries
+            "prices": [round(p, 2) for p in prices[:20]],
         }
     else:
         snapshot = {
             "count": 0,
             "refs": [],
             "currency_code": wanted,
+            "prices": [],
             **({"seen_currencies": sorted(list(seen_currencies))} if seen_currencies else {}),
         }
 
@@ -369,6 +372,43 @@ def _market_reason_text(
         f"Sur {count} offres similaires ({curr_label}), ton prix est plutôt au-dessus du niveau du marché. "
         f"Je recommande de baisser vers {round(float(suggested_price), 2)} pour mieux s’aligner."
     )
+
+
+def _merge_snapshots(primary: dict, secondary: dict) -> dict:
+    """Merge two SERP snapshots (best-effort) using their `prices` lists."""
+    try:
+        p_prices = [float(x) for x in (primary.get("prices") or []) if isinstance(x, (int, float))]
+        s_prices = [float(x) for x in (secondary.get("prices") or []) if isinstance(x, (int, float))]
+        prices = p_prices + s_prices
+        prices = [p for p in prices if p and p > 0]
+        prices.sort()
+
+        refs = []
+        for r in (primary.get("refs") or []) + (secondary.get("refs") or []):
+            if isinstance(r, dict):
+                refs.append(r)
+
+        if not prices:
+            return {
+                "count": 0,
+                "refs": refs[:5],
+                "currency_code": primary.get("currency_code") or secondary.get("currency_code"),
+                "prices": [],
+            }
+
+        mid = len(prices) // 2
+        median = prices[mid] if len(prices) % 2 == 1 else (prices[mid - 1] + prices[mid]) / 2
+        return {
+            "count": len(prices),
+            "min": round(prices[0], 2),
+            "median": round(median, 2),
+            "max": round(prices[-1], 2),
+            "refs": refs[:5],
+            "currency_code": primary.get("currency_code") or secondary.get("currency_code"),
+            "prices": [round(p, 2) for p in prices[:30]],
+        }
+    except Exception:
+        return primary
 
 
 def _market_price_decision(current_price: float, snapshot: dict) -> dict:
@@ -4177,6 +4217,17 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50):
                     parts.append(str(item.get("desc_kw")).strip())
                 return " ".join([p for p in parts if p])
 
+            def _query_fallback(item: dict) -> str:
+                # Broader query to ensure we find many comparable offers.
+                parts = []
+                if item.get("product_type"):
+                    parts.append(str(item.get("product_type")).strip())
+                # Keep only the first chunk of the title to avoid over-specific matches.
+                title = str(item.get("title") or "").strip()
+                if title:
+                    parts.append(" ".join(title.split()[:6]))
+                return " ".join([p for p in parts if p]) or title
+
             # Small parallelization to reduce overall latency.
             from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -4189,7 +4240,19 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50):
 
                 for fut in as_completed(futures):
                     item, q = futures[fut]
-                    snapshot = fut.result() or {"count": 0, "refs": []}
+                    snapshot = fut.result() or {"count": 0, "refs": [], "prices": []}
+
+                    # If too few offers, broaden search with a simplified query.
+                    if int(snapshot.get("count") or 0) < 3:
+                        try:
+                            q2 = _query_fallback(item)
+                            if q2 and q2 != q:
+                                gl = _gl_for_currency(shop_currency)
+                                snap2 = _serpapi_price_snapshot(q2, gl, "fr", shop_currency)
+                                snapshot = _merge_snapshots(snapshot, snap2)
+                                q = f"{q} | {q2}"
+                        except Exception:
+                            pass
 
                     decision = _market_price_decision(float(item["current_price"]), snapshot)
                     action = decision.get("action")
