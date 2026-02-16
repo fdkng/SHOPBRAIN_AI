@@ -1247,6 +1247,7 @@ export default function Dashboard() {
       
       if (data.success && data.products) {
         setProducts(data.products)
+        return data.products
         // Afficher les statistiques
         if (data.statistics) {
           console.log('Stats:', data.statistics)
@@ -1254,11 +1255,13 @@ export default function Dashboard() {
       } else {
         setProducts([])
         setError('Aucun produit trouvé. Connectez votre boutique Shopify d\'abord.')
+        return []
       }
     } catch (err) {
       console.error('Error loading products:', err)
       setError(formatUserFacingError(err, 'Erreur chargement produits'))
       setProducts([])
+      return []
     } finally {
       setLoading(false)
     }
@@ -1554,36 +1557,112 @@ export default function Dashboard() {
           await waitForBackendReady({ retries: 8, retryDelayMs: 2000, timeoutMs: 22000 })
           await warmupBackend(session.access_token)
 
-          const { response, data: payload } = await fetchJsonWithRetry(`${API_URL}/api/ai/price-opportunities?limit=50`, {
-            method: 'GET',
+          // Preferred: lightweight endpoint (if deployed).
+          try {
+            const { response, data: payload } = await fetchJsonWithRetry(`${API_URL}/api/ai/price-opportunities?limit=50`, {
+              method: 'GET',
+              headers: {
+                'Authorization': `Bearer ${session.access_token}`,
+                'Content-Type': 'application/json'
+              }
+            }, {
+              retries: 1,
+              retryDelayMs: 1500,
+              timeoutMs: 45000,
+              retryStatuses: [429, 500, 502, 503, 504]
+            })
+
+            if (response?.ok && payload?.success) {
+              if (Number.isFinite(Number(payload?.products_analyzed))) {
+                setInsightsData((prev) => ({
+                  ...(prev || {}),
+                  products_analyzed: Number(payload.products_analyzed)
+                }))
+              }
+              const items = Array.isArray(payload?.price_opportunities) ? payload.price_opportunities : []
+              return items.slice(0, 10)
+            }
+
+            // If endpoint isn't available yet (404), fall back.
+            if (response?.status !== 404) {
+              const detail = payload?.detail || payload?.error
+              throw new Error(detail || `HTTP ${response?.status || 'ERR'}`)
+            }
+          } catch (err) {
+            // Continue to legacy fallback below.
+            console.warn('Price-opportunities endpoint unavailable, using analyze-store fallback:', err)
+          }
+
+          // Legacy fallback: call analyze-store with a minimized products payload.
+          let localProducts = Array.isArray(products) ? products : []
+          if (localProducts.length === 0) {
+            // Best effort: try to load products first.
+            localProducts = await loadProducts()
+          }
+          if (localProducts.length === 0) return []
+
+          const slimProducts = localProducts.slice(0, 120).map((p) => ({
+            id: p?.id,
+            title: p?.title,
+            status: p?.status,
+            variants: Array.isArray(p?.variants) ? p.variants.slice(0, 1).map((v) => ({ price: v?.price })) : []
+          }))
+
+          const { response: legacyResp, data: legacyPayload } = await fetchJsonWithRetry(`${API_URL}/api/ai/analyze-store`, {
+            method: 'POST',
             headers: {
               'Authorization': `Bearer ${session.access_token}`,
               'Content-Type': 'application/json'
-            }
+            },
+            body: JSON.stringify({
+              products: slimProducts,
+              analytics: { timestamp: new Date().toISOString() },
+              tier: subscription?.plan || 'standard'
+            })
           }, {
-            retries: 2,
-            retryDelayMs: 2000,
+            retries: 1,
+            retryDelayMs: 1500,
             timeoutMs: 60000,
             retryStatuses: [429, 500, 502, 503, 504]
           })
 
-          if (!response?.ok) {
-            const detail = payload?.detail || payload?.error
-            throw new Error(detail || `HTTP ${response?.status || 'ERR'}`)
+          if (!legacyResp?.ok) {
+            const detail = legacyPayload?.detail || legacyPayload?.error
+            throw new Error(detail || `HTTP ${legacyResp?.status || 'ERR'}`)
           }
+          if (!legacyPayload?.success) throw new Error(legacyPayload?.detail || 'Analyse IA indisponible')
 
-          if (!payload?.success) throw new Error(payload?.detail || 'Analyse prix indisponible')
-
-          // Keep metadata for the UI (products analyzed).
-          if (Number.isFinite(Number(payload?.products_analyzed))) {
+          if (Number.isFinite(Number(legacyPayload?.products_analyzed))) {
             setInsightsData((prev) => ({
               ...(prev || {}),
-              products_analyzed: Number(payload.products_analyzed)
+              products_analyzed: Number(legacyPayload.products_analyzed)
             }))
           }
 
-          const items = Array.isArray(payload?.price_opportunities) ? payload.price_opportunities : []
-          return items.slice(0, 10)
+          const optimizations = legacyPayload?.analysis?.pricing_strategy?.optimizations
+          if (!Array.isArray(optimizations) || optimizations.length === 0) return []
+
+          const byTitle = new Map(slimProducts.map((p) => [String(p?.title || '').trim().toLowerCase(), p]))
+          return optimizations.slice(0, 10).map((opt, index) => {
+            const title = String(opt?.product || '').trim()
+            const match = byTitle.get(title.toLowerCase())
+            const currentPrice = Number(opt?.current_price)
+            const suggestedPrice = Number(opt?.suggested_price)
+            const targetDeltaPct = Number.isFinite(currentPrice) && currentPrice > 0 && Number.isFinite(suggestedPrice)
+              ? Number((((suggestedPrice - currentPrice) / currentPrice) * 100).toFixed(2))
+              : null
+
+            return {
+              product_id: match?.id ? String(match.id) : `ai-${index}`,
+              title: title || match?.title || `Produit ${index + 1}`,
+              suggestion: opt?.reason || 'Ajustement recommandé par analyse IA',
+              current_price: Number.isFinite(currentPrice) ? currentPrice : null,
+              suggested_price: Number.isFinite(suggestedPrice) ? suggestedPrice : null,
+              target_delta_pct: Number.isFinite(targetDeltaPct) ? targetDeltaPct : null,
+              reason: opt?.expected_impact || opt?.reason || 'Opportunité détectée par l’IA',
+              source: 'ai_analyze_store'
+            }
+          })
         } catch (err) {
           console.warn('AI price fallback failed:', err)
           return []
