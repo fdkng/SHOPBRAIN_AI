@@ -81,12 +81,138 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
 FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
+SERPAPI_KEY = os.getenv("SERPAPI_KEY") or os.getenv("SERPAPI_API_KEY")
+
+# Small in-memory cache to reduce SERP API calls
+_SERP_CACHE: dict[str, tuple[float, dict]] = {}
+
+
+def _cache_get_serp(key: str, ttl_s: int = 3600) -> dict | None:
+    try:
+        ts, value = _SERP_CACHE.get(key, (0.0, None))
+        if value is not None and (time.time() - ts) < ttl_s:
+            return value
+    except Exception:
+        return None
+    return None
+
+
+def _cache_set_serp(key: str, value: dict):
+    try:
+        _SERP_CACHE[key] = (time.time(), value)
+    except Exception:
+        pass
+
+
+def _parse_price_value(raw: str) -> float | None:
+    if not raw:
+        return None
+    text = str(raw)
+    # Keep digits, dot, comma
+    cleaned = re.sub(r"[^0-9\.,]", "", text)
+    if not cleaned:
+        return None
+    # Heuristic: if both separators exist, assume comma is thousands separator.
+    if "," in cleaned and "." in cleaned:
+        cleaned = cleaned.replace(",", "")
+    else:
+        # Convert comma decimals to dot
+        if cleaned.count(",") == 1 and cleaned.count(".") == 0:
+            cleaned = cleaned.replace(",", ".")
+        # Remove thousands separators like 1.234,56 (already handled) or 1 234
+        if cleaned.count(".") > 1:
+            parts = cleaned.split(".")
+            cleaned = "".join(parts[:-1]) + "." + parts[-1]
+    try:
+        value = float(cleaned)
+        return value if value > 0 else None
+    except Exception:
+        return None
+
+
+def _serpapi_price_snapshot(query: str, gl: str = "fr", hl: str = "fr") -> dict:
+    """Fetch competitor prices via SerpApi (Google Shopping engine).
+
+    Returns: {count, min, median, max, refs:[{title,source,price,link}]}
+    """
+    if not SERPAPI_KEY:
+        return {"count": 0, "refs": []}
+
+    cache_key = f"{gl}:{hl}:{query}".strip().lower()
+    cached = _cache_get_serp(cache_key)
+    if cached is not None:
+        return cached
+
+    params = {
+        "engine": "google_shopping",
+        "q": query,
+        "gl": gl,
+        "hl": hl,
+        "api_key": SERPAPI_KEY,
+        # Keep it small/cost-controlled
+        "num": 10,
+    }
+
+    try:
+        resp = requests.get("https://serpapi.com/search.json", params=params, timeout=20)
+        if resp.status_code != 200:
+            snapshot = {"count": 0, "refs": [], "error": f"HTTP {resp.status_code}"}
+            _cache_set_serp(cache_key, snapshot)
+            return snapshot
+        payload = resp.json() or {}
+    except Exception as e:
+        snapshot = {"count": 0, "refs": [], "error": str(e)}
+        _cache_set_serp(cache_key, snapshot)
+        return snapshot
+
+    results = payload.get("shopping_results") or []
+    refs = []
+    prices = []
+    for item in results[:10]:
+        title = item.get("title") or item.get("name") or ""
+        source = item.get("source") or item.get("merchant") or ""
+        link = item.get("link") or item.get("product_link") or item.get("thumbnail")
+        price_raw = item.get("price") or item.get("extracted_price")
+        price = None
+        if isinstance(price_raw, (int, float)):
+            price = float(price_raw)
+        else:
+            price = _parse_price_value(price_raw)
+
+        if price is None:
+            continue
+
+        prices.append(price)
+        refs.append({
+            "title": title[:140],
+            "source": source[:60],
+            "price": round(price, 2),
+            "link": link,
+        })
+
+    prices.sort()
+    if prices:
+        mid = len(prices) // 2
+        median = prices[mid] if len(prices) % 2 == 1 else (prices[mid - 1] + prices[mid]) / 2
+        snapshot = {
+            "count": len(prices),
+            "min": round(prices[0], 2),
+            "median": round(median, 2),
+            "max": round(prices[-1], 2),
+            "refs": refs[:5],
+        }
+    else:
+        snapshot = {"count": 0, "refs": []}
+
+    _cache_set_serp(cache_key, snapshot)
+    return snapshot
 
 
 def _get_market_comparison_status() -> dict:
     provider_keys = [
         ("MARKET_API_KEY", "market_api"),
         ("SERPAPI_KEY", "serpapi"),
+        ("SERPAPI_API_KEY", "serpapi"),
         ("RAPIDAPI_KEY", "rapidapi"),
         ("GOOGLE_SHOPPING_API_KEY", "google_shopping"),
         ("PRICE_API_KEY", "price_api"),
@@ -97,6 +223,8 @@ def _get_market_comparison_status() -> dict:
 
     for env_key, provider in provider_keys:
         value = os.getenv(env_key)
+        if env_key in ("SERPAPI_KEY", "SERPAPI_API_KEY") and not value:
+            value = SERPAPI_KEY
         if env_key == "OPENAI_API_KEY" and not value:
             # Support sanitized key stored in OPENAI_API_KEY variable.
             value = OPENAI_API_KEY
@@ -427,6 +555,7 @@ async def health():
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
             "openai": "configured" if OPENAI_API_KEY else "not_configured",
+            "serpapi": "configured" if SERPAPI_KEY else "not_configured",
             "stripe": "configured" if STRIPE_SECRET_KEY else "not_configured",
             "supabase": "configured" if SUPABASE_URL else "not_configured"
         }
@@ -3819,12 +3948,57 @@ async def analyze_store_endpoint(req: AnalyzeStoreRequest, request: Request):
         products = req.products[:limit] if limit else req.products
         
         analysis = engine.analyze_store(products, req.analytics, tier)
+
+        # Enrich pricing suggestions with real market comparison via SERP API when available.
+        market_status = _get_market_comparison_status()
+        if market_status.get("enabled") and market_status.get("provider") == "serpapi" and SERPAPI_KEY:
+            try:
+                optimizations = (analysis.get("pricing_strategy") or {}).get("optimizations") or []
+                for opt in optimizations[:10]:
+                    title = str(opt.get("product") or "").strip()
+                    if not title:
+                        continue
+
+                    snapshot = _serpapi_price_snapshot(title, gl="fr", hl="fr")
+                    if snapshot.get("count", 0) < 3:
+                        continue
+
+                    current_price = opt.get("current_price")
+                    suggested_price = opt.get("suggested_price")
+                    median = snapshot.get("median")
+                    min_p = snapshot.get("min")
+                    max_p = snapshot.get("max")
+
+                    # Market-based suggested price: anchor to median when we have enough samples.
+                    if isinstance(median, (int, float)) and median and median > 0:
+                        opt["market_snapshot"] = snapshot
+                        opt["market_suggested_price"] = round(float(median), 2)
+
+                        # Override suggestion to be truly comparison-based.
+                        try:
+                            opt["suggested_price"] = round(float(median), 2)
+                        except Exception:
+                            pass
+
+                        # Provide a clear justification.
+                        opt["reason"] = (
+                            f"Comparaison marché (SERP): {snapshot.get('count')} offres trouvées. "
+                            f"Prix observés ≈ {min_p}–{max_p} (médiane {median}). "
+                            f"Prix actuel: {current_price}. Prix suggéré: {opt.get('suggested_price')}."
+                        )
+                        opt["expected_impact"] = (
+                            "Alignement sur le marché pour réduire le risque de sous/sur-pricing, "
+                            "à confirmer avec vos conversions et marges."
+                        )
+            except Exception as e:
+                print(f"SERP enrichment warning: {e}")
         
         return {
             "success": True,
             "tier": tier,
             "products_analyzed": len(products),
-            "analysis": analysis
+            "analysis": analysis,
+            "market_comparison": market_status,
         }
     
     except Exception as e:

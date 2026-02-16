@@ -3100,10 +3100,13 @@ export default function Dashboard() {
             {(() => {
               const priceItems = getPriceItems(insightsData)
               const rawMarketStatus = insightsData?.market_comparison || insightsData?.price_analysis?.market_comparison || null
+              const healthSaysSerpApi = backendHealth?.services?.serpapi === 'configured'
               const healthSaysOpenAI = backendHealth?.services?.openai === 'configured'
-              const marketStatus = rawMarketStatus || (healthSaysOpenAI
-                ? { enabled: true, provider: 'openai', source: 'openai', inferred: true }
-                : null)
+              const marketStatus = rawMarketStatus || (healthSaysSerpApi
+                ? { enabled: true, provider: 'serpapi', source: 'serpapi', mode: 'external_api', inferred: true }
+                : healthSaysOpenAI
+                  ? { enabled: true, provider: 'openai', source: 'openai', mode: 'ai_estimate', inferred: true }
+                  : null)
               const withDelta = priceItems.filter((item) => Number.isFinite(Number(item.target_delta_pct)))
               const avgDelta = withDelta.length > 0
                 ? (withDelta.reduce((sum, item) => sum + Number(item.target_delta_pct), 0) / withDelta.length)
@@ -3119,7 +3122,13 @@ export default function Dashboard() {
                 <p className="text-sm text-gray-400">{getInsightCount(priceItems)} opportunités</p>
                 <p className={`text-xs ${marketStatus?.enabled ? 'text-green-400' : 'text-gray-400'}`}>
                   Comparaison marché externe: {marketStatus?.enabled ? 'Activée' : 'Non configurée'}
-                  {marketStatus?.provider ? ` (${marketStatus.provider})` : ''}
+                  {marketStatus?.provider
+                    ? marketStatus.provider === 'openai'
+                      ? ' (IA — estimation)'
+                      : marketStatus.provider === 'serpapi'
+                        ? ' (SERP API)'
+                        : ` (${marketStatus.provider})`
+                    : ''}
                 </p>
                 {!marketStatus?.enabled ? (
                   <p className="text-xs text-gray-500">Analyse prix active via Shopify (commandes, stock, prix, conversion), même sans API marché externe.</p>
