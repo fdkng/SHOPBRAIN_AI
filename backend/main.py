@@ -3712,6 +3712,94 @@ class AnalyzeStoreRequest(BaseModel):
     tier: str  # standard, pro, premium
 
 
+@app.get("/api/ai/price-opportunities")
+async def price_opportunities_endpoint(request: Request, limit: int = 50):
+    """💰 Retourne des opportunités de prix (léger, sans gros payload).
+
+    Objectif: éviter que le frontend doive POST une liste complète de produits
+    (trop volumineux → erreurs réseau), tout en produisant des recommandations
+    rapides et exploitables.
+    """
+    user_id = get_user_id(request)
+    tier = get_user_tier(user_id)
+    ensure_feature_allowed(tier, "price_suggestions")
+
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        raise HTTPException(status_code=500, detail="Supabase not configured")
+
+    try:
+        from supabase import create_client
+        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        connection = supabase.table("shopify_connections").select("*").eq("user_id", user_id).execute()
+        if not connection.data:
+            raise HTTPException(status_code=404, detail="Aucune boutique Shopify connectée. Veuillez vous connecter d'abord.")
+
+        shop_domain = connection.data[0]["shop_domain"]
+        access_token = connection.data[0]["access_token"]
+
+        products_url = f"https://{shop_domain}/admin/api/2024-10/products.json?limit=250"
+        headers = {
+            "X-Shopify-Access-Token": access_token,
+            "Content-Type": "application/json",
+        }
+        resp = requests.get(products_url, headers=headers, timeout=25)
+        if resp.status_code == 401:
+            raise HTTPException(status_code=401, detail="Token Shopify expiré ou invalide. Reconnectez-vous.")
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail=f"Erreur Shopify: {resp.text[:300]}")
+
+        products = (resp.json() or {}).get("products", [])
+        if not products:
+            return {
+                "success": True,
+                "products_analyzed": 0,
+                "price_opportunities": [],
+            }
+
+        # Build minimal items for the UI.
+        opportunities = []
+        for p in products[: max(1, int(limit))]:
+            variants = p.get("variants") or []
+            if not variants:
+                continue
+            title = p.get("title") or "Produit"
+            product_id = str(p.get("id") or "")
+            try:
+                current_price = float(variants[0].get("price") or 0)
+            except Exception:
+                current_price = 0.0
+            if current_price <= 0:
+                continue
+
+            suggested_price = round(current_price * 1.25, 2)
+            target_delta_pct = round(((suggested_price - current_price) / current_price) * 100, 2)
+            opportunities.append(
+                {
+                    "product_id": product_id or f"shopify-{len(opportunities)+1}",
+                    "title": title,
+                    "suggestion": "Ajustement recommandé (test d’élasticité)",
+                    "current_price": round(current_price, 2),
+                    "suggested_price": suggested_price,
+                    "target_delta_pct": target_delta_pct,
+                    "reason": "Proposition rapide basée sur un test d’élasticité (+25%). À confirmer avec vos données de conversion.",
+                    "source": "ai_price_opportunities",
+                }
+            )
+
+        return {
+            "success": True,
+            "tier": tier,
+            "products_analyzed": min(len(products), max(1, int(limit))),
+            "price_opportunities": opportunities,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in price_opportunities_endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/ai/analyze-store")
 async def analyze_store_endpoint(req: AnalyzeStoreRequest, request: Request):
     """

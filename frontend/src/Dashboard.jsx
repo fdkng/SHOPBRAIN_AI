@@ -250,6 +250,10 @@ export default function Dashboard() {
     }
     const isNetwork = /Failed to fetch|NetworkError|Load failed|fetch/i.test(raw)
     if (isNetwork) {
+      const freshHealth = backendHealth && backendHealthTs && (Date.now() - backendHealthTs < 2 * 60 * 1000)
+      if (freshHealth && backendHealth?.status === 'ok') {
+        return 'Erreur réseau lors de la requête (le backend répond sur /health). Vérifie ta connexion ou bloqueurs réseau, puis réessaie.'
+      }
       return 'Connexion au backend impossible pour le moment (serveur en réveil). Réessaie dans 10-20 secondes.'
     }
     return raw || fallback
@@ -1544,27 +1548,22 @@ export default function Dashboard() {
       const loadAiPriceInsights = async () => {
         try {
           const { data: { session } } = await supabase.auth.getSession()
-          if (!session || !Array.isArray(products) || products.length === 0) return []
+          if (!session) return []
 
           // Reduce cold-start failures before calling an authenticated endpoint.
           await waitForBackendReady({ retries: 8, retryDelayMs: 2000, timeoutMs: 22000 })
           await warmupBackend(session.access_token)
 
-          const { response, data: payload } = await fetchJsonWithRetry(`${API_URL}/api/ai/analyze-store`, {
-            method: 'POST',
+          const { response, data: payload } = await fetchJsonWithRetry(`${API_URL}/api/ai/price-opportunities?limit=50`, {
+            method: 'GET',
             headers: {
               'Authorization': `Bearer ${session.access_token}`,
               'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              products: products.slice(0, 120),
-              analytics: { timestamp: new Date().toISOString() },
-              tier: subscription?.plan || 'standard'
-            })
+            }
           }, {
             retries: 2,
             retryDelayMs: 2000,
-            timeoutMs: 180000,
+            timeoutMs: 60000,
             retryStatuses: [429, 500, 502, 503, 504]
           })
 
@@ -1573,37 +1572,18 @@ export default function Dashboard() {
             throw new Error(detail || `HTTP ${response?.status || 'ERR'}`)
           }
 
-          if (!payload?.success) {
-            throw new Error(payload?.detail || 'Analyse IA indisponible')
+          if (!payload?.success) throw new Error(payload?.detail || 'Analyse prix indisponible')
+
+          // Keep metadata for the UI (products analyzed).
+          if (Number.isFinite(Number(payload?.products_analyzed))) {
+            setInsightsData((prev) => ({
+              ...(prev || {}),
+              products_analyzed: Number(payload.products_analyzed)
+            }))
           }
 
-          const optimizations = payload?.analysis?.pricing_strategy?.optimizations
-          if (!Array.isArray(optimizations) || optimizations.length === 0) return []
-
-          const byTitle = new Map(
-            (products || []).map((product) => [String(product?.title || '').trim().toLowerCase(), product])
-          )
-
-          return optimizations.slice(0, 10).map((opt, index) => {
-            const title = String(opt?.product || '').trim()
-            const product = byTitle.get(title.toLowerCase())
-            const currentPrice = Number(opt?.current_price)
-            const suggestedPrice = Number(opt?.suggested_price)
-            const targetDeltaPct = Number.isFinite(currentPrice) && currentPrice > 0 && Number.isFinite(suggestedPrice)
-              ? Number((((suggestedPrice - currentPrice) / currentPrice) * 100).toFixed(2))
-              : null
-
-            return {
-              product_id: product?.id ? String(product.id) : `ai-${index}`,
-              title: title || product?.title || `Produit ${index + 1}`,
-              suggestion: opt?.reason || 'Ajustement recommandé par analyse IA',
-              current_price: Number.isFinite(currentPrice) ? currentPrice : null,
-              suggested_price: Number.isFinite(suggestedPrice) ? suggestedPrice : null,
-              target_delta_pct: Number.isFinite(targetDeltaPct) ? targetDeltaPct : null,
-              reason: opt?.expected_impact || opt?.reason || 'Opportunité détectée par l’IA',
-              source: 'ai_analyze_store'
-            }
-          })
+          const items = Array.isArray(payload?.price_opportunities) ? payload.price_opportunities : []
+          return items.slice(0, 10)
         } catch (err) {
           console.warn('AI price fallback failed:', err)
           return []
@@ -3078,7 +3058,7 @@ export default function Dashboard() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Produits analysés</p>
-                <p className="text-2xl text-white font-bold mt-2">{formatCompactNumber(products?.length || 0)}</p>
+                <p className="text-2xl text-white font-bold mt-2">{formatCompactNumber(insightsData?.products_analyzed ?? (products?.length || 0))}</p>
               </div>
               <div className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
                 <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Opportunités prix</p>
