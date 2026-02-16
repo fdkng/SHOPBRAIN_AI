@@ -3120,9 +3120,16 @@ async def get_shopify_blockers(request: Request, range: str = "30d", limit: int 
         f"&fields=id,created_at,total_price,financial_status,currency,line_items"
     )
     page_count = 0
+    max_pages = 2 if days <= 30 else 3
+    max_orders = 500 if days <= 30 else 800
 
-    while next_url and page_count < 4:
-        response = requests.get(next_url, headers=headers, timeout=30)
+    while next_url and page_count < max_pages and len(orders) < max_orders:
+        try:
+            response = requests.get(next_url, headers=headers, timeout=20)
+        except requests.exceptions.Timeout:
+            raise HTTPException(status_code=504, detail="Shopify timeout (orders). Réessaie.")
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Erreur réseau Shopify (orders): {str(e)[:120]}")
         if response.status_code == 401:
             raise HTTPException(status_code=401, detail="Token Shopify expiré ou invalide. Reconnectez-vous.")
         if response.status_code != 200:
@@ -3157,8 +3164,25 @@ async def get_shopify_blockers(request: Request, range: str = "30d", limit: int 
     product_ids = list(product_stats.keys())
     event_counts = _fetch_shopify_event_counts(user_id, shop_domain, days)
     if not product_ids:
-        products_payload = await get_shopify_products(request)
-        products = products_payload.get("products", [])
+        # Lightweight products fetch (avoid heavy payload / transform) for the blockers fallback.
+        products = []
+        try:
+            products_url = (
+                f"https://{shop_domain}/admin/api/2024-10/products.json"
+                f"?limit=120&fields=id,title,body_html,images,variants"
+            )
+            resp = requests.get(products_url, headers=headers, timeout=20)
+            if resp.status_code == 401:
+                raise HTTPException(status_code=401, detail="Token Shopify expiré ou invalide. Reconnectez-vous.")
+            if resp.status_code != 200:
+                raise HTTPException(status_code=resp.status_code, detail=f"Erreur Shopify: {resp.text[:300]}")
+            products = (resp.json() or {}).get("products", [])
+        except HTTPException:
+            raise
+        except requests.exceptions.Timeout:
+            raise HTTPException(status_code=504, detail="Shopify timeout (products). Réessaie.")
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Erreur réseau Shopify (products): {str(e)[:120]}")
         if not products:
             return {
                 "success": True,
@@ -3274,6 +3298,32 @@ async def get_shopify_blockers(request: Request, range: str = "30d", limit: int 
             "notes": notes,
         }
 
+    # Down-select products to keep API calls fast and reliable.
+    def _candidate_score(pid: str, stat: dict) -> float:
+        orders_count = len(stat.get("order_ids") or [])
+        signals = event_counts.get(pid, {"views": 0, "add_to_cart": 0}) if event_counts else {"views": 0, "add_to_cart": 0}
+        views = int(signals.get("views", 0) or 0)
+        atc = int(signals.get("add_to_cart", 0) or 0)
+        score = 0.0
+        if orders_count <= 1:
+            score += 2.0
+        if atc >= 5 and (orders_count / atc) < 0.2:
+            score += 2.0
+        if views >= 10 and atc > 0 and (atc / views) < 0.03:
+            score += 2.0
+        score += min(1.5, views / 200.0)
+        score += min(1.5, atc / 80.0)
+        score += min(1.0, float(stat.get("revenue", 0.0) <= 0.0))
+        return score
+
+    if len(product_ids) > 160:
+        ranked = sorted(
+            ((pid, _candidate_score(pid, stat)) for pid, stat in product_stats.items()),
+            key=lambda x: x[1],
+            reverse=True,
+        )
+        product_ids = [pid for pid, _ in ranked[:160]]
+
     products_by_id = {}
     batch_size = 50
     for i in range(0, len(product_ids), batch_size):
@@ -3282,7 +3332,12 @@ async def get_shopify_blockers(request: Request, range: str = "30d", limit: int 
             f"https://{shop_domain}/admin/api/2024-10/products.json"
             f"?ids={batch_ids}&fields=id,title,body_html,images,variants,product_type,vendor,status"
         )
-        response = requests.get(products_url, headers=headers, timeout=30)
+        try:
+            response = requests.get(products_url, headers=headers, timeout=20)
+        except requests.exceptions.Timeout:
+            raise HTTPException(status_code=504, detail="Shopify timeout (product batch). Réessaie.")
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Erreur réseau Shopify (product batch): {str(e)[:120]}")
         if response.status_code != 200:
             raise HTTPException(status_code=response.status_code, detail=f"Erreur Shopify: {response.text[:300]}")
         for product in response.json().get("products", []):

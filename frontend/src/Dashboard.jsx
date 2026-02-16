@@ -1561,20 +1561,27 @@ export default function Dashboard() {
         return
       }
 
-      const response = await fetch(`${API_URL}/api/shopify/blockers?range=${rangeValue}`, {
+      await waitForBackendReady({ retries: 8, retryDelayMs: 2000, timeoutMs: 22000 })
+      await warmupBackend(session.access_token)
+
+      const { response, data } = await fetchJsonWithRetry(`${API_URL}/api/shopify/blockers?range=${rangeValue}`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
           'Content-Type': 'application/json'
         }
+      }, {
+        retries: 1,
+        retryDelayMs: 1500,
+        timeoutMs: 70000,
+        retryStatuses: [429, 500, 502, 503, 504]
       })
 
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.detail || `HTTP ${response.status}`)
+      if (!response?.ok) {
+        const detail = data?.detail || data?.error
+        throw new Error(detail || `HTTP ${response?.status || 'ERR'}`)
       }
 
-      const data = await response.json()
       if (data.success) {
         setBlockersData(data)
       } else {
