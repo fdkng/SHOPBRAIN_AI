@@ -1408,7 +1408,7 @@ export default function Dashboard() {
     const { data } = await fetchJsonWithRetry(healthUrl, { method: 'GET' }, {
       retries: config.retries ?? 3,
       retryDelayMs: config.retryDelayMs ?? 1500,
-      timeoutMs: config.timeoutMs ?? 20000,
+      timeoutMs: config.timeoutMs ?? 45000,
       retryStatuses: config.retryStatuses ?? [429, 500, 502, 503, 504]
     })
     setBackendHealth(data)
@@ -1422,19 +1422,31 @@ export default function Dashboard() {
       return backendHealth
     }
 
-    const retries = config.retries ?? 6
-    const retryDelayMs = config.retryDelayMs ?? 2000
+    const retries = config.retries ?? 12
+    const retryDelayMs = config.retryDelayMs ?? 3000
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
     let lastErr = null
+    let wakePinged = false
 
     for (let attempt = 0; attempt <= retries; attempt += 1) {
       try {
         return await fetchBackendHealth({
           retries: 0,
-          timeoutMs: config.timeoutMs ?? 20000
+          timeoutMs: config.timeoutMs ?? 45000
         })
       } catch (err) {
         lastErr = err
+
+        // Best-effort wake ping (opaque) to trigger Render cold-start without requiring CORS.
+        if (!wakePinged) {
+          wakePinged = true
+          try {
+            await fetch(`${API_URL}/health`, { method: 'GET', mode: 'no-cors', cache: 'no-store' })
+          } catch {
+            // ignore
+          }
+        }
+
         if (attempt < retries) {
           await sleep(retryDelayMs)
           continue
