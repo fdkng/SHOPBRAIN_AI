@@ -84,6 +84,7 @@ FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAI
 SERPAPI_KEY = os.getenv("SERPAPI_KEY") or os.getenv("SERPAPI_API_KEY")
 MARKET_TOLERANCE_PCT = float(os.getenv("MARKET_TOLERANCE_PCT", "5"))
 SERP_MAX_PRODUCTS = int(os.getenv("SERP_MAX_PRODUCTS", "8"))
+SERP_NUM_RESULTS = int(os.getenv("SERP_NUM_RESULTS", "20"))
 
 # Small in-memory cache to reduce SERP API calls
 _SERP_CACHE: dict[str, tuple[float, dict]] = {}
@@ -157,6 +158,25 @@ def _keywords_from_text(text: str, max_words: int = 12) -> str:
         if len(out) >= max_words:
             break
     return " ".join(out)
+
+
+def _clean_query_text(text: str, shop_brand: str | None = None) -> str:
+    if not text:
+        return ""
+    q = str(text)
+    q = q.replace("’", "'")
+    q = re.sub(r"[\"“”«»]", " ", q)
+    q = re.sub(r"[^A-Za-zÀ-ÖØ-öø-ÿ0-9\s\-]", " ", q)
+    q = re.sub(r"\s+", " ", q).strip()
+    if shop_brand:
+        brand = re.sub(r"\s+", " ", str(shop_brand)).strip()
+        if brand:
+            # Remove brand tokens (case-insensitive)
+            for token in re.split(r"\s+", brand.lower()):
+                if len(token) >= 3:
+                    q = re.sub(rf"\b{re.escape(token)}\b", " ", q, flags=re.IGNORECASE)
+            q = re.sub(r"\s+", " ", q).strip()
+    return q
 
 
 def _gl_for_currency(currency_code: str | None) -> str:
@@ -250,7 +270,7 @@ def _serpapi_price_snapshot(query: str, gl: str = "ca", hl: str = "fr", currency
         "hl": hl,
         "api_key": SERPAPI_KEY,
         # Keep it small/cost-controlled
-        "num": 10,
+        "num": max(5, min(int(SERP_NUM_RESULTS), 40)),
     }
 
     try:
@@ -265,7 +285,14 @@ def _serpapi_price_snapshot(query: str, gl: str = "ca", hl: str = "fr", currency
         _cache_set_serp(cache_key, snapshot)
         return snapshot
 
-    results = payload.get("shopping_results") or payload.get("inline_shopping_results") or []
+    results = []
+    try:
+        results.extend(payload.get("shopping_results") or [])
+        results.extend(payload.get("inline_shopping_results") or [])
+        # Some responses may contain variations
+        results.extend(payload.get("organic_shopping_results") or [])
+    except Exception:
+        results = payload.get("shopping_results") or payload.get("inline_shopping_results") or []
     refs = []
     prices = []
     wanted = (currency_code or "").upper().strip() or None
@@ -279,6 +306,12 @@ def _serpapi_price_snapshot(query: str, gl: str = "ca", hl: str = "fr", currency
         curr = None
         if isinstance(price_raw, (int, float)):
             price = float(price_raw)
+            try:
+                item_curr = item.get("currency")
+                if isinstance(item_curr, str) and item_curr.strip():
+                    curr = item_curr.strip().upper()
+            except Exception:
+                curr = None
         else:
             price, curr = _parse_price_and_currency(price_raw)
 
@@ -4207,10 +4240,23 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50):
             max_market = max(1, min(len(candidates), SERP_MAX_PRODUCTS))
             subset = candidates[:max_market]
 
+            # Brand tokens from your own catalog can make the query too specific.
+            shop_brand = None
+            try:
+                for it in subset:
+                    v = str(it.get("vendor") or "").strip()
+                    if v:
+                        shop_brand = v
+                        break
+            except Exception:
+                shop_brand = None
+
             def _query_for(item: dict) -> str:
-                parts = [str(item.get("title") or "").strip()]
+                title = _clean_query_text(item.get("title") or "", shop_brand=shop_brand)
+                parts = [title]
                 if item.get("vendor"):
-                    parts.append(str(item.get("vendor")).strip())
+                    # Do not include vendor (often your own brand) in the search query.
+                    pass
                 if item.get("product_type"):
                     parts.append(str(item.get("product_type")).strip())
                 if item.get("desc_kw"):
@@ -4223,10 +4269,18 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50):
                 if item.get("product_type"):
                     parts.append(str(item.get("product_type")).strip())
                 # Keep only the first chunk of the title to avoid over-specific matches.
-                title = str(item.get("title") or "").strip()
+                title = _clean_query_text(item.get("title") or "", shop_brand=shop_brand)
                 if title:
-                    parts.append(" ".join(title.split()[:6]))
+                    parts.append(" ".join(title.split()[:4]))
                 return " ".join([p for p in parts if p]) or title
+
+            def _query_ultra(item: dict) -> str:
+                # Ultra broad: just the product type (or a generic noun from title)
+                pt = str(item.get("product_type") or "").strip()
+                if pt:
+                    return pt
+                title = _clean_query_text(item.get("title") or "", shop_brand=shop_brand)
+                return " ".join(title.split()[:2])
 
             # Small parallelization to reduce overall latency.
             from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -4251,6 +4305,18 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50):
                                 snap2 = _serpapi_price_snapshot(q2, gl, "fr", shop_currency)
                                 snapshot = _merge_snapshots(snapshot, snap2)
                                 q = f"{q} | {q2}"
+                        except Exception:
+                            pass
+
+                    # If still too few, try English locale for Canada.
+                    if int(snapshot.get("count") or 0) < 3:
+                        try:
+                            q3 = _query_ultra(item)
+                            if q3:
+                                gl = _gl_for_currency(shop_currency)
+                                snap3 = _serpapi_price_snapshot(q3, gl, "en", shop_currency)
+                                snapshot = _merge_snapshots(snapshot, snap3)
+                                q = f"{q} | {q3}"
                         except Exception:
                             pass
 
