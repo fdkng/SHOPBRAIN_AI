@@ -3109,6 +3109,122 @@ def _fetch_shopify_event_counts(user_id: str, shop_domain: str, days: int) -> di
 
     return counts
 
+@app.get("/api/shopify/image-risks")
+async def get_shopify_image_risks(request: Request, range: str = "30d", limit: int = 50):
+    """🖼️ Analyse rapide des images produits (signaux de conversion visuels).
+
+    - Nombre d'images faible
+    - Alt manquant
+    - (si pixel) taux vue→panier faible
+    """
+    user_id = get_user_id(request)
+    tier = get_user_tier(user_id)
+    ensure_feature_allowed(tier, "product_analysis")
+
+    shop_domain, access_token = _get_shopify_connection(user_id)
+
+    range_map = {
+        "7d": 7,
+        "30d": 30,
+        "90d": 90,
+        "365d": 365,
+    }
+    days = range_map.get(range, 30)
+    effective_limit = max(1, min(int(limit), 250))
+
+    headers = {
+        "X-Shopify-Access-Token": access_token,
+        "Content-Type": "application/json",
+    }
+
+    try:
+        products_url = (
+            f"https://{shop_domain}/admin/api/2024-10/products.json"
+            f"?limit={effective_limit}&fields=id,title,images"
+        )
+        resp = requests.get(products_url, headers=headers, timeout=20)
+        if resp.status_code == 401:
+            raise HTTPException(status_code=401, detail="Token Shopify expiré ou invalide. Reconnectez-vous.")
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail=f"Erreur Shopify: {resp.text[:300]}")
+
+        products = (resp.json() or {}).get("products", [])
+        if not products:
+            return {
+                "success": True,
+                "shop": shop_domain,
+                "range": range,
+                "image_risks": [],
+                "notes": ["Aucun produit trouvé dans la boutique."],
+            }
+
+        event_counts = {}
+        try:
+            event_counts = _fetch_shopify_event_counts(user_id, shop_domain, days)
+        except Exception:
+            event_counts = {}
+
+        items = []
+        for p in products:
+            pid = str(p.get("id") or "")
+            if not pid:
+                continue
+            images = p.get("images") or []
+            images_count = len(images)
+            missing_alt = any(not (img.get("alt") or "").strip() for img in images) if images else True
+
+            signals = event_counts.get(pid, {"views": 0, "add_to_cart": 0})
+            views = int(signals.get("views", 0) or 0)
+            add_to_cart = int(signals.get("add_to_cart", 0) or 0)
+            view_to_cart = (add_to_cart / views) if views else None
+
+            # Risk heuristics: very few images OR missing alt OR low view→cart when we have pixel data.
+            is_risky = images_count <= 1 or missing_alt or (view_to_cart is not None and views >= 10 and view_to_cart < 0.02)
+            if not is_risky:
+                continue
+
+            score = 0
+            if images_count <= 1:
+                score += 2
+            if missing_alt:
+                score += 1
+            if view_to_cart is not None and views >= 10 and view_to_cart < 0.02:
+                score += 2
+
+            items.append({
+                "product_id": pid,
+                "title": p.get("title") or f"Produit {pid}",
+                "images_count": images_count,
+                "missing_alt": bool(missing_alt),
+                "views": views,
+                "add_to_cart": add_to_cart,
+                "view_to_cart_rate": round(view_to_cart, 4) if view_to_cart is not None else None,
+                "score": score,
+            })
+
+        items.sort(key=lambda x: (x.get("score", 0), x.get("views", 0)), reverse=True)
+        items = items[: min(50, max(1, effective_limit))]
+
+        notes = [
+            "Analyse basée sur qualité des images (alt, quantité) + signaux Pixel si disponibles.",
+        ]
+        if not event_counts:
+            notes.append("Ajoutez le Shopify Pixel pour enrichir les signaux vues/panier.")
+
+        return {
+            "success": True,
+            "shop": shop_domain,
+            "range": range,
+            "image_risks": items,
+            "notes": notes,
+        }
+    except HTTPException:
+        raise
+    except requests.exceptions.Timeout:
+        raise HTTPException(status_code=504, detail="Shopify timeout (products). Réessaie.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur image-risks: {str(e)[:200]}")
+
 
 @app.get("/api/shopify/blockers")
 async def get_shopify_blockers(request: Request, range: str = "30d", limit: int = 12):

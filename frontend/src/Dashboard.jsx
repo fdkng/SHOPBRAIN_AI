@@ -1758,6 +1758,50 @@ export default function Dashboard() {
 
       if (actionKey === 'action-blockers') {
         await loadBlockers()
+      } else if (actionKey === 'action-images') {
+        setInsightsLoading(true)
+        try {
+          const { data: { session } } = await supabase.auth.getSession()
+          if (!session) {
+            setStatus(actionKey, 'error', 'Session expirée, reconnectez-vous')
+            return
+          }
+
+          await waitForBackendReady({ retries: 10, retryDelayMs: 2500, timeoutMs: 45000 })
+          await warmupBackend(session.access_token)
+
+          const rangeValue = analyticsRange
+          const { response, data } = await fetchJsonWithRetry(`${API_URL}/api/shopify/image-risks?range=${encodeURIComponent(rangeValue)}&limit=120`, {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${session.access_token}`,
+              'Content-Type': 'application/json'
+            }
+          }, {
+            retries: 2,
+            retryDelayMs: 2000,
+            timeoutMs: 90000,
+            retryStatuses: [429, 500, 502, 503, 504]
+          })
+
+          if (!response?.ok) {
+            const detail = data?.detail || data?.error
+            throw new Error(detail || `HTTP ${response?.status || 'ERR'}`)
+          }
+          if (!data?.success) throw new Error(data?.detail || 'Analyse images indisponible')
+
+          setInsightsData({
+            success: true,
+            image_risks: Array.isArray(data?.image_risks) ? data.image_risks : [],
+            notes: Array.isArray(data?.notes) ? data.notes : []
+          })
+          setStatus(actionKey, 'success', 'Analyse terminée.')
+        } catch (err) {
+          setStatus(actionKey, 'error', normalizeNetworkErrorMessage(err, 'Erreur analyse'))
+        } finally {
+          setInsightsLoading(false)
+        }
+        return
       } else if (actionKey === 'action-rewrite') {
         const { data: { session } } = await supabase.auth.getSession()
         if (!session) {
@@ -2375,7 +2419,7 @@ export default function Dashboard() {
               { key: 'action-blockers', label: 'Produits freins' },
               { key: 'action-rewrite', label: 'Réécriture intelligente' },
               { key: 'action-price', label: 'Optimisation prix' },
-              { key: 'action-images', label: 'Images non convertissantes' },
+              { key: 'action-images', label: 'Audit images' },
               { key: 'action-bundles', label: 'Bundles & cross-sell' },
               { key: 'action-stock', label: 'Prévision ruptures' },
               { key: 'action-returns', label: 'Anti-retours / chargebacks' },
@@ -3291,8 +3335,8 @@ export default function Dashboard() {
         {activeTab === 'action-images' && (
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 space-y-6">
             <div>
-              <h2 className="text-white text-xl font-bold mb-2">Images qui ne convertissent pas</h2>
-              <p className="text-gray-400">Analyse des images produits et recommandations.</p>
+              <h2 className="text-white text-xl font-bold mb-2">Audit images</h2>
+              <p className="text-gray-400">Détecte les fiches avec images insuffisantes, alt manquant, et signaux vue→panier faibles (si Pixel).</p>
             </div>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <p className="text-sm text-gray-400">{getInsightCount(insightsData?.image_risks)} produits analysés</p>
@@ -3305,13 +3349,20 @@ export default function Dashboard() {
               </button>
             </div>
             {renderStatus('action-images')}
+            {Array.isArray(insightsData?.notes) && insightsData.notes.length > 0 ? (
+              <div className="text-xs text-gray-500 space-y-1">
+                {insightsData.notes.slice(0, 3).map((note, idx) => (
+                  <div key={idx}>• {note}</div>
+                ))}
+              </div>
+            ) : null}
             <div className="space-y-3">
               {!insightsLoading && (!insightsData?.image_risks || insightsData.image_risks.length === 0) ? (
                 <p className="text-sm text-gray-500">Aucun signal détecté.</p>
               ) : (
                 insightsData?.image_risks?.slice(0, 8).map((item, index) => (
                   <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
-                    <p className="text-white font-semibold">Produit #{item.product_id}</p>
+                    <p className="text-white font-semibold">{item.title || `Produit #${item.product_id}`}</p>
                     <p className="text-xs text-gray-500">
                       {item.images_count} images{item.missing_alt ? ' • alt manquant' : ''}
                       {item.view_to_cart_rate !== null && item.view_to_cart_rate !== undefined ? ` • v→panier ${Math.round(item.view_to_cart_rate * 100)}%` : ''}
