@@ -1605,6 +1605,8 @@ export default function Dashboard() {
             id: p?.id,
             title: p?.title,
             status: p?.status,
+            vendor: p?.vendor,
+            product_type: p?.product_type,
             variants: Array.isArray(p?.variants) ? p.variants.slice(0, 1).map((v) => ({ price: v?.price })) : []
           }))
 

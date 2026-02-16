@@ -82,6 +82,8 @@ SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
 FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
 SERPAPI_KEY = os.getenv("SERPAPI_KEY") or os.getenv("SERPAPI_API_KEY")
+MARKET_TOLERANCE_PCT = float(os.getenv("MARKET_TOLERANCE_PCT", "5"))
+SERP_MAX_PRODUCTS = int(os.getenv("SERP_MAX_PRODUCTS", "8"))
 
 # Small in-memory cache to reduce SERP API calls
 _SERP_CACHE: dict[str, tuple[float, dict]] = {}
@@ -206,6 +208,30 @@ def _serpapi_price_snapshot(query: str, gl: str = "fr", hl: str = "fr") -> dict:
 
     _cache_set_serp(cache_key, snapshot)
     return snapshot
+
+
+def _market_price_decision(current_price: float, snapshot: dict) -> dict:
+    """Decide whether to keep, increase or decrease based on market median.
+
+    Returns: {action, suggested_price, delta_pct}
+    action ∈ {keep,increase,decrease}
+    """
+    median = snapshot.get("median")
+    if not isinstance(median, (int, float)) or not median or median <= 0:
+        return {"action": "keep", "suggested_price": current_price, "delta_pct": 0.0}
+
+    suggested = float(median)
+    delta_pct = ((suggested - current_price) / current_price) * 100 if current_price > 0 else 0.0
+    if current_price > 0:
+        pct_vs_median = abs((current_price - suggested) / suggested) * 100
+    else:
+        pct_vs_median = 0.0
+
+    if pct_vs_median <= MARKET_TOLERANCE_PCT:
+        return {"action": "keep", "suggested_price": current_price, "delta_pct": 0.0}
+    if suggested > current_price:
+        return {"action": "increase", "suggested_price": round(suggested, 2), "delta_pct": round(delta_pct, 2)}
+    return {"action": "decrease", "suggested_price": round(suggested, 2), "delta_pct": round(delta_pct, 2)}
 
 
 def _get_market_comparison_status() -> dict:
@@ -3885,41 +3911,149 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50):
                 "price_opportunities": [],
             }
 
+        effective_limit = max(1, int(limit))
+
         # Build minimal items for the UI.
-        opportunities = []
-        for p in products[: max(1, int(limit))]:
+        candidates = []
+        for p in products[:effective_limit]:
             variants = p.get("variants") or []
             if not variants:
                 continue
-            title = p.get("title") or "Produit"
-            product_id = str(p.get("id") or "")
             try:
                 current_price = float(variants[0].get("price") or 0)
             except Exception:
                 current_price = 0.0
             if current_price <= 0:
                 continue
+            candidates.append(
+                {
+                    "product_id": str(p.get("id") or ""),
+                    "title": p.get("title") or "Produit",
+                    "vendor": p.get("vendor") or "",
+                    "product_type": p.get("product_type") or "",
+                    "current_price": round(current_price, 2),
+                }
+            )
 
+        opportunities = []
+
+        # If SERP API is configured, do real market comparison.
+        if SERPAPI_KEY:
+            max_market = max(1, min(len(candidates), SERP_MAX_PRODUCTS))
+            subset = candidates[:max_market]
+
+            def _query_for(item: dict) -> str:
+                parts = [str(item.get("title") or "").strip()]
+                if item.get("vendor"):
+                    parts.append(str(item.get("vendor")).strip())
+                if item.get("product_type"):
+                    parts.append(str(item.get("product_type")).strip())
+                return " ".join([p for p in parts if p])
+
+            # Small parallelization to reduce overall latency.
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            futures = {}
+            with ThreadPoolExecutor(max_workers=4) as ex:
+                for item in subset:
+                    q = _query_for(item)
+                    futures[ex.submit(_serpapi_price_snapshot, q, "fr", "fr")] = (item, q)
+
+                for fut in as_completed(futures):
+                    item, q = futures[fut]
+                    snapshot = fut.result() or {"count": 0, "refs": []}
+
+                    decision = _market_price_decision(float(item["current_price"]), snapshot)
+                    action = decision.get("action")
+                    suggested = float(decision.get("suggested_price", item["current_price"]))
+                    delta_pct = float(decision.get("delta_pct", 0.0))
+
+                    median = snapshot.get("median")
+                    min_p = snapshot.get("min")
+                    max_p = snapshot.get("max")
+
+                    if snapshot.get("count", 0) < 3:
+                        # Not enough market signals -> don't force a change.
+                        action = "keep"
+                        suggested = float(item["current_price"])
+                        delta_pct = 0.0
+
+                    if action == "keep":
+                        suggestion = "Prix aligné au marché"
+                        reason = (
+                            f"Comparaison marché (SERP) sur produits similaires: {snapshot.get('count', 0)} offres. "
+                            f"Range ≈ {min_p}–{max_p} (médiane {median}). "
+                            f"Prix actuel {item['current_price']} ≈ médiane (±{MARKET_TOLERANCE_PCT}%)."
+                        )
+                    elif action == "increase":
+                        suggestion = "Prix trop bas vs marché"
+                        reason = (
+                            f"Comparaison marché (SERP) sur produits similaires: {snapshot.get('count', 0)} offres. "
+                            f"Range ≈ {min_p}–{max_p} (médiane {median}). "
+                            f"Ton prix {item['current_price']} est sous la médiane → suggéré {round(suggested,2)} (+{abs(delta_pct)}%)."
+                        )
+                    else:
+                        suggestion = "Prix trop haut vs marché"
+                        reason = (
+                            f"Comparaison marché (SERP) sur produits similaires: {snapshot.get('count', 0)} offres. "
+                            f"Range ≈ {min_p}–{max_p} (médiane {median}). "
+                            f"Ton prix {item['current_price']} est au-dessus de la médiane → suggéré {round(suggested,2)} (-{abs(delta_pct)}%)."
+                        )
+
+                    opportunities.append(
+                        {
+                            "product_id": item["product_id"] or f"shopify-{len(opportunities)+1}",
+                            "title": item["title"],
+                            "suggestion": suggestion,
+                            "current_price": item["current_price"],
+                            "suggested_price": round(suggested, 2),
+                            "target_delta_pct": round(delta_pct, 2),
+                            "reason": reason,
+                            "market_action": action,
+                            "market_snapshot": snapshot,
+                            "market_query": q,
+                            "source": "serpapi",
+                        }
+                    )
+
+            # If user asked more than the max market cap, provide a note.
+            note = None
+            if effective_limit > SERP_MAX_PRODUCTS:
+                note = f"Comparaison SERP limitée à {SERP_MAX_PRODUCTS} produits par analyse (configurable via SERP_MAX_PRODUCTS)."
+
+            return {
+                "success": True,
+                "tier": tier,
+                "products_analyzed": len(subset),
+                "price_opportunities": opportunities,
+                "market_comparison": _get_market_comparison_status(),
+                **({"note": note} if note else {}),
+            }
+
+        # Fallback when SERP API isn't configured.
+        for item in candidates[: min(len(candidates), 10)]:
+            current_price = float(item["current_price"])
             suggested_price = round(current_price * 1.25, 2)
             target_delta_pct = round(((suggested_price - current_price) / current_price) * 100, 2)
             opportunities.append(
                 {
-                    "product_id": product_id or f"shopify-{len(opportunities)+1}",
-                    "title": title,
-                    "suggestion": "Ajustement recommandé (test d’élasticité)",
+                    "product_id": item["product_id"] or f"shopify-{len(opportunities)+1}",
+                    "title": item["title"],
+                    "suggestion": "Ajustement recommandé (heuristique)",
                     "current_price": round(current_price, 2),
                     "suggested_price": suggested_price,
                     "target_delta_pct": target_delta_pct,
-                    "reason": "Proposition rapide basée sur un test d’élasticité (+25%). À confirmer avec vos données de conversion.",
-                    "source": "ai_price_opportunities",
+                    "reason": "SERP API non configurée: suggestion heuristique (+25%).",
+                    "source": "heuristic",
                 }
             )
 
         return {
             "success": True,
             "tier": tier,
-            "products_analyzed": min(len(products), max(1, int(limit))),
+            "products_analyzed": min(len(candidates), effective_limit),
             "price_opportunities": opportunities,
+            "market_comparison": _get_market_comparison_status(),
         }
 
     except HTTPException:
@@ -3963,33 +4097,51 @@ async def analyze_store_endpoint(req: AnalyzeStoreRequest, request: Request):
                     if snapshot.get("count", 0) < 3:
                         continue
 
-                    current_price = opt.get("current_price")
-                    suggested_price = opt.get("suggested_price")
+                    try:
+                        current_price = float(opt.get("current_price") or 0)
+                    except Exception:
+                        current_price = 0.0
+                    if current_price <= 0:
+                        continue
+
+                    decision = _market_price_decision(current_price, snapshot)
+                    action = decision.get("action")
+                    suggested = decision.get("suggested_price", current_price)
+                    delta_pct = decision.get("delta_pct", 0.0)
+
+                    opt["market_snapshot"] = snapshot
+                    opt["market_action"] = action
+                    opt["market_suggested_price"] = suggested
+
+                    # Override suggested price according to market.
+                    opt["suggested_price"] = suggested
+                    opt["increase"] = round(float(suggested) - float(current_price), 2)
+
                     median = snapshot.get("median")
                     min_p = snapshot.get("min")
                     max_p = snapshot.get("max")
 
-                    # Market-based suggested price: anchor to median when we have enough samples.
-                    if isinstance(median, (int, float)) and median and median > 0:
-                        opt["market_snapshot"] = snapshot
-                        opt["market_suggested_price"] = round(float(median), 2)
-
-                        # Override suggestion to be truly comparison-based.
-                        try:
-                            opt["suggested_price"] = round(float(median), 2)
-                        except Exception:
-                            pass
-
-                        # Provide a clear justification.
+                    if action == "keep":
                         opt["reason"] = (
                             f"Comparaison marché (SERP): {snapshot.get('count')} offres trouvées. "
                             f"Prix observés ≈ {min_p}–{max_p} (médiane {median}). "
-                            f"Prix actuel: {current_price}. Prix suggéré: {opt.get('suggested_price')}."
+                            f"Ton prix ({current_price}) est déjà aligné (±{MARKET_TOLERANCE_PCT}%)."
                         )
-                        opt["expected_impact"] = (
-                            "Alignement sur le marché pour réduire le risque de sous/sur-pricing, "
-                            "à confirmer avec vos conversions et marges."
+                        opt["expected_impact"] = "Prix jugé correct vs produits similaires: pas de changement recommandé."
+                    elif action == "increase":
+                        opt["reason"] = (
+                            f"Comparaison marché (SERP): {snapshot.get('count')} offres trouvées. "
+                            f"Prix observés ≈ {min_p}–{max_p} (médiane {median}). "
+                            f"Ton prix ({current_price}) est inférieur au marché → suggéré {suggested} (+{abs(delta_pct)}%)."
                         )
+                        opt["expected_impact"] = "Augmenter pour se rapprocher du marché et améliorer la marge, à valider avec vos conversions."
+                    else:
+                        opt["reason"] = (
+                            f"Comparaison marché (SERP): {snapshot.get('count')} offres trouvées. "
+                            f"Prix observés ≈ {min_p}–{max_p} (médiane {median}). "
+                            f"Ton prix ({current_price}) est supérieur au marché → suggéré {suggested} (-{abs(delta_pct)}%)."
+                        )
+                        opt["expected_impact"] = "Baisser pour se rapprocher du marché et réduire le risque de perte de conversion."
             except Exception as e:
                 print(f"SERP enrichment warning: {e}")
         
