@@ -92,6 +92,9 @@ _SERP_CACHE: dict[str, tuple[float, dict]] = {}
 # Small in-memory cache to reduce Shopify shop.json calls
 _SHOP_CACHE: dict[str, tuple[float, dict]] = {}
 
+# Small in-memory cache to reduce repeated heavy blockers computations
+_BLOCKERS_CACHE: dict[str, tuple[float, dict]] = {}
+
 
 def _cache_get_serp(key: str, ttl_s: int = 3600) -> dict | None:
     try:
@@ -123,6 +126,23 @@ def _cache_get_shop(key: str, ttl_s: int = 3600) -> dict | None:
 def _cache_set_shop(key: str, value: dict):
     try:
         _SHOP_CACHE[key] = (time.time(), value)
+    except Exception:
+        pass
+
+
+def _cache_get_blockers(key: str, ttl_s: int = 300) -> dict | None:
+    try:
+        ts, value = _BLOCKERS_CACHE.get(key, (0.0, None))
+        if value is not None and (time.time() - ts) < ttl_s:
+            return value
+    except Exception:
+        return None
+    return None
+
+
+def _cache_set_blockers(key: str, value: dict):
+    try:
+        _BLOCKERS_CACHE[key] = (time.time(), value)
     except Exception:
         pass
 
@@ -3099,6 +3119,14 @@ async def get_shopify_blockers(request: Request, range: str = "30d", limit: int 
 
     shop_domain, access_token = _get_shopify_connection(user_id)
 
+    cache_key = f"{user_id}:{shop_domain}:{range}:{int(limit)}"
+    cached = _cache_get_blockers(cache_key, ttl_s=300)
+    if cached:
+        return cached
+
+    started_at = time.time()
+    max_total_s = 25
+
     range_map = {
         "7d": 7,
         "30d": 30,
@@ -3120,10 +3148,13 @@ async def get_shopify_blockers(request: Request, range: str = "30d", limit: int 
         f"&fields=id,created_at,total_price,financial_status,currency,line_items"
     )
     page_count = 0
-    max_pages = 2 if days <= 30 else 3
-    max_orders = 500 if days <= 30 else 800
+    # Keep this endpoint responsive: prefer partial analysis over timeouts.
+    max_pages = 1 if days <= 30 else 2
+    max_orders = 250 if days <= 30 else 500
 
     while next_url and page_count < max_pages and len(orders) < max_orders:
+        if (time.time() - started_at) > (max_total_s - 7):
+            break
         try:
             response = requests.get(next_url, headers=headers, timeout=20)
         except requests.exceptions.Timeout:
@@ -3162,7 +3193,12 @@ async def get_shopify_blockers(request: Request, range: str = "30d", limit: int 
             stat["revenue"] += revenue
 
     product_ids = list(product_stats.keys())
-    event_counts = _fetch_shopify_event_counts(user_id, shop_domain, days)
+    event_counts = {}
+    try:
+        if (time.time() - started_at) < (max_total_s - 10):
+            event_counts = _fetch_shopify_event_counts(user_id, shop_domain, days)
+    except Exception:
+        event_counts = {}
     if not product_ids:
         # Lightweight products fetch (avoid heavy payload / transform) for the blockers fallback.
         products = []
@@ -3316,17 +3352,19 @@ async def get_shopify_blockers(request: Request, range: str = "30d", limit: int 
         score += min(1.0, float(stat.get("revenue", 0.0) <= 0.0))
         return score
 
-    if len(product_ids) > 160:
+    if len(product_ids) > 120:
         ranked = sorted(
             ((pid, _candidate_score(pid, stat)) for pid, stat in product_stats.items()),
             key=lambda x: x[1],
             reverse=True,
         )
-        product_ids = [pid for pid, _ in ranked[:160]]
+        product_ids = [pid for pid, _ in ranked[:120]]
 
     products_by_id = {}
     batch_size = 50
     for i in range(0, len(product_ids), batch_size):
+        if (time.time() - started_at) > (max_total_s - 5):
+            break
         batch_ids = ",".join(product_ids[i : i + batch_size])
         products_url = (
             f"https://{shop_domain}/admin/api/2024-10/products.json"
@@ -3492,8 +3530,10 @@ async def get_shopify_blockers(request: Request, range: str = "30d", limit: int 
         "Analyse basée sur commandes Shopify + événements Shopify Pixel (vues, ajout panier).",
         "Si les événements Pixel ne sont pas configurés, certaines métriques peuvent manquer.",
     ]
+    if (time.time() - started_at) > (max_total_s - 1):
+        notes.insert(0, "Analyse partielle: temps de calcul limité pour éviter les timeouts.")
 
-    return {
+    payload = {
         "success": True,
         "shop": shop_domain,
         "range": range,
@@ -3501,6 +3541,9 @@ async def get_shopify_blockers(request: Request, range: str = "30d", limit: int 
         "blockers": blockers[: max(1, min(limit, 50))],
         "notes": notes,
     }
+
+    _cache_set_blockers(cache_key, payload)
+    return payload
 
 
 class BlockerApplyRequest(BaseModel):
