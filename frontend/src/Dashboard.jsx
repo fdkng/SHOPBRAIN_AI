@@ -1583,9 +1583,9 @@ export default function Dashboard() {
           'Content-Type': 'application/json'
         }
       }, {
-        retries: 1,
-        retryDelayMs: 1500,
-        timeoutMs: 70000,
+        retries: 2,
+        retryDelayMs: 2000,
+        timeoutMs: 180000,
         retryStatuses: [429, 500, 502, 503, 504]
       })
 
