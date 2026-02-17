@@ -3425,6 +3425,57 @@ export default function Dashboard() {
                           </div>
                         ) : null}
 
+                        {item.recommendations?.source === 'ai' && item.recommendations?.ai?.beginner_guide ? (
+                          <div className="bg-gray-800/60 border border-gray-700 rounded-lg p-4 space-y-2">
+                            <div className="text-white font-semibold text-base">Mode débutant (fais exactement ça)</div>
+                            {Array.isArray(item.recommendations.ai.beginner_guide.before_you_start) && item.recommendations.ai.beginner_guide.before_you_start.length > 0 ? (
+                              <div className="text-sm text-gray-300 space-y-1">
+                                <div className="text-gray-400">Avant de commencer</div>
+                                {item.recommendations.ai.beginner_guide.before_you_start.slice(0, 5).map((line, idx) => (
+                                  <div key={idx}>• {line}</div>
+                                ))}
+                              </div>
+                            ) : null}
+
+                            {item.recommendations.ai.beginner_guide.setup ? (
+                              <div className="text-sm text-gray-300 space-y-1">
+                                <div className="text-gray-400">Setup (copie/colle)</div>
+                                {item.recommendations.ai.beginner_guide.setup.background ? <div>• Fond: <span className="text-white">{item.recommendations.ai.beginner_guide.setup.background}</span></div> : null}
+                                {item.recommendations.ai.beginner_guide.setup.lighting ? <div>• Lumière: <span className="text-white">{item.recommendations.ai.beginner_guide.setup.lighting}</span></div> : null}
+                                {item.recommendations.ai.beginner_guide.setup.camera ? <div>• Caméra: <span className="text-white">{item.recommendations.ai.beginner_guide.setup.camera}</span></div> : null}
+                                {item.recommendations.ai.beginner_guide.setup.styling ? <div>• Mise en scène: <span className="text-white">{item.recommendations.ai.beginner_guide.setup.styling}</span></div> : null}
+                              </div>
+                            ) : null}
+
+                            {Array.isArray(item.recommendations.ai.beginner_guide.do_this_first) && item.recommendations.ai.beginner_guide.do_this_first.length > 0 ? (
+                              <div className="text-sm text-gray-300 space-y-1">
+                                <div className="text-gray-400">À faire en premier (dans l’ordre)</div>
+                                {item.recommendations.ai.beginner_guide.do_this_first.slice(0, 6).map((line, idx) => (
+                                  <div key={idx}>{idx + 1}. {line}</div>
+                                ))}
+                              </div>
+                            ) : null}
+
+                            {Array.isArray(item.recommendations.ai.beginner_guide.quality_check) && item.recommendations.ai.beginner_guide.quality_check.length > 0 ? (
+                              <div className="text-sm text-gray-300 space-y-1">
+                                <div className="text-gray-400">Check qualité (avant d’exporter)</div>
+                                {item.recommendations.ai.beginner_guide.quality_check.slice(0, 5).map((line, idx) => (
+                                  <div key={idx}>• {line}</div>
+                                ))}
+                              </div>
+                            ) : null}
+
+                            {Array.isArray(item.recommendations.ai.beginner_guide.what_to_avoid) && item.recommendations.ai.beginner_guide.what_to_avoid.length > 0 ? (
+                              <div className="text-sm text-gray-300 space-y-1">
+                                <div className="text-gray-400">À éviter (vraiment)</div>
+                                {item.recommendations.ai.beginner_guide.what_to_avoid.slice(0, 5).map((line, idx) => (
+                                  <div key={idx}>• {line}</div>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
+
                         {item.recommendations?.source !== 'ai' && Array.isArray(item.recommendations.category_notes) && item.recommendations.category_notes.length > 0 ? (
                           <div className="text-sm text-gray-400 space-y-1">
                             {item.recommendations.category_notes.slice(0, 2).map((line, idx) => (
@@ -3461,11 +3512,22 @@ export default function Dashboard() {
                                 <div key={idx} className="text-sm text-gray-300">
                                   <div className="font-semibold text-white">Image {img.index || (idx + 1)} — {img.name}</div>
                                   <div className="text-gray-300">{img.what_to_shoot}</div>
+                                  {Array.isArray(img.uses_facts) && img.uses_facts.length > 0 ? (
+                                    <div className="text-gray-400 mt-2">Pourquoi c’est adapté: <span className="text-white">{img.uses_facts.slice(0, 3).join(' · ')}</span></div>
+                                  ) : null}
                                   <div className="text-gray-400 mt-1">
                                     Fond: {img.background} • Ton: {img.color_tone} • Props: {img.props}
                                   </div>
                                   <div className="text-gray-400">Caméra: {img.camera} • Lumière: {img.lighting}</div>
                                   {img.editing_notes ? <div className="text-gray-500">Retouche: {img.editing_notes}</div> : null}
+                                  {Array.isArray(img.exact_steps) && img.exact_steps.length > 0 ? (
+                                    <div className="mt-2 space-y-1">
+                                      <div className="text-gray-400">Étapes exactes</div>
+                                      {img.exact_steps.slice(0, 6).map((line, sidx) => (
+                                        <div key={sidx}>{sidx + 1}. {line}</div>
+                                      ))}
+                                    </div>
+                                  ) : null}
                                 </div>
                               ))}
                             </div>

@@ -3502,6 +3502,7 @@ def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
         if not kw:
             return False
         hit = 0
+        facts_used_hits = 0
         for img in images_to_create[:6]:
             text = " ".join([
                 str(img.get("name") or ""),
@@ -3510,8 +3511,12 @@ def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
             ]).lower()
             if any(k in text for k in list(kw)[:8]):
                 hit += 1
-        # Require at least 2 hits in first shots
-        return hit < 2
+            uses = img.get("uses_facts")
+            if isinstance(uses, list) and any(isinstance(u, str) and u.strip() for u in uses):
+                facts_used_hits += 1
+
+        # Require: at least 3 keyword hits AND at least 3 shots explicitly linking to product facts.
+        return hit < 3 or facts_used_hits < 3
 
     def _build_prompt_blocks(images_to_create: list[dict]) -> list[dict]:
         prompt_blocks = []
@@ -3544,6 +3549,18 @@ def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
         schema = {
             "product_id": "string",
             "product_facts_used": ["string"],
+            "beginner_guide": {
+                "before_you_start": ["string"],
+                "setup": {
+                    "background": "string",
+                    "lighting": "string",
+                    "camera": "string",
+                    "styling": "string",
+                },
+                "do_this_first": ["string"],
+                "quality_check": ["string"],
+                "what_to_avoid": ["string"],
+            },
             "target_total_images": 8,
             "tone": "string",
             "background": "string",
@@ -3562,6 +3579,8 @@ def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
                     "lighting": "string",
                     "editing_notes": "string",
                     "why": "string",
+                    "exact_steps": ["string"],
+                    "uses_facts": ["string"],
                     "prompts": {"studio": "string", "premium": "string"},
                 }
             ],
@@ -3574,13 +3593,17 @@ def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
             "Do NOT browse the web.",
             "Be specific to THIS product. Do NOT reuse generic templates.",
             "First, extract 4-7 concrete product facts into product_facts_used (from title/type/tags/vendor/description/price).",
-            "Every shot (name/what_to_shoot/why) MUST mention at least one fact from product_facts_used.",
+            "You must write for a complete beginner: short sentences, imperative verbs, no jargon.",
+            "Fill beginner_guide with step-by-step instructions someone can follow literally.",
+            "Every shot MUST include uses_facts with 1-3 exact strings copied from product_facts_used.",
+            "Every shot (name/what_to_shoot/why) MUST clearly reference at least one fact from uses_facts.",
+            "For every shot, add exact_steps (3-6 bullets) that describe exactly what to do.",
             "If information is missing, infer reasonable specifics from product_type/title (ex: bouteille -> bouchon/étanchéité/prise en main).",
             "Avoid vague advice. Use measurable / concrete details.",
             "Return only valid JSON matching output_schema.",
         ]
         if retry:
-            constraints.insert(0, "Your previous answer was too generic. Make it clearly different and product-linked.")
+            constraints.insert(0, "Your previous answer was too generic. Make it clearly different AND cite product facts in every shot (uses_facts + exact_steps).")
 
         prompt = {
             "task": "Create extremely concrete, product-specific image recommendations for an ecommerce product page.",
@@ -3623,8 +3646,14 @@ def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
                 return {}
             facts = row.get("product_facts_used")
             facts = facts if isinstance(facts, list) else []
+            beginner_guide = row.get("beginner_guide") if isinstance(row.get("beginner_guide"), dict) else {}
             if (not retry) and _looks_generic(p, images_to_create, facts):
                 return _text_only_for_product(p, retry=True)
+
+            # Require beginner guide when generating from text (no photos).
+            if not retry:
+                if not beginner_guide or not isinstance(beginner_guide.get("do_this_first"), list) or len(beginner_guide.get("do_this_first") or []) < 3:
+                    return _text_only_for_product(p, retry=True)
 
             return {
                 "ai": {
@@ -3635,6 +3664,7 @@ def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
                     "alt_templates": row.get("alt_templates"),
                     "notes": row.get("notes"),
                     "product_facts_used": facts,
+                    "beginner_guide": beginner_guide,
                 },
                 "target_total_images": row.get("target_total_images"),
                 "action_plan": row.get("action_plan"),
@@ -3665,6 +3695,11 @@ def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
             "output_schema": {
                 "product_id": "string",
                 "product_facts_used": ["string"],
+                "beginner_guide": {
+                    "do_this_first": ["string"],
+                    "quality_check": ["string"],
+                    "what_to_avoid": ["string"],
+                },
                 "tone": "string",
                 "background": "string",
                 "color_palette": ["string"],
@@ -3714,6 +3749,7 @@ def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
                 return {}
             facts = row.get("product_facts_used")
             facts = facts if isinstance(facts, list) else []
+            beginner_guide = row.get("beginner_guide") if isinstance(row.get("beginner_guide"), dict) else {}
             return {
                 "ai": {
                     "tone": row.get("tone"),
@@ -3723,6 +3759,7 @@ def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
                     "notes": row.get("notes"),
                     "audit": row.get("audit") if isinstance(row.get("audit"), dict) else {},
                     "product_facts_used": facts,
+                    "beginner_guide": beginner_guide,
                 },
                 "target_total_images": None,
                 "action_plan": row.get("action_plan"),
