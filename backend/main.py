@@ -3156,11 +3156,39 @@ def _run_bundles_worker(job_id: str, shop_domain: str, access_token: str, days: 
             _BUNDLES_JOBS[job_id]["result"] = result
             # cache last result per shop
             _BUNDLES_CACHE[shop_domain] = {"ts": time.time(), "result": result}
+        # Persist job/result to Supabase if available (best-effort)
+        try:
+            if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+                supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+                supabase.table("bundle_jobs").insert({
+                    "job_id": job_id,
+                    "shop_domain": shop_domain,
+                    "status": "completed",
+                    "started_at": datetime.utcfromtimestamp(_BUNDLES_JOBS[job_id].get("started_at")) if _BUNDLES_JOBS[job_id].get("started_at") else None,
+                    "finished_at": datetime.utcfromtimestamp(_BUNDLES_JOBS[job_id].get("finished_at")) if _BUNDLES_JOBS[job_id].get("finished_at") else None,
+                    "result": json.dumps(result),
+                }).execute()
+        except Exception:
+            pass
     except Exception as e:
         with _BUNDLES_LOCK:
             _BUNDLES_JOBS[job_id]["status"] = "failed"
             _BUNDLES_JOBS[job_id]["error"] = str(e)
             _BUNDLES_JOBS[job_id]["finished_at"] = time.time()
+        # persist failure
+        try:
+            if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+                supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+                supabase.table("bundle_jobs").insert({
+                    "job_id": job_id,
+                    "shop_domain": shop_domain,
+                    "status": "failed",
+                    "started_at": datetime.utcfromtimestamp(_BUNDLES_JOBS[job_id].get("started_at")) if _BUNDLES_JOBS[job_id].get("started_at") else None,
+                    "finished_at": datetime.utcfromtimestamp(_BUNDLES_JOBS[job_id].get("finished_at")) if _BUNDLES_JOBS[job_id].get("finished_at") else None,
+                    "error": str(e),
+                }).execute()
+        except Exception:
+            pass
 
 
 @app.post("/api/shopify/bundles/async")
@@ -3187,6 +3215,83 @@ async def get_shopify_bundles_job(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return {"success": True, "job": job}
+
+
+@app.get("/api/shopify/bundles/latest")
+async def get_shopify_bundles_latest(request: Request):
+    """Return cached bundles result for the connected shop if available; otherwise return fast fallback info."""
+    user_id = get_user_id(request)
+    shop_domain, _ = _get_shopify_connection(user_id)
+    cached = _BUNDLES_CACHE.get(shop_domain)
+    if cached and time.time() - cached.get("ts", 0) < int(os.getenv("BUNDLES_CACHE_TTL", "3600")):
+        return {"success": True, "shop": shop_domain, "cached": True, "result": cached.get("result")}
+
+    # Try Supabase fallback
+    if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+        try:
+            supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+            rows = supabase.table("bundle_jobs").select("job_id,result,finished_at").eq("shop_domain", shop_domain).order("finished_at", desc=True).limit(1).execute()
+            if rows and rows.data:
+                row = rows.data[0]
+                return {"success": True, "shop": shop_domain, "cached": True, "result": json.loads(row.get("result") or "{}"), "job_id": row.get("job_id")}
+        except Exception:
+            pass
+
+    return {"success": True, "shop": shop_domain, "cached": False, "message": "No cached bundles. Start analysis with /api/shopify/bundles/async."}
+
+
+@app.get("/api/shopify/bundles/list")
+async def list_shopify_bundles_jobs(request: Request, limit: int = 20):
+    user_id = get_user_id(request)
+    shop_domain, _ = _get_shopify_connection(user_id)
+    # Local jobs
+    jobs = []
+    with _BUNDLES_LOCK:
+        for jid, meta in _BUNDLES_JOBS.items():
+            # include only jobs for this shop if present in meta (we store shop_domain there when creating)
+            if meta.get("shop_domain") and meta.get("shop_domain") != shop_domain:
+                continue
+            jobs.append({"job_id": jid, **meta})
+
+    # Supabase persisted jobs
+    persisted = []
+    if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+        try:
+            supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+            rows = supabase.table("bundle_jobs").select("job_id,status,started_at,finished_at").eq("shop_domain", shop_domain).order("finished_at", desc=True).limit(limit).execute()
+            persisted = rows.data or []
+        except Exception:
+            persisted = []
+
+    return {"success": True, "shop": shop_domain, "local_jobs": jobs, "persisted_jobs": persisted}
+
+
+@app.post("/api/shopify/bundles/cancel/{job_id}")
+async def cancel_shopify_bundles_job(request: Request, job_id: str):
+    user_id = get_user_id(request)
+    shop_domain, _ = _get_shopify_connection(user_id)
+    with _BUNDLES_LOCK:
+        job = _BUNDLES_JOBS.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if job.get("status") in {"completed", "failed"}:
+            raise HTTPException(status_code=400, detail="Cannot cancel completed/failed job")
+        job["status"] = "cancelled"
+        job["finished_at"] = time.time()
+    # persist cancellation
+    try:
+        if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+            supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+            supabase.table("bundle_jobs").insert({
+                "job_id": job_id,
+                "shop_domain": shop_domain,
+                "status": "cancelled",
+                "started_at": None,
+                "finished_at": datetime.utcnow(),
+            }).execute()
+    except Exception:
+        pass
+    return {"success": True, "job_id": job_id, "status": "cancelled"}
 
 
 @app.get("/api/shopify/market-status")
