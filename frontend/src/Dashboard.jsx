@@ -3336,11 +3336,11 @@ export default function Dashboard() {
         {activeTab === 'action-images' && (
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 space-y-6">
             <div>
-              <h2 className="text-white text-xl font-bold mb-2">Assistance images</h2>
-              <p className="text-gray-400">Recommandations détaillées: nombre d’images cible, types d’images à produire, style (fond, ton couleur, background) et prompts.</p>
+              <h2 className="text-white text-2xl font-bold mb-2">Assistance images</h2>
+              <p className="text-gray-300 text-base">Plan d’action ultra précis: combien d’images, quelles images produire, avec quel fond/ton/couleurs, et prompts prêts à utiliser.</p>
             </div>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <p className="text-sm text-gray-400">{getInsightCount(insightsData?.image_risks)} produits analysés</p>
+              <p className="text-base text-gray-300">{getInsightCount(insightsData?.image_risks)} produits analysés</p>
               <button
                 onClick={() => runActionAnalysis('action-images')}
                 disabled={insightsLoading}
@@ -3351,7 +3351,7 @@ export default function Dashboard() {
             </div>
             {renderStatus('action-images')}
             {Array.isArray(insightsData?.notes) && insightsData.notes.length > 0 ? (
-              <div className="text-xs text-gray-500 space-y-1">
+              <div className="text-sm text-gray-400 space-y-1">
                 {insightsData.notes.slice(0, 3).map((note, idx) => (
                   <div key={idx}>• {note}</div>
                 ))}
@@ -3360,10 +3360,10 @@ export default function Dashboard() {
 
             {insightsData?.playbook ? (
               <div className="bg-gray-900/60 border border-gray-700 rounded-lg p-4 space-y-3">
-                <div className="text-white font-semibold">Playbook visuel (standard pro)</div>
-                <div className="text-xs text-gray-400">Minimum recommandé: {insightsData.playbook.recommended_min_images} images • Idéal: {insightsData.playbook.recommended_ideal_images} images</div>
+                <div className="text-white font-semibold text-lg">Playbook visuel (standard pro)</div>
+                <div className="text-sm text-gray-300">Minimum recommandé: {insightsData.playbook.recommended_min_images} images • Idéal: {insightsData.playbook.recommended_ideal_images} images</div>
                 {Array.isArray(insightsData.playbook.what_to_produce) ? (
-                  <div className="text-xs text-gray-400 space-y-1">
+                  <div className="text-sm text-gray-300 space-y-1">
                     {insightsData.playbook.what_to_produce.slice(0, 6).map((line, idx) => (
                       <div key={idx}>• {line}</div>
                     ))}
@@ -3378,15 +3378,15 @@ export default function Dashboard() {
               ) : (
                 insightsData?.image_risks?.slice(0, 8).map((item, index) => (
                   <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
-                    <p className="text-white font-semibold">{item.title || `Produit #${item.product_id}`}</p>
-                    <p className="text-xs text-gray-500">
+                    <p className="text-white font-semibold text-lg">{item.title || `Produit #${item.product_id}`}</p>
+                    <p className="text-sm text-gray-400">
                       {item.images_count} images{item.missing_alt ? ' • alt manquant' : ''}
                       {item.view_to_cart_rate !== null && item.view_to_cart_rate !== undefined ? ` • v→panier ${Math.round(item.view_to_cart_rate * 100)}%` : ''}
                     </p>
 
                     {item?.recommendations ? (
-                      <div className="mt-3 space-y-2">
-                        <div className="text-xs text-gray-300">
+                      <div className="mt-4 space-y-4">
+                        <div className="text-base text-gray-200">
                           Cible: <span className="text-white font-semibold">{item.recommendations.target_total_images}</span> images
                           {Number.isFinite(Number(item.recommendations.recommended_new_images)) && item.recommendations.recommended_new_images > 0
                             ? <span className="text-gray-400"> • à produire: {item.recommendations.recommended_new_images}</span>
@@ -3394,29 +3394,68 @@ export default function Dashboard() {
                           }
                         </div>
 
-                        {Array.isArray(item.recommendations.priority_shots) && item.recommendations.priority_shots.length > 0 ? (
-                          <div className="text-xs text-gray-400 space-y-1">
-                            <div className="text-gray-300 font-semibold">Shots à produire (priorité)</div>
-                            {item.recommendations.priority_shots.slice(0, 5).map((s, idx) => (
-                              <div key={idx}>• <span className="text-white">{s.shot}</span> — {s.purpose} (fond: {s.background})</div>
-                            ))}
-                          </div>
-                        ) : null}
-
-                        {Array.isArray(item.recommendations.style_guidelines) && item.recommendations.style_guidelines.length > 0 ? (
-                          <div className="text-xs text-gray-500 space-y-1">
-                            {item.recommendations.style_guidelines.slice(0, 3).map((line, idx) => (
+                        {Array.isArray(item.recommendations.category_notes) && item.recommendations.category_notes.length > 0 ? (
+                          <div className="text-sm text-gray-400 space-y-1">
+                            {item.recommendations.category_notes.slice(0, 2).map((line, idx) => (
                               <div key={idx}>• {line}</div>
                             ))}
                           </div>
                         ) : null}
 
-                        {Array.isArray(item.recommendations.prompt_pack) && item.recommendations.prompt_pack.length > 0 ? (
-                          <div className="text-xs text-gray-500">
-                            <div className="text-gray-300 font-semibold mb-1">Prompt (génération d’images)</div>
-                            <div className="bg-black/30 border border-gray-700 rounded p-2 font-mono whitespace-pre-wrap break-words">
-                              {item.recommendations.prompt_pack[0]?.prompt}
+                        {Array.isArray(item.recommendations.action_plan) && item.recommendations.action_plan.length > 0 ? (
+                          <div className="bg-gray-800/60 border border-gray-700 rounded-lg p-4 space-y-2">
+                            <div className="text-white font-semibold text-base">Plan d’action (quoi faire, dans l’ordre)</div>
+                            <div className="space-y-2">
+                              {item.recommendations.action_plan.slice(0, 7).map((stepObj, idx) => (
+                                <div key={idx} className="text-sm text-gray-300">
+                                  <div className="font-semibold text-white">{stepObj.step}. {stepObj.title}</div>
+                                  {Array.isArray(stepObj.do) ? (
+                                    <div className="mt-1 text-gray-300 space-y-1">
+                                      {stepObj.do.slice(0, 4).map((line, lineIdx) => (
+                                        <div key={lineIdx}>- {line}</div>
+                                      ))}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ))}
                             </div>
+                          </div>
+                        ) : null}
+
+                        {Array.isArray(item.recommendations.recommended_order) && item.recommendations.recommended_order.length > 0 ? (
+                          <div className="text-sm text-gray-300 space-y-1">
+                            <div className="text-white font-semibold">Ordre recommandé des images</div>
+                            {item.recommendations.recommended_order.slice(0, 8).map((o, idx) => (
+                              <div key={idx}>#{o.position} — <span className="text-white">{o.shot}</span> <span className="text-gray-400">({o.goal})</span></div>
+                            ))}
+                          </div>
+                        ) : null}
+
+                        {Array.isArray(item.recommendations.style_guidelines) && item.recommendations.style_guidelines.length > 0 ? (
+                          <div className="text-sm text-gray-400 space-y-1">
+                            <div className="text-white font-semibold">Style (fond, ton, background)</div>
+                            {item.recommendations.style_guidelines.slice(0, 4).map((line, idx) => (
+                              <div key={idx}>• {line}</div>
+                            ))}
+                          </div>
+                        ) : null}
+
+                        {Array.isArray(item.recommendations.prompt_blocks) && item.recommendations.prompt_blocks.length > 0 ? (
+                          <div className="space-y-2">
+                            <div className="text-white font-semibold">Prompts (génération d’images)</div>
+                            {item.recommendations.prompt_blocks.slice(0, 3).map((pb, idx) => (
+                              <div key={idx} className="bg-black/20 border border-gray-700 rounded-lg p-3 space-y-2">
+                                <div className="text-sm text-gray-200 font-semibold">{pb.shot}</div>
+                                {Array.isArray(pb.prompts) ? pb.prompts.slice(0, 2).map((pr, prIdx) => (
+                                  <div key={prIdx} className="space-y-1">
+                                    <div className="text-xs text-gray-400">{pr.label}</div>
+                                    <div className="bg-black/30 border border-gray-700 rounded p-2 font-mono text-xs whitespace-pre-wrap break-words text-gray-200">
+                                      {pr.prompt}
+                                    </div>
+                                  </div>
+                                )) : null}
+                              </div>
+                            ))}
                           </div>
                         ) : null}
                       </div>

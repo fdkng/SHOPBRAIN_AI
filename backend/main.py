@@ -3171,8 +3171,7 @@ def _build_image_shot_list(category: str) -> list[dict]:
             "lighting": "Latérale douce pour révéler texture",
         },
         {
-            "shot": "Image "
-                    "preuve" ,
+            "shot": "Image preuve (bénéfice / taille / usage)",
             "purpose": "Réduire l’incertitude (taille/usage/benefit)",
             "composition": "Infographie simple: 1 bénéfice + 1 donnée",
             "background": "Blanc/clair avec accent couleur de marque",
@@ -3274,17 +3273,116 @@ def _build_image_recommendations(title: str, images_count: int, missing_alt: boo
 
     # AI prompt pack: usable in DALL·E / Midjourney / SD.
     product_label = (title or "Produit").strip()[:80]
-    prompt_pack = []
-    for s in priority_shots[:6]:
-        prompt_pack.append({
-            "shot": s.get("shot"),
-            "prompt": (
-                f"Photo produit e-commerce professionnelle: {product_label}. "
-                f"Type: {s.get('shot')}. Composition: {s.get('composition')}. "
-                f"Fond: {s.get('background')}. Ton couleur: {s.get('color_tone')}. "
-                f"Lumière: {s.get('lighting')}. Ultra réaliste, haute résolution, netteté parfaite, pas de texte, pas de watermark."
-            )
+    prompt_blocks = []
+    for s in priority_shots[:8]:
+        shot_name = s.get("shot")
+        base_prompt = (
+            f"Photo produit e-commerce professionnelle: {product_label}. "
+            f"Shot: {shot_name}. Composition: {s.get('composition')}. "
+            f"Fond: {s.get('background')}. Ton couleur: {s.get('color_tone')}. "
+            f"Lumière: {s.get('lighting')}. Ultra réaliste, haute résolution, netteté parfaite, pas de texte, pas de watermark."
+        )
+        premium_prompt = (
+            f"Photographie premium studio: {product_label}. "
+            f"Shot: {shot_name}. Composition: {s.get('composition')}. "
+            f"Arrière-plan minimaliste, rendu luxe discret, contrastes doux, couleurs fidèles, reflets contrôlés. "
+            f"Ultra réaliste, haute résolution, pas de texte, pas de watermark."
+        )
+        prompt_blocks.append({
+            "shot": shot_name,
+            "prompts": [
+                {"label": "Studio e-commerce", "prompt": base_prompt},
+                {"label": "Premium (luxe discret)", "prompt": premium_prompt},
+            ]
         })
+
+    # Highly prescriptive, step-by-step action plan.
+    size_specs = {
+        "ratio": "1:1 (carré)",
+        "min_resolution": "2000×2000 px",
+        "format": "JPG (ou WebP) haute qualité",
+    }
+    action_plan = [
+        {
+            "step": 1,
+            "title": "Produire le packshot principal (hero)",
+            "do": [
+                "Fond blanc ou gris très clair (#F6F6F6).",
+                "Produit grand (70–85% du cadre), centré, ombre douce.",
+                f"Export: {size_specs['ratio']} • {size_specs['min_resolution']} • {size_specs['format']}",
+            ],
+        },
+        {
+            "step": 2,
+            "title": "Ajouter 1 angle (3/4) + 1 dos/face si pertinent",
+            "do": [
+                "Même fond + même lumière que le hero (cohérence).",
+                "Objectif: volume + comprendre la forme en 1 seconde.",
+            ],
+        },
+        {
+            "step": 3,
+            "title": "Faire 2 zooms détails (preuve qualité)",
+            "do": [
+                "1 détail matière/texture.",
+                "1 détail finition (couture, logo, valve, embout, fermoir, etc.).",
+                "1 détail = 1 image (net, sans bruit).",
+            ],
+        },
+        {
+            "step": 4,
+            "title": "Créer 1 image preuve (taille / bénéfice / usage)",
+            "do": [
+                "Infographie simple: 1 bénéfice + 1 donnée maximum.",
+                "Police grande, lisible mobile, contraste doux.",
+                "Accents couleur limités (1–2 couleurs).",
+            ],
+        },
+        {
+            "step": 5,
+            "title": "Ajouter 1 lifestyle propre (projection)",
+            "do": [
+                "Décor minimal (pas de désordre), props limités (0–1).",
+                "Lumière naturelle douce ou studio diffus.",
+                "Le produit reste le sujet principal.",
+            ],
+        },
+        {
+            "step": 6,
+            "title": "Clarifier ce qui est inclus (packaging / contenu)",
+            "do": [
+                "Flat lay propre ou packshot packaging.",
+                "Lister visuellement les éléments inclus (sans surcharge).",
+            ],
+        },
+    ]
+    if missing_alt:
+        action_plan.append({
+            "step": 7,
+            "title": "Renseigner les textes ALT (SEO + accessibilité)",
+            "do": [
+                "ALT = type produit + matière/couleur + usage + vue.",
+                "Ex: 'Bouteille isotherme noire 500ml, vue 3/4, bouchon fermé'.",
+            ],
+        })
+
+    # Recommended ordering in the gallery for conversion.
+    order = []
+    for idx, s in enumerate(priority_shots[:target], start=1):
+        order.append({
+            "position": idx,
+            "shot": s.get("shot"),
+            "goal": s.get("purpose"),
+        })
+
+    # Extra specificity per category.
+    category_notes = []
+    if category == "apparel":
+        category_notes.append("Vêtements: ajoutez face + dos sur modèle, puis guide tailles (réduit retours).")
+    if category == "bottle":
+        category_notes.append("Gourdes/bouteilles: montrez le bouchon, l’ouverture, l’étanchéité, et l’échelle (main / sac / vélo).")
+    if category in {"beauty", "jewelry"}:
+        category_notes.append("Beauty/Bijoux: reflets contrôlés, macro très nette, 1–2 images mood premium max.")
 
     style_guidelines = [
         "Cohérence: même ratio, même lumière et fond sur la série.",
@@ -3305,7 +3403,10 @@ def _build_image_recommendations(title: str, images_count: int, missing_alt: boo
         "priority_shots": priority_shots,
         "style_guidelines": style_guidelines,
         "alt_text_guidance": alt_guidance,
-        "prompt_pack": prompt_pack,
+        "prompt_blocks": prompt_blocks,
+        "action_plan": action_plan,
+        "recommended_order": order,
+        "category_notes": category_notes,
         "do_dont": [
             "DO: fond propre, angles cohérents, détails nets, preuves (tailles, inclus, bénéfices).",
             "DON'T: texte illisible sur image, filtres lourds, ombres dures, décors encombrés.",
