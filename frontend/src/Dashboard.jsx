@@ -1548,6 +1548,59 @@ export default function Dashboard() {
     }
   }
 
+  const loadBundles = async (rangeOverride, config = {}) => {
+    try {
+      const rangeValue = rangeOverride || analyticsRange
+      setInsightsLoading(true)
+      if (!config?.silent) setInsightsError('')
+      const { data: { session } } = await supabase.auth.getSession()
+
+      if (!session) {
+        throw new Error('Session expirée, reconnectez-vous')
+      }
+
+      await waitForBackendReady({ retries: 8, retryDelayMs: 2000, timeoutMs: 22000 })
+      await warmupBackend(session.access_token)
+
+      const bundlesUrl = `${API_URL}/api/shopify/bundles?range=${rangeValue}`
+      const { response, data } = await fetchJsonWithRetry(bundlesUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        }
+      }, {
+        retries: 3,
+        retryDelayMs: 2000,
+        timeoutMs: 70000,
+        retryStatuses: [429, 500, 502, 503, 504]
+      })
+
+      if (!response.ok) {
+        const errorData = data || {}
+        throw new Error(errorData.detail || `HTTP ${response.status}`)
+      }
+
+      if (!data?.success) {
+        throw new Error(data?.detail || 'Analyse indisponible')
+      }
+
+      setInsightsData((prev) => ({
+        ...(prev || {}),
+        bundle_suggestions: Array.isArray(data?.bundle_suggestions) ? data.bundle_suggestions : []
+      }))
+      setBackendHealthTs(Date.now())
+      return data
+    } catch (err) {
+      console.error('Error loading bundles:', err)
+      const errorMessage = normalizeNetworkErrorMessage(err)
+      if (!config?.silent) setInsightsError(errorMessage)
+      throw new Error(errorMessage)
+    } finally {
+      setInsightsLoading(false)
+    }
+  }
+
   useEffect(() => {
     // Passive health probe to stabilize “Comparaison marché externe” status.
     // Also refresh periodically so status doesn't only change after a click.
@@ -1631,6 +1684,17 @@ export default function Dashboard() {
       setStatus(actionKey, 'info', 'Analyse en cours...')
       if (actionKey === 'action-rewrite') {
         setInsightsData(null)
+      }
+
+      if (actionKey === 'action-bundles') {
+        const data = await loadBundles(undefined)
+        const items = Array.isArray(data?.bundle_suggestions) ? data.bundle_suggestions : []
+        if (items.length === 0) {
+          setStatus(actionKey, 'warning', 'Analyse terminée: aucune opportunité détectée.')
+        } else {
+          setStatus(actionKey, 'success', 'Analyse terminée.')
+        }
+        return
       }
 
       const loadAiPriceInsights = async () => {
@@ -3535,7 +3599,7 @@ export default function Dashboard() {
                 disabled={insightsLoading}
                 className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
               >
-                {insightsLoading ? 'Analyse en cours...' : 'Lancer l\'analyse IA'}
+                {insightsLoading ? 'Analyse en cours...' : 'Analyser'}
               </button>
             </div>
             {renderStatus('action-bundles')}
@@ -3545,10 +3609,39 @@ export default function Dashboard() {
               ) : (
                 insightsData?.bundle_suggestions?.slice(0, 8).map((item, index) => (
                   <div key={index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
-                    <p className="text-white font-semibold">
-                      {item.titles?.[0] || `#${item.pair?.[0] || 'A'}`} + {item.titles?.[1] || `#${item.pair?.[1] || 'B'}`}
-                    </p>
-                    <p className="text-xs text-gray-500">{item.count || 0} commandes</p>
+                    <div className="flex flex-col gap-2">
+                      <div>
+                        <p className="text-white font-semibold">
+                          {item.titles?.[0] || `#${item.pair?.[0] || 'A'}`} + {item.titles?.[1] || `#${item.pair?.[1] || 'B'}`}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          {item.count || 0} commandes
+                          {item.confidence ? ` • confiance ${item.confidence}` : ''}
+                          {Array.isArray(item.discount_range_pct) && item.discount_range_pct.length >= 2 ? ` • remise ${item.discount_range_pct[0]}–${item.discount_range_pct[1]}%` : ''}
+                        </p>
+                      </div>
+
+                      {item.offer?.message ? (
+                        <div className="text-sm text-gray-300">
+                          <div className="text-white font-semibold">Offre</div>
+                          <div className="text-gray-300">{item.offer.message}</div>
+                        </div>
+                      ) : null}
+
+                      {Array.isArray(item.placements) && item.placements.length > 0 ? (
+                        <div className="text-sm text-gray-300">
+                          <div className="text-white font-semibold">Où l’afficher</div>
+                          <div className="text-gray-400">{item.placements.slice(0, 3).join(' · ')}</div>
+                        </div>
+                      ) : null}
+
+                      {Array.isArray(item.copy) && item.copy.length > 0 ? (
+                        <div className="text-sm text-gray-300">
+                          <div className="text-white font-semibold">Copy (exemples)</div>
+                          <div className="text-gray-400">{item.copy.slice(0, 2).join(' · ')}</div>
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 ))
               )}

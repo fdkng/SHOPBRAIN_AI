@@ -2868,6 +2868,137 @@ async def get_shopify_insights(
     }
 
 
+@app.get("/api/shopify/bundles")
+async def get_shopify_bundles(request: Request, range: str = "30d", limit: int = 10):
+    """🧩 Bundles & cross-sell suggestions based on order co-occurrence.
+
+    Lightweight alternative to /api/shopify/insights when you only need bundles.
+    """
+    user_id = get_user_id(request)
+    shop_domain, access_token = _get_shopify_connection(user_id)
+
+    range_map = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}
+    days = range_map.get(range, 30)
+
+    orders = _fetch_shopify_orders(shop_domain, access_token, days)
+    pair_counts: dict[tuple[str, str], int] = {}
+    for order in orders:
+        ids = [str(item.get("product_id") or item.get("id")) for item in order.get("line_items", [])]
+        ids = list({pid for pid in ids if pid and pid != "None"})
+        if len(ids) < 2:
+            continue
+        for i in range(len(ids)):
+            for j in range(i + 1, len(ids)):
+                pair = tuple(sorted([ids[i], ids[j]]))
+                pair_counts[pair] = pair_counts.get(pair, 0) + 1
+
+    top_pairs = sorted(pair_counts.items(), key=lambda x: x[1], reverse=True)[: max(1, min(int(limit or 10), 20))]
+
+    needed_ids = set()
+    for (a, b), _count in top_pairs:
+        needed_ids.add(a)
+        needed_ids.add(b)
+
+    def _fetch_product_titles(product_ids: set[str]) -> dict[str, str]:
+        titles: dict[str, str] = {}
+        if not product_ids:
+            return titles
+
+        headers = {
+            "X-Shopify-Access-Token": access_token,
+            "Content-Type": "application/json",
+        }
+        per_request_timeout = int(os.getenv("SHOPIFY_REQUEST_TIMEOUT", "25"))
+
+        # Best-effort: scan a few product pages to resolve titles.
+        next_url = (
+            f"https://{shop_domain}/admin/api/2024-10/products.json"
+            f"?limit=250&fields=id,title"
+        )
+        page_count = 0
+        max_pages = int(os.getenv("SHOPIFY_PRODUCTS_TITLE_MAX_PAGES", "3"))
+        while next_url and page_count < max_pages and len(titles) < len(product_ids):
+            resp = requests.get(next_url, headers=headers, timeout=per_request_timeout)
+            if resp.status_code != 200:
+                break
+            payload = resp.json()
+            for p in payload.get("products", []) or []:
+                pid = str(p.get("id") or "")
+                if pid and pid in product_ids and pid not in titles:
+                    titles[pid] = p.get("title") or pid
+            next_url = _parse_shopify_next_link(resp.headers.get("Link"))
+            page_count += 1
+
+        # Fallback: direct fetch for any missing IDs (bounded).
+        missing = [pid for pid in product_ids if pid not in titles]
+        for pid in missing[:10]:
+            try:
+                resp = requests.get(
+                    f"https://{shop_domain}/admin/api/2024-10/products/{pid}.json?fields=id,title",
+                    headers=headers,
+                    timeout=per_request_timeout,
+                )
+                if resp.status_code == 200:
+                    prod = (resp.json() or {}).get("product") or {}
+                    if str(prod.get("id") or "") == str(pid):
+                        titles[pid] = prod.get("title") or pid
+            except Exception:
+                continue
+
+        return titles
+
+    titles_by_id = _fetch_product_titles(needed_ids)
+
+    def _discount_range_pct(count: int) -> tuple[int, int]:
+        if count >= 8:
+            return (5, 8)
+        if count >= 4:
+            return (8, 12)
+        return (10, 15)
+
+    def _confidence_label(count: int) -> str:
+        if count >= 8:
+            return "forte"
+        if count >= 4:
+            return "moyenne"
+        return "faible"
+
+    suggestions: list[dict] = []
+    for (a, b), count in top_pairs:
+        left = titles_by_id.get(a) or f"#{a}"
+        right = titles_by_id.get(b) or f"#{b}"
+        low, high = _discount_range_pct(int(count or 0))
+        suggestions.append({
+            "pair": [a, b],
+            "count": int(count or 0),
+            "confidence": _confidence_label(int(count or 0)),
+            "titles": [left, right],
+            "discount_range_pct": [low, high],
+            "placements": [
+                "page_produit (bloc: Souvent achetés ensemble)",
+                "panier / drawer (cross-sell avant checkout)",
+                "checkout (si supporté par le thème/app)",
+            ],
+            "offer": {
+                "type": "bundle",
+                "name": f"Bundle: {left} + {right}"[:120],
+                "message": f"Ajoute {right} et économise {low}–{high}% sur le pack.",
+            },
+            "copy": [
+                f"Complète ton achat avec {right}.",
+                f"Le duo le plus fréquent: {left} + {right}.",
+            ],
+        })
+
+    return {
+        "success": True,
+        "shop": shop_domain,
+        "range": range,
+        "orders_scanned": len(orders),
+        "bundle_suggestions": suggestions,
+    }
+
+
 @app.get("/api/shopify/market-status")
 async def get_shopify_market_status(request: Request):
     user_id = get_user_id(request)
