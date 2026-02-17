@@ -1,50 +1,36 @@
+
+"""
+ShopBrain AI – Écosystème Bundles & cross-sell
+Endpoints, logique asynchrone, cache, persistance Supabase, gestion d’erreurs, threading, doc.
+"""
+
+import os
+import re
+import json
+import time
+import uuid
+import hashlib
+import requests
+import threading
+from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException, Request, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
-import os
-import uuid
+from starlette.responses import RedirectResponse
+from supabase import create_client
 import openai
-try:
-    from openai import OpenAI
-except Exception:
 
-    import os
-    import re
-    import json
-    import time
-    import uuid
-    import hashlib
-    import requests
-    from datetime import datetime, timedelta
-    from fastapi import FastAPI, Request, HTTPException, UploadFile, File
-    from fastapi.middleware.cors import CORSMiddleware
-    from pydantic import BaseModel
-    from starlette.responses import RedirectResponse
-    from supabase import create_client
-    import threading
+print("\n🚀 ========== BACKEND STARTUP ==========")
+print(f"✅ FastAPI initializing...")
+app = FastAPI()
 
-    print("\n🚀 ========== BACKEND STARTUP ==========")
-    print(f"✅ FastAPI initializing...")
-    app = FastAPI()
-
-    # Shopify OAuth credentials
-    SHOPIFY_API_KEY = os.getenv("SHOPIFY_API_KEY")
-    SHOPIFY_API_SECRET = os.getenv("SHOPIFY_API_SECRET")
-    SHOPIFY_ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN")
-    SHOPIFY_SCOPES = "read_products,write_products,read_orders,read_customers,read_analytics"
-    SHOPIFY_REDIRECT_URI = os.getenv("SHOPIFY_REDIRECT_URI", "https://shopbrain-backend.onrender.com/auth/shopify/callback")
-
-    if not OPENAI_API_KEY:
-        # Line 645 omitted
-    else:
-        # Lines 647-648 omitted
-        # Line 648 omitted
-
-    if STRIPE_SECRET_KEY:
-        # Line 651 omitted
-except Exception as e:
-    print(f"⚠️  ShopBrainAI import failed (non-critical): {e}")
+# Shopify OAuth credentials
+SHOPIFY_API_KEY = os.getenv("SHOPIFY_API_KEY")
+SHOPIFY_API_SECRET = os.getenv("SHOPIFY_API_SECRET")
+SHOPIFY_ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN")
+SHOPIFY_SCOPES = "read_products,write_products,read_orders,read_customers,read_analytics"
+SHOPIFY_REDIRECT_URI = os.getenv("SHOPIFY_REDIRECT_URI", "https://shopbrain-backend.onrender.com/auth/shopify/callback")
 
 try:
     from shopbrain_expert_system import SHOPBRAIN_EXPERT_SYSTEM as _SYSTEM_PROMPT
