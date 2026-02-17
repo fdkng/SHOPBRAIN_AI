@@ -3436,6 +3436,8 @@ def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
             "product_type": p.get("product_type") or "",
             "vendor": p.get("vendor") or "",
             "tags": p.get("tags") or "",
+            "description": p.get("description") or "",
+            "price": p.get("price"),
             "images_count": p.get("images_count"),
             "missing_alt": bool(p.get("missing_alt")),
             "views": p.get("views"),
@@ -3448,11 +3450,12 @@ def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
         return {}
 
     prompt = {
-        "task": "Create extremely concrete, user-friendly image recommendations for ecommerce product pages.",
+        "task": "Create extremely concrete, product-specific image recommendations for ecommerce product pages.",
         "language": "fr",
         "constraints": [
             "Do NOT browse the web.",
-            "Be specific to EACH product title/type/tags.",
+            "Be specific to EACH product title/type/tags/description.",
+            "Infer what matters to show (features/angles/details) from the product context (e.g., vélo -> crampons, transmission, freins; voiture -> intérieur, tableau de bord, coffre, détails finition).",
             "Give a predefined structured plan (always same fields).",
             "Avoid vague advice. Use actionable sentences (what to shoot, background, colors, props, lighting).",
             "Return only valid JSON.",
@@ -3465,6 +3468,20 @@ def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
                     "tone": "string",
                     "background": "string",
                     "color_palette": ["string"],
+                    "action_plan": [
+                        {
+                            "step": 1,
+                            "title": "string",
+                            "do": ["string"]
+                        }
+                    ],
+                    "recommended_order": [
+                        {
+                            "position": 1,
+                            "shot": "string",
+                            "goal": "string"
+                        }
+                    ],
                     "images_to_create": [
                         {
                             "index": 1,
@@ -3546,6 +3563,8 @@ def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
                     "notes": row.get("notes"),
                 },
                 "target_total_images": row.get("target_total_images"),
+                "action_plan": row.get("action_plan"),
+                "recommended_order": row.get("recommended_order"),
                 "images_to_create": images_to_create,
                 "prompt_blocks": prompt_blocks,
             }
@@ -3661,24 +3680,60 @@ async def get_shopify_image_risks(request: Request, range: str = "30d", limit: i
         items = items[:8]
 
         use_ai = bool(int(ai or 0))
+        if use_ai and not OPENAI_API_KEY:
+            raise HTTPException(status_code=503, detail="IA images non configurée: OPENAI_API_KEY manquante côté backend")
+
         ai_payload = {}
         if use_ai and OPENAI_API_KEY and items:
-            ai_payload = _ai_image_assistance_batch([
-                {
-                    "product_id": it.get("product_id"),
+            # Fetch extra details for these specific products to make AI recommendations truly product-specific.
+            details_by_id: dict[str, dict] = {}
+            started = time.time()
+            for it in items:
+                pid = str(it.get("product_id") or "")
+                if not pid:
+                    continue
+                if (time.time() - started) > 15:
+                    break
+                try:
+                    detail_url = f"https://{shop_domain}/admin/api/2024-10/products/{pid}.json?fields=id,title,body_html,product_type,vendor,tags,variants"
+                    dresp = requests.get(detail_url, headers=headers, timeout=10)
+                    if dresp.status_code == 200:
+                        prod = (dresp.json() or {}).get("product") or {}
+                        details_by_id[pid] = prod
+                except Exception:
+                    continue
+
+            enriched_for_ai = []
+            for it in items:
+                pid = str(it.get("product_id") or "")
+                prod = details_by_id.get(pid, {})
+                body = _strip_html(prod.get("body_html") or "")
+                body = body[:900]
+                price = None
+                try:
+                    variants = prod.get("variants") or []
+                    if variants:
+                        price = variants[0].get("price")
+                except Exception:
+                    price = None
+
+                enriched_for_ai.append({
+                    "product_id": pid,
                     "title": it.get("title"),
-                    "product_type": it.get("product_type"),
-                    "vendor": it.get("vendor"),
-                    "tags": it.get("tags"),
+                    "product_type": it.get("product_type") or prod.get("product_type") or "",
+                    "vendor": it.get("vendor") or prod.get("vendor") or "",
+                    "tags": it.get("tags") or prod.get("tags") or "",
+                    "description": body,
+                    "price": price,
                     "images_count": it.get("images_count"),
                     "missing_alt": it.get("missing_alt"),
                     "views": it.get("views"),
                     "add_to_cart": it.get("add_to_cart"),
                     "view_to_cart_rate": it.get("view_to_cart_rate"),
                     "target_total_images": (it.get("recommendations") or {}).get("target_total_images"),
-                }
-                for it in items
-            ])
+                })
+
+            ai_payload = _ai_image_assistance_batch(enriched_for_ai)
 
             for it in items:
                 pid = str(it.get("product_id") or "")
@@ -3687,24 +3742,33 @@ async def get_shopify_image_risks(request: Request, range: str = "30d", limit: i
                 ai_row = ai_payload.get(pid)
                 if not isinstance(ai_row, dict):
                     continue
-                rec = it.get("recommendations") or {}
-                # Override/augment with AI-specific plan.
-                if isinstance(ai_row.get("target_total_images"), (int, float)):
-                    rec["target_total_images"] = int(ai_row["target_total_images"])
-                    rec["recommended_new_images"] = max(0, int(rec["target_total_images"]) - int(it.get("images_count") or 0))
-                if isinstance(ai_row.get("images_to_create"), list):
-                    rec["images_to_create"] = ai_row.get("images_to_create")
-                if isinstance(ai_row.get("prompt_blocks"), list):
-                    rec["prompt_blocks"] = ai_row.get("prompt_blocks")
-                if isinstance(ai_row.get("ai"), dict):
-                    rec["ai"] = ai_row.get("ai")
-                it["recommendations"] = rec
+
+                # Replace recommendations with AI-generated content (no generic template).
+                target_total = ai_row.get("target_total_images")
+                try:
+                    target_total = int(target_total) if isinstance(target_total, (int, float, str)) else None
+                except Exception:
+                    target_total = None
+
+                it["recommendations"] = {
+                    "source": "ai",
+                    "target_total_images": target_total or (it.get("recommendations") or {}).get("target_total_images"),
+                    "recommended_new_images": max(0, int((target_total or (it.get("recommendations") or {}).get("target_total_images") or 0)) - int(it.get("images_count") or 0)),
+                    "images_to_create": ai_row.get("images_to_create") if isinstance(ai_row.get("images_to_create"), list) else [],
+                    "action_plan": ai_row.get("action_plan") if isinstance(ai_row.get("action_plan"), list) else [],
+                    "recommended_order": ai_row.get("recommended_order") if isinstance(ai_row.get("recommended_order"), list) else [],
+                    "style_guidelines": (ai_row.get("ai") or {}).get("style_rules") if isinstance((ai_row.get("ai") or {}).get("style_rules"), list) else [],
+                    "prompt_blocks": ai_row.get("prompt_blocks") if isinstance(ai_row.get("prompt_blocks"), list) else [],
+                    "ai": ai_row.get("ai") if isinstance(ai_row.get("ai"), dict) else {},
+                }
 
         notes = [
             "Analyse basée sur qualité des images (alt, quantité) + signaux Pixel si disponibles.",
         ]
         if not event_counts:
             notes.append("Ajoutez le Shopify Pixel pour enrichir les signaux vues/panier.")
+        if use_ai and OPENAI_API_KEY:
+            notes.append("Recommandations générées par IA et spécifiques à chaque produit.")
 
 
         return {

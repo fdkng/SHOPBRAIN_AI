@@ -1797,7 +1797,12 @@ export default function Dashboard() {
           })
           setStatus(actionKey, 'success', 'Analyse terminée.')
         } catch (err) {
-          setStatus(actionKey, 'error', normalizeNetworkErrorMessage(err, 'Erreur analyse'))
+          const message = normalizeNetworkErrorMessage(err, 'Erreur analyse')
+          if (String(message || '').toLowerCase().includes('ia images non configurée') || String(message || '').includes('OPENAI_API_KEY')) {
+            setStatus(actionKey, 'error', 'IA images non configurée côté backend (OPENAI_API_KEY). Ajoute la clé puis relance l’analyse.')
+          } else {
+            setStatus(actionKey, 'error', message)
+          }
         } finally {
           setInsightsLoading(false)
         }
@@ -3378,6 +3383,20 @@ export default function Dashboard() {
                             : <span className="text-gray-400"> • OK sur la quantité</span>
                           }
                         </div>
+
+                        {item.recommendations?.source === 'ai' && item.recommendations?.ai ? (
+                          <div className="text-sm text-gray-300 space-y-1">
+                            <div className="text-white font-semibold">Direction artistique (spécifique produit)</div>
+                            {item.recommendations.ai.tone ? <div>• Ton: <span className="text-white">{item.recommendations.ai.tone}</span></div> : null}
+                            {item.recommendations.ai.background ? <div>• Fond / background: <span className="text-white">{item.recommendations.ai.background}</span></div> : null}
+                            {Array.isArray(item.recommendations.ai.color_palette) && item.recommendations.ai.color_palette.length > 0 ? (
+                              <div>• Palette: <span className="text-white">{item.recommendations.ai.color_palette.slice(0, 6).join(', ')}</span></div>
+                            ) : null}
+                            {Array.isArray(item.recommendations.ai.notes) && item.recommendations.ai.notes.length > 0 ? (
+                              <div className="text-gray-400">• Note: {item.recommendations.ai.notes[0]}</div>
+                            ) : null}
+                          </div>
+                        ) : null}
 
                         {Array.isArray(item.recommendations.category_notes) && item.recommendations.category_notes.length > 0 ? (
                           <div className="text-sm text-gray-400 space-y-1">
