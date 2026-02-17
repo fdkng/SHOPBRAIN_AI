@@ -36,13 +36,13 @@ except Exception:
     SHOPIFY_REDIRECT_URI = os.getenv("SHOPIFY_REDIRECT_URI", "https://shopbrain-backend.onrender.com/auth/shopify/callback")
 
     if not OPENAI_API_KEY:
-        /* Line 645 omitted */
+        # Line 645 omitted
     else:
-        /* Lines 647-648 omitted */
-        /* Line 648 omitted */
+        # Lines 647-648 omitted
+        # Line 648 omitted
 
     if STRIPE_SECRET_KEY:
-        /* Line 651 omitted */
+        # Line 651 omitted
 except Exception as e:
     print(f"⚠️  ShopBrainAI import failed (non-critical): {e}")
 
