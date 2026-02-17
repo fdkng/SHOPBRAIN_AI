@@ -1548,58 +1548,97 @@ export default function Dashboard() {
     }
   }
 
-  const loadBundles = async (rangeOverride, config = {}) => {
+  // Nouveau flow asynchrone bundles
+  const loadBundlesAsync = async () => {
     try {
-      const rangeValue = rangeOverride || analyticsRange
       setInsightsLoading(true)
-      if (!config?.silent) setInsightsError('')
+      setInsightsError('')
       const { data: { session } } = await supabase.auth.getSession()
-
-      if (!session) {
-        throw new Error('Session expirée, reconnectez-vous')
-      }
-
+      if (!session) throw new Error('Session expirée, reconnectez-vous')
       await waitForBackendReady({ retries: 8, retryDelayMs: 2000, timeoutMs: 22000 })
       await warmupBackend(session.access_token)
-
-      const bundlesUrl = `${API_URL}/api/shopify/bundles?range=${rangeValue}`
-      const { response, data } = await fetchJsonWithRetry(bundlesUrl, {
-        method: 'GET',
+      // Lancer le job async
+      const resp = await fetch(`${API_URL}/api/shopify/bundles/async`, {
+        method: 'POST',
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
           'Content-Type': 'application/json'
         }
-      }, {
-        retries: 3,
-        retryDelayMs: 2000,
-        timeoutMs: 70000,
-        retryStatuses: [429, 500, 502, 503, 504]
       })
-
-      if (!response.ok) {
-        const errorData = data || {}
-        throw new Error(errorData.detail || `HTTP ${response.status}`)
-      }
-
-      if (!data?.success) {
-        throw new Error(data?.detail || 'Analyse indisponible')
-      }
-
-      setInsightsData((prev) => ({
-        ...(prev || {}),
-        bundle_suggestions: Array.isArray(data?.bundle_suggestions) ? data.bundle_suggestions : []
-      }))
-      setBackendHealthTs(Date.now())
-      return data
+      const data = await resp.json()
+      if (!resp.ok || !data?.job_id) throw new Error(data?.detail || 'Erreur lancement analyse')
+      // Poller le job
+      await pollBundlesJob(data.job_id, session.access_token)
     } catch (err) {
-      console.error('Error loading bundles:', err)
       const errorMessage = normalizeNetworkErrorMessage(err)
-      if (!config?.silent) setInsightsError(errorMessage)
+      setInsightsError(errorMessage)
       throw new Error(errorMessage)
     } finally {
       setInsightsLoading(false)
     }
   }
+
+  // Polling du job bundles
+  const pollBundlesJob = async (jobId, accessToken) => {
+    let done = false
+    let tries = 0
+    let lastStatus = null
+    while (!done && tries < 40) {
+      tries++
+      await new Promise((r) => setTimeout(r, 2000))
+      const resp = await fetch(`${API_URL}/api/shopify/bundles/job/${jobId}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      })
+      const data = await resp.json()
+      if (data?.status === 'done' && data?.result?.bundle_suggestions) {
+        setInsightsData((prev) => ({
+          ...(prev || {}),
+          bundle_suggestions: data.result.bundle_suggestions
+        }))
+        done = true
+        break
+      } else if (data?.status === 'failed') {
+        setInsightsError(data?.error || 'Erreur analyse')
+        break
+      } else {
+        lastStatus = data?.status
+      }
+    }
+    if (!done) setInsightsError('Analyse trop longue ou échouée')
+  }
+
+  // Charger l’historique bundles
+  const loadBundlesHistory = async () => {
+    try {
+      setInsightsLoading(true)
+      setInsightsError('')
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) throw new Error('Session expirée, reconnectez-vous')
+      await waitForBackendReady({ retries: 8, retryDelayMs: 2000, timeoutMs: 22000 })
+      await warmupBackend(session.access_token)
+      const resp = await fetch(`${API_URL}/api/shopify/bundles/list`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        }
+      })
+      const data = await resp.json()
+      if (!resp.ok || !Array.isArray(data?.jobs)) throw new Error(data?.detail || 'Erreur historique')
+      setBundlesHistory(data.jobs)
+    } catch (err) {
+      setInsightsError(normalizeNetworkErrorMessage(err))
+    } finally {
+      setInsightsLoading(false)
+    }
+  }
+
+  // State pour l’historique
+  const [bundlesHistory, setBundlesHistory] = useState([])
 
   useEffect(() => {
     // Passive health probe to stabilize “Comparaison marché externe” status.
@@ -3595,11 +3634,18 @@ export default function Dashboard() {
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <p className="text-sm text-gray-400">{getInsightCount(insightsData?.bundle_suggestions)} suggestions</p>
               <button
-                onClick={() => runActionAnalysis('action-bundles')}
+                onClick={loadBundlesAsync}
                 disabled={insightsLoading}
                 className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
               >
                 {insightsLoading ? 'Analyse en cours...' : 'Analyser'}
+              </button>
+              <button
+                onClick={loadBundlesHistory}
+                disabled={insightsLoading}
+                className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
+              >
+                Historique
               </button>
             </div>
             {renderStatus('action-bundles')}
@@ -3646,6 +3692,22 @@ export default function Dashboard() {
                 ))
               )}
             </div>
+            {/* Historique des jobs bundles */}
+            {bundlesHistory.length > 0 && (
+              <div className="mt-6">
+                <h3 className="text-white font-bold mb-2">Historique des analyses</h3>
+                <ul className="space-y-2">
+                  {bundlesHistory.map((job, idx) => (
+                    <li key={job.id || idx} className="bg-gray-900/70 border border-gray-700 rounded-lg p-3 flex flex-col">
+                      <span className="text-xs text-gray-400">{job.created_at} • {job.status}</span>
+                      {job.result?.bundle_suggestions && (
+                        <span className="text-sm text-white">{job.result.bundle_suggestions.length} suggestions</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         )}
 
