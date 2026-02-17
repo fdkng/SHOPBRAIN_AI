@@ -1,3 +1,4 @@
+from dotenv import load_dotenv
 
 """
 ShopBrain AI – Écosystème Bundles & cross-sell
