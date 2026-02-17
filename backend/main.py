@@ -8,39 +8,40 @@ import openai
 try:
     from openai import OpenAI
 except Exception:
-    OpenAI = None
-import stripe
-from dotenv import load_dotenv
-import re
-import jwt
-from functools import lru_cache
-import hmac
-import hashlib
-import base64
-import requests
-import json
-import sys
-from datetime import datetime, timedelta
-import time
-from supabase import create_client
-from io import BytesIO
-from email.message import EmailMessage
-import smtplib
-import ssl
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter
 
-# Ajouter le répertoire parent au path pour importer AI_engine
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import os
+    import re
+    import json
+    import time
+    import uuid
+    import hashlib
+    import requests
+    from datetime import datetime, timedelta
+    from fastapi import FastAPI, Request, HTTPException, UploadFile, File
+    from fastapi.middleware.cors import CORSMiddleware
+    from pydantic import BaseModel
+    from starlette.responses import RedirectResponse
+    from supabase import create_client
 
-# Imports protégés pour les modules optionnels
-ShopBrainAI = None
-SHOPBRAIN_EXPERT_SYSTEM = None
+    print("\n🚀 ========== BACKEND STARTUP ==========")
+    print(f"✅ FastAPI initializing...")
+    app = FastAPI()
 
-try:
-    from AI_engine.shopbrain_ai import ShopBrainAI as _ShopBrainAI
-    ShopBrainAI = _ShopBrainAI
-    print("✅ ShopBrainAI imported successfully")
+    # Shopify OAuth credentials
+    SHOPIFY_API_KEY = os.getenv("SHOPIFY_API_KEY")
+    SHOPIFY_API_SECRET = os.getenv("SHOPIFY_API_SECRET")
+    SHOPIFY_ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN")
+    SHOPIFY_SCOPES = "read_products,write_products,read_orders,read_customers,read_analytics"
+    SHOPIFY_REDIRECT_URI = os.getenv("SHOPIFY_REDIRECT_URI", "https://shopbrain-backend.onrender.com/auth/shopify/callback")
+
+    if not OPENAI_API_KEY:
+        /* Line 645 omitted */
+    else:
+        /* Lines 647-648 omitted */
+        /* Line 648 omitted */
+
+    if STRIPE_SECRET_KEY:
+        /* Line 651 omitted */
 except Exception as e:
     print(f"⚠️  ShopBrainAI import failed (non-critical): {e}")
 
