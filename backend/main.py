@@ -22,6 +22,7 @@ except Exception:
     from pydantic import BaseModel
     from starlette.responses import RedirectResponse
     from supabase import create_client
+    import threading
 
     print("\n🚀 ========== BACKEND STARTUP ==========")
     print(f"✅ FastAPI initializing...")
@@ -2204,6 +2205,11 @@ def _get_user_id_by_shop_domain(shop_domain: str) -> str | None:
 
 _ORDERS_CACHE: dict[tuple[str, int, str], tuple[float, list[dict]]] = {}
 
+# Bundles job store: simple in-memory registry for async jobs
+_BUNDLES_JOBS: dict[str, dict] = {}
+_BUNDLES_LOCK = threading.Lock()
+_BUNDLES_CACHE: dict[str, dict] = {}
+
 
 def _cache_get_orders(shop_domain: str, range_days: int, access_token: str) -> list[dict] | None:
     ttl = int(os.getenv("SHOPIFY_ORDERS_CACHE_TTL", "300"))
@@ -3014,6 +3020,173 @@ async def get_shopify_bundles(request: Request, range: str = "30d", limit: int =
         "orders_scanned": len(orders),
         "bundle_suggestions": suggestions,
     }
+
+
+def _compute_bundles_suggestions(shop_domain: str, access_token: str, days: int, limit: int = 10) -> dict:
+    """Compute bundle suggestions (same logic as endpoint) and return result dict.
+
+    This function is synchronous and suitable to run in a background thread.
+    """
+    orders = _fetch_shopify_orders(shop_domain, access_token, days)
+    pair_counts: dict[tuple[str, str], int] = {}
+    for order in orders:
+        ids = [str(item.get("product_id") or item.get("id")) for item in order.get("line_items", [])]
+        ids = list({pid for pid in ids if pid and pid != "None"})
+        if len(ids) < 2:
+            continue
+        for i in range(len(ids)):
+            for j in range(i + 1, len(ids)):
+                key = tuple(sorted((ids[i], ids[j])))
+                pair_counts[key] = pair_counts.get(key, 0) + 1
+
+    top_pairs = sorted(pair_counts.items(), key=lambda x: x[1], reverse=True)[: max(1, min(int(limit or 10), 20))]
+
+    needed_ids = set()
+    for (a, b), _count in top_pairs:
+        needed_ids.add(a)
+        needed_ids.add(b)
+
+    # Try to resolve titles
+    def _fetch_product_titles(product_ids: set[str]) -> dict[str, str]:
+        titles: dict[str, str] = {}
+        if not product_ids:
+            return titles
+
+        headers = {
+            "X-Shopify-Access-Token": access_token,
+            "Content-Type": "application/json",
+        }
+        per_request_timeout = int(os.getenv("SHOPIFY_REQUEST_TIMEOUT", "25"))
+
+        next_url = (
+            f"https://{shop_domain}/admin/api/2024-10/products.json"
+            f"?limit=250&fields=id,title"
+        )
+        page_count = 0
+        max_pages = int(os.getenv("SHOPIFY_PRODUCTS_TITLE_MAX_PAGES", "3"))
+        while next_url and page_count < max_pages and len(titles) < len(product_ids):
+            try:
+                resp = requests.get(next_url, headers=headers, timeout=per_request_timeout)
+            except Exception:
+                break
+            if resp.status_code != 200:
+                break
+            data = resp.json().get("products", [])
+            for prod in data:
+                pid = str(prod.get("id"))
+                if pid in product_ids:
+                    titles[pid] = prod.get("title")
+            next_url = None
+            page_count += 1
+
+        missing = [pid for pid in product_ids if pid not in titles]
+        for pid in missing[:10]:
+            try:
+                resp = requests.get(
+                    f"https://{shop_domain}/admin/api/2024-10/products/{pid}.json?fields=id,title",
+                    headers=headers,
+                    timeout=per_request_timeout,
+                )
+            except Exception:
+                continue
+            if resp.status_code == 200:
+                prod = resp.json().get("product", {})
+                if prod:
+                    titles[str(prod.get("id"))] = prod.get("title")
+        return titles
+
+    titles_by_id = _fetch_product_titles(needed_ids)
+
+    def _discount_range_pct(count: int) -> tuple[int, int]:
+        if count >= 8:
+            return (15, 20)
+        if count >= 4:
+            return (12, 18)
+        return (10, 15)
+
+    def _confidence_label(count: int) -> str:
+        if count >= 8:
+            return "forte"
+        if count >= 4:
+            return "moyenne"
+        return "faible"
+
+    suggestions: list[dict] = []
+    for (a, b), count in top_pairs:
+        left = titles_by_id.get(a) or f"#{a}"
+        right = titles_by_id.get(b) or f"#{b}"
+        low, high = _discount_range_pct(int(count or 0))
+        suggestions.append({
+            "pair": [a, b],
+            "count": int(count or 0),
+            "confidence": _confidence_label(int(count or 0)),
+            "titles": [left, right],
+            "discount_range_pct": [low, high],
+            "placements": [
+                "page_produit (bloc: Souvent achetés ensemble)",
+                "panier / drawer (cross-sell avant checkout)",
+                "checkout (si supporté par le thème/app)",
+            ],
+            "offer": {
+                "type": "bundle",
+                "name": f"Bundle: {left} + {right}"[:120],
+                "message": f"Ajoute {right} et économise {low}–{high}% sur le pack.",
+            },
+            "copy": [
+                f"Complète ton achat avec {right}.",
+                f"Le duo le plus fréquent: {left} + {right}.",
+            ],
+        })
+
+    return {
+        "orders_scanned": len(orders),
+        "bundle_suggestions": suggestions,
+    }
+
+
+def _run_bundles_worker(job_id: str, shop_domain: str, access_token: str, days: int, limit: int):
+    try:
+        with _BUNDLES_LOCK:
+            _BUNDLES_JOBS[job_id]["status"] = "running"
+            _BUNDLES_JOBS[job_id]["started_at"] = time.time()
+        result = _compute_bundles_suggestions(shop_domain, access_token, days, limit)
+        with _BUNDLES_LOCK:
+            _BUNDLES_JOBS[job_id]["status"] = "completed"
+            _BUNDLES_JOBS[job_id]["finished_at"] = time.time()
+            _BUNDLES_JOBS[job_id]["result"] = result
+            # cache last result per shop
+            _BUNDLES_CACHE[shop_domain] = {"ts": time.time(), "result": result}
+    except Exception as e:
+        with _BUNDLES_LOCK:
+            _BUNDLES_JOBS[job_id]["status"] = "failed"
+            _BUNDLES_JOBS[job_id]["error"] = str(e)
+            _BUNDLES_JOBS[job_id]["finished_at"] = time.time()
+
+
+@app.post("/api/shopify/bundles/async")
+async def start_shopify_bundles_job(request: Request, range: str = "30d", limit: int = 10):
+    user_id = get_user_id(request)
+    shop_domain, access_token = _get_shopify_connection(user_id)
+
+    range_map = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}
+    days = range_map.get(range, 30)
+
+    job_id = uuid.uuid4().hex
+    with _BUNDLES_LOCK:
+        _BUNDLES_JOBS[job_id] = {"status": "pending", "result": None, "started_at": None, "finished_at": None}
+
+    thread = threading.Thread(target=_run_bundles_worker, args=(job_id, shop_domain, access_token, days, int(limit or 10)), daemon=True)
+    thread.start()
+
+    return {"success": True, "job_id": job_id}
+
+
+@app.get("/api/shopify/bundles/job/{job_id}")
+async def get_shopify_bundles_job(job_id: str):
+    job = _BUNDLES_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"success": True, "job": job}
 
 
 @app.get("/api/shopify/market-status")
