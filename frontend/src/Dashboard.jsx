@@ -3398,7 +3398,29 @@ export default function Dashboard() {
                           </div>
                         ) : null}
 
-                        {Array.isArray(item.recommendations.category_notes) && item.recommendations.category_notes.length > 0 ? (
+                        {item.recommendations?.source === 'ai' && item.recommendations?.ai?.audit ? (
+                          <div className="text-sm text-gray-300 space-y-2">
+                            <div className="text-white font-semibold">Audit images existantes</div>
+                            {Array.isArray(item.recommendations.ai.audit.issues) && item.recommendations.ai.audit.issues.length > 0 ? (
+                              <div className="space-y-1">
+                                <div className="text-gray-400">Problèmes détectés</div>
+                                {item.recommendations.ai.audit.issues.slice(0, 5).map((line, idx) => (
+                                  <div key={idx}>• {line}</div>
+                                ))}
+                              </div>
+                            ) : null}
+                            {Array.isArray(item.recommendations.ai.audit.quick_fixes) && item.recommendations.ai.audit.quick_fixes.length > 0 ? (
+                              <div className="space-y-1">
+                                <div className="text-gray-400">Fix rapides (aujourd’hui)</div>
+                                {item.recommendations.ai.audit.quick_fixes.slice(0, 5).map((line, idx) => (
+                                  <div key={idx}>• {line}</div>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
+
+                        {item.recommendations?.source !== 'ai' && Array.isArray(item.recommendations.category_notes) && item.recommendations.category_notes.length > 0 ? (
                           <div className="text-sm text-gray-400 space-y-1">
                             {item.recommendations.category_notes.slice(0, 2).map((line, idx) => (
                               <div key={idx}>• {line}</div>
