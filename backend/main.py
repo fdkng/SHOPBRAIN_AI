@@ -3276,6 +3276,7 @@ def _build_image_recommendations(title: str, images_count: int, missing_alt: boo
     prompt_blocks = []
     for s in priority_shots[:8]:
         shot_name = s.get("shot")
+        outcome = f"Tu obtiens: {shot_name.lower()} propre, net, cohérent avec la fiche produit."
         base_prompt = (
             f"Photo produit e-commerce professionnelle: {product_label}. "
             f"Shot: {shot_name}. Composition: {s.get('composition')}. "
@@ -3290,9 +3291,10 @@ def _build_image_recommendations(title: str, images_count: int, missing_alt: boo
         )
         prompt_blocks.append({
             "shot": shot_name,
+            "outcome": outcome,
             "prompts": [
-                {"label": "Studio e-commerce", "prompt": base_prompt},
-                {"label": "Premium (luxe discret)", "prompt": premium_prompt},
+                {"label": "Studio e-commerce", "when_to_use": "Pour les 3–5 premières images (confiance + lisibilité)", "prompt": base_prompt},
+                {"label": "Premium (luxe discret)", "when_to_use": "Pour 1–2 images mood (sans casser la cohérence)", "prompt": premium_prompt},
             ]
         })
 
@@ -3413,8 +3415,147 @@ def _build_image_recommendations(title: str, images_count: int, missing_alt: boo
         ],
     }
 
+
+def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
+    """Generate product-specific image guidance in one OpenAI call.
+
+    Returns: {product_id: {target_total_images, images_to_create, style_rules, prompt_cards, notes}}
+    """
+    if not OPENAI_API_KEY or not products:
+        return {}
+
+    # Keep cost/latency bounded.
+    sample = []
+    for p in products[:8]:
+        pid = str(p.get("product_id") or "")
+        if not pid:
+            continue
+        sample.append({
+            "product_id": pid,
+            "title": p.get("title") or "",
+            "product_type": p.get("product_type") or "",
+            "vendor": p.get("vendor") or "",
+            "tags": p.get("tags") or "",
+            "images_count": p.get("images_count"),
+            "missing_alt": bool(p.get("missing_alt")),
+            "views": p.get("views"),
+            "add_to_cart": p.get("add_to_cart"),
+            "view_to_cart_rate": p.get("view_to_cart_rate"),
+            "target_hint": p.get("target_total_images"),
+        })
+
+    if not sample:
+        return {}
+
+    prompt = {
+        "task": "Create extremely concrete, user-friendly image recommendations for ecommerce product pages.",
+        "language": "fr",
+        "constraints": [
+            "Do NOT browse the web.",
+            "Be specific to EACH product title/type/tags.",
+            "Give a predefined structured plan (always same fields).",
+            "Avoid vague advice. Use actionable sentences (what to shoot, background, colors, props, lighting).",
+            "Return only valid JSON.",
+        ],
+        "output_schema": {
+            "items": [
+                {
+                    "product_id": "string",
+                    "target_total_images": 8,
+                    "tone": "string",
+                    "background": "string",
+                    "color_palette": ["string"],
+                    "images_to_create": [
+                        {
+                            "index": 1,
+                            "name": "string",
+                            "what_to_shoot": "string",
+                            "background": "string",
+                            "color_tone": "string",
+                            "props": "string",
+                            "camera": "string",
+                            "lighting": "string",
+                            "editing_notes": "string",
+                            "why": "string",
+                            "prompts": {
+                                "studio": "string",
+                                "premium": "string"
+                            }
+                        }
+                    ],
+                    "style_rules": ["string"],
+                    "alt_templates": ["string"],
+                    "notes": ["string"],
+                }
+            ]
+        },
+        "products": sample,
+    }
+
+    try:
+        client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "Tu es un directeur artistique e-commerce senior. Tu produis des plans d’images ultra concrets, faciles à exécuter."},
+                {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+            ],
+            temperature=0.25,
+            max_tokens=1400,
+            response_format={"type": "json_object"},
+        )
+        payload = json.loads(response.choices[0].message.content or "{}")
+        out: dict[str, dict] = {}
+        for row in payload.get("items", []) if isinstance(payload, dict) else []:
+            pid = str(row.get("product_id") or "")
+            if not pid:
+                continue
+            images_to_create = row.get("images_to_create")
+            if not isinstance(images_to_create, list) or not images_to_create:
+                continue
+
+            # Build prompt_blocks (user-friendly) from images_to_create.
+            prompt_blocks = []
+            for img in images_to_create[:10]:
+                name = img.get("name")
+                prompts = img.get("prompts") or {}
+                prompt_blocks.append({
+                    "shot": name,
+                    "outcome": img.get("why") or "",
+                    "prompts": [
+                        {
+                            "label": "Studio e-commerce",
+                            "when_to_use": "Pour une image propre et vendeuse (packshot/fiche)",
+                            "prompt": prompts.get("studio") or "",
+                        },
+                        {
+                            "label": "Premium (luxe discret)",
+                            "when_to_use": "Pour une image 'mood' premium (1–2 max)",
+                            "prompt": prompts.get("premium") or "",
+                        },
+                    ]
+                })
+
+            out[pid] = {
+                "ai": {
+                    "tone": row.get("tone"),
+                    "background": row.get("background"),
+                    "color_palette": row.get("color_palette"),
+                    "style_rules": row.get("style_rules"),
+                    "alt_templates": row.get("alt_templates"),
+                    "notes": row.get("notes"),
+                },
+                "target_total_images": row.get("target_total_images"),
+                "images_to_create": images_to_create,
+                "prompt_blocks": prompt_blocks,
+            }
+        return out
+    except Exception as e:
+        print(f"⚠️ image assistance AI error: {type(e).__name__}: {str(e)[:160]}")
+        return {}
+
 @app.get("/api/shopify/image-risks")
-async def get_shopify_image_risks(request: Request, range: str = "30d", limit: int = 50):
+async def get_shopify_image_risks(request: Request, range: str = "30d", limit: int = 50, ai: int = 1):
     """🖼️ Analyse rapide des images produits (signaux de conversion visuels).
 
     - Nombre d'images faible
@@ -3444,7 +3585,7 @@ async def get_shopify_image_risks(request: Request, range: str = "30d", limit: i
     try:
         products_url = (
             f"https://{shop_domain}/admin/api/2024-10/products.json"
-            f"?limit={effective_limit}&fields=id,title,images"
+            f"?limit={effective_limit}&fields=id,title,images,product_type,vendor,tags"
         )
         resp = requests.get(products_url, headers=headers, timeout=20)
         if resp.status_code == 401:
@@ -3498,6 +3639,9 @@ async def get_shopify_image_risks(request: Request, range: str = "30d", limit: i
             items.append({
                 "product_id": pid,
                 "title": p.get("title") or f"Produit {pid}",
+                "product_type": p.get("product_type") or "",
+                "vendor": p.get("vendor") or "",
+                "tags": p.get("tags") or "",
                 "images_count": images_count,
                 "missing_alt": bool(missing_alt),
                 "views": views,
@@ -3513,7 +3657,48 @@ async def get_shopify_image_risks(request: Request, range: str = "30d", limit: i
             })
 
         items.sort(key=lambda x: (x.get("score", 0), x.get("views", 0)), reverse=True)
-        items = items[: min(50, max(1, effective_limit))]
+        # Keep UI responsive: only return top items that the dashboard shows.
+        items = items[:8]
+
+        use_ai = bool(int(ai or 0))
+        ai_payload = {}
+        if use_ai and OPENAI_API_KEY and items:
+            ai_payload = _ai_image_assistance_batch([
+                {
+                    "product_id": it.get("product_id"),
+                    "title": it.get("title"),
+                    "product_type": it.get("product_type"),
+                    "vendor": it.get("vendor"),
+                    "tags": it.get("tags"),
+                    "images_count": it.get("images_count"),
+                    "missing_alt": it.get("missing_alt"),
+                    "views": it.get("views"),
+                    "add_to_cart": it.get("add_to_cart"),
+                    "view_to_cart_rate": it.get("view_to_cart_rate"),
+                    "target_total_images": (it.get("recommendations") or {}).get("target_total_images"),
+                }
+                for it in items
+            ])
+
+            for it in items:
+                pid = str(it.get("product_id") or "")
+                if not pid:
+                    continue
+                ai_row = ai_payload.get(pid)
+                if not isinstance(ai_row, dict):
+                    continue
+                rec = it.get("recommendations") or {}
+                # Override/augment with AI-specific plan.
+                if isinstance(ai_row.get("target_total_images"), (int, float)):
+                    rec["target_total_images"] = int(ai_row["target_total_images"])
+                    rec["recommended_new_images"] = max(0, int(rec["target_total_images"]) - int(it.get("images_count") or 0))
+                if isinstance(ai_row.get("images_to_create"), list):
+                    rec["images_to_create"] = ai_row.get("images_to_create")
+                if isinstance(ai_row.get("prompt_blocks"), list):
+                    rec["prompt_blocks"] = ai_row.get("prompt_blocks")
+                if isinstance(ai_row.get("ai"), dict):
+                    rec["ai"] = ai_row.get("ai")
+                it["recommendations"] = rec
 
         notes = [
             "Analyse basée sur qualité des images (alt, quantité) + signaux Pixel si disponibles.",
@@ -3521,32 +3706,6 @@ async def get_shopify_image_risks(request: Request, range: str = "30d", limit: i
         if not event_counts:
             notes.append("Ajoutez le Shopify Pixel pour enrichir les signaux vues/panier.")
 
-        playbook = {
-            "recommended_min_images": 6,
-            "recommended_ideal_images": 8,
-            "what_to_produce": [
-                "1 hero packshot (fond clair)",
-                "1 angle 3/4",
-                "2 détails macro",
-                "1 lifestyle propre",
-                "1 preuve (taille/usage/bénéfice)",
-                "1 packaging / inclus",
-            ],
-            "background_guidelines": [
-                "Base: blanc/gris très clair pour la cohérence e-commerce.",
-                "Option premium: dégradé sombre ou surface noble (marbre discret) pour 1–2 images max.",
-                "Éviter: décors chargés, textures fortes, arrière-plans colorés agressifs.",
-            ],
-            "color_guidelines": [
-                "Couleurs fidèles au produit (balance des blancs cohérente).",
-                "Accents: 1–2 couleurs de marque max (icônes/infographie), pas de rainbow.",
-            ],
-            "workflow": [
-                "Étape 1: produire les 3 images de base (hero + angle + détail).",
-                "Étape 2: ajouter preuve + lifestyle + packaging.",
-                "Étape 3: optimiser alts + ordre des images (hero → preuve → détails → lifestyle).",
-            ],
-        }
 
         return {
             "success": True,
@@ -3554,7 +3713,6 @@ async def get_shopify_image_risks(request: Request, range: str = "30d", limit: i
             "range": range,
             "image_risks": items,
             "notes": notes,
-            "playbook": playbook,
         }
     except HTTPException:
         raise

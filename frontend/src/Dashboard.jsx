@@ -1771,7 +1771,7 @@ export default function Dashboard() {
           await warmupBackend(session.access_token)
 
           const rangeValue = analyticsRange
-          const { response, data } = await fetchJsonWithRetry(`${API_URL}/api/shopify/image-risks?range=${encodeURIComponent(rangeValue)}&limit=120`, {
+          const { response, data } = await fetchJsonWithRetry(`${API_URL}/api/shopify/image-risks?range=${encodeURIComponent(rangeValue)}&limit=120&ai=1`, {
             method: 'GET',
             headers: {
               'Authorization': `Bearer ${session.access_token}`,
@@ -1794,7 +1794,6 @@ export default function Dashboard() {
             success: true,
             image_risks: Array.isArray(data?.image_risks) ? data.image_risks : [],
             notes: Array.isArray(data?.notes) ? data.notes : [],
-            playbook: data?.playbook || null
           })
           setStatus(actionKey, 'success', 'Analyse terminée.')
         } catch (err) {
@@ -3358,20 +3357,6 @@ export default function Dashboard() {
               </div>
             ) : null}
 
-            {insightsData?.playbook ? (
-              <div className="bg-gray-900/60 border border-gray-700 rounded-lg p-4 space-y-3">
-                <div className="text-white font-semibold text-lg">Playbook visuel (standard pro)</div>
-                <div className="text-sm text-gray-300">Minimum recommandé: {insightsData.playbook.recommended_min_images} images • Idéal: {insightsData.playbook.recommended_ideal_images} images</div>
-                {Array.isArray(insightsData.playbook.what_to_produce) ? (
-                  <div className="text-sm text-gray-300 space-y-1">
-                    {insightsData.playbook.what_to_produce.slice(0, 6).map((line, idx) => (
-                      <div key={idx}>• {line}</div>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
             <div className="space-y-3">
               {!insightsLoading && (!insightsData?.image_risks || insightsData.image_risks.length === 0) ? (
                 <p className="text-sm text-gray-500">Aucun signal détecté.</p>
@@ -3422,6 +3407,25 @@ export default function Dashboard() {
                           </div>
                         ) : null}
 
+                        {Array.isArray(item.recommendations.images_to_create) && item.recommendations.images_to_create.length > 0 ? (
+                          <div className="bg-gray-800/60 border border-gray-700 rounded-lg p-4 space-y-2">
+                            <div className="text-white font-semibold text-base">À créer (exactement)</div>
+                            <div className="space-y-3">
+                              {item.recommendations.images_to_create.slice(0, 8).map((img, idx) => (
+                                <div key={idx} className="text-sm text-gray-300">
+                                  <div className="font-semibold text-white">Image {img.index || (idx + 1)} — {img.name}</div>
+                                  <div className="text-gray-300">{img.what_to_shoot}</div>
+                                  <div className="text-gray-400 mt-1">
+                                    Fond: {img.background} • Ton: {img.color_tone} • Props: {img.props}
+                                  </div>
+                                  <div className="text-gray-400">Caméra: {img.camera} • Lumière: {img.lighting}</div>
+                                  {img.editing_notes ? <div className="text-gray-500">Retouche: {img.editing_notes}</div> : null}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+
                         {Array.isArray(item.recommendations.recommended_order) && item.recommendations.recommended_order.length > 0 ? (
                           <div className="text-sm text-gray-300 space-y-1">
                             <div className="text-white font-semibold">Ordre recommandé des images</div>
@@ -3446,9 +3450,10 @@ export default function Dashboard() {
                             {item.recommendations.prompt_blocks.slice(0, 3).map((pb, idx) => (
                               <div key={idx} className="bg-black/20 border border-gray-700 rounded-lg p-3 space-y-2">
                                 <div className="text-sm text-gray-200 font-semibold">{pb.shot}</div>
+                                {pb.outcome ? <div className="text-xs text-gray-400">Ce que tu obtiens: {pb.outcome}</div> : null}
                                 {Array.isArray(pb.prompts) ? pb.prompts.slice(0, 2).map((pr, prIdx) => (
                                   <div key={prIdx} className="space-y-1">
-                                    <div className="text-xs text-gray-400">{pr.label}</div>
+                                    <div className="text-xs text-gray-400">{pr.label}{pr.when_to_use ? ` — ${pr.when_to_use}` : ''}</div>
                                     <div className="bg-black/30 border border-gray-700 rounded p-2 font-mono text-xs whitespace-pre-wrap break-words text-gray-200">
                                       {pr.prompt}
                                     </div>
