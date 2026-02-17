@@ -3392,6 +3392,11 @@ export default function Dashboard() {
                             {Array.isArray(item.recommendations.ai.color_palette) && item.recommendations.ai.color_palette.length > 0 ? (
                               <div>• Palette: <span className="text-white">{item.recommendations.ai.color_palette.slice(0, 6).join(', ')}</span></div>
                             ) : null}
+                            {Array.isArray(item.recommendations.ai.product_facts_used) && item.recommendations.ai.product_facts_used.length > 0 ? (
+                              <div className="text-gray-400">
+                                • Détails pris en compte: <span className="text-white">{item.recommendations.ai.product_facts_used.slice(0, 6).join(' · ')}</span>
+                              </div>
+                            ) : null}
                             {Array.isArray(item.recommendations.ai.notes) && item.recommendations.ai.notes.length > 0 ? (
                               <div className="text-gray-400">• Note: {item.recommendations.ai.notes[0]}</div>
                             ) : null}

@@ -3469,248 +3469,290 @@ def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
     OPENAI_VISION_MODEL = os.getenv("OPENAI_VISION_MODEL") or "gpt-4o-mini"
 
     def _merge(pid: str, payload: dict):
-        if not pid or not isinstance(payload, dict):
-            return
-        out[pid] = payload
+        if pid and isinstance(payload, dict):
+            out[pid] = payload
 
-    def _run_text_only(sample: list[dict]) -> dict[str, dict]:
-        if not sample:
-            return {}
-        prompt = {
-            "task": "Create extremely concrete, product-specific image recommendations for ecommerce product pages.",
-            "language": "fr",
-            "constraints": [
-                "Do NOT browse the web.",
-                "Be specific to EACH product title/type/tags/description.",
-                "Infer what matters to show (features/angles/details) from the product context (e.g., vélo -> crampons, transmission, freins; voiture -> intérieur, tableau de bord, coffre, détails finition).",
-                "Avoid vague advice. Every recommendation must reference a concrete product feature inferred from context.",
-                "Return only valid JSON.",
-            ],
-            "output_schema": {
-                "items": [
+    def _keywords(p: dict) -> list[str]:
+        parts = " ".join([
+            str(p.get("title") or ""),
+            str(p.get("product_type") or ""),
+            str(p.get("vendor") or ""),
+            str(p.get("tags") or ""),
+        ]).lower()
+        tokens = []
+        for w in re.split(r"[^a-z0-9àâçéèêëîïôûùüÿñæœ]+", parts):
+            w = (w or "").strip()
+            if len(w) >= 4:
+                tokens.append(w)
+        # unique, keep order
+        seen = set()
+        uniq = []
+        for t in tokens:
+            if t not in seen:
+                seen.add(t)
+                uniq.append(t)
+        return uniq[:12]
+
+    def _looks_generic(p: dict, images_to_create: list[dict], facts: list[str]) -> bool:
+        if not isinstance(images_to_create, list) or not images_to_create:
+            return True
+        kw = set(_keywords(p))
+        kw.update([f.lower() for f in facts if isinstance(f, str)])
+        # If there are no usable keywords, accept.
+        if not kw:
+            return False
+        hit = 0
+        for img in images_to_create[:6]:
+            text = " ".join([
+                str(img.get("name") or ""),
+                str(img.get("what_to_shoot") or ""),
+                str(img.get("why") or ""),
+            ]).lower()
+            if any(k in text for k in list(kw)[:8]):
+                hit += 1
+        # Require at least 2 hits in first shots
+        return hit < 2
+
+    def _build_prompt_blocks(images_to_create: list[dict]) -> list[dict]:
+        prompt_blocks = []
+        for img in images_to_create[:10]:
+            name = img.get("name")
+            prompts = img.get("prompts") or {}
+            prompt_blocks.append({
+                "shot": name,
+                "outcome": img.get("why") or "",
+                "prompts": [
                     {
-                        "product_id": "string",
-                        "target_total_images": 8,
-                        "tone": "string",
-                        "background": "string",
-                        "color_palette": ["string"],
-                        "action_plan": [{"step": 1, "title": "string", "do": ["string"]}],
-                        "recommended_order": [{"position": 1, "shot": "string", "goal": "string"}],
-                        "images_to_create": [
-                            {
-                                "index": 1,
-                                "name": "string",
-                                "what_to_shoot": "string",
-                                "background": "string",
-                                "color_tone": "string",
-                                "props": "string",
-                                "camera": "string",
-                                "lighting": "string",
-                                "editing_notes": "string",
-                                "why": "string",
-                                "prompts": {"studio": "string", "premium": "string"},
-                            }
-                        ],
-                        "style_rules": ["string"],
-                        "alt_templates": ["string"],
-                        "notes": ["string"],
-                    }
+                        "label": "Studio e-commerce",
+                        "when_to_use": "Pour une image propre et vendeuse (packshot/fiche)",
+                        "prompt": prompts.get("studio") or "",
+                    },
+                    {
+                        "label": "Premium (luxe discret)",
+                        "when_to_use": "Pour une image 'mood' premium (1–2 max)",
+                        "prompt": prompts.get("premium") or "",
+                    },
                 ]
-            },
-            "products": sample[:8],
+            })
+        return prompt_blocks
+
+    def _text_only_for_product(p: dict, retry: bool = False) -> dict:
+        pid = str(p.get("product_id") or "")
+        if not pid:
+            return {}
+
+        schema = {
+            "product_id": "string",
+            "product_facts_used": ["string"],
+            "target_total_images": 8,
+            "tone": "string",
+            "background": "string",
+            "color_palette": ["string"],
+            "action_plan": [{"step": 1, "title": "string", "do": ["string"]}],
+            "recommended_order": [{"position": 1, "shot": "string", "goal": "string"}],
+            "images_to_create": [
+                {
+                    "index": 1,
+                    "name": "string",
+                    "what_to_shoot": "string",
+                    "background": "string",
+                    "color_tone": "string",
+                    "props": "string",
+                    "camera": "string",
+                    "lighting": "string",
+                    "editing_notes": "string",
+                    "why": "string",
+                    "prompts": {"studio": "string", "premium": "string"},
+                }
+            ],
+            "style_rules": ["string"],
+            "alt_templates": ["string"],
+            "notes": ["string"],
         }
+
+        constraints = [
+            "Do NOT browse the web.",
+            "Be specific to THIS product. Do NOT reuse generic templates.",
+            "First, extract 4-7 concrete product facts into product_facts_used (from title/type/tags/vendor/description/price).",
+            "Every shot (name/what_to_shoot/why) MUST mention at least one fact from product_facts_used.",
+            "If information is missing, infer reasonable specifics from product_type/title (ex: bouteille -> bouchon/étanchéité/prise en main).",
+            "Avoid vague advice. Use measurable / concrete details.",
+            "Return only valid JSON matching output_schema.",
+        ]
+        if retry:
+            constraints.insert(0, "Your previous answer was too generic. Make it clearly different and product-linked.")
+
+        prompt = {
+            "task": "Create extremely concrete, product-specific image recommendations for an ecommerce product page.",
+            "language": "fr",
+            "constraints": constraints,
+            "output_schema": schema,
+            "product": {
+                "product_id": pid,
+                "title": p.get("title") or "",
+                "product_type": p.get("product_type") or "",
+                "vendor": p.get("vendor") or "",
+                "tags": p.get("tags") or "",
+                "description": p.get("description") or "",
+                "price": p.get("price"),
+                "images_count": p.get("images_count"),
+                "missing_alt": bool(p.get("missing_alt")),
+                "views": p.get("views"),
+                "add_to_cart": p.get("add_to_cart"),
+                "view_to_cart_rate": p.get("view_to_cart_rate"),
+            },
+        }
+
         try:
             client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
             response = client.chat.completions.create(
                 model=OPENAI_TEXT_MODEL,
                 messages=[
-                    {
-                        "role": "system",
-                        "content": "Tu es un directeur artistique e-commerce senior. Tu produis des plans d’images ultra concrets, spécifiques au produit, faciles à exécuter.",
-                    },
+                    {"role": "system", "content": "Tu es un directeur artistique e-commerce senior. Tu produis des plans d’images ultra concrets, spécifiques au produit."},
                     {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
                 ],
                 temperature=0.25,
-                max_tokens=1600,
+                max_tokens=1500,
                 response_format={"type": "json_object"},
             )
-            payload = json.loads(response.choices[0].message.content or "{}")
-            result: dict[str, dict] = {}
-            for row in payload.get("items", []) if isinstance(payload, dict) else []:
-                pid = str(row.get("product_id") or "")
-                images_to_create = row.get("images_to_create")
-                if not pid or not isinstance(images_to_create, list) or not images_to_create:
-                    continue
+            row = json.loads(response.choices[0].message.content or "{}")
+            if not isinstance(row, dict):
+                return {}
+            images_to_create = row.get("images_to_create")
+            if not isinstance(images_to_create, list) or not images_to_create:
+                return {}
+            facts = row.get("product_facts_used")
+            facts = facts if isinstance(facts, list) else []
+            if (not retry) and _looks_generic(p, images_to_create, facts):
+                return _text_only_for_product(p, retry=True)
 
-                prompt_blocks = []
-                for img in images_to_create[:10]:
-                    name = img.get("name")
-                    prompts = img.get("prompts") or {}
-                    prompt_blocks.append(
-                        {
-                            "shot": name,
-                            "outcome": img.get("why") or "",
-                            "prompts": [
-                                {
-                                    "label": "Studio e-commerce",
-                                    "when_to_use": "Pour une image propre et vendeuse (packshot/fiche)",
-                                    "prompt": prompts.get("studio") or "",
-                                },
-                                {
-                                    "label": "Premium (luxe discret)",
-                                    "when_to_use": "Pour une image 'mood' premium (1–2 max)",
-                                    "prompt": prompts.get("premium") or "",
-                                },
-                            ],
-                        }
-                    )
-
-                result[pid] = {
-                    "ai": {
-                        "tone": row.get("tone"),
-                        "background": row.get("background"),
-                        "color_palette": row.get("color_palette"),
-                        "style_rules": row.get("style_rules"),
-                        "alt_templates": row.get("alt_templates"),
-                        "notes": row.get("notes"),
-                    },
-                    "target_total_images": row.get("target_total_images"),
-                    "action_plan": row.get("action_plan"),
-                    "recommended_order": row.get("recommended_order"),
-                    "images_to_create": images_to_create,
-                    "prompt_blocks": prompt_blocks,
-                }
-            return result
+            return {
+                "ai": {
+                    "tone": row.get("tone"),
+                    "background": row.get("background"),
+                    "color_palette": row.get("color_palette"),
+                    "style_rules": row.get("style_rules"),
+                    "alt_templates": row.get("alt_templates"),
+                    "notes": row.get("notes"),
+                    "product_facts_used": facts,
+                },
+                "target_total_images": row.get("target_total_images"),
+                "action_plan": row.get("action_plan"),
+                "recommended_order": row.get("recommended_order"),
+                "images_to_create": images_to_create,
+                "prompt_blocks": _build_prompt_blocks(images_to_create),
+            }
         except Exception as e:
-            print(f"⚠️ image assistance AI(text) error: {type(e).__name__}: {str(e)[:160]}")
+            print(f"⚠️ image assistance AI(text:{pid}) error: {type(e).__name__}: {str(e)[:160]}")
             return {}
 
-    def _run_vision_audit(sample: list[dict]) -> dict[str, dict]:
-        if not sample:
+    def _vision_for_product(p: dict) -> dict:
+        pid = str(p.get("product_id") or "")
+        urls = _normalize_image_urls(p.get("image_urls"))[:2]
+        if not pid or not urls:
             return {}
 
-        # Cap hard to keep latency/cost bounded.
-        sample = sample[:3]
-
-        base_text = {
+        prompt = {
             "task": "Audit existing ecommerce product images and give product-specific improvements.",
             "language": "fr",
             "constraints": [
                 "Do NOT browse the web.",
                 "Use ONLY the provided images + product context.",
-                "Be brutally specific: mention what is wrong visually (background, lighting, crop, consistency, reflections, noise, color cast).",
-                "Return actionable fixes and a concrete re-shoot plan.",
-                "Return only valid JSON.",
+                "Be specific: describe background, lighting, crop, reflections, color cast, consistency.",
+                "Provide quick fixes + a concrete re-shoot plan linked to the product.",
+                "Return only valid JSON matching output_schema.",
             ],
             "output_schema": {
-                "items": [
-                    {
-                        "product_id": "string",
-                        "tone": "string",
-                        "background": "string",
-                        "color_palette": ["string"],
-                        "audit": {
-                            "what_i_see": ["string"],
-                            "issues": ["string"],
-                            "quick_fixes": ["string"],
-                            "consistency_score": 0.0,
-                        },
-                        "action_plan": [{"step": 1, "title": "string", "do": ["string"]}],
-                        "recommended_order": [{"position": 1, "shot": "string", "goal": "string"}],
-                        "style_rules": ["string"],
-                        "notes": ["string"],
-                    }
-                ]
+                "product_id": "string",
+                "product_facts_used": ["string"],
+                "tone": "string",
+                "background": "string",
+                "color_palette": ["string"],
+                "audit": {
+                    "what_i_see": ["string"],
+                    "issues": ["string"],
+                    "quick_fixes": ["string"],
+                    "consistency_score": 0.0,
+                },
+                "action_plan": [{"step": 1, "title": "string", "do": ["string"]}],
+                "recommended_order": [{"position": 1, "shot": "string", "goal": "string"}],
+                "style_rules": ["string"],
+                "notes": ["string"],
             },
-            "products": [
-                {
-                    "product_id": p.get("product_id"),
-                    "title": p.get("title"),
-                    "product_type": p.get("product_type"),
-                    "vendor": p.get("vendor"),
-                    "tags": p.get("tags"),
-                    "description": p.get("description"),
-                    "price": p.get("price"),
-                }
-                for p in sample
-            ],
+            "product": {
+                "product_id": pid,
+                "title": p.get("title") or "",
+                "product_type": p.get("product_type") or "",
+                "vendor": p.get("vendor") or "",
+                "tags": p.get("tags") or "",
+                "description": p.get("description") or "",
+                "price": p.get("price"),
+                "images_count": p.get("images_count"),
+            }
         }
 
-        # Build a multimodal message with product separators.
         user_parts: list[dict] = [
-            {
-                "type": "text",
-                "text": "Tu vas auditer les images existantes par produit. Réponds STRICTEMENT en JSON selon output_schema.\n\n" + json.dumps(base_text, ensure_ascii=False),
-            }
+            {"type": "text", "text": "Réponds STRICTEMENT en JSON (output_schema).\n" + json.dumps(prompt, ensure_ascii=False)},
         ]
-
-        for p in sample:
-            pid = str(p.get("product_id") or "")
-            title = p.get("title") or ""
-            user_parts.append({"type": "text", "text": f"\n\n=== PRODUIT {pid} — {title} ===\nImages ci-dessous:"})
-            urls = _normalize_image_urls(p.get("image_urls"))[:2]
-            for u in urls:
-                user_parts.append({"type": "image_url", "image_url": {"url": u}})
+        for u in urls:
+            user_parts.append({"type": "image_url", "image_url": {"url": u}})
 
         try:
             client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
             response = client.chat.completions.create(
                 model=OPENAI_VISION_MODEL,
                 messages=[
-                    {
-                        "role": "system",
-                        "content": "Tu es un directeur artistique e-commerce senior. Tu audites des images produits et proposes des corrections concrètes, spécifiques au produit.",
-                    },
+                    {"role": "system", "content": "Tu es un directeur artistique e-commerce senior. Tu audites des images produits et proposes des corrections concrètes, spécifiques au produit."},
                     {"role": "user", "content": user_parts},
                 ],
                 temperature=0.2,
-                max_tokens=1400,
+                max_tokens=1200,
                 response_format={"type": "json_object"},
             )
-            payload = json.loads(response.choices[0].message.content or "{}")
-            result: dict[str, dict] = {}
-            for row in payload.get("items", []) if isinstance(payload, dict) else []:
-                pid = str(row.get("product_id") or "")
-                if not pid:
-                    continue
-                result[pid] = {
-                    "ai": {
-                        "tone": row.get("tone"),
-                        "background": row.get("background"),
-                        "color_palette": row.get("color_palette"),
-                        "style_rules": row.get("style_rules"),
-                        "notes": row.get("notes"),
-                        "audit": row.get("audit") if isinstance(row.get("audit"), dict) else {},
-                    },
-                    "target_total_images": None,
-                    "action_plan": row.get("action_plan"),
-                    "recommended_order": row.get("recommended_order"),
-                    "images_to_create": [],
-                    "prompt_blocks": [],
-                }
-            return result
+            row = json.loads(response.choices[0].message.content or "{}")
+            if not isinstance(row, dict) or str(row.get("product_id") or "") != pid:
+                return {}
+            facts = row.get("product_facts_used")
+            facts = facts if isinstance(facts, list) else []
+            return {
+                "ai": {
+                    "tone": row.get("tone"),
+                    "background": row.get("background"),
+                    "color_palette": row.get("color_palette"),
+                    "style_rules": row.get("style_rules"),
+                    "notes": row.get("notes"),
+                    "audit": row.get("audit") if isinstance(row.get("audit"), dict) else {},
+                    "product_facts_used": facts,
+                },
+                "target_total_images": None,
+                "action_plan": row.get("action_plan"),
+                "recommended_order": row.get("recommended_order"),
+                "images_to_create": [],
+                "prompt_blocks": [],
+            }
         except Exception as e:
-            print(f"⚠️ image assistance AI(vision) error: {type(e).__name__}: {str(e)[:160]}")
+            print(f"⚠️ image assistance AI(vision:{pid}) error: {type(e).__name__}: {str(e)[:160]}")
             return {}
 
-    # 1) Vision audit for products with images.
-    vision_result = _run_vision_audit(with_images)
-    for pid, payload in (vision_result or {}).items():
-        _merge(pid, payload)
+    # Keep latency bounded.
+    started = time.time()
+    budget_s = 22
+    max_products = 6
 
-    # 2) Text-only plan for products without images, plus any with images not returned by vision.
-    remaining = []
-    for p in without_images:
-        remaining.append(p)
-    for p in with_images:
+    # Prioritize: audit vision when photos exist; otherwise text.
+    queue = (with_images + without_images)[:max_products]
+    for p in queue:
+        if (time.time() - started) > budget_s:
+            break
         pid = str(p.get("product_id") or "")
-        if pid and pid not in out:
-            # Fall back to text plan if vision didn't return (model not available, error, etc.)
-            remaining.append({**p, "image_urls": []})
-
-    text_result = _run_text_only(remaining)
-    for pid, payload in (text_result or {}).items():
-        if pid not in out:
+        if not pid or pid in out:
+            continue
+        payload = {}
+        if _normalize_image_urls(p.get("image_urls")):
+            payload = _vision_for_product(p)
+        if not payload:
+            payload = _text_only_for_product(p)
+        if payload:
             _merge(pid, payload)
 
     return out
