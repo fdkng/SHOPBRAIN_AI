@@ -87,131 +87,147 @@ SERP_MAX_PRODUCTS = int(os.getenv("SERP_MAX_PRODUCTS", "8"))
 SERP_NUM_RESULTS = int(os.getenv("SERP_NUM_RESULTS", "20"))
 
 # Small in-memory cache to reduce SERP API calls
-_SERP_CACHE: dict[str, tuple[float, dict]] = {}
 
-# Small in-memory cache to reduce Shopify shop.json calls
-_SHOP_CACHE: dict[str, tuple[float, dict]] = {}
+import time
 
-# Small in-memory cache to reduce repeated heavy blockers computations
-_BLOCKERS_CACHE: dict[str, tuple[float, dict]] = {}
+@app.get("/api/shopify/bundles")
+async def get_shopify_bundles(request: Request, range: str = "30d", limit: int = 10):
+    """🧩 Bundles & cross-sell suggestions based on order co-occurrence.
 
+    Lightweight alternative to /api/shopify/insights when you only need bundles.
+    """
+    start_time = time.time()
+    user_id = get_user_id(request)
+    shop_domain, access_token = _get_shopify_connection(user_id)
 
-def _cache_get_serp(key: str, ttl_s: int = 3600) -> dict | None:
-    try:
-        ts, value = _SERP_CACHE.get(key, (0.0, None))
-        if value is not None and (time.time() - ts) < ttl_s:
-            return value
-    except Exception:
-        return None
-    return None
+    range_map = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}
+    days = range_map.get(range, 30)
 
+    print(f"[BUNDLES] Début analyse bundles pour {shop_domain} sur {days} jours...")
+    t0 = time.time()
+    orders = _fetch_shopify_orders(shop_domain, access_token, days)
+    print(f"[BUNDLES] Récupération commandes: {len(orders)} commandes en {time.time() - t0:.2f}s")
 
-def _cache_set_serp(key: str, value: dict):
-    try:
-        _SERP_CACHE[key] = (time.time(), value)
-    except Exception:
-        pass
+    pair_counts: dict[tuple[str, str], int] = {}
+    for order in orders:
+        ids = [str(item.get("product_id") or item.get("id")) for item in order.get("line_items", [])]
+        ids = list({pid for pid in ids if pid and pid != "None"})
+        if len(ids) < 2:
+            continue
+        for i in range(len(ids)):
+            for j in range(i + 1, len(ids)):
+                key = tuple(sorted((ids[i], ids[j])))
+                pair_counts[key] = pair_counts.get(key, 0) + 1
 
+    print(f"[BUNDLES] Comptage paires: {len(pair_counts)} paires trouvées en {time.time() - t0:.2f}s")
 
-def _cache_get_shop(key: str, ttl_s: int = 3600) -> dict | None:
-    try:
-        ts, value = _SHOP_CACHE.get(key, (0.0, None))
-        if value is not None and (time.time() - ts) < ttl_s:
-            return value
-    except Exception:
-        return None
-    return None
+    top_pairs = sorted(pair_counts.items(), key=lambda x: x[1], reverse=True)[: max(1, min(int(limit or 10), 20))]
 
+    needed_ids = set()
+    for (a, b), _count in top_pairs:
+        needed_ids.add(a)
+        needed_ids.add(b)
 
-def _cache_set_shop(key: str, value: dict):
-    try:
-        _SHOP_CACHE[key] = (time.time(), value)
-    except Exception:
-        pass
+    def _fetch_product_titles(product_ids: set[str]) -> dict[str, str]:
+        titles: dict[str, str] = {}
+        if not product_ids:
+            return titles
 
+        headers = {
+            "X-Shopify-Access-Token": access_token,
+            "Content-Type": "application/json",
+        }
+        # Augmente le timeout à 60s pour debug
+        per_request_timeout = int(os.getenv("SHOPIFY_REQUEST_TIMEOUT", "60"))
 
-def _cache_get_blockers(key: str, ttl_s: int = 300) -> dict | None:
-    try:
-        ts, value = _BLOCKERS_CACHE.get(key, (0.0, None))
-        if value is not None and (time.time() - ts) < ttl_s:
-            return value
-    except Exception:
-        return None
-    return None
+        # Best-effort: scan a few product pages to resolve titles.
+        next_url = (
+            f"https://{shop_domain}/admin/api/2024-10/products.json"
+            f"?limit=250&fields=id,title"
+        )
+        page_count = 0
+        max_pages = int(os.getenv("SHOPIFY_PRODUCTS_TITLE_MAX_PAGES", "3"))
+        while next_url and page_count < max_pages and len(titles) < len(product_ids):
+            resp = requests.get(next_url, headers=headers, timeout=per_request_timeout)
+            if resp.status_code != 200:
+                break
+            data = resp.json().get("products", [])
+            for prod in data:
+                pid = str(prod.get("id"))
+                if pid in product_ids:
+                    titles[pid] = prod.get("title")
+            next_url = None
+            page_count += 1
 
+        # Fallback: direct fetch for any missing IDs (bounded).
+        missing = [pid for pid in product_ids if pid not in titles]
+        for pid in missing[:10]:
+            resp = requests.get(
+                f"https://{shop_domain}/admin/api/2024-10/products/{pid}.json?fields=id,title",
+                headers=headers,
+                timeout=per_request_timeout,
+            )
+            if resp.status_code == 200:
+                prod = resp.json().get("product", {})
+                if prod:
+                    titles[str(prod.get("id"))] = prod.get("title")
+        return titles
 
-def _cache_set_blockers(key: str, value: dict):
-    try:
-        _BLOCKERS_CACHE[key] = (time.time(), value)
-    except Exception:
-        pass
+    t1 = time.time()
+    titles_by_id = _fetch_product_titles(needed_ids)
+    print(f"[BUNDLES] Récupération titres produits: {len(titles_by_id)} titres en {time.time() - t1:.2f}s")
 
+    def _discount_range_pct(count: int) -> tuple[int, int]:
+        if count >= 8:
+            return (15, 20)
+        if count >= 4:
+            return (12, 18)
+        return (10, 15)
 
-def _strip_html(raw: str) -> str:
-    if not raw:
-        return ""
-    text = re.sub(r"<[^>]+>", " ", str(raw))
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
+    def _confidence_label(count: int) -> str:
+        if count >= 8:
+            return "forte"
+        if count >= 4:
+            return "moyenne"
+        return "faible"
 
+    suggestions: list[dict] = []
+    for (a, b), count in top_pairs:
+        left = titles_by_id.get(a) or f"#{a}"
+        right = titles_by_id.get(b) or f"#{b}"
+        low, high = _discount_range_pct(int(count or 0))
+        suggestions.append({
+            "pair": [a, b],
+            "count": int(count or 0),
+            "confidence": _confidence_label(int(count or 0)),
+            "titles": [left, right],
+            "discount_range_pct": [low, high],
+            "placements": [
+                "page_produit (bloc: Souvent achetés ensemble)",
+                "panier / drawer (cross-sell avant checkout)",
+                "checkout (si supporté par le thème/app)",
+            ],
+            "offer": {
+                "type": "bundle",
+                "name": f"Bundle: {left} + {right}"[:120],
+                "message": f"Ajoute {right} et économise {low}–{high}% sur le pack.",
+            },
+            "copy": [
+                f"Complète ton achat avec {right}.",
+                f"Le duo le plus fréquent: {left} + {right}.",
+            ],
+        })
 
-def _keywords_from_text(text: str, max_words: int = 12) -> str:
-    if not text:
-        return ""
-    words = re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ0-9]{3,}", text.lower())
-    if not words:
-        return ""
-    stop = {
-        "avec", "sans", "pour", "dans", "vous", "votre", "vos", "notre", "nos", "leur", "leurs",
-        "plus", "moins", "très", "tres", "comme", "sur", "sous", "entre", "afin", "chez",
-        "this", "that", "with", "without", "from", "your", "ours", "their", "the", "and",
+    print(f"[BUNDLES] Suggestions générées: {len(suggestions)} en {time.time() - t1:.2f}s")
+    print(f"[BUNDLES] Temps total endpoint: {time.time() - start_time:.2f}s")
+
+    return {
+        "success": True,
+        "shop": shop_domain,
+        "range": range,
+        "orders_scanned": len(orders),
+        "bundle_suggestions": suggestions,
     }
-    out = []
-    seen = set()
-    for w in words:
-        if w in stop:
-            continue
-        if w in seen:
-            continue
-        seen.add(w)
-        out.append(w)
-        if len(out) >= max_words:
-            break
-    return " ".join(out)
-
-
-def _clean_query_text(text: str, shop_brand: str | None = None) -> str:
-    if not text:
-        return ""
-    q = str(text)
-    q = q.replace("’", "'")
-    q = re.sub(r"[\"“”«»]", " ", q)
-    q = re.sub(r"[^A-Za-zÀ-ÖØ-öø-ÿ0-9\s\-]", " ", q)
-    q = re.sub(r"\s+", " ", q).strip()
-    if shop_brand:
-        brand = re.sub(r"\s+", " ", str(shop_brand)).strip()
-        if brand:
-            # Remove brand tokens (case-insensitive)
-            for token in re.split(r"\s+", brand.lower()):
-                if len(token) >= 3:
-                    q = re.sub(rf"\b{re.escape(token)}\b", " ", q, flags=re.IGNORECASE)
-            q = re.sub(r"\s+", " ", q).strip()
-    return q
-
-
-def _gl_for_currency(currency_code: str | None) -> str:
-    code = (currency_code or "").upper().strip()
-    if code == "CAD":
-        return "ca"
-    if code == "USD":
-        return "us"
-    if code == "EUR":
-        return "fr"
-    return "ca"
-
-
-def _currency_label(currency_code: str | None) -> str:
-    code = (currency_code or "").upper().strip()
     if code == "CAD":
         return "dollars canadiens (CAD)"
     if code == "USD":
@@ -3255,7 +3271,7 @@ def _infer_image_category(title: str) -> str:
     for cat, pat in patterns:
         try:
             if re.search(pat, t, flags=re.IGNORECASE):
-                return cat
+                    return cat  # Return the matched category
         except Exception:
             continue
     return "general"
