@@ -3432,8 +3432,25 @@ async def list_shopify_bundles_jobs(request: Request, limit: int = 20):
     if SUPABASE_URL and SUPABASE_SERVICE_KEY:
         try:
             supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-            rows = supabase.table("bundle_jobs").select("job_id,status,started_at,finished_at").eq("shop_domain", shop_domain).order("finished_at", desc=True).limit(limit).execute()
-            persisted = rows.data or []
+            rows = supabase.table("bundle_jobs").select("job_id,status,started_at,finished_at,result").eq("shop_domain", shop_domain).order("finished_at", desc=True).limit(limit).execute()
+            raw_rows = rows.data or []
+            for row in raw_rows:
+                parsed = None
+                result_raw = row.get("result")
+                if isinstance(result_raw, dict):
+                    parsed = result_raw
+                elif isinstance(result_raw, str) and result_raw.strip():
+                    try:
+                        parsed = json.loads(result_raw)
+                    except Exception:
+                        parsed = None
+                persisted.append({
+                    "job_id": row.get("job_id"),
+                    "status": row.get("status") or "completed",
+                    "started_at": row.get("started_at"),
+                    "finished_at": row.get("finished_at"),
+                    "result": parsed,
+                })
         except Exception:
             persisted = []
 
