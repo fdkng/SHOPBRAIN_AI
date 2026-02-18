@@ -3123,7 +3123,7 @@ def _compute_bundles_suggestions(shop_domain: str, access_token: str, days: int,
         ids = list({pid for pid in ids if pid and pid != "None"})
         for pid in ids:
             unique_product_ids.add(pid)
-        if len(ids) < 2:
+        if len(ids) < 2 :
             continue
         orders_with_2plus_items += 1
         for i in range(len(ids)):
@@ -3454,9 +3454,28 @@ async def list_shopify_bundles_jobs(request: Request, limit: int = 20):
         except Exception:
             persisted = []
 
+    combined_by_job_id: dict[str, dict] = {}
+    for item in jobs:
+        jid = str(item.get("job_id") or "")
+        if jid:
+            combined_by_job_id[jid] = {**item}
+
+    for item in persisted:
+        jid = str(item.get("job_id") or "")
+        if not jid:
+            continue
+        existing = combined_by_job_id.get(jid) or {}
+        merged = {
+            **existing,
+            **item,
+            "result": item.get("result") if item.get("result") is not None else existing.get("result"),
+        }
+        combined_by_job_id[jid] = merged
+
+    combined_jobs = list(combined_by_job_id.values())
     jobs_sorted = sorted(
-        jobs,
-        key=lambda item: (item.get("finished_at") or item.get("started_at") or 0),
+        combined_jobs,
+        key=lambda item: (item.get("finished_at") or item.get("started_at") or item.get("created_at") or 0),
         reverse=True,
     )[: max(1, min(int(limit or 20), 100))]
 

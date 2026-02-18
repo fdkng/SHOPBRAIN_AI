@@ -112,6 +112,8 @@ export default function Dashboard() {
   const [bundlesDiagnostics, setBundlesDiagnostics] = useState(null)
   const [bundlesJobStatus, setBundlesJobStatus] = useState('idle')
   const [bundlesHistoryOpen, setBundlesHistoryOpen] = useState(false)
+  const [bundlesHistoryLoading, setBundlesHistoryLoading] = useState(false)
+  const [selectedBundlesHistoryJobId, setSelectedBundlesHistoryJobId] = useState('')
   const [backendHealth, setBackendHealth] = useState(null)
   const [backendHealthTs, setBackendHealthTs] = useState(0)
   const [shopCurrency, setShopCurrency] = useState(() => {
@@ -1638,6 +1640,7 @@ export default function Dashboard() {
 
   // Charger l’historique bundles
   const applyBundlesHistoryJob = (job) => {
+    setSelectedBundlesHistoryJobId(job?.job_id || '')
     const result = job?.result || {}
     const suggestions = Array.isArray(result?.bundle_suggestions) ? result.bundle_suggestions : []
     const diagnostics = result?.diagnostics || null
@@ -1646,19 +1649,14 @@ export default function Dashboard() {
       bundle_suggestions: suggestions
     }))
     setBundlesDiagnostics(diagnostics)
-    if (suggestions.length > 0) {
-      setStatus('action-bundles', 'success', `Historique chargé: ${suggestions.length} suggestion(s).`)
-    } else {
-      setStatus('action-bundles', 'warning', diagnostics?.no_result_reason || 'Historique chargé: aucune suggestion.')
-    }
   }
 
   const loadBundlesHistory = async () => {
     try {
-      setInsightsLoading(true)
+      setBundlesHistoryLoading(true)
       setInsightsError('')
       setBundlesHistoryOpen(true)
-      setBundlesJobStatus('history')
+      clearStatus('action-bundles')
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) throw new Error('Session expirée, reconnectez-vous')
       await waitForBackendReady({ retries: 8, retryDelayMs: 2000, timeoutMs: 22000 })
@@ -1680,14 +1678,11 @@ export default function Dashboard() {
       const firstWithResult = jobs.find((job) => Array.isArray(job?.result?.bundle_suggestions))
       if (firstWithResult) {
         applyBundlesHistoryJob(firstWithResult)
-      } else {
-        setStatus('action-bundles', 'warning', 'Historique disponible, mais sans résultat exploitable pour l’instant.')
       }
     } catch (err) {
       setInsightsError(normalizeNetworkErrorMessage(err))
-      setStatus('action-bundles', 'error', normalizeNetworkErrorMessage(err))
     } finally {
-      setInsightsLoading(false)
+      setBundlesHistoryLoading(false)
     }
   }
 
@@ -3687,10 +3682,10 @@ export default function Dashboard() {
               </button>
               <button
                 onClick={loadBundlesHistory}
-                disabled={insightsLoading}
+                disabled={bundlesHistoryLoading}
                 className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
               >
-                {bundlesHistoryOpen ? 'Historique ouvert' : 'Historique'}
+                {bundlesHistoryLoading ? 'Chargement historique...' : 'Historique'}
               </button>
             </div>
             {bundlesJobStatus !== 'idle' && (
@@ -3755,28 +3750,32 @@ export default function Dashboard() {
               )}
             </div>
             {/* Historique des jobs bundles */}
-            {bundlesHistoryOpen && bundlesHistory.length > 0 && (
+            {bundlesHistoryOpen && (
               <div className="mt-6">
                 <h3 className="text-white font-bold mb-2">Historique des analyses</h3>
-                <ul className="space-y-2">
-                  {bundlesHistory.map((job, idx) => (
-                    <li key={job.id || job.job_id || idx} className="bg-gray-900/70 border border-gray-700 rounded-lg p-3 flex flex-col gap-2">
-                      <span className="text-xs text-gray-400">
-                        {job.finished_at || job.started_at || job.created_at || '—'} • {job.status || 'unknown'}
-                      </span>
-                      {(job.result?.bundle_suggestions || job.bundle_suggestions) && (
-                        <span className="text-sm text-white">{(job.result?.bundle_suggestions || job.bundle_suggestions || []).length} suggestions</span>
-                      )}
-                      <button
-                        onClick={() => applyBundlesHistoryJob(job)}
-                        className="self-start bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold py-1 px-3 rounded"
-                        type="button"
-                      >
-                        Charger ce résultat
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                {bundlesHistory.length === 0 ? (
+                  <p className="text-sm text-gray-500">Aucun ancien résultat disponible.</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {bundlesHistory.map((job, idx) => (
+                      <li key={job.id || job.job_id || idx} className="bg-gray-900/70 border border-gray-700 rounded-lg p-3 flex flex-col gap-2">
+                        <span className="text-xs text-gray-400">
+                          {job.finished_at || job.started_at || job.created_at || '—'} • {job.status || 'unknown'}
+                        </span>
+                        {(job.result?.bundle_suggestions || job.bundle_suggestions) && (
+                          <span className="text-sm text-white">{(job.result?.bundle_suggestions || job.bundle_suggestions || []).length} suggestions</span>
+                        )}
+                        <button
+                          onClick={() => applyBundlesHistoryJob(job)}
+                          className="self-start bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold py-1 px-3 rounded"
+                          type="button"
+                        >
+                          {selectedBundlesHistoryJobId && selectedBundlesHistoryJobId === (job.job_id || '') ? 'Résultat affiché' : 'Charger ce résultat'}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             )}
           </div>
