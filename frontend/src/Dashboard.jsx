@@ -135,6 +135,8 @@ export default function Dashboard() {
   const waveAnimFrameRef = useRef(null)
   const voiceCallModeRef = useRef(false)
   const voiceCallAudioRef = useRef(null)
+  const mediaRecorderRef = useRef(null)
+  const audioChunksRef = useRef([])
   const chatTextareaRef = useRef(null)
   const [chatTextareaFocused, setChatTextareaFocused] = useState(false)
   const [analyticsRange, setAnalyticsRange] = useState('30d')
@@ -1093,58 +1095,117 @@ export default function Dashboard() {
     setVoiceWaveBars(Array(40).fill(2))
   }
 
+  // ── OpenAI Whisper transcription helper ──
+  const transcribeWithWhisper = async (audioBlob) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return null
+      const formData = new FormData()
+      formData.append('audio', audioBlob, 'recording.webm')
+      const response = await fetch(`${API_URL}/api/ai/stt`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${session.access_token}` },
+        body: formData
+      })
+      if (!response.ok) throw new Error(`STT API error: ${response.status}`)
+      const data = await response.json()
+      return data.success ? data.text : null
+    } catch (err) {
+      console.warn('Whisper STT failed:', err)
+      return null
+    }
+  }
+
+  // Start MediaRecorder for Whisper
+  const startMediaRecorder = (stream) => {
+    try {
+      audioChunksRef.current = []
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm'
+        : MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4'
+        : 'audio/wav'
+      const recorder = new MediaRecorder(stream, { mimeType })
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data) }
+      recorder.start(250) // collect chunks every 250ms
+      mediaRecorderRef.current = recorder
+    } catch (err) {
+      console.warn('MediaRecorder failed to start:', err)
+    }
+  }
+
+  const stopMediaRecorder = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try { mediaRecorderRef.current.stop() } catch {}
+    }
+    mediaRecorderRef.current = null
+  }
+
+  const getRecordedBlob = () => {
+    if (audioChunksRef.current.length === 0) return null
+    return new Blob(audioChunksRef.current, { type: 'audio/webm' })
+  }
+
   // ── Dictation mode (waveform in input bar) ──
   const dictationActiveRef = useRef(false)
   const dictationTranscriptRef = useRef('')
 
   const startDictation = async () => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SpeechRecognition) { alert('La reconnaissance vocale n\'est pas supportée par votre navigateur.'); return }
     dictationActiveRef.current = true
     dictationTranscriptRef.current = ''
     setVoiceDictationMode(true)
     setVoiceDictationTranscript('')
     // Start waveform first (requests mic permission)
     await startWaveAnimation()
-    // Then start speech recognition
-    const recognition = new SpeechRecognition()
-    recognition.lang = 'fr-FR'
-    recognition.interimResults = true
-    recognition.continuous = true
-    voiceRecognitionRef.current = recognition
-    recognition.onresult = (event) => {
-      let final = ''
-      let interim = ''
-      for (let i = 0; i < event.results.length; i++) {
-        if (event.results[i].isFinal) {
-          final += (final ? ' ' : '') + event.results[i][0].transcript
-        } else { interim += event.results[i][0].transcript }
+    // Also start MediaRecorder for Whisper transcription
+    if (mediaStreamRef.current) startMediaRecorder(mediaStreamRef.current)
+    // Use browser SpeechRecognition for real-time preview
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition()
+      recognition.lang = 'fr-FR'
+      recognition.interimResults = true
+      recognition.continuous = true
+      voiceRecognitionRef.current = recognition
+      recognition.onresult = (event) => {
+        let final = ''
+        let interim = ''
+        for (let i = 0; i < event.results.length; i++) {
+          if (event.results[i].isFinal) {
+            final += (final ? ' ' : '') + event.results[i][0].transcript
+          } else { interim += event.results[i][0].transcript }
+        }
+        dictationTranscriptRef.current = final
+        setVoiceDictationTranscript(final + (interim ? ' ' + interim : ''))
       }
-      dictationTranscriptRef.current = final
-      setVoiceDictationTranscript(final + (interim ? ' ' + interim : ''))
-    }
-    recognition.onerror = (e) => {
-      console.warn('Dictation recognition error:', e.error)
-      if (e.error !== 'aborted' && dictationActiveRef.current) {
-        // Auto-restart on non-fatal errors
-        try { recognition.start() } catch {}
+      recognition.onerror = (e) => {
+        console.warn('Dictation recognition error:', e.error)
+        if (e.error !== 'aborted' && dictationActiveRef.current) {
+          try { recognition.start() } catch {}
+        }
       }
-    }
-    recognition.onend = () => {
-      // Auto-restart if user hasn't confirmed/cancelled yet
-      if (dictationActiveRef.current) {
-        try { recognition.start() } catch {}
+      recognition.onend = () => {
+        if (dictationActiveRef.current) {
+          try { recognition.start() } catch {}
+        }
       }
+      recognition.start()
     }
-    recognition.start()
     setVoiceListening(true)
   }
 
-  const confirmDictation = () => {
+  const confirmDictation = async () => {
     dictationActiveRef.current = false
     if (voiceRecognitionRef.current) try { voiceRecognitionRef.current.stop() } catch {}
-    const text = (dictationTranscriptRef.current || voiceDictationTranscript || '').trim()
-    if (text) setChatInput(prev => (prev ? prev + ' ' : '') + text)
+    stopMediaRecorder()
+    // Try Whisper transcription first (more accurate), fallback to browser STT
+    const audioBlob = getRecordedBlob()
+    let text = null
+    if (audioBlob && audioBlob.size > 1000) {
+      setVoiceDictationTranscript('Transcription en cours...')
+      text = await transcribeWithWhisper(audioBlob)
+    }
+    if (!text) text = (dictationTranscriptRef.current || voiceDictationTranscript || '').trim()
+    if (text && text !== 'Transcription en cours...') setChatInput(prev => (prev ? prev + ' ' : '') + text)
     setVoiceDictationMode(false)
     setVoiceDictationTranscript('')
     setVoiceListening(false)
@@ -1154,6 +1215,7 @@ export default function Dashboard() {
   const cancelDictation = () => {
     dictationActiveRef.current = false
     if (voiceRecognitionRef.current) try { voiceRecognitionRef.current.stop() } catch {}
+    stopMediaRecorder()
     setVoiceDictationMode(false)
     setVoiceDictationTranscript('')
     setVoiceListening(false)
@@ -1218,56 +1280,93 @@ export default function Dashboard() {
 
   const startVoiceCallListening = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SpeechRecognition || !voiceCallModeRef.current) return
+    if (!voiceCallModeRef.current) return
     // Stop any previous recognition
     if (voiceRecognitionRef.current) try { voiceRecognitionRef.current.stop() } catch {}
-    const recognition = new SpeechRecognition()
-    recognition.lang = 'fr-FR'
-    recognition.interimResults = true
-    recognition.continuous = true
-    voiceRecognitionRef.current = recognition
+    // Start MediaRecorder for Whisper
+    if (mediaStreamRef.current) startMediaRecorder(mediaStreamRef.current)
     let finalText = ''
     let hasResults = false
 
     const resetSilenceTimer = () => {
       if (voiceCallSilenceRef.current) clearTimeout(voiceCallSilenceRef.current)
-      voiceCallSilenceRef.current = setTimeout(() => {
-        // 2s of silence after speech → send the message
-        if (finalText.trim() && voiceCallModeRef.current) {
-          try { recognition.stop() } catch {}
-          setVoiceCallListening(false)
-          const textToSend = finalText.trim()
+      voiceCallSilenceRef.current = setTimeout(async () => {
+        // 2s of silence after speech → transcribe with Whisper then send
+        if (!voiceCallModeRef.current) return
+        if (SpeechRecognition && voiceRecognitionRef.current) try { voiceRecognitionRef.current.stop() } catch {}
+        stopMediaRecorder()
+        setVoiceCallListening(false)
+        // Try Whisper first for accurate transcription
+        const audioBlob = getRecordedBlob()
+        let textToSend = finalText.trim()
+        if (audioBlob && audioBlob.size > 1000) {
+          setVoiceCallTranscript('Transcription...')
+          const whisperText = await transcribeWithWhisper(audioBlob)
+          if (whisperText) textToSend = whisperText
+        }
+        if (textToSend) {
           setVoiceCallTranscript('')
           sendVoiceCallMessage(textToSend)
+        } else {
+          // No speech detected, restart listening
+          if (voiceCallModeRef.current) startVoiceCallListening()
         }
       }, 2000)
     }
 
-    recognition.onresult = (event) => {
-      let interim = ''
-      finalText = ''
-      for (let i = 0; i < event.results.length; i++) {
-        if (event.results[i].isFinal) {
-          finalText += (finalText ? ' ' : '') + event.results[i][0].transcript
-        } else { interim += event.results[i][0].transcript }
+    // Use browser SpeechRecognition for real-time preview (if available)
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition()
+      recognition.lang = 'fr-FR'
+      recognition.interimResults = true
+      recognition.continuous = true
+      voiceRecognitionRef.current = recognition
+      recognition.onresult = (event) => {
+        let interim = ''
+        finalText = ''
+        for (let i = 0; i < event.results.length; i++) {
+          if (event.results[i].isFinal) {
+            finalText += (finalText ? ' ' : '') + event.results[i][0].transcript
+          } else { interim += event.results[i][0].transcript }
+        }
+        hasResults = true
+        setVoiceCallTranscript(finalText + (interim ? ' ' + interim : ''))
+        resetSilenceTimer()
       }
-      hasResults = true
-      setVoiceCallTranscript(finalText + (interim ? ' ' + interim : ''))
-      resetSilenceTimer()
-    }
-    recognition.onerror = (e) => {
-      console.warn('Voice call recognition error:', e.error)
-      if (e.error !== 'aborted' && voiceCallModeRef.current) {
-        setTimeout(() => { if (voiceCallModeRef.current) startVoiceCallListening() }, 500)
+      recognition.onerror = (e) => {
+        console.warn('Voice call recognition error:', e.error)
+        if (e.error !== 'aborted' && voiceCallModeRef.current) {
+          setTimeout(() => { if (voiceCallModeRef.current) startVoiceCallListening() }, 500)
+        }
       }
-    }
-    recognition.onend = () => {
-      // If recognition ended without sending a message, restart it
-      if (voiceCallModeRef.current && !finalText.trim()) {
-        setTimeout(() => { if (voiceCallModeRef.current) startVoiceCallListening() }, 300)
+      recognition.onend = () => {
+        if (voiceCallModeRef.current && !finalText.trim()) {
+          setTimeout(() => { if (voiceCallModeRef.current) startVoiceCallListening() }, 300)
+        }
       }
+      recognition.start()
+    } else {
+      // No browser STT — rely solely on Whisper with silence detection via audio levels
+      // Auto-send after 4 seconds of recording
+      voiceCallSilenceRef.current = setTimeout(async () => {
+        if (!voiceCallModeRef.current) return
+        stopMediaRecorder()
+        setVoiceCallListening(false)
+        const audioBlob = getRecordedBlob()
+        if (audioBlob && audioBlob.size > 1000) {
+          setVoiceCallTranscript('Transcription...')
+          const whisperText = await transcribeWithWhisper(audioBlob)
+          if (whisperText) {
+            setVoiceCallTranscript('')
+            sendVoiceCallMessage(whisperText)
+          } else {
+            if (voiceCallModeRef.current) startVoiceCallListening()
+          }
+        } else {
+          if (voiceCallModeRef.current) startVoiceCallListening()
+        }
+      }, 4000)
     }
-    recognition.start()
     setVoiceCallListening(true)
   }
 
@@ -1306,6 +1405,7 @@ export default function Dashboard() {
     if (voiceRecognitionRef.current) try { voiceRecognitionRef.current.stop() } catch {}
     if (voiceCallSilenceRef.current) { clearTimeout(voiceCallSilenceRef.current); voiceCallSilenceRef.current = null }
     if (window.speechSynthesis) window.speechSynthesis.cancel()
+    stopMediaRecorder()
     // Stop any playing audio
     if (voiceCallAudioRef.current) { try { voiceCallAudioRef.current.pause() } catch {}; voiceCallAudioRef.current = null }
     setVoiceCallMode(false)
@@ -1976,7 +2076,7 @@ export default function Dashboard() {
   const loadInsights = async (rangeOverride, includeAi = false, productId, config = {}) => {
     try {
       const rangeValue = rangeOverride || analyticsRange
-      setInsightsLoading(true)
+      if (!config?.silent) setInsightsLoading(true)
       if (!config?.silent) setInsightsError('')
       const { data: { session } } = await supabase.auth.getSession()
 
@@ -2017,7 +2117,8 @@ export default function Dashboard() {
         throw new Error(data.detail || 'Analyse indisponible')
       }
 
-      setInsightsData(data)
+      // In silent/background mode, do NOT overwrite insightsData — return data only
+      if (!config?.silent) setInsightsData(data)
       // Cache health when a request succeeds.
       setBackendHealthTs(Date.now())
       return data
@@ -2027,7 +2128,7 @@ export default function Dashboard() {
       if (!config?.silent) setInsightsError(errorMessage)
       throw new Error(errorMessage)
     } finally {
-      setInsightsLoading(false)
+      if (!config?.silent) setInsightsLoading(false)
     }
   }
 
@@ -2495,9 +2596,23 @@ export default function Dashboard() {
             // Best-effort: try to fetch Shopify insights in background to enrich, but never fail the UI.
             loadInsights(undefined, true, options.productId, { silent: true }).then((data) => {
               if (!data) return
-              const mergedPriceItems = getPriceItems(data)
-              if (Array.isArray(mergedPriceItems) && mergedPriceItems.length > 0) {
-                setInsightsData(data)
+              const shopifyPriceItems = getPriceItems(data)
+              if (Array.isArray(shopifyPriceItems) && shopifyPriceItems.length > 0) {
+                // Merge: keep AI items + add any unique Shopify items
+                const existingIds = new Set(aiPriceItems.map(i => i.product_id))
+                const newItems = shopifyPriceItems.filter(i => !existingIds.has(i.product_id))
+                const merged = [...aiPriceItems, ...newItems]
+                setInsightsData(prev => ({
+                  ...(prev || {}),
+                  ...data,
+                  price_opportunities: merged,
+                  price_analysis: {
+                    ...(data?.price_analysis || {}),
+                    items: merged,
+                    market_comparison: data?.market_comparison || data?.price_analysis?.market_comparison || inferredMarket
+                  },
+                  market_comparison: data?.market_comparison || data?.price_analysis?.market_comparison || inferredMarket
+                }))
               }
             }).catch(() => {})
 

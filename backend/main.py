@@ -5668,6 +5668,69 @@ async def text_to_speech(req: TTSRequest, request: Request):
 
 
 # ============================================================================
+# Speech-to-Text via OpenAI Whisper
+# ============================================================================
+@app.post("/api/ai/stt")
+async def speech_to_text(request: Request):
+    """🎤 Speech-to-Text via OpenAI Whisper API - Accepts audio file, returns text transcription"""
+    user_id = get_user_id(request)
+    print(f"🔔 /api/ai/stt called. user_id={user_id}")
+
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OpenAI not configured")
+
+    try:
+        form = await request.form()
+        audio_file = form.get("audio")
+        if not audio_file:
+            raise HTTPException(status_code=400, detail="Aucun fichier audio fourni")
+
+        # Read the audio content
+        audio_content = await audio_file.read()
+        if len(audio_content) == 0:
+            raise HTTPException(status_code=400, detail="Fichier audio vide")
+
+        # Limit file size (25MB max for Whisper)
+        if len(audio_content) > 25 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="Fichier audio trop volumineux (max 25MB)")
+
+        print(f"🎤 Audio received: {len(audio_content)} bytes, filename={getattr(audio_file, 'filename', 'unknown')}")
+
+        # Determine file extension
+        filename = getattr(audio_file, 'filename', 'audio.webm') or 'audio.webm'
+
+        client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
+        
+        # Use Whisper API
+        audio_bytes_io = BytesIO(audio_content)
+        audio_bytes_io.name = filename  # Whisper needs the filename with extension
+        
+        response = client.audio.transcriptions.create(
+            model="whisper-1",
+            file=audio_bytes_io,
+            language="fr",
+            response_format="text"
+        )
+
+        transcript = response.strip() if isinstance(response, str) else str(response).strip()
+        print(f"✅ STT transcription: '{transcript[:100]}...' ({len(transcript)} chars)")
+
+        return {
+            "success": True,
+            "text": transcript,
+            "language": "fr"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error in STT: {type(e).__name__}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Erreur STT: {str(e)}")
+
+
+# ============================================================================
 @app.get("/api/ai/diag")
 async def ai_diag():
     """Detailed diagnostics for OpenAI key and header construction."""
