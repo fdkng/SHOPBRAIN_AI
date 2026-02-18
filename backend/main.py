@@ -91,6 +91,9 @@ SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
 FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
 SERPAPI_KEY = os.getenv("SERPAPI_KEY") or os.getenv("SERPAPI_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+if GEMINI_API_KEY:
+    print(f"🔑 GEMINI_API_KEY loaded: {len(GEMINI_API_KEY)} chars")
 MARKET_TOLERANCE_PCT = float(os.getenv("MARKET_TOLERANCE_PCT", "5"))
 SERP_MAX_PRODUCTS = int(os.getenv("SERP_MAX_PRODUCTS", "8"))
 SERP_NUM_RESULTS = int(os.getenv("SERP_NUM_RESULTS", "20"))
@@ -939,6 +942,7 @@ async def health():
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
             "openai": "configured" if OPENAI_API_KEY else "not_configured",
+            "gemini": "configured" if GEMINI_API_KEY else "not_configured",
             "serpapi": "configured" if SERPAPI_KEY else "not_configured",
             "stripe": "configured" if STRIPE_SECRET_KEY else "not_configured",
             "supabase": "configured" if SUPABASE_URL else "not_configured"
@@ -5728,6 +5732,87 @@ async def speech_to_text(request: Request):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Erreur STT: {str(e)}")
+
+
+# ============================================================================
+# Gemini Live API — Ephemeral Token for client-side WebSocket voice
+# ============================================================================
+@app.post("/api/gemini/live-token")
+async def gemini_live_token(request: Request):
+    """Generate an ephemeral token for Gemini Live API client-side WebSocket connection.
+    This allows the frontend to connect directly to Gemini Live for real-time voice conversation."""
+    user_id = get_user_id(request)
+    print(f"🔔 /api/gemini/live-token called. user_id={user_id}")
+
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="Gemini API key not configured")
+
+    try:
+        # Use the Gemini API to create an ephemeral token
+        # POST https://generativelanguage.googleapis.com/v1alpha/authTokens
+        resp = requests.post(
+            f"https://generativelanguage.googleapis.com/v1alpha/authTokens?key={GEMINI_API_KEY}",
+            json={
+                "authToken": {
+                    "uses": 1,
+                    "bidiGenerateContentSetup": {
+                        "model": "models/gemini-2.5-flash-preview-native-audio-dialog",
+                        "generationConfig": {
+                            "responseModalities": ["AUDIO"],
+                            "speechConfig": {
+                                "voiceConfig": {
+                                    "prebuiltVoiceConfig": {
+                                        "voiceName": "Aoede"
+                                    }
+                                }
+                            }
+                        },
+                        "systemInstruction": {
+                            "parts": [{
+                                "text": (
+                                    "Tu es ShopBrain, un assistant IA expert en e-commerce Shopify. "
+                                    "Tu parles français avec un ton professionnel mais amical. "
+                                    "Tu aides les marchands à optimiser leur boutique en ligne: "
+                                    "prix, produits, marketing, conversion, SEO. "
+                                    "Réponds de manière concise et naturelle, comme dans une vraie conversation téléphonique. "
+                                    "Ne fais pas de listes ou de formatage markdown — parle naturellement."
+                                )
+                            }]
+                        },
+                        "inputAudioTranscription": {},
+                        "outputAudioTranscription": {}
+                    }
+                }
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=15
+        )
+
+        if resp.status_code != 200:
+            print(f"❌ Gemini token error: {resp.status_code} - {resp.text[:500]}")
+            raise HTTPException(status_code=502, detail=f"Gemini API error: {resp.status_code}")
+
+        data = resp.json()
+        token_name = data.get("name") or data.get("authToken", {}).get("name")
+        if not token_name:
+            print(f"❌ Gemini token response missing 'name': {json.dumps(data)[:500]}")
+            raise HTTPException(status_code=502, detail="Token creation failed")
+
+        print(f"✅ Gemini ephemeral token created for user {user_id}")
+        return {
+            "success": True,
+            "token": token_name,
+            "model": "gemini-2.5-flash-preview-native-audio-dialog",
+            "ws_url": "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error creating Gemini token: {type(e).__name__}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Erreur Gemini: {str(e)}")
 
 
 # ============================================================================

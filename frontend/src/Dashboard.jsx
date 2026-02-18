@@ -1222,191 +1222,294 @@ export default function Dashboard() {
     stopWaveAnimation()
   }
 
-  // ── Voice call with TTS response (OpenAI TTS API) ──
-  const speakText = async (text) => {
-    setVoiceCallSpeaking(true)
-    const resumeListening = () => {
-      setVoiceCallSpeaking(false)
-      if (voiceCallModeRef.current) startVoiceCallListening()
+  // ── Gemini Live Voice Call (real-time voice-to-voice via WebSocket) ──
+  const geminiWsRef = useRef(null)
+  const geminiAudioCtxRef = useRef(null)
+  const geminiMicStreamRef = useRef(null)
+  const geminiMicProcessorRef = useRef(null)
+  const geminiPlayQueueRef = useRef([])
+  const geminiIsPlayingRef = useRef(false)
+
+  // Convert Float32 PCM to Int16 PCM (Gemini expects 16-bit PCM at 16kHz)
+  const float32ToInt16 = (float32Array) => {
+    const int16 = new Int16Array(float32Array.length)
+    for (let i = 0; i < float32Array.length; i++) {
+      const s = Math.max(-1, Math.min(1, float32Array[i]))
+      int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF
     }
+    return int16
+  }
+
+  // Convert Int16 PCM to Float32 for playback
+  const int16ToFloat32 = (int16Array) => {
+    const float32 = new Float32Array(int16Array.length)
+    for (let i = 0; i < int16Array.length; i++) {
+      float32[i] = int16Array[i] / (int16Array[i] < 0 ? 0x8000 : 0x7FFF)
+    }
+    return float32
+  }
+
+  // Play Gemini audio response chunks
+  const playGeminiAudio = async (base64Audio) => {
     try {
-      const { data: { session } } = await supabase.auth.getSession()
-      const response = await fetch(`${API_URL}/api/ai/tts`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${session?.access_token || ''}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ text, voice: 'nova' })
-      })
-      if (!response.ok) throw new Error(`TTS API error: ${response.status}`)
-      const audioBlob = await response.blob()
-      const audioUrl = URL.createObjectURL(audioBlob)
-      const audio = new Audio(audioUrl)
-      voiceCallAudioRef.current = audio
-      audio.onended = () => {
-        URL.revokeObjectURL(audioUrl)
-        voiceCallAudioRef.current = null
-        resumeListening()
+      if (!geminiAudioCtxRef.current) {
+        geminiAudioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 })
       }
-      audio.onerror = () => {
-        URL.revokeObjectURL(audioUrl)
-        voiceCallAudioRef.current = null
-        resumeListening()
-      }
-      await audio.play()
+      const ctx = geminiAudioCtxRef.current
+      if (ctx.state === 'suspended') await ctx.resume()
+
+      const raw = atob(base64Audio)
+      const bytes = new Uint8Array(raw.length)
+      for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i)
+      const int16 = new Int16Array(bytes.buffer)
+      const float32 = int16ToFloat32(int16)
+
+      const buffer = ctx.createBuffer(1, float32.length, 24000)
+      buffer.getChannelData(0).set(float32)
+
+      geminiPlayQueueRef.current.push(buffer)
+      if (!geminiIsPlayingRef.current) drainGeminiPlayQueue()
     } catch (err) {
-      console.warn('OpenAI TTS failed, falling back to browser speechSynthesis:', err)
-      if (window.speechSynthesis) {
-        window.speechSynthesis.cancel()
-        const utterance = new SpeechSynthesisUtterance(text)
-        utterance.lang = 'fr-FR'
-        utterance.rate = 1.0
-        utterance.pitch = 1.0
-        const voices = window.speechSynthesis.getVoices()
-        const frVoice = voices.find(v => v.lang.startsWith('fr') && v.name.toLowerCase().includes('female'))
-          || voices.find(v => v.lang.startsWith('fr'))
-        if (frVoice) utterance.voice = frVoice
-        utterance.onend = () => resumeListening()
-        utterance.onerror = () => resumeListening()
-        window.speechSynthesis.speak(utterance)
-      } else {
-        resumeListening()
-      }
+      console.warn('Gemini audio playback error:', err)
     }
   }
 
-  const voiceCallSilenceRef = useRef(null)
-
-  const startVoiceCallListening = () => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!voiceCallModeRef.current) return
-    // Stop any previous recognition
-    if (voiceRecognitionRef.current) try { voiceRecognitionRef.current.stop() } catch {}
-    // Start MediaRecorder for Whisper
-    if (mediaStreamRef.current) startMediaRecorder(mediaStreamRef.current)
-    let finalText = ''
-    let hasResults = false
-
-    const resetSilenceTimer = () => {
-      if (voiceCallSilenceRef.current) clearTimeout(voiceCallSilenceRef.current)
-      voiceCallSilenceRef.current = setTimeout(async () => {
-        // 2s of silence after speech → transcribe with Whisper then send
-        if (!voiceCallModeRef.current) return
-        if (SpeechRecognition && voiceRecognitionRef.current) try { voiceRecognitionRef.current.stop() } catch {}
-        stopMediaRecorder()
-        setVoiceCallListening(false)
-        // Try Whisper first for accurate transcription
-        const audioBlob = getRecordedBlob()
-        let textToSend = finalText.trim()
-        if (audioBlob && audioBlob.size > 1000) {
-          setVoiceCallTranscript('Transcription...')
-          const whisperText = await transcribeWithWhisper(audioBlob)
-          if (whisperText) textToSend = whisperText
-        }
-        if (textToSend) {
-          setVoiceCallTranscript('')
-          sendVoiceCallMessage(textToSend)
-        } else {
-          // No speech detected, restart listening
-          if (voiceCallModeRef.current) startVoiceCallListening()
-        }
-      }, 2000)
+  const drainGeminiPlayQueue = () => {
+    if (geminiPlayQueueRef.current.length === 0) {
+      geminiIsPlayingRef.current = false
+      return
     }
-
-    // Use browser SpeechRecognition for real-time preview (if available)
-    if (SpeechRecognition) {
-      const recognition = new SpeechRecognition()
-      recognition.lang = 'fr-FR'
-      recognition.interimResults = true
-      recognition.continuous = true
-      voiceRecognitionRef.current = recognition
-      recognition.onresult = (event) => {
-        let interim = ''
-        finalText = ''
-        for (let i = 0; i < event.results.length; i++) {
-          if (event.results[i].isFinal) {
-            finalText += (finalText ? ' ' : '') + event.results[i][0].transcript
-          } else { interim += event.results[i][0].transcript }
-        }
-        hasResults = true
-        setVoiceCallTranscript(finalText + (interim ? ' ' + interim : ''))
-        resetSilenceTimer()
-      }
-      recognition.onerror = (e) => {
-        console.warn('Voice call recognition error:', e.error)
-        if (e.error !== 'aborted' && voiceCallModeRef.current) {
-          setTimeout(() => { if (voiceCallModeRef.current) startVoiceCallListening() }, 500)
-        }
-      }
-      recognition.onend = () => {
-        if (voiceCallModeRef.current && !finalText.trim()) {
-          setTimeout(() => { if (voiceCallModeRef.current) startVoiceCallListening() }, 300)
-        }
-      }
-      recognition.start()
-    } else {
-      // No browser STT — rely solely on Whisper with silence detection via audio levels
-      // Auto-send after 4 seconds of recording
-      voiceCallSilenceRef.current = setTimeout(async () => {
-        if (!voiceCallModeRef.current) return
-        stopMediaRecorder()
-        setVoiceCallListening(false)
-        const audioBlob = getRecordedBlob()
-        if (audioBlob && audioBlob.size > 1000) {
-          setVoiceCallTranscript('Transcription...')
-          const whisperText = await transcribeWithWhisper(audioBlob)
-          if (whisperText) {
-            setVoiceCallTranscript('')
-            sendVoiceCallMessage(whisperText)
-          } else {
-            if (voiceCallModeRef.current) startVoiceCallListening()
-          }
-        } else {
-          if (voiceCallModeRef.current) startVoiceCallListening()
-        }
-      }, 4000)
-    }
-    setVoiceCallListening(true)
+    geminiIsPlayingRef.current = true
+    const ctx = geminiAudioCtxRef.current
+    if (!ctx) { geminiIsPlayingRef.current = false; return }
+    const buffer = geminiPlayQueueRef.current.shift()
+    const source = ctx.createBufferSource()
+    source.buffer = buffer
+    source.connect(ctx.destination)
+    source.onended = () => drainGeminiPlayQueue()
+    source.start()
   }
 
-  const sendVoiceCallMessage = async (text) => {
-    try {
-      setChatMessages(prev => [...prev, { role: 'user', text }])
-      const { data: { session } } = await supabase.auth.getSession()
-      const response = await fetch(`${API_URL}/api/ai/chat`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, context: shopifyUrl ? `Boutique connectée: ${shopifyUrl}` : '' })
-      })
-      const data = await response.json()
-      const reply = data.success ? data.message : 'Désolé, une erreur est survenue.'
-      setChatMessages(prev => [...prev, { role: 'assistant', text: reply }])
-      // Speak the response out loud
-      speakText(reply)
-    } catch {
-      speakText('Désolé, je n\'ai pas pu me connecter.')
-    }
-  }
-
-  const startVoiceCall = () => {
+  const startVoiceCall = async () => {
     voiceCallModeRef.current = true
     setVoiceCallMode(true)
     setVoiceCallTranscript('')
     setVoiceCallSpeaking(false)
+    setVoiceCallListening(false)
     startWaveAnimation()
-    // Greet first
-    const greeting = `${getGreeting()}, ${profile?.first_name || 'là'}. Comment puis-je vous aider ?`
-    speakText(greeting)
+
+    try {
+      // 1. Get ephemeral token from backend
+      setVoiceCallTranscript('Connexion à Gemini Live...')
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) throw new Error('Session expirée')
+
+      const tokenResp = await fetch(`${API_URL}/api/gemini/live-token`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        }
+      })
+
+      if (!tokenResp.ok) {
+        const errData = await tokenResp.json().catch(() => ({}))
+        throw new Error(errData.detail || `Token error: ${tokenResp.status}`)
+      }
+
+      const { token, ws_url, model } = await tokenResp.json()
+
+      // 2. Connect WebSocket to Gemini Live
+      const wsUrl = `${ws_url}?access_token=${encodeURIComponent(token)}`
+      const ws = new WebSocket(wsUrl)
+      geminiWsRef.current = ws
+
+      ws.onopen = () => {
+        console.log('✅ Gemini Live WebSocket connected')
+        // Send setup message
+        ws.send(JSON.stringify({
+          setup: {
+            model: `models/${model}`,
+            generationConfig: {
+              responseModalities: ['AUDIO'],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: { voiceName: 'Aoede' }
+                }
+              }
+            },
+            systemInstruction: {
+              parts: [{
+                text: `Tu es ShopBrain, un assistant IA expert en e-commerce Shopify. Tu parles français avec un ton professionnel mais amical. Tu aides les marchands à optimiser leur boutique en ligne. Réponds de manière concise et naturelle, comme dans une vraie conversation. Le marchand s'appelle ${profile?.first_name || 'là'}.${shopifyUrl ? ` Sa boutique est: ${shopifyUrl}` : ''}`
+              }]
+            },
+            inputAudioTranscription: {},
+            outputAudioTranscription: {}
+          }
+        }))
+      }
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data)
+
+          // Setup complete → start mic
+          if (msg.setupComplete) {
+            console.log('✅ Gemini Live setup complete')
+            setVoiceCallTranscript('')
+            startGeminiMic()
+            return
+          }
+
+          // Server content (audio response + transcriptions)
+          if (msg.serverContent) {
+            const sc = msg.serverContent
+
+            // Model is speaking
+            if (sc.modelTurn?.parts) {
+              for (const part of sc.modelTurn.parts) {
+                if (part.inlineData?.data) {
+                  setVoiceCallSpeaking(true)
+                  playGeminiAudio(part.inlineData.data)
+                }
+              }
+            }
+
+            // Output transcription (what the AI said)
+            if (sc.outputTranscription?.text) {
+              const aiText = sc.outputTranscription.text
+              setChatMessages(prev => {
+                const last = prev[prev.length - 1]
+                if (last?.role === 'assistant' && last._geminiLive) {
+                  return [...prev.slice(0, -1), { ...last, text: last.text + aiText }]
+                }
+                return [...prev, { role: 'assistant', text: aiText, _geminiLive: true }]
+              })
+            }
+
+            // Input transcription (what the user said)
+            if (sc.inputTranscription?.text) {
+              const userText = sc.inputTranscription.text
+              setVoiceCallTranscript(prev => prev + userText)
+              setChatMessages(prev => {
+                const last = prev[prev.length - 1]
+                if (last?.role === 'user' && last._geminiLive) {
+                  return [...prev.slice(0, -1), { ...last, text: last.text + userText }]
+                }
+                return [...prev, { role: 'user', text: userText, _geminiLive: true }]
+              })
+            }
+
+            // Turn complete → AI stopped speaking
+            if (sc.turnComplete) {
+              setVoiceCallSpeaking(false)
+              setVoiceCallTranscript('')
+            }
+
+            // Interrupted → user interrupted the AI
+            if (sc.interrupted) {
+              geminiPlayQueueRef.current = []
+              geminiIsPlayingRef.current = false
+              setVoiceCallSpeaking(false)
+            }
+          }
+        } catch (err) {
+          console.warn('Gemini WS message parse error:', err)
+        }
+      }
+
+      ws.onerror = (err) => {
+        console.error('Gemini Live WebSocket error:', err)
+        setVoiceCallTranscript('Erreur de connexion')
+      }
+
+      ws.onclose = (event) => {
+        console.log('Gemini Live WebSocket closed:', event.code, event.reason)
+        if (voiceCallModeRef.current) {
+          setVoiceCallTranscript('Connexion terminée')
+          setTimeout(() => { if (voiceCallModeRef.current) endVoiceCall() }, 2000)
+        }
+      }
+
+    } catch (err) {
+      console.error('Voice call init error:', err)
+      setVoiceCallTranscript(`Erreur: ${err.message}`)
+      // Fallback: end after showing error
+      setTimeout(() => { if (voiceCallModeRef.current) endVoiceCall() }, 3000)
+    }
+  }
+
+  // Start capturing mic audio and streaming to Gemini
+  const startGeminiMic = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true } })
+      geminiMicStreamRef.current = stream
+
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 })
+      const source = audioCtx.createMediaStreamSource(stream)
+
+      // Use ScriptProcessorNode for PCM capture (widely supported)
+      const processor = audioCtx.createScriptProcessor(4096, 1, 1)
+      geminiMicProcessorRef.current = { processor, audioCtx }
+
+      processor.onaudioprocess = (e) => {
+        if (!voiceCallModeRef.current || !geminiWsRef.current || geminiWsRef.current.readyState !== WebSocket.OPEN) return
+        const float32 = e.inputBuffer.getChannelData(0)
+        const int16 = float32ToInt16(float32)
+        const base64 = btoa(String.fromCharCode(...new Uint8Array(int16.buffer)))
+
+        geminiWsRef.current.send(JSON.stringify({
+          realtimeInput: {
+            audio: {
+              data: base64,
+              mimeType: 'audio/pcm;rate=16000'
+            }
+          }
+        }))
+      }
+
+      source.connect(processor)
+      processor.connect(audioCtx.destination) // Required for ScriptProcessor to work
+
+      setVoiceCallListening(true)
+      console.log('🎤 Gemini mic streaming started')
+    } catch (err) {
+      console.error('Mic access error:', err)
+      setVoiceCallTranscript('Erreur micro: ' + err.message)
+    }
+  }
+
+  const stopGeminiMic = () => {
+    if (geminiMicProcessorRef.current) {
+      try { geminiMicProcessorRef.current.processor.disconnect() } catch {}
+      try { geminiMicProcessorRef.current.audioCtx.close() } catch {}
+      geminiMicProcessorRef.current = null
+    }
+    if (geminiMicStreamRef.current) {
+      geminiMicStreamRef.current.getTracks().forEach(t => t.stop())
+      geminiMicStreamRef.current = null
+    }
+    setVoiceCallListening(false)
   }
 
   const endVoiceCall = () => {
     voiceCallModeRef.current = false
+    // Close Gemini WebSocket
+    if (geminiWsRef.current) {
+      try { geminiWsRef.current.close() } catch {}
+      geminiWsRef.current = null
+    }
+    stopGeminiMic()
+    // Clean up audio
+    geminiPlayQueueRef.current = []
+    geminiIsPlayingRef.current = false
+    if (geminiAudioCtxRef.current) {
+      try { geminiAudioCtxRef.current.close() } catch {}
+      geminiAudioCtxRef.current = null
+    }
     if (voiceRecognitionRef.current) try { voiceRecognitionRef.current.stop() } catch {}
-    if (voiceCallSilenceRef.current) { clearTimeout(voiceCallSilenceRef.current); voiceCallSilenceRef.current = null }
     if (window.speechSynthesis) window.speechSynthesis.cancel()
     stopMediaRecorder()
-    // Stop any playing audio
     if (voiceCallAudioRef.current) { try { voiceCallAudioRef.current.pause() } catch {}; voiceCallAudioRef.current = null }
     setVoiceCallMode(false)
     setVoiceCallListening(false)
@@ -1416,12 +1519,17 @@ export default function Dashboard() {
   }
 
   const toggleVoiceCallMic = () => {
-    if (voiceCallSpeaking) return // don't toggle while AI speaks
+    if (voiceCallSpeaking) return
     if (voiceCallListening) {
-      if (voiceRecognitionRef.current) try { voiceRecognitionRef.current.stop() } catch {}
-      setVoiceCallListening(false)
+      stopGeminiMic()
+      // Signal to Gemini that audio stream ended
+      if (geminiWsRef.current && geminiWsRef.current.readyState === WebSocket.OPEN) {
+        geminiWsRef.current.send(JSON.stringify({
+          realtimeInput: { audioStreamEnd: true }
+        }))
+      }
     } else {
-      startVoiceCallListening()
+      startGeminiMic()
     }
   }
 
@@ -5800,7 +5908,7 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* ══════ Voice Call Mode (fullscreen overlay with TTS) ══════ */}
+              {/* ══════ Voice Call Mode (Gemini Live — real-time voice-to-voice) ══════ */}
               {voiceCallMode && (
                 <div className="absolute inset-0 z-[70] bg-gradient-to-b from-gray-100 to-white flex flex-col items-center justify-between py-8">
                   {/* Header icons */}
@@ -5819,6 +5927,10 @@ export default function Dashboard() {
                     >
                       <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
                     </button>
+                  </div>
+                  {/* Gemini Live badge */}
+                  <div className="absolute top-3 left-3">
+                    <span className="text-[10px] tracking-widest uppercase text-gray-400 font-medium">Gemini Live</span>
                   </div>
 
                   {/* Logo with rainbow halo */}
