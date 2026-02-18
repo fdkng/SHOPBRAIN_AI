@@ -6,11 +6,16 @@ Endpoints, logique asynchrone, cache, persistance Supabase, gestion d’erreurs,
 """
 
 import os
+import sys
 import re
 import json
 import time
 import uuid
 import hashlib
+import base64
+import hmac
+import smtplib
+import ssl
 import requests
 import threading
 from datetime import datetime, timedelta
@@ -18,9 +23,24 @@ from fastapi import FastAPI, HTTPException, Request, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
-from starlette.responses import RedirectResponse
+from io import BytesIO
+from email.message import EmailMessage
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
 from supabase import create_client
 import openai
+import stripe
+import jwt
+
+try:
+    from openai import OpenAI
+except Exception:
+    OpenAI = None
+
+try:
+    from AI_engine.shopbrain_ai import ShopBrainAI
+except Exception:
+    ShopBrainAI = None
 
 print("\n🚀 ========== BACKEND STARTUP ==========")
 print(f"✅ FastAPI initializing...")
@@ -75,9 +95,88 @@ MARKET_TOLERANCE_PCT = float(os.getenv("MARKET_TOLERANCE_PCT", "5"))
 SERP_MAX_PRODUCTS = int(os.getenv("SERP_MAX_PRODUCTS", "8"))
 SERP_NUM_RESULTS = int(os.getenv("SERP_NUM_RESULTS", "20"))
 
-# Small in-memory cache to reduce SERP API calls
+_SERP_CACHE: dict[str, dict] = {}
+_SHOP_CACHE: dict[str, dict] = {}
+_BLOCKERS_CACHE: dict[str, dict] = {}
+_MEM_CACHE_LOCK = threading.Lock()
 
-import time
+
+def _cache_get_serp(key: str, ttl_s: int = 900):
+    with _MEM_CACHE_LOCK:
+        item = _SERP_CACHE.get(key)
+        if not item:
+            return None
+        if time.time() - item.get("ts", 0) > ttl_s:
+            _SERP_CACHE.pop(key, None)
+            return None
+        return item.get("data")
+
+
+def _cache_set_serp(key: str, data):
+    with _MEM_CACHE_LOCK:
+        _SERP_CACHE[key] = {"ts": time.time(), "data": data}
+
+
+def _cache_get_shop(key: str, ttl_s: int = 3600):
+    with _MEM_CACHE_LOCK:
+        item = _SHOP_CACHE.get(key)
+        if not item:
+            return None
+        if time.time() - item.get("ts", 0) > ttl_s:
+            _SHOP_CACHE.pop(key, None)
+            return None
+        return item.get("data")
+
+
+def _cache_set_shop(key: str, data):
+    with _MEM_CACHE_LOCK:
+        _SHOP_CACHE[key] = {"ts": time.time(), "data": data}
+
+
+def _cache_get_blockers(key: str, ttl_s: int = 300):
+    with _MEM_CACHE_LOCK:
+        item = _BLOCKERS_CACHE.get(key)
+        if not item:
+            return None
+        if time.time() - item.get("ts", 0) > ttl_s:
+            _BLOCKERS_CACHE.pop(key, None)
+            return None
+        return item.get("data")
+
+
+def _cache_set_blockers(key: str, data):
+    with _MEM_CACHE_LOCK:
+        _BLOCKERS_CACHE[key] = {"ts": time.time(), "data": data}
+
+
+def _currency_label(code: str | None) -> str:
+    if code == "CAD":
+        return "dollars canadiens (CAD)"
+    if code == "USD":
+        return "dollars US (USD)"
+    if code == "EUR":
+        return "euros (EUR)"
+    return f"{code or 'devise inconnue'}"
+
+
+def _gl_for_currency(code: str | None) -> str:
+    if code == "USD":
+        return "us"
+    if code == "EUR":
+        return "fr"
+    return "ca"
+
+
+def _keywords_from_text(text: str, max_words: int = 10) -> list[str]:
+    tokens = re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ0-9]+", (text or "").lower())
+    return [w for w in tokens if len(w) > 2][:max_words]
+
+
+def _clean_query_text(text: str, shop_brand: str | None = None) -> str:
+    cleaned = re.sub(r"\s+", " ", (text or "")).strip()
+    if shop_brand:
+        cleaned = re.sub(re.escape(shop_brand), "", cleaned, flags=re.IGNORECASE).strip()
+    return cleaned
 
 @app.get("/api/shopify/bundles")
 async def get_shopify_bundles(request: Request, range: str = "30d", limit: int = 10):
@@ -641,7 +740,7 @@ if STRIPE_SECRET_KEY:
 
 print("\n🚀 ========== BACKEND STARTUP ==========")
 print(f"✅ FastAPI initializing...")
-app = FastAPI()
+# Do not re-create app here: keep the original instance so previously declared routes stay registered.
 
 # Allow CORS from configured frontend and local development
 allowed_origins = [
