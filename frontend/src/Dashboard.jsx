@@ -55,18 +55,15 @@ export default function Dashboard() {
   const [selectedActions, setSelectedActions] = useState([])
   const [applyingActions, setApplyingActions] = useState(false)
   const [analysisResults, setAnalysisResults] = useState(null)
-  const defaultChatMessages = [
-    { role: 'assistant', text: 'Bonjour, je suis ton assistant IA e-commerce. Pose-moi des questions sur tes produits, ta stratégie, ou ta boutique Shopify.' }
-  ]
   const [chatMessages, setChatMessages] = useState(() => {
-    if (typeof window === 'undefined') return defaultChatMessages
+    if (typeof window === 'undefined') return []
     try {
       const stored = localStorage.getItem('chatMessages')
-      if (!stored) return defaultChatMessages
+      if (!stored) return []
       const parsed = JSON.parse(stored)
-      return Array.isArray(parsed) && parsed.length > 0 ? parsed : defaultChatMessages
+      return Array.isArray(parsed) ? parsed : []
     } catch {
-      return defaultChatMessages
+      return []
     }
   })
   const [chatInput, setChatInput] = useState('')
@@ -100,7 +97,24 @@ export default function Dashboard() {
   const [pendingRevokeKeyId, setPendingRevokeKeyId] = useState(null)
   const [pendingCancelSubscription, setPendingCancelSubscription] = useState(false)
   const chatEndRef = useRef(null)
-  const [showChatModal, setShowChatModal] = useState(false)
+  const [showChatPanel, setShowChatPanel] = useState(false)
+  const [chatExpanded, setChatExpanded] = useState(false)
+  const [chatConversations, setChatConversations] = useState(() => {
+    if (typeof window === 'undefined') return []
+    try {
+      const stored = localStorage.getItem('chatConversations')
+      return stored ? JSON.parse(stored) : []
+    } catch { return [] }
+  })
+  const [activeConversationId, setActiveConversationId] = useState(() => {
+    if (typeof window === 'undefined') return null
+    return localStorage.getItem('activeConversationId') || null
+  })
+  const [showConversationMenu, setShowConversationMenu] = useState(false)
+  const [conversationSearch, setConversationSearch] = useState('')
+  const [renamingConversationId, setRenamingConversationId] = useState(null)
+  const [renamingValue, setRenamingValue] = useState('')
+  const conversationMenuRef = useRef(null)
   const [analyticsRange, setAnalyticsRange] = useState('30d')
   const [analyticsData, setAnalyticsData] = useState(null)
   const [analyticsLoading, setAnalyticsLoading] = useState(false)
@@ -655,6 +669,29 @@ export default function Dashboard() {
   }, [chatMessages])
 
   useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('chatConversations', JSON.stringify(chatConversations))
+    }
+  }, [chatConversations])
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && activeConversationId) {
+      localStorage.setItem('activeConversationId', activeConversationId)
+    }
+  }, [activeConversationId])
+
+  useEffect(() => {
+    if (!showConversationMenu) return
+    const handleClickOutside = (e) => {
+      if (conversationMenuRef.current && !conversationMenuRef.current.contains(e.target)) {
+        setShowConversationMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showConversationMenu])
+
+  useEffect(() => {
     if (typeof window !== 'undefined' && profile) {
       localStorage.setItem('profileCache', JSON.stringify(profile))
     }
@@ -875,18 +912,117 @@ export default function Dashboard() {
     }
   }
 
-  const sendChatMessage = async () => {
-    if (!chatInput.trim()) return
+  // ============ CONVERSATION MANAGEMENT ============
+  const startNewConversation = () => {
+    // Save current conversation if it has messages
+    if (chatMessages.length > 0 && activeConversationId) {
+      setChatConversations(prev => prev.map(c =>
+        c.id === activeConversationId ? { ...c, messages: chatMessages, updatedAt: new Date().toISOString() } : c
+      ))
+    } else if (chatMessages.length > 0 && !activeConversationId) {
+      const firstUserMsg = chatMessages.find(m => m.role === 'user')
+      const title = firstUserMsg ? firstUserMsg.text.slice(0, 40) + (firstUserMsg.text.length > 40 ? '...' : '') : 'Nouvelle conversation'
+      const newConv = {
+        id: Date.now().toString(),
+        title,
+        messages: chatMessages,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }
+      setChatConversations(prev => [newConv, ...prev])
+    }
+    setChatMessages([])
+    setActiveConversationId(null)
+    setShowConversationMenu(false)
+  }
+
+  const loadConversation = (conv) => {
+    // Save current first
+    if (chatMessages.length > 0 && activeConversationId && activeConversationId !== conv.id) {
+      setChatConversations(prev => prev.map(c =>
+        c.id === activeConversationId ? { ...c, messages: chatMessages, updatedAt: new Date().toISOString() } : c
+      ))
+    }
+    setChatMessages(conv.messages || [])
+    setActiveConversationId(conv.id)
+    setShowConversationMenu(false)
+  }
+
+  const renameConversation = (convId, newTitle) => {
+    setChatConversations(prev => prev.map(c =>
+      c.id === convId ? { ...c, title: newTitle } : c
+    ))
+    setRenamingConversationId(null)
+    setRenamingValue('')
+  }
+
+  const deleteConversation = (convId) => {
+    setChatConversations(prev => prev.filter(c => c.id !== convId))
+    if (activeConversationId === convId) {
+      setChatMessages([])
+      setActiveConversationId(null)
+    }
+  }
+
+  const getGreeting = () => {
+    const hour = new Date().getHours()
+    if (hour >= 5 && hour < 12) return 'Bonjour'
+    if (hour >= 12 && hour < 18) return 'Bon après-midi'
+    return 'Bonsoir'
+  }
+
+  const getConversationDateLabel = (dateStr) => {
+    const date = new Date(dateStr)
+    const today = new Date()
+    const yesterday = new Date(today)
+    yesterday.setDate(yesterday.getDate() - 1)
+    if (date.toDateString() === today.toDateString()) return "Aujourd'hui"
+    if (date.toDateString() === yesterday.toDateString()) return 'Hier'
+    return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })
+  }
+
+  const filteredConversations = chatConversations
+    .filter(c => !conversationSearch || c.title.toLowerCase().includes(conversationSearch.toLowerCase()))
+    .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
+
+  const groupedConversations = filteredConversations.reduce((acc, conv) => {
+    const label = getConversationDateLabel(conv.updatedAt || conv.createdAt)
+    if (!acc[label]) acc[label] = []
+    acc[label].push(conv)
+    return acc
+  }, {})
+
+  const activeConversationTitle = activeConversationId
+    ? (chatConversations.find(c => c.id === activeConversationId)?.title || 'Conversation')
+    : 'Nouvelle conversation'
+
+  // ============ CHAT SEND ============
+  const sendChatMessage = async (directMessage) => {
+    const messageToSend = directMessage || chatInput.trim()
+    if (!messageToSend) return
     
     try {
       setChatLoading(true)
       
-      // Ajouter le message utilisateur
-      const userMessage = chatInput.trim()
+      const userMessage = messageToSend
       setChatMessages(prev => [...prev, { role: 'user', text: userMessage }])
       setChatInput('')
       
-      // Envoyer au backend
+      // Auto-create conversation on first message
+      if (!activeConversationId) {
+        const newId = Date.now().toString()
+        const title = userMessage.slice(0, 40) + (userMessage.length > 40 ? '...' : '')
+        const newConv = {
+          id: newId,
+          title,
+          messages: [{ role: 'user', text: userMessage }],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+        setChatConversations(prev => [newConv, ...prev])
+        setActiveConversationId(newId)
+      }
+      
       const { data: { session } } = await supabase.auth.getSession()
       const response = await fetch(`${API_URL}/api/ai/chat`, {
         method: 'POST',
@@ -903,7 +1039,16 @@ export default function Dashboard() {
       const data = await response.json()
       
       if (data.success) {
-        setChatMessages(prev => [...prev, { role: 'assistant', text: data.message }])
+        setChatMessages(prev => {
+          const updated = [...prev, { role: 'assistant', text: data.message }]
+          // Persist to conversation
+          if (activeConversationId) {
+            setChatConversations(prev2 => prev2.map(c =>
+              c.id === activeConversationId ? { ...c, messages: updated, updatedAt: new Date().toISOString() } : c
+            ))
+          }
+          return updated
+        })
       } else {
         setChatMessages(prev => [...prev, { 
           role: 'assistant', 
@@ -4771,56 +4916,246 @@ export default function Dashboard() {
       )}
           </div>
 
+          {/* ====== FAB Bouton Assistant IA ====== */}
           <button
-            onClick={() => setShowChatModal(true)}
-            className="fixed bottom-6 right-6 bg-yellow-600 hover:bg-yellow-500 text-black font-semibold px-5 py-3 rounded-full shadow-xl border border-yellow-400/40 z-40"
+            onClick={() => setShowChatPanel(true)}
+            className="fixed bottom-6 right-6 z-40 group"
+            title="Assistant IA"
           >
-            Assistant IA
+            <div className="relative w-14 h-14 rounded-full bg-gradient-to-br from-yellow-500 to-yellow-700 shadow-2xl shadow-yellow-600/30 flex items-center justify-center border-2 border-yellow-400/40 transition-all duration-200 group-hover:scale-110 group-hover:shadow-yellow-500/50">
+              <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
+                <circle cx="16" cy="13" r="8" fill="#0b0d12" opacity="0.85"/>
+                <circle cx="12" cy="12" r="2" fill="#facc15"/>
+                <circle cx="20" cy="12" r="2" fill="#facc15"/>
+                <path d="M11 17 Q16 21 21 17" stroke="#facc15" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+                <circle cx="8" cy="8" r="1.5" fill="#facc15" opacity="0.7"/>
+                <circle cx="24" cy="8" r="1.5" fill="#facc15" opacity="0.7"/>
+              </svg>
+              <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-green-500 rounded-full border-2 border-gray-900"></span>
+            </div>
           </button>
 
-          {showChatModal && (
-            <div className="fixed inset-0 bg-black/60 z-50 flex items-end md:items-center justify-center" onClick={() => setShowChatModal(false)}>
+          {/* ====== Panneau latéral Assistant IA (style Sidekick) ====== */}
+          {showChatPanel && (
+            <>
+              {/* Overlay (only when not expanded) */}
+              {!chatExpanded && (
+                <div
+                  className="fixed inset-0 bg-black/40 z-50 transition-opacity duration-300"
+                  onClick={() => setShowChatPanel(false)}
+                />
+              )}
               <div
-                className="bg-gray-900 border border-gray-700 rounded-2xl w-full md:max-w-2xl h-[75vh] md:h-[70vh] mx-4 mb-6 md:mb-0 flex flex-col"
-                onClick={(e) => e.stopPropagation()}
+                className={`fixed z-50 flex flex-col bg-[#0f1117] border-l border-gray-700/60 shadow-2xl transition-all duration-300 ease-in-out ${
+                  chatExpanded
+                    ? 'inset-0 rounded-none'
+                    : 'top-0 right-0 bottom-0 w-full sm:w-[420px] md:w-[460px] rounded-l-2xl'
+                }`}
+                style={{ fontFamily: 'DM Sans, sans-serif' }}
               >
-                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.3em] text-gray-500">Assistant</p>
-                    <h3 className="text-white text-lg font-semibold">Assistant IA</h3>
+                {/* ── Header ── */}
+                <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700/50">
+                  <div className="relative" ref={conversationMenuRef}>
+                    <button
+                      onClick={() => setShowConversationMenu(!showConversationMenu)}
+                      className="flex items-center gap-1.5 text-sm text-gray-200 hover:text-white font-medium transition-colors"
+                    >
+                      <span className="truncate max-w-[180px]">{activeConversationTitle}</span>
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="shrink-0">
+                        <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    </button>
+
+                    {/* ── Dropdown conversations ── */}
+                    {showConversationMenu && (
+                      <div className="absolute top-full left-0 mt-2 w-72 bg-[#1a1d27] border border-gray-700/60 rounded-xl shadow-2xl z-[60] overflow-hidden">
+                        <div className="p-3 border-b border-gray-700/40">
+                          <div className="relative">
+                            <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" width="14" height="14" viewBox="0 0 16 16" fill="none">
+                              <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.5"/>
+                              <path d="M11 11L14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                            </svg>
+                            <input
+                              type="text"
+                              placeholder="Rechercher des conversations..."
+                              value={conversationSearch}
+                              onChange={(e) => setConversationSearch(e.target.value)}
+                              className="w-full bg-[#0f1117] text-sm text-gray-300 pl-9 pr-8 py-2 rounded-lg border border-gray-700/50 focus:border-yellow-500/50 focus:outline-none placeholder:text-gray-600"
+                            />
+                            {conversationSearch && (
+                              <button onClick={() => setConversationSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">
+                                <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 3L9 9M9 3L3 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        <div className="max-h-64 overflow-y-auto">
+                          <button
+                            onClick={startNewConversation}
+                            className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700/40 transition-colors"
+                          >
+                            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 3V13M3 8H13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                            Nouvelle conversation
+                          </button>
+                          {Object.entries(groupedConversations).map(([dateLabel, convs]) => (
+                            <div key={dateLabel}>
+                              <div className="px-4 py-1.5 text-[11px] text-gray-500 font-medium uppercase tracking-wider">{dateLabel}</div>
+                              {convs.map(conv => (
+                                <div key={conv.id} className={`group flex items-center gap-1 px-4 py-2 hover:bg-gray-700/40 transition-colors ${
+                                  activeConversationId === conv.id ? 'bg-gray-700/30' : ''
+                                }`}>
+                                  {renamingConversationId === conv.id ? (
+                                    <input
+                                      autoFocus
+                                      value={renamingValue}
+                                      onChange={(e) => setRenamingValue(e.target.value)}
+                                      onKeyDown={(e) => { if (e.key === 'Enter') renameConversation(conv.id, renamingValue); if (e.key === 'Escape') setRenamingConversationId(null) }}
+                                      onBlur={() => renameConversation(conv.id, renamingValue)}
+                                      className="flex-1 text-sm text-gray-200 bg-transparent border-b border-yellow-500 outline-none py-0.5"
+                                    />
+                                  ) : (
+                                    <button
+                                      onClick={() => loadConversation(conv)}
+                                      className="flex-1 text-left text-sm text-gray-300 truncate"
+                                    >
+                                      {conv.title}
+                                    </button>
+                                  )}
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); setRenamingConversationId(conv.id); setRenamingValue(conv.title) }}
+                                    className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-gray-300 p-0.5 transition-opacity"
+                                    title="Renommer"
+                                  >
+                                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M11 2L14 5L5 14H2V11L11 2Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/></svg>
+                                  </button>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); deleteConversation(conv.id) }}
+                                    className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 p-0.5 transition-opacity"
+                                    title="Supprimer"
+                                  >
+                                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          ))}
+                          {filteredConversations.length === 0 && (
+                            <div className="px-4 py-6 text-center text-sm text-gray-600">Aucune conversation</div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <button
-                    onClick={() => setShowChatModal(false)}
-                    className="text-gray-400 hover:text-white text-sm"
-                  >
-                    Fermer
-                  </button>
+
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={startNewConversation}
+                      className="p-2 text-gray-400 hover:text-white rounded-lg hover:bg-gray-700/40 transition-colors"
+                      title="Nouvelle conversation"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3V13M3 8H13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                    </button>
+                    <button
+                      onClick={() => setChatExpanded(!chatExpanded)}
+                      className="p-2 text-gray-400 hover:text-white rounded-lg hover:bg-gray-700/40 transition-colors"
+                      title={chatExpanded ? 'Réduire' : 'Agrandir'}
+                    >
+                      {chatExpanded ? (
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 2V6H14M6 14V10H2M14 10H10V14M2 6H6V2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                      ) : (
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 2L6 2V6M14 2L10 2V6M14 14L10 14V10M2 14L6 14V10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                      )}
+                    </button>
+                    <button
+                      onClick={() => setShowChatPanel(false)}
+                      className="p-2 text-gray-400 hover:text-white rounded-lg hover:bg-gray-700/40 transition-colors"
+                      title="Fermer"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                    </button>
+                  </div>
                 </div>
-                <div className="flex-1 overflow-y-auto overflow-x-hidden px-6 py-4 space-y-4">
-                  {chatMessages.map((msg, idx) => (
-                    <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-full lg:max-w-2xl px-4 py-2 rounded-lg whitespace-pre-wrap break-words ${
-                        msg.role === 'user'
-                          ? 'bg-yellow-600 text-black'
-                          : 'bg-gray-800 text-gray-200'
-                      }`}>
-                        {msg.text}
+
+                {/* ── Messages / Welcome ── */}
+                <div className="flex-1 overflow-y-auto overflow-x-hidden">
+                  {chatMessages.length === 0 ? (
+                    /* Welcome Screen */
+                    <div className="flex flex-col items-center justify-center h-full px-6">
+                      {/* Logo avatar */}
+                      <div className="w-16 h-16 rounded-full bg-gradient-to-br from-yellow-500 to-yellow-700 flex items-center justify-center mb-5 shadow-lg shadow-yellow-600/20">
+                        <svg width="36" height="36" viewBox="0 0 32 32" fill="none">
+                          <circle cx="16" cy="13" r="8" fill="#0b0d12" opacity="0.85"/>
+                          <circle cx="12" cy="12" r="2.2" fill="#facc15"/>
+                          <circle cx="20" cy="12" r="2.2" fill="#facc15"/>
+                          <path d="M11 17 Q16 21 21 17" stroke="#facc15" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+                          <circle cx="8" cy="8" r="1.5" fill="#facc15" opacity="0.7"/>
+                          <circle cx="24" cy="8" r="1.5" fill="#facc15" opacity="0.7"/>
+                        </svg>
                       </div>
+                      <p className="text-gray-500 text-sm mb-1">{getGreeting()}, {profile?.first_name || user?.user_metadata?.full_name?.split(' ')[0] || 'là'}</p>
+                      <h3 className="text-white text-lg font-semibold mb-6">Comment puis-je vous aider ?</h3>
+                      <button
+                        onClick={() => sendChatMessage('Quoi de neuf ?')}
+                        className="px-5 py-2 rounded-full border border-gray-600 text-gray-400 text-sm hover:border-yellow-500/50 hover:text-yellow-400 transition-all duration-200"
+                      >
+                        Quoi de neuf ?
+                      </button>
                     </div>
-                  ))}
-                  {chatLoading && (
-                    <div className="flex justify-start">
-                      <div className="bg-gray-800 text-gray-200 px-4 py-2 rounded-lg">
-                        L'IA réfléchit...
-                      </div>
+                  ) : (
+                    /* Messages list */
+                    <div className="px-4 py-4 space-y-4">
+                      {chatMessages.map((msg, idx) => (
+                        <div key={idx} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+                          {/* Avatar */}
+                          {msg.role === 'assistant' && (
+                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-yellow-500 to-yellow-700 flex items-center justify-center shrink-0 mt-0.5 shadow-md">
+                              <svg width="18" height="18" viewBox="0 0 32 32" fill="none">
+                                <circle cx="16" cy="13" r="8" fill="#0b0d12" opacity="0.85"/>
+                                <circle cx="12" cy="12" r="2" fill="#facc15"/>
+                                <circle cx="20" cy="12" r="2" fill="#facc15"/>
+                                <path d="M11 17 Q16 21 21 17" stroke="#facc15" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+                              </svg>
+                            </div>
+                          )}
+                          {/* Bubble */}
+                          <div className={`max-w-[80%] px-4 py-2.5 rounded-2xl whitespace-pre-wrap break-words text-sm leading-relaxed ${
+                            msg.role === 'user'
+                              ? 'bg-yellow-600 text-black rounded-br-md'
+                              : 'bg-[#1a1d27] text-gray-200 rounded-bl-md border border-gray-700/40'
+                          }`}>
+                            {msg.text}
+                          </div>
+                        </div>
+                      ))}
+
+                      {/* ── Typing indicator (3 bouncing dots with logo) ── */}
+                      {chatLoading && (
+                        <div className="flex gap-3 items-start">
+                          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-yellow-500 to-yellow-700 flex items-center justify-center shrink-0 shadow-md">
+                            <svg width="18" height="18" viewBox="0 0 32 32" fill="none">
+                              <circle cx="16" cy="13" r="8" fill="#0b0d12" opacity="0.85"/>
+                              <circle cx="12" cy="12" r="2" fill="#facc15"/>
+                              <circle cx="20" cy="12" r="2" fill="#facc15"/>
+                              <path d="M11 17 Q16 21 21 17" stroke="#facc15" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+                            </svg>
+                          </div>
+                          <div className="bg-[#1a1d27] border border-gray-700/40 rounded-2xl rounded-bl-md px-4 py-3 flex items-center gap-1.5">
+                            <span className="w-2 h-2 bg-yellow-500 rounded-full animate-bounce" style={{ animationDelay: '0ms', animationDuration: '0.8s' }}></span>
+                            <span className="w-2 h-2 bg-yellow-500 rounded-full animate-bounce" style={{ animationDelay: '150ms', animationDuration: '0.8s' }}></span>
+                            <span className="w-2 h-2 bg-yellow-500 rounded-full animate-bounce" style={{ animationDelay: '300ms', animationDuration: '0.8s' }}></span>
+                          </div>
+                        </div>
+                      )}
+                      <div ref={chatEndRef} />
                     </div>
                   )}
-                  <div ref={chatEndRef} />
                 </div>
-                <div className="border-t border-gray-700 px-6 py-4">
-                  <div className="flex gap-2">
+
+                {/* ── Input area ── */}
+                <div className="border-t border-gray-700/50 px-4 py-3">
+                  <div className="flex items-end gap-2 bg-[#1a1d27] border border-gray-700/50 rounded-xl px-3 py-2 focus-within:border-yellow-500/40 transition-colors">
                     <textarea
-                      placeholder="Pose une question à l'IA..."
+                      placeholder="Posez n'importe quelle question..."
                       value={chatInput}
                       onChange={(e) => setChatInput(e.target.value)}
                       onKeyDown={(e) => {
@@ -4830,20 +5165,29 @@ export default function Dashboard() {
                         }
                       }}
                       disabled={chatLoading}
-                      rows={2}
-                      className="flex-1 resize-none bg-gray-800 text-white px-4 py-2 rounded-lg border border-gray-700 disabled:opacity-50 max-h-36 overflow-y-auto"
+                      rows={1}
+                      className="flex-1 resize-none bg-transparent text-gray-200 text-sm placeholder:text-gray-600 outline-none max-h-28 overflow-y-auto py-1"
+                      style={{ minHeight: '24px' }}
+                      onInput={(e) => {
+                        e.target.style.height = 'auto'
+                        e.target.style.height = Math.min(e.target.scrollHeight, 112) + 'px'
+                      }}
                     />
                     <button
                       onClick={sendChatMessage}
                       disabled={chatLoading || !chatInput.trim()}
-                      className="bg-yellow-600 hover:bg-yellow-500 text-black font-semibold py-2 px-6 rounded-lg disabled:opacity-50"
+                      className="p-1.5 text-yellow-500 hover:text-yellow-400 disabled:text-gray-600 transition-colors shrink-0"
+                      title="Envoyer"
                     >
-                      {chatLoading ? 'Envoi...' : 'Envoyer'}
+                      <svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor">
+                        <path d="M3.105 2.29a1 1 0 011.265-.42l13 6.5a1 1 0 010 1.79l-13 6.5A1 1 0 013 15.79V11.5l8-1.5-8-1.5V4.21a1 1 0 01.105-.92z"/>
+                      </svg>
                     </button>
                   </div>
+                  <p className="text-[10px] text-gray-600 text-center mt-2">ShopBrain IA peut faire des erreurs. Vérifiez les informations importantes.</p>
                 </div>
               </div>
-            </div>
+            </>
           )}
         </main>
       </div>
