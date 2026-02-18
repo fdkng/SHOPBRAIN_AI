@@ -124,6 +124,11 @@ export default function Dashboard() {
   const [voiceCallMode, setVoiceCallMode] = useState(false)
   const [voiceCallListening, setVoiceCallListening] = useState(false)
   const [voiceCallTranscript, setVoiceCallTranscript] = useState('')
+  const [voiceCallSpeaking, setVoiceCallSpeaking] = useState(false)
+  const [voiceDictationMode, setVoiceDictationMode] = useState(false)
+  const [voiceDictationTranscript, setVoiceDictationTranscript] = useState('')
+  const voiceWaveIntervalRef = useRef(null)
+  const [voiceWaveBars, setVoiceWaveBars] = useState(Array(40).fill(2))
   const [analyticsRange, setAnalyticsRange] = useState('30d')
   const [analyticsData, setAnalyticsData] = useState(null)
   const [analyticsLoading, setAnalyticsLoading] = useState(false)
@@ -1033,49 +1038,89 @@ export default function Dashboard() {
     setChatAttachments(prev => prev.filter((_, i) => i !== idx))
   }
 
-  const toggleVoiceListening = () => {
-    if (voiceListening) {
-      if (voiceRecognitionRef.current) voiceRecognitionRef.current.stop()
-      setVoiceListening(false)
-      return
-    }
+  // Start waveform animation
+  const startWaveAnimation = () => {
+    if (voiceWaveIntervalRef.current) clearInterval(voiceWaveIntervalRef.current)
+    voiceWaveIntervalRef.current = setInterval(() => {
+      setVoiceWaveBars(prev => prev.map(() => Math.random() * 18 + 2))
+    }, 80)
+  }
+  const stopWaveAnimation = () => {
+    if (voiceWaveIntervalRef.current) { clearInterval(voiceWaveIntervalRef.current); voiceWaveIntervalRef.current = null }
+    setVoiceWaveBars(Array(40).fill(2))
+  }
+
+  // ── Dictation mode (waveform in input bar) ──
+  const startDictation = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SpeechRecognition) {
-      alert('La reconnaissance vocale n\'est pas supportée par votre navigateur.')
-      return
-    }
+    if (!SpeechRecognition) { alert('La reconnaissance vocale n\'est pas supportée par votre navigateur.'); return }
+    setVoiceDictationMode(true)
+    setVoiceDictationTranscript('')
+    startWaveAnimation()
     const recognition = new SpeechRecognition()
     recognition.lang = 'fr-FR'
     recognition.interimResults = true
     recognition.continuous = true
     voiceRecognitionRef.current = recognition
-    let finalTranscript = chatInput
+    let finalTranscript = ''
     recognition.onresult = (event) => {
       let interim = ''
       for (let i = event.resultIndex; i < event.results.length; i++) {
         if (event.results[i].isFinal) {
           finalTranscript += (finalTranscript ? ' ' : '') + event.results[i][0].transcript
-        } else {
-          interim += event.results[i][0].transcript
-        }
+        } else { interim += event.results[i][0].transcript }
       }
-      setChatInput(finalTranscript + (interim ? ' ' + interim : ''))
+      setVoiceDictationTranscript(finalTranscript + (interim ? ' ' + interim : ''))
     }
-    recognition.onerror = () => setVoiceListening(false)
-    recognition.onend = () => setVoiceListening(false)
+    recognition.onerror = () => { stopDictation() }
+    recognition.onend = () => { /* don't auto-close, user decides with ✓ or ✕ */ }
     recognition.start()
     setVoiceListening(true)
   }
 
-  const startVoiceCall = () => {
-    setVoiceCallMode(true)
-    setVoiceCallTranscript('')
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SpeechRecognition) {
-      alert('La reconnaissance vocale n\'est pas supportée par votre navigateur.')
-      setVoiceCallMode(false)
-      return
+  const confirmDictation = () => {
+    if (voiceRecognitionRef.current) try { voiceRecognitionRef.current.stop() } catch {}
+    const text = voiceDictationTranscript.trim()
+    if (text) setChatInput(prev => (prev ? prev + ' ' : '') + text)
+    setVoiceDictationMode(false)
+    setVoiceDictationTranscript('')
+    setVoiceListening(false)
+    stopWaveAnimation()
+  }
+
+  const cancelDictation = () => {
+    if (voiceRecognitionRef.current) try { voiceRecognitionRef.current.stop() } catch {}
+    setVoiceDictationMode(false)
+    setVoiceDictationTranscript('')
+    setVoiceListening(false)
+    stopWaveAnimation()
+  }
+
+  // ── Voice call with TTS response ──
+  const speakText = (text) => {
+    if (!window.speechSynthesis) return
+    window.speechSynthesis.cancel()
+    const utterance = new SpeechSynthesisUtterance(text)
+    utterance.lang = 'fr-FR'
+    utterance.rate = 1.0
+    utterance.pitch = 1.0
+    // Pick a French voice if available
+    const voices = window.speechSynthesis.getVoices()
+    const frVoice = voices.find(v => v.lang.startsWith('fr') && v.name.toLowerCase().includes('female'))
+      || voices.find(v => v.lang.startsWith('fr'))
+    if (frVoice) utterance.voice = frVoice
+    utterance.onstart = () => setVoiceCallSpeaking(true)
+    utterance.onend = () => {
+      setVoiceCallSpeaking(false)
+      // Resume listening after AI finishes speaking
+      if (voiceCallMode) startVoiceCallListening()
     }
+    window.speechSynthesis.speak(utterance)
+  }
+
+  const startVoiceCallListening = () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SpeechRecognition) return
     const recognition = new SpeechRecognition()
     recognition.lang = 'fr-FR'
     recognition.interimResults = true
@@ -1087,40 +1132,68 @@ export default function Dashboard() {
       for (let i = event.resultIndex; i < event.results.length; i++) {
         if (event.results[i].isFinal) {
           finalText += (finalText ? ' ' : '') + event.results[i][0].transcript
-        } else {
-          interim += event.results[i][0].transcript
-        }
+        } else { interim += event.results[i][0].transcript }
       }
       setVoiceCallTranscript(finalText + (interim ? ' ' + interim : ''))
     }
     recognition.onerror = () => setVoiceCallListening(false)
     recognition.onend = () => {
       setVoiceCallListening(false)
-      // Auto-send on end if there's text
       if (finalText.trim()) {
-        sendChatMessage(finalText.trim())
-        setVoiceCallMode(false)
+        setVoiceCallTranscript('')
+        sendVoiceCallMessage(finalText.trim())
       }
     }
     recognition.start()
     setVoiceCallListening(true)
   }
 
+  const sendVoiceCallMessage = async (text) => {
+    try {
+      setChatMessages(prev => [...prev, { role: 'user', text }])
+      const { data: { session } } = await supabase.auth.getSession()
+      const response = await fetch(`${API_URL}/api/ai/chat`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text, context: shopifyUrl ? `Boutique connectée: ${shopifyUrl}` : '' })
+      })
+      const data = await response.json()
+      const reply = data.success ? data.message : 'Désolé, une erreur est survenue.'
+      setChatMessages(prev => [...prev, { role: 'assistant', text: reply }])
+      // Speak the response out loud
+      speakText(reply)
+    } catch {
+      speakText('Désolé, je n\'ai pas pu me connecter.')
+    }
+  }
+
+  const startVoiceCall = () => {
+    setVoiceCallMode(true)
+    setVoiceCallTranscript('')
+    setVoiceCallSpeaking(false)
+    startWaveAnimation()
+    // Greet first
+    const greeting = `${getGreeting()}, ${profile?.first_name || 'là'}. Comment puis-je vous aider ?`
+    speakText(greeting)
+  }
+
   const endVoiceCall = () => {
-    if (voiceRecognitionRef.current) voiceRecognitionRef.current.stop()
+    if (voiceRecognitionRef.current) try { voiceRecognitionRef.current.stop() } catch {}
+    if (window.speechSynthesis) window.speechSynthesis.cancel()
     setVoiceCallMode(false)
     setVoiceCallListening(false)
     setVoiceCallTranscript('')
+    setVoiceCallSpeaking(false)
+    stopWaveAnimation()
   }
 
   const toggleVoiceCallMic = () => {
-    if (!voiceRecognitionRef.current) return
+    if (voiceCallSpeaking) return // don't toggle while AI speaks
     if (voiceCallListening) {
-      voiceRecognitionRef.current.stop()
+      if (voiceRecognitionRef.current) try { voiceRecognitionRef.current.stop() } catch {}
       setVoiceCallListening(false)
     } else {
-      voiceRecognitionRef.current.start()
-      setVoiceCallListening(true)
+      startVoiceCallListening()
     }
   }
 
@@ -5300,86 +5373,122 @@ export default function Dashboard() {
                     </div>
                   )}
 
-                  <div className="flex items-end gap-2 bg-[#1a1d27] border border-gray-700/50 rounded-xl px-3 py-2 focus-within:border-yellow-500/40 transition-colors">
-                    {/* ── Bouton + (Attach menu) ── */}
-                    <div className="relative shrink-0" ref={attachMenuRef}>
-                      <button
-                        onClick={() => setShowAttachMenu(!showAttachMenu)}
-                        className={`p-1.5 rounded-lg transition-colors ${
-                          showAttachMenu ? 'text-yellow-400 bg-gray-700/40' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-700/30'
-                        }`}
-                        title="Ajouter"
-                      >
-                        {showAttachMenu ? (
-                          <svg width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-                        ) : (
-                          <svg width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M8 3V13M3 8H13" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
-                        )}
-                      </button>
+                  {/* Dictation transcript preview */}
+                  {voiceDictationMode && voiceDictationTranscript && (
+                    <p className="text-gray-200 text-base font-medium text-center mb-3 px-2">{voiceDictationTranscript}</p>
+                  )}
 
-                      {showAttachMenu && (
-                        <div className="absolute bottom-full left-0 mb-2 w-60 bg-[#1e2130] border border-gray-700/60 rounded-xl shadow-2xl z-[60] overflow-hidden py-1">
+                  <div className={`flex items-end gap-2 bg-[#1a1d27] border border-gray-700/50 rounded-xl px-3 py-2 transition-colors ${
+                    voiceDictationMode ? 'border-red-500/40' : 'focus-within:border-yellow-500/40'
+                  }`}>
+                    {/* Left buttons: + or Stop */}
+                    <div className="relative shrink-0" ref={attachMenuRef}>
+                      {voiceDictationMode ? (
+                        /* Stop button (red square) */
+                        <button
+                          onClick={cancelDictation}
+                          className="p-1.5 text-red-400 hover:text-red-300 rounded-lg transition-colors"
+                          title="Arrêter la dictée"
+                        >
+                          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><rect x="3" y="3" width="10" height="10" rx="2"/></svg>
+                        </button>
+                      ) : (
+                        /* + button */
+                        <>
                           <button
-                            onClick={() => { fileInputRef.current?.click() }}
-                            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700/40 transition-colors"
+                            onClick={() => setShowAttachMenu(!showAttachMenu)}
+                            className={`p-1.5 rounded-lg transition-colors ${
+                              showAttachMenu ? 'text-yellow-400 bg-gray-700/40' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-700/30'
+                            }`}
+                            title="Ajouter"
                           >
-                            <svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-gray-400"><path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" stroke="currentColor" strokeWidth="1.5"/></svg>
-                            Fichiers
+                            {showAttachMenu ? (
+                              <svg width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                            ) : (
+                              <svg width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M8 3V13M3 8H13" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
+                            )}
                           </button>
-                          <button
-                            onClick={() => { fileInputRef.current?.click() }}
-                            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700/40 transition-colors"
-                          >
-                            <svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-gray-400"><path d="M5 15L10 5L15 15" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><circle cx="10" cy="3" r="1.5" fill="currentColor"/></svg>
-                            Charger depuis l'appareil
-                          </button>
-                          <div className="border-t border-gray-700/40 my-1"></div>
-                          <button
-                            onClick={() => { setChatInput(prev => prev + '@'); setShowAttachMenu(false) }}
-                            className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700/40 transition-colors"
-                          >
-                            <span className="flex items-center gap-3">
-                              <svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-gray-400"><circle cx="10" cy="10" r="4" stroke="currentColor" strokeWidth="1.5"/><path d="M14 10C14 12.2 12.2 14 10 14C7.8 14 6 12.2 6 10C6 7.8 7.8 6 10 6C12.2 6 14 7.8 14 10ZM14 10V11.5C14 12.88 15.12 14 16.5 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-                              Mention
-                            </span>
-                            <span className="text-xs text-gray-600 bg-gray-800 px-1.5 py-0.5 rounded">@</span>
-                          </button>
-                          <button
-                            onClick={() => { setChatInput(prev => prev + '/'); setShowAttachMenu(false) }}
-                            className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700/40 transition-colors"
-                          >
-                            <span className="flex items-center gap-3">
-                              <svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-gray-400"><path d="M13 3L7 17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
-                              Compétences
-                            </span>
-                            <span className="text-xs text-gray-600 bg-gray-800 px-1.5 py-0.5 rounded">/</span>
-                          </button>
-                        </div>
+
+                          {showAttachMenu && (
+                            <div className="absolute bottom-full left-0 mb-2 w-60 bg-[#1e2130] border border-gray-700/60 rounded-xl shadow-2xl z-[60] overflow-hidden py-1">
+                              <button onClick={() => { fileInputRef.current?.click() }} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700/40 transition-colors">
+                                <svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-gray-400"><path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" stroke="currentColor" strokeWidth="1.5"/></svg>
+                                Fichiers
+                              </button>
+                              <button onClick={() => { fileInputRef.current?.click() }} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700/40 transition-colors">
+                                <svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-gray-400"><path d="M5 15L10 5L15 15" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><circle cx="10" cy="3" r="1.5" fill="currentColor"/></svg>
+                                Charger depuis l'appareil
+                              </button>
+                              <div className="border-t border-gray-700/40 my-1"></div>
+                              <button onClick={() => { setChatInput(prev => prev + '@'); setShowAttachMenu(false) }} className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700/40 transition-colors">
+                                <span className="flex items-center gap-3"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-gray-400"><circle cx="10" cy="10" r="4" stroke="currentColor" strokeWidth="1.5"/><path d="M14 10C14 12.2 12.2 14 10 14C7.8 14 6 12.2 6 10C6 7.8 7.8 6 10 6C12.2 6 14 7.8 14 10ZM14 10V11.5C14 12.88 15.12 14 16.5 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>Mention</span>
+                                <span className="text-xs text-gray-600 bg-gray-800 px-1.5 py-0.5 rounded">@</span>
+                              </button>
+                              <button onClick={() => { setChatInput(prev => prev + '/'); setShowAttachMenu(false) }} className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700/40 transition-colors">
+                                <span className="flex items-center gap-3"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-gray-400"><path d="M13 3L7 17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>Compétences</span>
+                                <span className="text-xs text-gray-600 bg-gray-800 px-1.5 py-0.5 rounded">/</span>
+                              </button>
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
 
-                    <textarea
-                      placeholder="Posez n'importe quelle question..."
-                      value={chatInput}
-                      onChange={(e) => setChatInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey && !chatLoading) {
-                          e.preventDefault()
-                          sendChatMessage()
-                        }
-                      }}
-                      disabled={chatLoading}
-                      rows={1}
-                      className="flex-1 resize-none bg-transparent text-gray-200 text-sm placeholder:text-gray-600 outline-none max-h-28 overflow-y-auto py-1"
-                      style={{ minHeight: '24px' }}
-                      onInput={(e) => {
-                        e.target.style.height = 'auto'
-                        e.target.style.height = Math.min(e.target.scrollHeight, 112) + 'px'
-                      }}
-                    />
+                    {/* Waveform OR Textarea */}
+                    {voiceDictationMode ? (
+                      /* Animated waveform bars */
+                      <div className="flex-1 flex items-center justify-center gap-[2px] h-10 px-2">
+                        {voiceWaveBars.map((h, i) => (
+                          <div
+                            key={i}
+                            className="w-[2px] bg-gray-400 rounded-full transition-all duration-75"
+                            style={{ height: `${h}px` }}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <textarea
+                        placeholder="Posez n'importe quelle question..."
+                        value={chatInput}
+                        onChange={(e) => setChatInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey && !chatLoading) {
+                            e.preventDefault()
+                            sendChatMessage()
+                          }
+                        }}
+                        disabled={chatLoading}
+                        rows={1}
+                        className="flex-1 resize-none bg-transparent text-gray-200 text-sm placeholder:text-gray-600 outline-none py-1 overflow-y-auto"
+                        style={{ minHeight: '24px', maxHeight: '168px' }}
+                        onInput={(e) => {
+                          e.target.style.height = 'auto'
+                          e.target.style.height = Math.min(e.target.scrollHeight, 168) + 'px'
+                        }}
+                      />
+                    )}
 
-                    {/* Send or Mic button */}
-                    {chatInput.trim() ? (
+                    {/* Right buttons */}
+                    {voiceDictationMode ? (
+                      /* ✕ Cancel + ✓ Confirm */
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          onClick={cancelDictation}
+                          className="p-1.5 text-gray-500 hover:text-gray-300 transition-colors"
+                          title="Annuler"
+                        >
+                          <svg width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                        </button>
+                        <button
+                          onClick={confirmDictation}
+                          className="p-1.5 text-yellow-500 hover:text-yellow-400 transition-colors"
+                          title="Confirmer"
+                        >
+                          <svg width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M3 8L6.5 11.5L13 4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                        </button>
+                      </div>
+                    ) : chatInput.trim() ? (
+                      /* Send button */
                       <button
                         onClick={sendChatMessage}
                         disabled={chatLoading}
@@ -5391,14 +5500,11 @@ export default function Dashboard() {
                         </svg>
                       </button>
                     ) : (
+                      /* Mic button */
                       <button
-                        onClick={toggleVoiceListening}
-                        className={`p-1.5 transition-colors shrink-0 rounded-lg ${
-                          voiceListening
-                            ? 'text-red-400 bg-red-500/10 animate-pulse'
-                            : 'text-gray-500 hover:text-gray-300'
-                        }`}
-                        title={voiceListening ? 'Arrêter l\'écoute' : 'Dictée vocale'}
+                        onClick={startDictation}
+                        className="p-1.5 text-gray-500 hover:text-gray-300 transition-colors shrink-0 rounded-lg"
+                        title="Dictée vocale"
                       >
                         <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
                           <rect x="7" y="2" width="6" height="10" rx="3" stroke="currentColor" strokeWidth="1.5"/>
@@ -5408,15 +5514,6 @@ export default function Dashboard() {
                       </button>
                     )}
                   </div>
-
-                  {/* Voice listening indicator */}
-                  {voiceListening && (
-                    <div className="flex items-center gap-2 mt-2 px-2">
-                      <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
-                      <span className="text-xs text-red-400">Écoute en cours... parlez maintenant</span>
-                      <button onClick={toggleVoiceListening} className="text-xs text-gray-500 hover:text-gray-300 ml-auto">Arrêter</button>
-                    </div>
-                  )}
 
                   <div className="flex items-center justify-between mt-2 px-1">
                     <p className="text-[10px] text-gray-600">ShopBrain IA peut faire des erreurs. Vérifiez les informations importantes.</p>
@@ -5443,14 +5540,11 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* ══════ Voice Call Mode (fullscreen overlay) ══════ */}
+              {/* ══════ Voice Call Mode (fullscreen overlay with TTS) ══════ */}
               {voiceCallMode && (
-                <div className="absolute inset-0 z-[70] bg-gradient-to-b from-gray-100 to-white flex flex-col items-center justify-between py-12">
+                <div className="absolute inset-0 z-[70] bg-gradient-to-b from-gray-100 to-white flex flex-col items-center justify-between py-8">
                   {/* Header icons */}
                   <div className="absolute top-3 right-3 flex items-center gap-1">
-                    <button className="p-2 text-gray-400 hover:text-gray-600 rounded-lg" title="Paramètres">
-                      <svg width="18" height="18" viewBox="0 0 20 20" fill="none"><path d="M10 13a3 3 0 100-6 3 3 0 000 6z" stroke="currentColor" strokeWidth="1.5"/><path d="M19.4 10a1.65 1.65 0 00.33-1.82l-.06-.06a1.65 1.65 0 00-1.82-.33h-.09a1.65 1.65 0 01-1.51-1v-.09a1.65 1.65 0 00-.33-1.82l-.06-.06a1.65 1.65 0 00-1.82-.33h-.09A1.65 1.65 0 0112.07 3v-.09A1.65 1.65 0 0010.25 1h-.09a1.65 1.65 0 00-1.82.33v.06A1.65 1.65 0 017.27 3h-.09A1.65 1.65 0 005.36 2.7l-.06.06A1.65 1.65 0 005 4.58v.09a1.65 1.65 0 01-1 1.51h-.09a1.65 1.65 0 00-1.82.33l-.06.06a1.65 1.65 0 00-.33 1.82v.09A1.65 1.65 0 003 9.93v.09" stroke="currentColor" strokeWidth="1.2"/></svg>
-                    </button>
                     <button
                       onClick={() => setChatExpanded(!chatExpanded)}
                       className="p-2 text-gray-400 hover:text-gray-600 rounded-lg"
@@ -5468,14 +5562,13 @@ export default function Dashboard() {
                   </div>
 
                   {/* Logo with rainbow halo */}
-                  <div className="flex flex-col items-center mt-12">
+                  <div className="flex flex-col items-center mt-16">
                     <div className="relative">
-                      {/* Rainbow halo glow */}
-                      <div className={`absolute inset-0 w-32 h-32 -m-6 rounded-full ${
-                        voiceCallListening ? 'animate-pulse' : ''
+                      <div className={`absolute -inset-8 rounded-full transition-all duration-500 ${
+                        voiceCallSpeaking ? 'scale-110 opacity-80' : voiceCallListening ? 'scale-100 opacity-60 animate-pulse' : 'scale-90 opacity-30'
                       }`} style={{
-                        background: 'conic-gradient(from 0deg, rgba(251,191,36,0.3), rgba(239,68,68,0.2), rgba(168,85,247,0.2), rgba(59,130,246,0.2), rgba(34,197,94,0.2), rgba(251,191,36,0.3))',
-                        filter: 'blur(20px)'
+                        background: 'conic-gradient(from 0deg, rgba(251,191,36,0.35), rgba(251,146,60,0.25), rgba(239,68,68,0.2), rgba(168,85,247,0.2), rgba(59,130,246,0.2), rgba(34,197,94,0.2), rgba(251,191,36,0.35))',
+                        filter: 'blur(24px)'
                       }}></div>
                       <div className="relative w-20 h-20 rounded-full bg-gradient-to-br from-yellow-500 to-yellow-700 flex items-center justify-center shadow-xl">
                         <svg width="44" height="44" viewBox="0 0 32 32" fill="none">
@@ -5488,24 +5581,34 @@ export default function Dashboard() {
                         </svg>
                       </div>
                     </div>
-                    {/* Transcript */}
-                    {voiceCallTranscript && (
-                      <p className="mt-8 text-gray-600 text-center text-sm max-w-[260px] leading-relaxed">{voiceCallTranscript}</p>
-                    )}
-                    {!voiceCallTranscript && voiceCallListening && (
-                      <p className="mt-8 text-gray-400 text-sm animate-pulse">Parlez maintenant...</p>
-                    )}
+
+                    {/* Status text */}
+                    <div className="mt-8 text-center max-w-[280px]">
+                      {voiceCallSpeaking && (
+                        <p className="text-gray-700 text-sm font-medium animate-pulse">ShopBrain parle...</p>
+                      )}
+                      {voiceCallTranscript && (
+                        <p className="text-gray-600 text-sm leading-relaxed mt-2">{voiceCallTranscript}</p>
+                      )}
+                      {!voiceCallTranscript && voiceCallListening && !voiceCallSpeaking && (
+                        <p className="text-gray-400 text-sm animate-pulse">Parlez maintenant...</p>
+                      )}
+                      {!voiceCallListening && !voiceCallSpeaking && !voiceCallTranscript && (
+                        <p className="text-gray-400 text-sm">Appuyez sur le micro pour parler</p>
+                      )}
+                    </div>
                   </div>
 
-                  {/* Bottom controls: Mic + Hang up */}
-                  <div className="flex items-center gap-6 mb-8">
+                  {/* Bottom controls: Mic + Hang up (phone icon) */}
+                  <div className="flex items-center gap-6 mb-6">
                     <button
                       onClick={toggleVoiceCallMic}
+                      disabled={voiceCallSpeaking}
                       className={`w-14 h-14 rounded-full flex items-center justify-center transition-all shadow-lg ${
                         voiceCallListening
                           ? 'bg-gray-200 text-gray-700'
                           : 'bg-gray-100 text-gray-400 border border-gray-200'
-                      }`}
+                      } ${voiceCallSpeaking ? 'opacity-50 cursor-not-allowed' : ''}`}
                       title={voiceCallListening ? 'Couper le micro' : 'Activer le micro'}
                     >
                       {voiceCallListening ? (
@@ -5523,15 +5626,14 @@ export default function Dashboard() {
                         </svg>
                       )}
                     </button>
+                    {/* Hang up button with phone icon */}
                     <button
                       onClick={endVoiceCall}
                       className="w-14 h-14 rounded-full bg-red-600 hover:bg-red-700 text-white flex items-center justify-center shadow-lg transition-colors"
                       title="Raccrocher"
                     >
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                        <path d="M3.51 16.12C2.14 14.57 2 12.5 2 12C2 6.48 6.48 2 12 2C17.52 2 22 6.48 22 12C22 12.5 21.86 14.57 20.49 16.12" stroke="white" strokeWidth="2" strokeLinecap="round"/>
-                        <path d="M8.59 16.59L6.76 14.76C6.28 14.28 6.11 13.54 6.36 12.9L7 11.5C7.2 10.97 7.69 10.62 8.25 10.55L10 10.33C10.41 10.28 10.77 10.53 10.87 10.93L11.25 12.5" stroke="white" strokeWidth="1.5" strokeLinecap="round"/>
-                        <path d="M15.41 16.59L17.24 14.76C17.72 14.28 17.89 13.54 17.64 12.9L17 11.5C16.8 10.97 16.31 10.62 15.75 10.55L14 10.33C13.59 10.28 13.23 10.53 13.13 10.93L12.75 12.5" stroke="white" strokeWidth="1.5" strokeLinecap="round"/>
+                      <svg width="26" height="26" viewBox="0 0 24 24" fill="white">
+                        <path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.956.956 0 010-1.36C3.49 8.83 7.54 7 12 7s8.51 1.83 11.71 4.72c.18.18.29.44.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28a11.27 11.27 0 00-2.67-1.85.996.996 0 01-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/>
                       </svg>
                     </button>
                   </div>
