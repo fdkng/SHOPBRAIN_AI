@@ -115,6 +115,15 @@ export default function Dashboard() {
   const [renamingConversationId, setRenamingConversationId] = useState(null)
   const [renamingValue, setRenamingValue] = useState('')
   const conversationMenuRef = useRef(null)
+  const [showAttachMenu, setShowAttachMenu] = useState(false)
+  const attachMenuRef = useRef(null)
+  const fileInputRef = useRef(null)
+  const [chatAttachments, setChatAttachments] = useState([])
+  const [voiceListening, setVoiceListening] = useState(false)
+  const voiceRecognitionRef = useRef(null)
+  const [voiceCallMode, setVoiceCallMode] = useState(false)
+  const [voiceCallListening, setVoiceCallListening] = useState(false)
+  const [voiceCallTranscript, setVoiceCallTranscript] = useState('')
   const [analyticsRange, setAnalyticsRange] = useState('30d')
   const [analyticsData, setAnalyticsData] = useState(null)
   const [analyticsLoading, setAnalyticsLoading] = useState(false)
@@ -995,6 +1004,125 @@ export default function Dashboard() {
   const activeConversationTitle = activeConversationId
     ? (chatConversations.find(c => c.id === activeConversationId)?.title || 'Conversation')
     : 'Nouvelle conversation'
+
+  // ============ ATTACHMENTS & VOICE ============
+  useEffect(() => {
+    if (!showAttachMenu) return
+    const handleClick = (e) => {
+      if (attachMenuRef.current && !attachMenuRef.current.contains(e.target)) setShowAttachMenu(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [showAttachMenu])
+
+  const handleFileAttach = (e) => {
+    const files = Array.from(e.target.files || [])
+    if (!files.length) return
+    files.forEach(file => {
+      const reader = new FileReader()
+      reader.onload = () => {
+        setChatAttachments(prev => [...prev, { name: file.name, type: file.type, size: file.size, preview: file.type.startsWith('image/') ? reader.result : null }])
+      }
+      reader.readAsDataURL(file)
+    })
+    setShowAttachMenu(false)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  const removeAttachment = (idx) => {
+    setChatAttachments(prev => prev.filter((_, i) => i !== idx))
+  }
+
+  const toggleVoiceListening = () => {
+    if (voiceListening) {
+      if (voiceRecognitionRef.current) voiceRecognitionRef.current.stop()
+      setVoiceListening(false)
+      return
+    }
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SpeechRecognition) {
+      alert('La reconnaissance vocale n\'est pas supportée par votre navigateur.')
+      return
+    }
+    const recognition = new SpeechRecognition()
+    recognition.lang = 'fr-FR'
+    recognition.interimResults = true
+    recognition.continuous = true
+    voiceRecognitionRef.current = recognition
+    let finalTranscript = chatInput
+    recognition.onresult = (event) => {
+      let interim = ''
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          finalTranscript += (finalTranscript ? ' ' : '') + event.results[i][0].transcript
+        } else {
+          interim += event.results[i][0].transcript
+        }
+      }
+      setChatInput(finalTranscript + (interim ? ' ' + interim : ''))
+    }
+    recognition.onerror = () => setVoiceListening(false)
+    recognition.onend = () => setVoiceListening(false)
+    recognition.start()
+    setVoiceListening(true)
+  }
+
+  const startVoiceCall = () => {
+    setVoiceCallMode(true)
+    setVoiceCallTranscript('')
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SpeechRecognition) {
+      alert('La reconnaissance vocale n\'est pas supportée par votre navigateur.')
+      setVoiceCallMode(false)
+      return
+    }
+    const recognition = new SpeechRecognition()
+    recognition.lang = 'fr-FR'
+    recognition.interimResults = true
+    recognition.continuous = true
+    voiceRecognitionRef.current = recognition
+    let finalText = ''
+    recognition.onresult = (event) => {
+      let interim = ''
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          finalText += (finalText ? ' ' : '') + event.results[i][0].transcript
+        } else {
+          interim += event.results[i][0].transcript
+        }
+      }
+      setVoiceCallTranscript(finalText + (interim ? ' ' + interim : ''))
+    }
+    recognition.onerror = () => setVoiceCallListening(false)
+    recognition.onend = () => {
+      setVoiceCallListening(false)
+      // Auto-send on end if there's text
+      if (finalText.trim()) {
+        sendChatMessage(finalText.trim())
+        setVoiceCallMode(false)
+      }
+    }
+    recognition.start()
+    setVoiceCallListening(true)
+  }
+
+  const endVoiceCall = () => {
+    if (voiceRecognitionRef.current) voiceRecognitionRef.current.stop()
+    setVoiceCallMode(false)
+    setVoiceCallListening(false)
+    setVoiceCallTranscript('')
+  }
+
+  const toggleVoiceCallMic = () => {
+    if (!voiceRecognitionRef.current) return
+    if (voiceCallListening) {
+      voiceRecognitionRef.current.stop()
+      setVoiceCallListening(false)
+    } else {
+      voiceRecognitionRef.current.start()
+      setVoiceCallListening(true)
+    }
+  }
 
   // ============ CHAT SEND ============
   const sendChatMessage = async (directMessage) => {
@@ -5153,7 +5281,83 @@ export default function Dashboard() {
 
                 {/* ── Input area ── */}
                 <div className="border-t border-gray-700/50 px-4 py-3">
+                  {/* Attachment previews */}
+                  {chatAttachments.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mb-2">
+                      {chatAttachments.map((att, i) => (
+                        <div key={i} className="relative group bg-[#1a1d27] border border-gray-700/50 rounded-lg p-1.5 flex items-center gap-2 text-xs text-gray-400 max-w-[180px]">
+                          {att.preview ? (
+                            <img src={att.preview} alt="" className="w-8 h-8 rounded object-cover" />
+                          ) : (
+                            <svg className="w-5 h-5 text-gray-500 shrink-0" viewBox="0 0 20 20" fill="currentColor"><path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"/></svg>
+                          )}
+                          <span className="truncate">{att.name}</span>
+                          <button onClick={() => removeAttachment(i)} className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-600 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                            <svg width="8" height="8" viewBox="0 0 12 12" fill="white"><path d="M3 3L9 9M9 3L3 9" stroke="white" strokeWidth="2" strokeLinecap="round"/></svg>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   <div className="flex items-end gap-2 bg-[#1a1d27] border border-gray-700/50 rounded-xl px-3 py-2 focus-within:border-yellow-500/40 transition-colors">
+                    {/* ── Bouton + (Attach menu) ── */}
+                    <div className="relative shrink-0" ref={attachMenuRef}>
+                      <button
+                        onClick={() => setShowAttachMenu(!showAttachMenu)}
+                        className={`p-1.5 rounded-lg transition-colors ${
+                          showAttachMenu ? 'text-yellow-400 bg-gray-700/40' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-700/30'
+                        }`}
+                        title="Ajouter"
+                      >
+                        {showAttachMenu ? (
+                          <svg width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                        ) : (
+                          <svg width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M8 3V13M3 8H13" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
+                        )}
+                      </button>
+
+                      {showAttachMenu && (
+                        <div className="absolute bottom-full left-0 mb-2 w-60 bg-[#1e2130] border border-gray-700/60 rounded-xl shadow-2xl z-[60] overflow-hidden py-1">
+                          <button
+                            onClick={() => { fileInputRef.current?.click() }}
+                            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700/40 transition-colors"
+                          >
+                            <svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-gray-400"><path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" stroke="currentColor" strokeWidth="1.5"/></svg>
+                            Fichiers
+                          </button>
+                          <button
+                            onClick={() => { fileInputRef.current?.click() }}
+                            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700/40 transition-colors"
+                          >
+                            <svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-gray-400"><path d="M5 15L10 5L15 15" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><circle cx="10" cy="3" r="1.5" fill="currentColor"/></svg>
+                            Charger depuis l'appareil
+                          </button>
+                          <div className="border-t border-gray-700/40 my-1"></div>
+                          <button
+                            onClick={() => { setChatInput(prev => prev + '@'); setShowAttachMenu(false) }}
+                            className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700/40 transition-colors"
+                          >
+                            <span className="flex items-center gap-3">
+                              <svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-gray-400"><circle cx="10" cy="10" r="4" stroke="currentColor" strokeWidth="1.5"/><path d="M14 10C14 12.2 12.2 14 10 14C7.8 14 6 12.2 6 10C6 7.8 7.8 6 10 6C12.2 6 14 7.8 14 10ZM14 10V11.5C14 12.88 15.12 14 16.5 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                              Mention
+                            </span>
+                            <span className="text-xs text-gray-600 bg-gray-800 px-1.5 py-0.5 rounded">@</span>
+                          </button>
+                          <button
+                            onClick={() => { setChatInput(prev => prev + '/'); setShowAttachMenu(false) }}
+                            className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700/40 transition-colors"
+                          >
+                            <span className="flex items-center gap-3">
+                              <svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-gray-400"><path d="M13 3L7 17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
+                              Compétences
+                            </span>
+                            <span className="text-xs text-gray-600 bg-gray-800 px-1.5 py-0.5 rounded">/</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
                     <textarea
                       placeholder="Posez n'importe quelle question..."
                       value={chatInput}
@@ -5173,20 +5377,166 @@ export default function Dashboard() {
                         e.target.style.height = Math.min(e.target.scrollHeight, 112) + 'px'
                       }}
                     />
+
+                    {/* Send or Mic button */}
+                    {chatInput.trim() ? (
+                      <button
+                        onClick={sendChatMessage}
+                        disabled={chatLoading}
+                        className="p-1.5 text-yellow-500 hover:text-yellow-400 disabled:text-gray-600 transition-colors shrink-0"
+                        title="Envoyer"
+                      >
+                        <svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor">
+                          <path d="M3.105 2.29a1 1 0 011.265-.42l13 6.5a1 1 0 010 1.79l-13 6.5A1 1 0 013 15.79V11.5l8-1.5-8-1.5V4.21a1 1 0 01.105-.92z"/>
+                        </svg>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={toggleVoiceListening}
+                        className={`p-1.5 transition-colors shrink-0 rounded-lg ${
+                          voiceListening
+                            ? 'text-red-400 bg-red-500/10 animate-pulse'
+                            : 'text-gray-500 hover:text-gray-300'
+                        }`}
+                        title={voiceListening ? 'Arrêter l\'écoute' : 'Dictée vocale'}
+                      >
+                        <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+                          <rect x="7" y="2" width="6" height="10" rx="3" stroke="currentColor" strokeWidth="1.5"/>
+                          <path d="M5 10C5 12.76 7.24 15 10 15C12.76 15 15 12.76 15 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                          <path d="M10 15V18M7 18H13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Voice listening indicator */}
+                  {voiceListening && (
+                    <div className="flex items-center gap-2 mt-2 px-2">
+                      <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
+                      <span className="text-xs text-red-400">Écoute en cours... parlez maintenant</span>
+                      <button onClick={toggleVoiceListening} className="text-xs text-gray-500 hover:text-gray-300 ml-auto">Arrêter</button>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between mt-2 px-1">
+                    <p className="text-[10px] text-gray-600">ShopBrain IA peut faire des erreurs. Vérifiez les informations importantes.</p>
+                    {/* Voice call button */}
                     <button
-                      onClick={sendChatMessage}
-                      disabled={chatLoading || !chatInput.trim()}
-                      className="p-1.5 text-yellow-500 hover:text-yellow-400 disabled:text-gray-600 transition-colors shrink-0"
-                      title="Envoyer"
+                      onClick={startVoiceCall}
+                      className="p-1 text-gray-600 hover:text-yellow-500 transition-colors"
+                      title="Appel vocal"
                     >
-                      <svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor">
-                        <path d="M3.105 2.29a1 1 0 011.265-.42l13 6.5a1 1 0 010 1.79l-13 6.5A1 1 0 013 15.79V11.5l8-1.5-8-1.5V4.21a1 1 0 01.105-.92z"/>
+                      <svg width="14" height="14" viewBox="0 0 20 20" fill="none">
+                        <path d="M3 5C3 3.9 3.9 3 5 3H7.5L9.5 7L7.5 8.5C8.57 10.67 10.33 12.43 12.5 13.5L14 11.5L18 13.5V16C18 17.1 17.1 18 16 18C8.82 18 3 12.18 3 5Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
                       </svg>
                     </button>
                   </div>
-                  <p className="text-[10px] text-gray-600 text-center mt-2">ShopBrain IA peut faire des erreurs. Vérifiez les informations importantes.</p>
+
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileAttach}
+                    multiple
+                    accept="image/*,.pdf,.doc,.docx,.txt,.csv,.xlsx"
+                    className="hidden"
+                  />
                 </div>
               </div>
+
+              {/* ══════ Voice Call Mode (fullscreen overlay) ══════ */}
+              {voiceCallMode && (
+                <div className="absolute inset-0 z-[70] bg-gradient-to-b from-gray-100 to-white flex flex-col items-center justify-between py-12">
+                  {/* Header icons */}
+                  <div className="absolute top-3 right-3 flex items-center gap-1">
+                    <button className="p-2 text-gray-400 hover:text-gray-600 rounded-lg" title="Paramètres">
+                      <svg width="18" height="18" viewBox="0 0 20 20" fill="none"><path d="M10 13a3 3 0 100-6 3 3 0 000 6z" stroke="currentColor" strokeWidth="1.5"/><path d="M19.4 10a1.65 1.65 0 00.33-1.82l-.06-.06a1.65 1.65 0 00-1.82-.33h-.09a1.65 1.65 0 01-1.51-1v-.09a1.65 1.65 0 00-.33-1.82l-.06-.06a1.65 1.65 0 00-1.82-.33h-.09A1.65 1.65 0 0112.07 3v-.09A1.65 1.65 0 0010.25 1h-.09a1.65 1.65 0 00-1.82.33v.06A1.65 1.65 0 017.27 3h-.09A1.65 1.65 0 005.36 2.7l-.06.06A1.65 1.65 0 005 4.58v.09a1.65 1.65 0 01-1 1.51h-.09a1.65 1.65 0 00-1.82.33l-.06.06a1.65 1.65 0 00-.33 1.82v.09A1.65 1.65 0 003 9.93v.09" stroke="currentColor" strokeWidth="1.2"/></svg>
+                    </button>
+                    <button
+                      onClick={() => setChatExpanded(!chatExpanded)}
+                      className="p-2 text-gray-400 hover:text-gray-600 rounded-lg"
+                      title={chatExpanded ? 'Réduire' : 'Agrandir'}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 2L6 2V6M14 2L10 2V6M14 14L10 14V10M2 14L6 14V10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                    </button>
+                    <button
+                      onClick={endVoiceCall}
+                      className="p-2 text-gray-400 hover:text-gray-600 rounded-lg"
+                      title="Fermer"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                    </button>
+                  </div>
+
+                  {/* Logo with rainbow halo */}
+                  <div className="flex flex-col items-center mt-12">
+                    <div className="relative">
+                      {/* Rainbow halo glow */}
+                      <div className={`absolute inset-0 w-32 h-32 -m-6 rounded-full ${
+                        voiceCallListening ? 'animate-pulse' : ''
+                      }`} style={{
+                        background: 'conic-gradient(from 0deg, rgba(251,191,36,0.3), rgba(239,68,68,0.2), rgba(168,85,247,0.2), rgba(59,130,246,0.2), rgba(34,197,94,0.2), rgba(251,191,36,0.3))',
+                        filter: 'blur(20px)'
+                      }}></div>
+                      <div className="relative w-20 h-20 rounded-full bg-gradient-to-br from-yellow-500 to-yellow-700 flex items-center justify-center shadow-xl">
+                        <svg width="44" height="44" viewBox="0 0 32 32" fill="none">
+                          <circle cx="16" cy="13" r="8" fill="#0b0d12" opacity="0.85"/>
+                          <circle cx="12" cy="12" r="2.2" fill="#facc15"/>
+                          <circle cx="20" cy="12" r="2.2" fill="#facc15"/>
+                          <path d="M11 17 Q16 21 21 17" stroke="#facc15" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+                          <circle cx="8" cy="8" r="1.5" fill="#facc15" opacity="0.7"/>
+                          <circle cx="24" cy="8" r="1.5" fill="#facc15" opacity="0.7"/>
+                        </svg>
+                      </div>
+                    </div>
+                    {/* Transcript */}
+                    {voiceCallTranscript && (
+                      <p className="mt-8 text-gray-600 text-center text-sm max-w-[260px] leading-relaxed">{voiceCallTranscript}</p>
+                    )}
+                    {!voiceCallTranscript && voiceCallListening && (
+                      <p className="mt-8 text-gray-400 text-sm animate-pulse">Parlez maintenant...</p>
+                    )}
+                  </div>
+
+                  {/* Bottom controls: Mic + Hang up */}
+                  <div className="flex items-center gap-6 mb-8">
+                    <button
+                      onClick={toggleVoiceCallMic}
+                      className={`w-14 h-14 rounded-full flex items-center justify-center transition-all shadow-lg ${
+                        voiceCallListening
+                          ? 'bg-gray-200 text-gray-700'
+                          : 'bg-gray-100 text-gray-400 border border-gray-200'
+                      }`}
+                      title={voiceCallListening ? 'Couper le micro' : 'Activer le micro'}
+                    >
+                      {voiceCallListening ? (
+                        <svg width="24" height="24" viewBox="0 0 20 20" fill="none">
+                          <rect x="7" y="2" width="6" height="10" rx="3" stroke="currentColor" strokeWidth="1.5"/>
+                          <path d="M5 10C5 12.76 7.24 15 10 15C12.76 15 15 12.76 15 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                          <path d="M10 15V18M7 18H13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                        </svg>
+                      ) : (
+                        <svg width="24" height="24" viewBox="0 0 20 20" fill="none">
+                          <rect x="7" y="2" width="6" height="10" rx="3" stroke="currentColor" strokeWidth="1.5"/>
+                          <path d="M5 10C5 12.76 7.24 15 10 15C12.76 15 15 12.76 15 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                          <path d="M10 15V18M7 18H13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                          <path d="M3 3L17 17" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                        </svg>
+                      )}
+                    </button>
+                    <button
+                      onClick={endVoiceCall}
+                      className="w-14 h-14 rounded-full bg-red-600 hover:bg-red-700 text-white flex items-center justify-center shadow-lg transition-colors"
+                      title="Raccrocher"
+                    >
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                        <path d="M3.51 16.12C2.14 14.57 2 12.5 2 12C2 6.48 6.48 2 12 2C17.52 2 22 6.48 22 12C22 12.5 21.86 14.57 20.49 16.12" stroke="white" strokeWidth="2" strokeLinecap="round"/>
+                        <path d="M8.59 16.59L6.76 14.76C6.28 14.28 6.11 13.54 6.36 12.9L7 11.5C7.2 10.97 7.69 10.62 8.25 10.55L10 10.33C10.41 10.28 10.77 10.53 10.87 10.93L11.25 12.5" stroke="white" strokeWidth="1.5" strokeLinecap="round"/>
+                        <path d="M15.41 16.59L17.24 14.76C17.72 14.28 17.89 13.54 17.64 12.9L17 11.5C16.8 10.97 16.31 10.62 15.75 10.55L14 10.33C13.59 10.28 13.23 10.53 13.13 10.93L12.75 12.5" stroke="white" strokeWidth="1.5" strokeLinecap="round"/>
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </main>
