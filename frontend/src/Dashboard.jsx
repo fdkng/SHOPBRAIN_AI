@@ -129,6 +129,12 @@ export default function Dashboard() {
   const [voiceDictationTranscript, setVoiceDictationTranscript] = useState('')
   const voiceWaveIntervalRef = useRef(null)
   const [voiceWaveBars, setVoiceWaveBars] = useState(Array(40).fill(2))
+  const audioContextRef = useRef(null)
+  const analyserRef = useRef(null)
+  const mediaStreamRef = useRef(null)
+  const waveAnimFrameRef = useRef(null)
+  const chatTextareaRef = useRef(null)
+  const [chatTextareaFocused, setChatTextareaFocused] = useState(false)
   const [analyticsRange, setAnalyticsRange] = useState('30d')
   const [analyticsData, setAnalyticsData] = useState(null)
   const [analyticsLoading, setAnalyticsLoading] = useState(false)
@@ -1038,15 +1044,50 @@ export default function Dashboard() {
     setChatAttachments(prev => prev.filter((_, i) => i !== idx))
   }
 
-  // Start waveform animation
-  const startWaveAnimation = () => {
-    if (voiceWaveIntervalRef.current) clearInterval(voiceWaveIntervalRef.current)
-    voiceWaveIntervalRef.current = setInterval(() => {
-      setVoiceWaveBars(prev => prev.map(() => Math.random() * 18 + 2))
-    }, 80)
+  // Start waveform animation (volume-reactive via AudioContext)
+  const startWaveAnimation = async () => {
+    stopWaveAnimation()
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      mediaStreamRef.current = stream
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+      audioContextRef.current = audioCtx
+      const source = audioCtx.createMediaStreamSource(stream)
+      const analyser = audioCtx.createAnalyser()
+      analyser.fftSize = 128
+      analyser.smoothingTimeConstant = 0.6
+      source.connect(analyser)
+      analyserRef.current = analyser
+      const dataArray = new Uint8Array(analyser.frequencyBinCount)
+      const updateBars = () => {
+        analyser.getByteFrequencyData(dataArray)
+        // Map 64 frequency bins → 40 bars
+        const bars = []
+        const binStep = dataArray.length / 40
+        for (let i = 0; i < 40; i++) {
+          const idx = Math.floor(i * binStep)
+          const val = dataArray[idx] || 0
+          // Scale 0-255 → 2-20px height
+          bars.push(Math.max(2, (val / 255) * 20))
+        }
+        setVoiceWaveBars(bars)
+        waveAnimFrameRef.current = requestAnimationFrame(updateBars)
+      }
+      updateBars()
+    } catch (err) {
+      console.warn('AudioContext waveform not available, falling back to random:', err)
+      // Fallback: random bars if microphone access fails
+      voiceWaveIntervalRef.current = setInterval(() => {
+        setVoiceWaveBars(prev => prev.map(() => Math.random() * 18 + 2))
+      }, 80)
+    }
   }
   const stopWaveAnimation = () => {
+    if (waveAnimFrameRef.current) { cancelAnimationFrame(waveAnimFrameRef.current); waveAnimFrameRef.current = null }
     if (voiceWaveIntervalRef.current) { clearInterval(voiceWaveIntervalRef.current); voiceWaveIntervalRef.current = null }
+    if (analyserRef.current) { analyserRef.current = null }
+    if (audioContextRef.current) { try { audioContextRef.current.close() } catch {}; audioContextRef.current = null }
+    if (mediaStreamRef.current) { mediaStreamRef.current.getTracks().forEach(t => t.stop()); mediaStreamRef.current = null }
     setVoiceWaveBars(Array(40).fill(2))
   }
 
@@ -1096,26 +1137,58 @@ export default function Dashboard() {
     stopWaveAnimation()
   }
 
-  // ── Voice call with TTS response ──
-  const speakText = (text) => {
-    if (!window.speechSynthesis) return
-    window.speechSynthesis.cancel()
-    const utterance = new SpeechSynthesisUtterance(text)
-    utterance.lang = 'fr-FR'
-    utterance.rate = 1.0
-    utterance.pitch = 1.0
-    // Pick a French voice if available
-    const voices = window.speechSynthesis.getVoices()
-    const frVoice = voices.find(v => v.lang.startsWith('fr') && v.name.toLowerCase().includes('female'))
-      || voices.find(v => v.lang.startsWith('fr'))
-    if (frVoice) utterance.voice = frVoice
-    utterance.onstart = () => setVoiceCallSpeaking(true)
-    utterance.onend = () => {
-      setVoiceCallSpeaking(false)
-      // Resume listening after AI finishes speaking
-      if (voiceCallMode) startVoiceCallListening()
+  // ── Voice call with TTS response (OpenAI TTS API) ──
+  const speakText = async (text) => {
+    setVoiceCallSpeaking(true)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const response = await fetch(`${API_URL}/api/ai/tts`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session?.access_token || ''}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ text, voice: 'nova' })
+      })
+      if (!response.ok) throw new Error('TTS API error')
+      const audioBlob = await response.blob()
+      const audioUrl = URL.createObjectURL(audioBlob)
+      const audio = new Audio(audioUrl)
+      audio.onended = () => {
+        setVoiceCallSpeaking(false)
+        URL.revokeObjectURL(audioUrl)
+        // Resume listening after AI finishes speaking
+        if (voiceCallMode) startVoiceCallListening()
+      }
+      audio.onerror = () => {
+        setVoiceCallSpeaking(false)
+        URL.revokeObjectURL(audioUrl)
+        if (voiceCallMode) startVoiceCallListening()
+      }
+      await audio.play()
+    } catch (err) {
+      console.warn('OpenAI TTS failed, falling back to browser speechSynthesis:', err)
+      // Fallback to browser speechSynthesis
+      if (window.speechSynthesis) {
+        window.speechSynthesis.cancel()
+        const utterance = new SpeechSynthesisUtterance(text)
+        utterance.lang = 'fr-FR'
+        utterance.rate = 1.0
+        utterance.pitch = 1.0
+        const voices = window.speechSynthesis.getVoices()
+        const frVoice = voices.find(v => v.lang.startsWith('fr') && v.name.toLowerCase().includes('female'))
+          || voices.find(v => v.lang.startsWith('fr'))
+        if (frVoice) utterance.voice = frVoice
+        utterance.onend = () => {
+          setVoiceCallSpeaking(false)
+          if (voiceCallMode) startVoiceCallListening()
+        }
+        window.speechSynthesis.speak(utterance)
+      } else {
+        setVoiceCallSpeaking(false)
+        if (voiceCallMode) startVoiceCallListening()
+      }
     }
-    window.speechSynthesis.speak(utterance)
   }
 
   const startVoiceCallListening = () => {
@@ -1180,6 +1253,8 @@ export default function Dashboard() {
   const endVoiceCall = () => {
     if (voiceRecognitionRef.current) try { voiceRecognitionRef.current.stop() } catch {}
     if (window.speechSynthesis) window.speechSynthesis.cancel()
+    // Stop any playing audio elements
+    document.querySelectorAll('audio').forEach(a => { try { a.pause(); a.currentTime = 0 } catch {} })
     setVoiceCallMode(false)
     setVoiceCallListening(false)
     setVoiceCallTranscript('')
@@ -1208,6 +1283,9 @@ export default function Dashboard() {
       const userMessage = messageToSend
       setChatMessages(prev => [...prev, { role: 'user', text: userMessage }])
       setChatInput('')
+      // Shrink textarea back to default
+      setChatTextareaFocused(false)
+      if (chatTextareaRef.current) chatTextareaRef.current.style.height = '44px'
       
       // Auto-create conversation on first message
       if (!activeConversationId) {
@@ -5448,9 +5526,23 @@ export default function Dashboard() {
                       </div>
                     ) : (
                       <textarea
+                        ref={chatTextareaRef}
                         placeholder="Posez n'importe quelle question..."
                         value={chatInput}
                         onChange={(e) => setChatInput(e.target.value)}
+                        onFocus={() => {
+                          setChatTextareaFocused(true)
+                          if (chatTextareaRef.current) {
+                            chatTextareaRef.current.style.height = 'auto'
+                            chatTextareaRef.current.style.height = Math.max(80, Math.min(chatTextareaRef.current.scrollHeight, 168)) + 'px'
+                          }
+                        }}
+                        onBlur={() => {
+                          if (!chatInput.trim()) {
+                            setChatTextareaFocused(false)
+                            if (chatTextareaRef.current) chatTextareaRef.current.style.height = '44px'
+                          }
+                        }}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter' && !e.shiftKey && !chatLoading) {
                             e.preventDefault()
@@ -5459,8 +5551,8 @@ export default function Dashboard() {
                         }}
                         disabled={chatLoading}
                         rows={1}
-                        className="flex-1 resize-none bg-transparent text-gray-200 text-sm placeholder:text-gray-600 outline-none py-1 overflow-y-auto"
-                        style={{ minHeight: '24px', maxHeight: '168px' }}
+                        className="flex-1 resize-none bg-transparent text-gray-200 text-sm placeholder:text-gray-600 outline-none py-2 overflow-y-auto"
+                        style={{ minHeight: '44px', maxHeight: '168px', height: chatTextareaFocused ? undefined : '44px' }}
                         onInput={(e) => {
                           e.target.style.height = 'auto'
                           e.target.style.height = Math.min(e.target.scrollHeight, 168) + 'px'

@@ -21,7 +21,7 @@ import threading
 from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException, Request, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 from io import BytesIO
 from email.message import EmailMessage
@@ -5618,6 +5618,53 @@ async def chat_with_ai(req: ChatRequest, request: Request):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Erreur IA: {str(e)}")
+
+
+# ============================================================================
+class TTSRequest(BaseModel):
+    text: str
+    voice: str = "nova"  # nova, alloy, echo, fable, onyx, shimmer
+
+
+@app.post("/api/ai/tts")
+async def text_to_speech(req: TTSRequest, request: Request):
+    """🔊 Text-to-Speech via OpenAI TTS API - Returns audio/mpeg stream"""
+    user_id = get_user_id(request)
+    print(f"🔔 /api/ai/tts called. user_id={user_id}, text_len={len(req.text)}")
+
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OpenAI not configured")
+
+    text = req.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Texte vide")
+
+    # Limit text length for TTS (max ~4096 chars)
+    if len(text) > 4096:
+        text = text[:4096]
+
+    try:
+        client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
+        response = client.audio.speech.create(
+            model="tts-1",
+            voice=req.voice,
+            input=text,
+            response_format="mp3"
+        )
+        print(f"✅ TTS response received")
+
+        audio_bytes = BytesIO(response.content)
+        return StreamingResponse(
+            audio_bytes,
+            media_type="audio/mpeg",
+            headers={"Content-Disposition": "inline; filename=speech.mp3"}
+        )
+
+    except Exception as e:
+        print(f"❌ Error in TTS: {type(e).__name__}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Erreur TTS: {str(e)}")
 
 
 # ============================================================================
