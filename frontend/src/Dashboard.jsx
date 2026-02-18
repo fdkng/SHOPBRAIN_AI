@@ -133,6 +133,8 @@ export default function Dashboard() {
   const analyserRef = useRef(null)
   const mediaStreamRef = useRef(null)
   const waveAnimFrameRef = useRef(null)
+  const voiceCallModeRef = useRef(false)
+  const voiceCallAudioRef = useRef(null)
   const chatTextareaRef = useRef(null)
   const [chatTextareaFocused, setChatTextareaFocused] = useState(false)
   const [analyticsRange, setAnalyticsRange] = useState('30d')
@@ -1092,36 +1094,56 @@ export default function Dashboard() {
   }
 
   // ── Dictation mode (waveform in input bar) ──
-  const startDictation = () => {
+  const dictationActiveRef = useRef(false)
+  const dictationTranscriptRef = useRef('')
+
+  const startDictation = async () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SpeechRecognition) { alert('La reconnaissance vocale n\'est pas supportée par votre navigateur.'); return }
+    dictationActiveRef.current = true
+    dictationTranscriptRef.current = ''
     setVoiceDictationMode(true)
     setVoiceDictationTranscript('')
-    startWaveAnimation()
+    // Start waveform first (requests mic permission)
+    await startWaveAnimation()
+    // Then start speech recognition
     const recognition = new SpeechRecognition()
     recognition.lang = 'fr-FR'
     recognition.interimResults = true
     recognition.continuous = true
     voiceRecognitionRef.current = recognition
-    let finalTranscript = ''
     recognition.onresult = (event) => {
+      let final = ''
       let interim = ''
-      for (let i = event.resultIndex; i < event.results.length; i++) {
+      for (let i = 0; i < event.results.length; i++) {
         if (event.results[i].isFinal) {
-          finalTranscript += (finalTranscript ? ' ' : '') + event.results[i][0].transcript
+          final += (final ? ' ' : '') + event.results[i][0].transcript
         } else { interim += event.results[i][0].transcript }
       }
-      setVoiceDictationTranscript(finalTranscript + (interim ? ' ' + interim : ''))
+      dictationTranscriptRef.current = final
+      setVoiceDictationTranscript(final + (interim ? ' ' + interim : ''))
     }
-    recognition.onerror = () => { stopDictation() }
-    recognition.onend = () => { /* don't auto-close, user decides with ✓ or ✕ */ }
+    recognition.onerror = (e) => {
+      console.warn('Dictation recognition error:', e.error)
+      if (e.error !== 'aborted' && dictationActiveRef.current) {
+        // Auto-restart on non-fatal errors
+        try { recognition.start() } catch {}
+      }
+    }
+    recognition.onend = () => {
+      // Auto-restart if user hasn't confirmed/cancelled yet
+      if (dictationActiveRef.current) {
+        try { recognition.start() } catch {}
+      }
+    }
     recognition.start()
     setVoiceListening(true)
   }
 
   const confirmDictation = () => {
+    dictationActiveRef.current = false
     if (voiceRecognitionRef.current) try { voiceRecognitionRef.current.stop() } catch {}
-    const text = voiceDictationTranscript.trim()
+    const text = (dictationTranscriptRef.current || voiceDictationTranscript || '').trim()
     if (text) setChatInput(prev => (prev ? prev + ' ' : '') + text)
     setVoiceDictationMode(false)
     setVoiceDictationTranscript('')
@@ -1130,6 +1152,7 @@ export default function Dashboard() {
   }
 
   const cancelDictation = () => {
+    dictationActiveRef.current = false
     if (voiceRecognitionRef.current) try { voiceRecognitionRef.current.stop() } catch {}
     setVoiceDictationMode(false)
     setVoiceDictationTranscript('')
@@ -1140,6 +1163,10 @@ export default function Dashboard() {
   // ── Voice call with TTS response (OpenAI TTS API) ──
   const speakText = async (text) => {
     setVoiceCallSpeaking(true)
+    const resumeListening = () => {
+      setVoiceCallSpeaking(false)
+      if (voiceCallModeRef.current) startVoiceCallListening()
+    }
     try {
       const { data: { session } } = await supabase.auth.getSession()
       const response = await fetch(`${API_URL}/api/ai/tts`, {
@@ -1150,25 +1177,24 @@ export default function Dashboard() {
         },
         body: JSON.stringify({ text, voice: 'nova' })
       })
-      if (!response.ok) throw new Error('TTS API error')
+      if (!response.ok) throw new Error(`TTS API error: ${response.status}`)
       const audioBlob = await response.blob()
       const audioUrl = URL.createObjectURL(audioBlob)
       const audio = new Audio(audioUrl)
+      voiceCallAudioRef.current = audio
       audio.onended = () => {
-        setVoiceCallSpeaking(false)
         URL.revokeObjectURL(audioUrl)
-        // Resume listening after AI finishes speaking
-        if (voiceCallMode) startVoiceCallListening()
+        voiceCallAudioRef.current = null
+        resumeListening()
       }
       audio.onerror = () => {
-        setVoiceCallSpeaking(false)
         URL.revokeObjectURL(audioUrl)
-        if (voiceCallMode) startVoiceCallListening()
+        voiceCallAudioRef.current = null
+        resumeListening()
       }
       await audio.play()
     } catch (err) {
       console.warn('OpenAI TTS failed, falling back to browser speechSynthesis:', err)
-      // Fallback to browser speechSynthesis
       if (window.speechSynthesis) {
         window.speechSynthesis.cancel()
         const utterance = new SpeechSynthesisUtterance(text)
@@ -1179,42 +1205,66 @@ export default function Dashboard() {
         const frVoice = voices.find(v => v.lang.startsWith('fr') && v.name.toLowerCase().includes('female'))
           || voices.find(v => v.lang.startsWith('fr'))
         if (frVoice) utterance.voice = frVoice
-        utterance.onend = () => {
-          setVoiceCallSpeaking(false)
-          if (voiceCallMode) startVoiceCallListening()
-        }
+        utterance.onend = () => resumeListening()
+        utterance.onerror = () => resumeListening()
         window.speechSynthesis.speak(utterance)
       } else {
-        setVoiceCallSpeaking(false)
-        if (voiceCallMode) startVoiceCallListening()
+        resumeListening()
       }
     }
   }
 
+  const voiceCallSilenceRef = useRef(null)
+
   const startVoiceCallListening = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SpeechRecognition) return
+    if (!SpeechRecognition || !voiceCallModeRef.current) return
+    // Stop any previous recognition
+    if (voiceRecognitionRef.current) try { voiceRecognitionRef.current.stop() } catch {}
     const recognition = new SpeechRecognition()
     recognition.lang = 'fr-FR'
     recognition.interimResults = true
     recognition.continuous = true
     voiceRecognitionRef.current = recognition
     let finalText = ''
+    let hasResults = false
+
+    const resetSilenceTimer = () => {
+      if (voiceCallSilenceRef.current) clearTimeout(voiceCallSilenceRef.current)
+      voiceCallSilenceRef.current = setTimeout(() => {
+        // 2s of silence after speech → send the message
+        if (finalText.trim() && voiceCallModeRef.current) {
+          try { recognition.stop() } catch {}
+          setVoiceCallListening(false)
+          const textToSend = finalText.trim()
+          setVoiceCallTranscript('')
+          sendVoiceCallMessage(textToSend)
+        }
+      }, 2000)
+    }
+
     recognition.onresult = (event) => {
       let interim = ''
-      for (let i = event.resultIndex; i < event.results.length; i++) {
+      finalText = ''
+      for (let i = 0; i < event.results.length; i++) {
         if (event.results[i].isFinal) {
           finalText += (finalText ? ' ' : '') + event.results[i][0].transcript
         } else { interim += event.results[i][0].transcript }
       }
+      hasResults = true
       setVoiceCallTranscript(finalText + (interim ? ' ' + interim : ''))
+      resetSilenceTimer()
     }
-    recognition.onerror = () => setVoiceCallListening(false)
+    recognition.onerror = (e) => {
+      console.warn('Voice call recognition error:', e.error)
+      if (e.error !== 'aborted' && voiceCallModeRef.current) {
+        setTimeout(() => { if (voiceCallModeRef.current) startVoiceCallListening() }, 500)
+      }
+    }
     recognition.onend = () => {
-      setVoiceCallListening(false)
-      if (finalText.trim()) {
-        setVoiceCallTranscript('')
-        sendVoiceCallMessage(finalText.trim())
+      // If recognition ended without sending a message, restart it
+      if (voiceCallModeRef.current && !finalText.trim()) {
+        setTimeout(() => { if (voiceCallModeRef.current) startVoiceCallListening() }, 300)
       }
     }
     recognition.start()
@@ -1241,6 +1291,7 @@ export default function Dashboard() {
   }
 
   const startVoiceCall = () => {
+    voiceCallModeRef.current = true
     setVoiceCallMode(true)
     setVoiceCallTranscript('')
     setVoiceCallSpeaking(false)
@@ -1251,10 +1302,12 @@ export default function Dashboard() {
   }
 
   const endVoiceCall = () => {
+    voiceCallModeRef.current = false
     if (voiceRecognitionRef.current) try { voiceRecognitionRef.current.stop() } catch {}
+    if (voiceCallSilenceRef.current) { clearTimeout(voiceCallSilenceRef.current); voiceCallSilenceRef.current = null }
     if (window.speechSynthesis) window.speechSynthesis.cancel()
-    // Stop any playing audio elements
-    document.querySelectorAll('audio').forEach(a => { try { a.pause(); a.currentTime = 0 } catch {} })
+    // Stop any playing audio
+    if (voiceCallAudioRef.current) { try { voiceCallAudioRef.current.pause() } catch {}; voiceCallAudioRef.current = null }
     setVoiceCallMode(false)
     setVoiceCallListening(false)
     setVoiceCallTranscript('')
