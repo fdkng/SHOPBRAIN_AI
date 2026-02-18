@@ -108,6 +108,9 @@ export default function Dashboard() {
   const [insightsData, setInsightsData] = useState(null)
   const [insightsLoading, setInsightsLoading] = useState(false)
   const [insightsError, setInsightsError] = useState('')
+  const [bundlesHistory, setBundlesHistory] = useState([])
+  const [bundlesDiagnostics, setBundlesDiagnostics] = useState(null)
+  const [bundlesJobStatus, setBundlesJobStatus] = useState('idle')
   const [backendHealth, setBackendHealth] = useState(null)
   const [backendHealthTs, setBackendHealthTs] = useState(0)
   const [shopCurrency, setShopCurrency] = useState(() => {
@@ -1553,12 +1556,13 @@ export default function Dashboard() {
     try {
       setInsightsLoading(true)
       setInsightsError('')
+      setBundlesJobStatus('starting')
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) throw new Error('Session expirée, reconnectez-vous')
       await waitForBackendReady({ retries: 8, retryDelayMs: 2000, timeoutMs: 22000 })
       await warmupBackend(session.access_token)
       // Lancer le job async
-      const resp = await fetch(`${API_URL}/api/shopify/bundles/async`, {
+      const resp = await fetch(`${API_URL}/api/shopify/bundles/async?range=${encodeURIComponent(analyticsRange)}&limit=10`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
@@ -1572,6 +1576,8 @@ export default function Dashboard() {
     } catch (err) {
       const errorMessage = normalizeNetworkErrorMessage(err)
       setInsightsError(errorMessage)
+      setBundlesJobStatus('failed')
+      setStatus('action-bundles', 'error', errorMessage)
       throw new Error(errorMessage)
     } finally {
       setInsightsLoading(false)
@@ -1582,7 +1588,8 @@ export default function Dashboard() {
   const pollBundlesJob = async (jobId, accessToken) => {
     let done = false
     let tries = 0
-    let lastStatus = null
+    setBundlesJobStatus('running')
+    setStatus('action-bundles', 'info', 'Analyse bundles en cours...')
     while (!done && tries < 40) {
       tries++
       await new Promise((r) => setTimeout(r, 2000))
@@ -1594,21 +1601,38 @@ export default function Dashboard() {
         }
       })
       const data = await resp.json()
-      if (data?.status === 'done' && data?.result?.bundle_suggestions) {
+      const status = data?.status || data?.job?.status
+      const result = data?.result || data?.job?.result
+      if (status === 'done' || status === 'completed') {
+        const suggestions = Array.isArray(result?.bundle_suggestions) ? result.bundle_suggestions : []
+        const diagnostics = result?.diagnostics || null
         setInsightsData((prev) => ({
           ...(prev || {}),
-          bundle_suggestions: data.result.bundle_suggestions
+          bundle_suggestions: suggestions
         }))
+        setBundlesDiagnostics(diagnostics)
+        if (suggestions.length === 0) {
+          const reason = diagnostics?.no_result_reason || 'Analyse terminée: aucune opportunité détectée.'
+          setStatus('action-bundles', 'warning', reason)
+        } else {
+          setStatus('action-bundles', 'success', `Analyse terminée: ${suggestions.length} suggestion(s).`)
+        }
+        setBundlesJobStatus('done')
         done = true
         break
-      } else if (data?.status === 'failed') {
-        setInsightsError(data?.error || 'Erreur analyse')
+      } else if (status === 'failed') {
+        const failureMessage = data?.error || data?.job?.error || 'Erreur analyse'
+        setInsightsError(failureMessage)
+        setStatus('action-bundles', 'error', failureMessage)
+        setBundlesJobStatus('failed')
         break
-      } else {
-        lastStatus = data?.status
       }
     }
-    if (!done) setInsightsError('Analyse trop longue ou échouée')
+    if (!done) {
+      setInsightsError('Analyse trop longue ou échouée')
+      setStatus('action-bundles', 'error', 'Analyse trop longue ou échouée')
+      setBundlesJobStatus('timeout')
+    }
   }
 
   // Charger l’historique bundles
@@ -1628,17 +1652,17 @@ export default function Dashboard() {
         }
       })
       const data = await resp.json()
-      if (!resp.ok || !Array.isArray(data?.jobs)) throw new Error(data?.detail || 'Erreur historique')
-      setBundlesHistory(data.jobs)
+      const jobs = Array.isArray(data?.jobs)
+        ? data.jobs
+        : (Array.isArray(data?.local_jobs) ? data.local_jobs : [])
+      if (!resp.ok || !Array.isArray(jobs)) throw new Error(data?.detail || 'Erreur historique')
+      setBundlesHistory(jobs)
     } catch (err) {
       setInsightsError(normalizeNetworkErrorMessage(err))
     } finally {
       setInsightsLoading(false)
     }
   }
-
-  // State pour l’historique
-  const [bundlesHistory, setBundlesHistory] = useState([])
 
   useEffect(() => {
     // Passive health probe to stabilize “Comparaison marché externe” status.
@@ -1726,13 +1750,7 @@ export default function Dashboard() {
       }
 
       if (actionKey === 'action-bundles') {
-        const data = await loadBundles(undefined)
-        const items = Array.isArray(data?.bundle_suggestions) ? data.bundle_suggestions : []
-        if (items.length === 0) {
-          setStatus(actionKey, 'warning', 'Analyse terminée: aucune opportunité détectée.')
-        } else {
-          setStatus(actionKey, 'success', 'Analyse terminée.')
-        }
+        await loadBundlesAsync()
         return
       }
 
@@ -3648,7 +3666,24 @@ export default function Dashboard() {
                 Historique
               </button>
             </div>
+            {bundlesJobStatus !== 'idle' && (
+              <p className="text-xs text-gray-400">État job: {bundlesJobStatus}</p>
+            )}
             {renderStatus('action-bundles')}
+            {bundlesDiagnostics && (
+              <div className="bg-gray-900/60 border border-gray-700 rounded-lg p-4 text-sm">
+                <div className="text-white font-semibold mb-1">Diagnostic analyse</div>
+                <div className="text-gray-300">
+                  {bundlesDiagnostics.orders_scanned || 0} commandes scannées • {bundlesDiagnostics.orders_with_2plus_items || 0} commandes avec 2+ articles • {bundlesDiagnostics.pairs_found || 0} paires trouvées
+                </div>
+                {bundlesDiagnostics.no_result_reason ? (
+                  <div className="text-yellow-300 mt-2">{bundlesDiagnostics.no_result_reason}</div>
+                ) : null}
+                {Array.isArray(bundlesDiagnostics.recommendations) && bundlesDiagnostics.recommendations.length > 0 ? (
+                  <div className="text-gray-400 mt-2">{bundlesDiagnostics.recommendations.join(' · ')}</div>
+                ) : null}
+              </div>
+            )}
             <div className="space-y-3">
               {!insightsLoading && (!insightsData?.bundle_suggestions || insightsData.bundle_suggestions.length === 0) ? (
                 <p className="text-sm text-gray-500">Aucune suggestion détectée.</p>
@@ -3699,9 +3734,11 @@ export default function Dashboard() {
                 <ul className="space-y-2">
                   {bundlesHistory.map((job, idx) => (
                     <li key={job.id || idx} className="bg-gray-900/70 border border-gray-700 rounded-lg p-3 flex flex-col">
-                      <span className="text-xs text-gray-400">{job.created_at} • {job.status}</span>
-                      {job.result?.bundle_suggestions && (
-                        <span className="text-sm text-white">{job.result.bundle_suggestions.length} suggestions</span>
+                      <span className="text-xs text-gray-400">
+                        {job.finished_at || job.started_at || job.created_at || '—'} • {job.status || 'unknown'}
+                      </span>
+                      {(job.result?.bundle_suggestions || job.bundle_suggestions) && (
+                        <span className="text-sm text-white">{(job.result?.bundle_suggestions || job.bundle_suggestions || []).length} suggestions</span>
                       )}
                     </li>
                   ))}

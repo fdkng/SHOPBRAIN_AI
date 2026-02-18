@@ -178,7 +178,7 @@ def _clean_query_text(text: str, shop_brand: str | None = None) -> str:
         cleaned = re.sub(re.escape(shop_brand), "", cleaned, flags=re.IGNORECASE).strip()
     return cleaned
 
-@app.get("/api/shopify/bundles")
+@app.get("/api/shopify/bundles/legacy-v1")
 async def get_shopify_bundles(request: Request, range: str = "30d", limit: int = 10):
     """🧩 Bundles & cross-sell suggestions based on order co-occurrence.
 
@@ -3114,18 +3114,25 @@ def _compute_bundles_suggestions(shop_domain: str, access_token: str, days: int,
     This function is synchronous and suitable to run in a background thread.
     """
     orders = _fetch_shopify_orders(shop_domain, access_token, days)
+    min_pair_count = max(1, int(os.getenv("BUNDLES_MIN_PAIR_COUNT", "2")))
     pair_counts: dict[tuple[str, str], int] = {}
+    orders_with_2plus_items = 0
+    unique_product_ids: set[str] = set()
     for order in orders:
         ids = [str(item.get("product_id") or item.get("id")) for item in order.get("line_items", [])]
         ids = list({pid for pid in ids if pid and pid != "None"})
+        for pid in ids:
+            unique_product_ids.add(pid)
         if len(ids) < 2:
             continue
+        orders_with_2plus_items += 1
         for i in range(len(ids)):
             for j in range(i + 1, len(ids)):
                 key = tuple(sorted((ids[i], ids[j])))
                 pair_counts[key] = pair_counts.get(key, 0) + 1
 
-    top_pairs = sorted(pair_counts.items(), key=lambda x: x[1], reverse=True)[: max(1, min(int(limit or 10), 20))]
+    strong_pairs = [(pair, count) for pair, count in pair_counts.items() if int(count or 0) >= min_pair_count]
+    top_pairs = sorted(strong_pairs, key=lambda x: x[1], reverse=True)[: max(1, min(int(limit or 10), 20))]
 
     needed_ids = set()
     for (a, b), _count in top_pairs:
@@ -3224,9 +3231,43 @@ def _compute_bundles_suggestions(shop_domain: str, access_token: str, days: int,
             ],
         })
 
+    no_result_reason = None
+    recommendations: list[str] = []
+    if not orders:
+        no_result_reason = "Aucune commande trouvée sur la période sélectionnée."
+        recommendations = [
+            "Essayez la période 90j ou 365j.",
+            "Vérifiez que la boutique a des commandes payées.",
+        ]
+    elif orders_with_2plus_items == 0:
+        no_result_reason = "Les commandes ont surtout un seul article, impossible de détecter des paires."
+        recommendations = [
+            "Créer des offres multi-articles pour générer des co-achats.",
+            "Ajouter des upsells dans le panier pour augmenter les paniers à 2+ articles.",
+        ]
+    elif not top_pairs:
+        no_result_reason = f"Des co-achats existent, mais aucun n'atteint le seuil minimum ({min_pair_count})."
+        recommendations = [
+            "Réduire temporairement le seuil via BUNDLES_MIN_PAIR_COUNT=1.",
+            "Attendre plus de volume de commandes pour fiabiliser les recommandations.",
+        ]
+
+    diagnostics = {
+        "days": int(days),
+        "orders_scanned": len(orders),
+        "orders_with_2plus_items": orders_with_2plus_items,
+        "unique_products_scanned": len(unique_product_ids),
+        "pairs_found": len(pair_counts),
+        "pairs_retained": len(top_pairs),
+        "min_pair_count": min_pair_count,
+        "no_result_reason": no_result_reason,
+        "recommendations": recommendations,
+    }
+
     return {
         "orders_scanned": len(orders),
         "bundle_suggestions": suggestions,
+        "diagnostics": diagnostics,
     }
 
 
@@ -3235,6 +3276,9 @@ def _run_bundles_worker(job_id: str, shop_domain: str, access_token: str, days: 
         with _BUNDLES_LOCK:
             _BUNDLES_JOBS[job_id]["status"] = "running"
             _BUNDLES_JOBS[job_id]["started_at"] = time.time()
+            _BUNDLES_JOBS[job_id]["shop_domain"] = shop_domain
+            _BUNDLES_JOBS[job_id]["days"] = int(days)
+            _BUNDLES_JOBS[job_id]["limit"] = int(limit)
         result = _compute_bundles_suggestions(shop_domain, access_token, days, limit)
         with _BUNDLES_LOCK:
             _BUNDLES_JOBS[job_id]["status"] = "completed"
@@ -3287,12 +3331,28 @@ async def start_shopify_bundles_job(request: Request, range: str = "30d", limit:
 
     job_id = uuid.uuid4().hex
     with _BUNDLES_LOCK:
-        _BUNDLES_JOBS[job_id] = {"status": "pending", "result": None, "started_at": None, "finished_at": None}
+        _BUNDLES_JOBS[job_id] = {
+            "status": "pending",
+            "result": None,
+            "started_at": None,
+            "finished_at": None,
+            "shop_domain": shop_domain,
+            "days": int(days),
+            "limit": int(limit or 10),
+        }
 
     thread = threading.Thread(target=_run_bundles_worker, args=(job_id, shop_domain, access_token, days, int(limit or 10)), daemon=True)
     thread.start()
 
-    return {"success": True, "job_id": job_id}
+    return {
+        "success": True,
+        "job_id": job_id,
+        "status": "pending",
+        "shop": shop_domain,
+        "range": range,
+        "days": int(days),
+        "limit": int(limit or 10),
+    }
 
 
 @app.get("/api/shopify/bundles/job/{job_id}")
@@ -3300,7 +3360,18 @@ async def get_shopify_bundles_job(job_id: str):
     job = _BUNDLES_JOBS.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    return {"success": True, "job": job}
+    status = job.get("status")
+    return {
+        "success": True,
+        "job_id": job_id,
+        "status": "done" if status == "completed" else status,
+        "raw_status": status,
+        "result": job.get("result"),
+        "error": job.get("error"),
+        "started_at": job.get("started_at"),
+        "finished_at": job.get("finished_at"),
+        "job": job,
+    }
 
 
 @app.get("/api/shopify/bundles/latest")
@@ -3310,7 +3381,15 @@ async def get_shopify_bundles_latest(request: Request):
     shop_domain, _ = _get_shopify_connection(user_id)
     cached = _BUNDLES_CACHE.get(shop_domain)
     if cached and time.time() - cached.get("ts", 0) < int(os.getenv("BUNDLES_CACHE_TTL", "3600")):
-        return {"success": True, "shop": shop_domain, "cached": True, "result": cached.get("result")}
+        result = cached.get("result") or {}
+        return {
+            "success": True,
+            "shop": shop_domain,
+            "cached": True,
+            "result": result,
+            "bundle_suggestions": result.get("bundle_suggestions") or [],
+            "diagnostics": result.get("diagnostics") or {},
+        }
 
     # Try Supabase fallback
     if SUPABASE_URL and SUPABASE_SERVICE_KEY:
@@ -3319,7 +3398,16 @@ async def get_shopify_bundles_latest(request: Request):
             rows = supabase.table("bundle_jobs").select("job_id,result,finished_at").eq("shop_domain", shop_domain).order("finished_at", desc=True).limit(1).execute()
             if rows and rows.data:
                 row = rows.data[0]
-                return {"success": True, "shop": shop_domain, "cached": True, "result": json.loads(row.get("result") or "{}"), "job_id": row.get("job_id")}
+                result = json.loads(row.get("result") or "{}")
+                return {
+                    "success": True,
+                    "shop": shop_domain,
+                    "cached": True,
+                    "result": result,
+                    "bundle_suggestions": result.get("bundle_suggestions") or [],
+                    "diagnostics": result.get("diagnostics") or {},
+                    "job_id": row.get("job_id"),
+                }
         except Exception:
             pass
 
@@ -3349,7 +3437,19 @@ async def list_shopify_bundles_jobs(request: Request, limit: int = 20):
         except Exception:
             persisted = []
 
-    return {"success": True, "shop": shop_domain, "local_jobs": jobs, "persisted_jobs": persisted}
+    jobs_sorted = sorted(
+        jobs,
+        key=lambda item: (item.get("finished_at") or item.get("started_at") or 0),
+        reverse=True,
+    )[: max(1, min(int(limit or 20), 100))]
+
+    return {
+        "success": True,
+        "shop": shop_domain,
+        "jobs": jobs_sorted,
+        "local_jobs": jobs,
+        "persisted_jobs": persisted,
+    }
 
 
 @app.post("/api/shopify/bundles/cancel/{job_id}")
