@@ -5750,22 +5750,33 @@ async def gemini_live_token(request: Request):
     GEMINI_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
 
     try:
-        # Use the Gemini API to create an ephemeral token
+        # Use the official google-genai SDK to create ephemeral tokens
         # Docs: https://ai.google.dev/gemini-api/docs/ephemeral-tokens
-        token_body = {
-            "uses": 1,
-            "liveConnectConstraints": {
-                "model": f"models/{GEMINI_LIVE_MODEL}",
-                "config": {
-                    "responseModalities": ["AUDIO"],
-                    "speechConfig": {
-                        "voiceConfig": {
-                            "prebuiltVoiceConfig": {
-                                "voiceName": "Aoede"
+        from google import genai as google_genai
+
+        client = google_genai.Client(
+            api_key=GEMINI_API_KEY,
+            http_options={"api_version": "v1alpha"}
+        )
+
+        print(f"🔑 Requesting Gemini ephemeral token for model {GEMINI_LIVE_MODEL}")
+
+        token = client.auth_tokens.create(
+            config={
+                "uses": 1,
+                "bidi_generate_content_setup": {
+                    "model": f"models/{GEMINI_LIVE_MODEL}",
+                    "generation_config": {
+                        "response_modalities": ["AUDIO"],
+                        "speech_config": {
+                            "voice_config": {
+                                "prebuilt_voice_config": {
+                                    "voice_name": "Aoede"
+                                }
                             }
                         }
                     },
-                    "systemInstruction": {
+                    "system_instruction": {
                         "parts": [{
                             "text": (
                                 "Tu es ShopBrain, un assistant IA expert en e-commerce Shopify. "
@@ -5777,32 +5788,19 @@ async def gemini_live_token(request: Request):
                             )
                         }]
                     },
-                    "inputAudioTranscription": {},
-                    "outputAudioTranscription": {}
-                }
+                    "input_audio_transcription": {},
+                    "output_audio_transcription": {}
+                },
+                "http_options": {"api_version": "v1alpha"}
             }
-        }
-
-        print(f"🔑 Requesting Gemini ephemeral token for model {GEMINI_LIVE_MODEL}")
-        resp = requests.post(
-            f"https://generativelanguage.googleapis.com/v1alpha/authTokens?key={GEMINI_API_KEY}",
-            json=token_body,
-            headers={"Content-Type": "application/json"},
-            timeout=15
         )
 
-        if resp.status_code != 200:
-            print(f"❌ Gemini token error: {resp.status_code} - {resp.text[:500]}")
-            raise HTTPException(status_code=502, detail=f"Gemini API error: {resp.status_code} — {resp.text[:200]}")
-
-        data = resp.json()
-        print(f"🔍 Gemini token response keys: {list(data.keys())}")
-        token_name = data.get("name") or data.get("authToken", {}).get("name")
+        token_name = token.name
         if not token_name:
-            print(f"❌ Gemini token response missing 'name': {json.dumps(data)[:500]}")
-            raise HTTPException(status_code=502, detail="Token creation failed")
+            print(f"❌ Gemini token creation returned empty name")
+            raise HTTPException(status_code=502, detail="Token creation failed — empty name")
 
-        print(f"✅ Gemini ephemeral token created for user {user_id}")
+        print(f"✅ Gemini ephemeral token created for user {user_id}: {token_name[:20]}...")
         return {
             "success": True,
             "token": token_name,
