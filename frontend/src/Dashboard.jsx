@@ -1326,10 +1326,28 @@ export default function Dashboard() {
 
       ws.onopen = () => {
         console.log('✅ Gemini Live WebSocket connected')
-        // With constrained ephemeral tokens, setup must be first message,
-        // but effective config is enforced server-side by the token.
+        // Send full setup for standard Live session (unconstrained ephemeral token)
         ws.send(JSON.stringify({
-          setup: {}
+          setup: {
+            model: `models/${model}`,
+            generationConfig: {
+              responseModalities: ['AUDIO'],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: {
+                    voiceName: 'Aoede'
+                  }
+                }
+              }
+            },
+            systemInstruction: {
+              parts: [{
+                text: 'Tu es ShopBrain, un assistant IA expert en e-commerce Shopify. Tu parles français avec un ton professionnel mais amical. Réponds de manière concise et naturelle, comme dans une vraie conversation téléphonique.'
+              }]
+            },
+            inputAudioTranscription: {},
+            outputAudioTranscription: {}
+          }
         }))
       }
 
