@@ -5761,11 +5761,36 @@ async def gemini_live_token(request: Request):
 
         print(f"🔑 Requesting Gemini ephemeral token for model {GEMINI_LIVE_MODEL}")
 
-        from google.genai import types as genai_types
-
-        token = client.auth_tokens.create(
-            config=genai_types.CreateAuthTokenConfig(uses=1)
-        )
+        # Create token with config — try with live_connect_constraints first,
+        # fall back to basic config for older SDK versions
+        token = None
+        try:
+            token = client.auth_tokens.create(
+                config={
+                    "uses": 1,
+                    "live_connect_constraints": {
+                        "model": f"models/{GEMINI_LIVE_MODEL}",
+                        "config": {
+                            "response_modalities": ["AUDIO"],
+                            "speech_config": {
+                                "voice_config": {
+                                    "prebuilt_voice_config": {
+                                        "voice_name": "Aoede"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "http_options": {"api_version": "v1alpha"}
+                }
+            )
+            print(f"✅ Token created with live_connect_constraints")
+        except Exception as e1:
+            print(f"⚠️ live_connect_constraints failed ({type(e1).__name__}: {e1}), trying basic config...")
+            token = client.auth_tokens.create(
+                config={"uses": 1, "http_options": {"api_version": "v1alpha"}}
+            )
+            print(f"✅ Token created with basic config (no constraints)")
 
         token_name = token.name
         if not token_name:
@@ -5777,7 +5802,7 @@ async def gemini_live_token(request: Request):
             "success": True,
             "token": token_name,
             "model": GEMINI_LIVE_MODEL,
-            "ws_url": "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent"
+            "ws_url": "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
         }
 
     except HTTPException:

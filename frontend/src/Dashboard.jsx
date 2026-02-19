@@ -1318,7 +1318,9 @@ export default function Dashboard() {
       }
 
       const { token, ws_url, model } = await tokenResp.json()
-      const fullSetup = {
+
+      // Build setup message — model is required, config adds voice/transcription
+      const setupPayload = {
         setup: {
           model: `models/${model}`,
           generationConfig: {
@@ -1341,150 +1343,117 @@ export default function Dashboard() {
         }
       }
 
-      const setupCandidates = [
-        fullSetup,
-        { setup: { model: `models/${model}` } },
-        { setup: {} }
-      ]
+      // Use the URL from backend (v1beta BidiGenerateContent)
+      // Pass token as access_token query param for ephemeral auth
+      const wsUrl = `${ws_url}?access_token=${encodeURIComponent(token)}`
+      console.log('🔌 Connecting to Gemini Live:', ws_url)
 
-      const wsCandidates = Array.from(new Set([
-        ws_url,
-        ws_url?.replace('BidiGenerateContent', 'BidiGenerateContentConstrained'),
-        ws_url?.replace('v1alpha', 'v1beta'),
-        ws_url?.replace('v1alpha', 'v1beta')?.replace('BidiGenerateContent', 'BidiGenerateContentConstrained')
-      ].filter(Boolean)))
+      const ws = new WebSocket(wsUrl)
+      geminiWsRef.current = ws
 
-      const attempts = []
-      for (const candidateUrl of wsCandidates) {
-        for (const setupPayload of setupCandidates) {
-          attempts.push({ candidateUrl, setupPayload })
+      let setupComplete = false
+
+      // 15 second timeout for setup
+      const setupTimeout = setTimeout(() => {
+        if (!setupComplete && voiceCallModeRef.current) {
+          console.error('⏰ Gemini setup timeout after 15s')
+          setVoiceCallTranscript('Erreur: délai de connexion dépassé')
+          try { ws.close() } catch {}
+          setTimeout(() => { if (voiceCallModeRef.current) endVoiceCall() }, 2000)
         }
+      }, 15000)
+
+      ws.onopen = () => {
+        console.log('✅ Gemini Live WebSocket connected')
+        setVoiceCallTranscript('Configuration de la session...')
+        ws.send(JSON.stringify(setupPayload))
+        console.log('📤 Setup message sent:', JSON.stringify(setupPayload).substring(0, 200))
       }
 
-      let attemptIndex = 0
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data)
+          console.log('📥 Gemini message:', Object.keys(msg).join(', '))
 
-      const connectAttempt = () => {
-        if (!voiceCallModeRef.current) return
-
-        if (attemptIndex >= attempts.length) {
-          setVoiceCallTranscript('Erreur: connexion Gemini impossible (toutes tentatives échouées)')
-          setTimeout(() => { if (voiceCallModeRef.current) endVoiceCall() }, 2500)
-          return
-        }
-
-        const currentAttempt = attemptIndex + 1
-        const attempt = attempts[attemptIndex]
-        attemptIndex += 1
-
-        setVoiceCallTranscript(`Connexion à Gemini Live... (${currentAttempt}/${attempts.length})`)
-
-        const wsUrl = `${attempt.candidateUrl}?access_token=${encodeURIComponent(token)}`
-        const ws = new WebSocket(wsUrl)
-        geminiWsRef.current = ws
-
-        let setupCompleteReceived = false
-        let attemptTimedOut = false
-        const attemptTimeoutMs = 5000
-        const attemptTimeout = setTimeout(() => {
-          if (!voiceCallModeRef.current || setupCompleteReceived) return
-          attemptTimedOut = true
-          try { ws.close() } catch {}
-        }, attemptTimeoutMs)
-
-        ws.onopen = () => {
-          console.log('✅ Gemini Live WebSocket connected', attempt)
-          ws.send(JSON.stringify(attempt.setupPayload))
-        }
-
-        ws.onmessage = (event) => {
-          try {
-            const msg = JSON.parse(event.data)
-
-            if (msg.setupComplete) {
-              setupCompleteReceived = true
-              clearTimeout(attemptTimeout)
-              console.log('✅ Gemini Live setup complete')
-              setVoiceCallTranscript('')
-              startGeminiMic()
-              return
-            }
-
-            if (msg.serverContent) {
-              const sc = msg.serverContent
-
-              if (sc.modelTurn?.parts) {
-                for (const part of sc.modelTurn.parts) {
-                  if (part.inlineData?.data) {
-                    setVoiceCallSpeaking(true)
-                    playGeminiAudio(part.inlineData.data)
-                  }
-                }
-              }
-
-              if (sc.outputTranscription?.text) {
-                const aiText = sc.outputTranscription.text
-                setChatMessages(prev => {
-                  const last = prev[prev.length - 1]
-                  if (last?.role === 'assistant' && last._geminiLive) {
-                    return [...prev.slice(0, -1), { ...last, text: last.text + aiText }]
-                  }
-                  return [...prev, { role: 'assistant', text: aiText, _geminiLive: true }]
-                })
-              }
-
-              if (sc.inputTranscription?.text) {
-                const userText = sc.inputTranscription.text
-                setVoiceCallTranscript(prev => prev + userText)
-                setChatMessages(prev => {
-                  const last = prev[prev.length - 1]
-                  if (last?.role === 'user' && last._geminiLive) {
-                    return [...prev.slice(0, -1), { ...last, text: last.text + userText }]
-                  }
-                  return [...prev, { role: 'user', text: userText, _geminiLive: true }]
-                })
-              }
-
-              if (sc.turnComplete) {
-                setVoiceCallSpeaking(false)
-                setVoiceCallTranscript('')
-              }
-
-              if (sc.interrupted) {
-                geminiPlayQueueRef.current = []
-                geminiIsPlayingRef.current = false
-                setVoiceCallSpeaking(false)
-              }
-            }
-          } catch (err) {
-            console.warn('Gemini WS message parse error:', err)
-          }
-        }
-
-        ws.onerror = (err) => {
-          console.error('Gemini Live WebSocket error:', err)
-        }
-
-        ws.onclose = (event) => {
-          clearTimeout(attemptTimeout)
-          console.log('Gemini Live WebSocket closed:', event.code, event.reason)
-
-          if (voiceCallModeRef.current && !setupCompleteReceived) {
-            if (attemptTimedOut) {
-              console.warn('Gemini attempt timed out, trying next attempt')
-            }
-            connectAttempt()
+          if (msg.setupComplete) {
+            setupComplete = true
+            clearTimeout(setupTimeout)
+            console.log('✅ Gemini Live setup complete')
+            setVoiceCallTranscript('Connecté ! Parlez...')
+            setTimeout(() => setVoiceCallTranscript(''), 1500)
+            startGeminiMic()
             return
           }
 
-          if (voiceCallModeRef.current) {
-            const reason = event?.reason ? ` (${event.reason})` : ''
-            setVoiceCallTranscript(`Connexion terminée [${event.code}]${reason}`)
-            setTimeout(() => { if (voiceCallModeRef.current) endVoiceCall() }, 2000)
+          if (msg.serverContent) {
+            const sc = msg.serverContent
+
+            if (sc.modelTurn?.parts) {
+              for (const part of sc.modelTurn.parts) {
+                if (part.inlineData?.data) {
+                  setVoiceCallSpeaking(true)
+                  playGeminiAudio(part.inlineData.data)
+                }
+              }
+            }
+
+            if (sc.outputTranscription?.text) {
+              const aiText = sc.outputTranscription.text
+              setChatMessages(prev => {
+                const last = prev[prev.length - 1]
+                if (last?.role === 'assistant' && last._geminiLive) {
+                  return [...prev.slice(0, -1), { ...last, text: last.text + aiText }]
+                }
+                return [...prev, { role: 'assistant', text: aiText, _geminiLive: true }]
+              })
+            }
+
+            if (sc.inputTranscription?.text) {
+              const userText = sc.inputTranscription.text
+              setVoiceCallTranscript(prev => prev + userText)
+              setChatMessages(prev => {
+                const last = prev[prev.length - 1]
+                if (last?.role === 'user' && last._geminiLive) {
+                  return [...prev.slice(0, -1), { ...last, text: last.text + userText }]
+                }
+                return [...prev, { role: 'user', text: userText, _geminiLive: true }]
+              })
+            }
+
+            if (sc.turnComplete) {
+              setVoiceCallSpeaking(false)
+              setVoiceCallTranscript('')
+            }
+
+            if (sc.interrupted) {
+              geminiPlayQueueRef.current = []
+              geminiIsPlayingRef.current = false
+              setVoiceCallSpeaking(false)
+            }
           }
+        } catch (err) {
+          console.warn('Gemini WS message parse error:', err)
         }
       }
 
-      connectAttempt()
+      ws.onerror = (err) => {
+        console.error('❌ Gemini Live WebSocket error:', err)
+      }
+
+      ws.onclose = (event) => {
+        clearTimeout(setupTimeout)
+        console.log('🔌 Gemini Live WebSocket closed:', event.code, event.reason)
+
+        if (voiceCallModeRef.current) {
+          const reason = event?.reason ? ` (${event.reason})` : ''
+          if (!setupComplete) {
+            setVoiceCallTranscript(`Erreur de connexion [${event.code}]${reason}`)
+          } else {
+            setVoiceCallTranscript(`Connexion terminée [${event.code}]${reason}`)
+          }
+          setTimeout(() => { if (voiceCallModeRef.current) endVoiceCall() }, 2000)
+        }
+      }
 
     } catch (err) {
       console.error('Voice call init error:', err)
