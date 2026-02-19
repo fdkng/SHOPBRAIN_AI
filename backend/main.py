@@ -5763,33 +5763,48 @@ async def gemini_live_token(request: Request):
 
         from google.genai import types as genai_types
 
-        token = client.auth_tokens.create(
-            config=genai_types.CreateAuthTokenConfig(
-                uses=1,
-                live_constrained_parameters=genai_types.LiveEphemeralParameters(
-                    model=f"models/{GEMINI_LIVE_MODEL}",
-                    config=genai_types.LiveConnectConfig(
-                        response_modalities=["AUDIO"],
-                        speech_config=genai_types.SpeechConfig(
-                            voice_config=genai_types.VoiceConfig(
-                                prebuilt_voice_config=genai_types.PrebuiltVoiceConfig(
-                                    voice_name="Aoede"
-                                )
-                            )
-                        ),
-                        system_instruction=(
-                            "Tu es ShopBrain, un assistant IA expert en e-commerce Shopify. "
-                            "Tu parles français avec un ton professionnel mais amical. "
-                            "Tu aides les marchands à optimiser leur boutique en ligne: "
-                            "prix, produits, marketing, conversion, SEO. "
-                            "Réponds de manière concise et naturelle, comme dans une vraie conversation téléphonique. "
-                            "Ne fais pas de listes ou de formatage markdown — parle naturellement."
-                        ),
-                        input_audio_transcription=genai_types.AudioTranscriptionConfig(),
-                        output_audio_transcription=genai_types.AudioTranscriptionConfig(),
-                    ),
-                ),
+        live_connect_config = {
+            "response_modalities": ["AUDIO"],
+            "speech_config": {
+                "voice_config": {
+                    "prebuilt_voice_config": {
+                        "voice_name": "Aoede"
+                    }
+                }
+            },
+            "system_instruction": (
+                "Tu es ShopBrain, un assistant IA expert en e-commerce Shopify. "
+                "Tu parles français avec un ton professionnel mais amical. "
+                "Tu aides les marchands à optimiser leur boutique en ligne: "
+                "prix, produits, marketing, conversion, SEO. "
+                "Réponds de manière concise et naturelle, comme dans une vraie conversation téléphonique. "
+                "Ne fais pas de listes ou de formatage markdown — parle naturellement."
+            ),
+            "input_audio_transcription": {},
+            "output_audio_transcription": {},
+        }
+
+        create_auth_fields = getattr(genai_types.CreateAuthTokenConfig, "model_fields", {})
+        auth_config_kwargs = {"uses": 1}
+
+        if "live_connect_constraints" in create_auth_fields:
+            auth_config_kwargs["live_connect_constraints"] = {
+                "model": f"models/{GEMINI_LIVE_MODEL}",
+                "config": live_connect_config,
+            }
+        elif "live_constrained_parameters" in create_auth_fields and hasattr(genai_types, "LiveEphemeralParameters"):
+            auth_config_kwargs["live_constrained_parameters"] = genai_types.LiveEphemeralParameters(
+                model=f"models/{GEMINI_LIVE_MODEL}",
+                config=genai_types.LiveConnectConfig(**live_connect_config),
             )
+        else:
+            auth_config_kwargs["live_connect_constraints"] = {
+                "model": f"models/{GEMINI_LIVE_MODEL}",
+                "config": live_connect_config,
+            }
+
+        token = client.auth_tokens.create(
+            config=genai_types.CreateAuthTokenConfig(**auth_config_kwargs)
         )
 
         token_name = token.name
