@@ -1326,12 +1326,10 @@ export default function Dashboard() {
 
       ws.onopen = () => {
         console.log('✅ Gemini Live WebSocket connected')
-        // When using ephemeral tokens with liveConnectConstraints,
-        // the config is locked server-side. Just send minimal setup.
+        // With constrained ephemeral tokens, setup must be first message,
+        // but effective config is enforced server-side by the token.
         ws.send(JSON.stringify({
-          setup: {
-            model: `models/${model}`
-          }
+          setup: {}
         }))
       }
 
@@ -1406,13 +1404,14 @@ export default function Dashboard() {
 
       ws.onerror = (err) => {
         console.error('Gemini Live WebSocket error:', err)
-        setVoiceCallTranscript('Erreur de connexion')
+        setVoiceCallTranscript('Erreur WebSocket Gemini')
       }
 
       ws.onclose = (event) => {
         console.log('Gemini Live WebSocket closed:', event.code, event.reason)
         if (voiceCallModeRef.current) {
-          setVoiceCallTranscript('Connexion terminée')
+          const reason = event?.reason ? ` (${event.reason})` : ''
+          setVoiceCallTranscript(`Connexion terminée [${event.code}]${reason}`)
           setTimeout(() => { if (voiceCallModeRef.current) endVoiceCall() }, 2000)
         }
       }
