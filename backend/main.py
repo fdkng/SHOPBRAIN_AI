@@ -5807,13 +5807,23 @@ async def gemini_live_token(request: Request):
         else:
             ws_endpoint = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
 
+        ws_fallback_urls = [
+            "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained",
+            "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent",
+            "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained",
+            "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent"
+        ]
+
         print(f"✅ Gemini ephemeral token created for user {user_id}: {token_name[:20]}... constrained={constrained}")
         return {
             "success": True,
             "token": token_name,
             "model": GEMINI_LIVE_MODEL,
             "ws_url": ws_endpoint,
-            "constrained": constrained
+            "constrained": constrained,
+            "auth_modes": ["access_token", "key"],
+            "ws_fallback_urls": ws_fallback_urls,
+            "recommended_setup": "empty" if constrained else "full"
         }
 
     except HTTPException:
