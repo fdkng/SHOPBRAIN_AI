@@ -5761,9 +5761,11 @@ async def gemini_live_token(request: Request):
 
         print(f"🔑 Requesting Gemini ephemeral token for model {GEMINI_LIVE_MODEL}")
 
-        # Create token with config — try with live_connect_constraints first,
-        # fall back to basic config for older SDK versions
+        # Create token with live_connect_constraints (locks config in token)
+        # Constrained tokens use BidiGenerateContentConstrained endpoint
+        # Unconstrained tokens use BidiGenerateContent endpoint
         token = None
+        constrained = False
         try:
             token = client.auth_tokens.create(
                 config={
@@ -5784,6 +5786,7 @@ async def gemini_live_token(request: Request):
                     "http_options": {"api_version": "v1alpha"}
                 }
             )
+            constrained = True
             print(f"✅ Token created with live_connect_constraints")
         except Exception as e1:
             print(f"⚠️ live_connect_constraints failed ({type(e1).__name__}: {e1}), trying basic config...")
@@ -5797,12 +5800,20 @@ async def gemini_live_token(request: Request):
             print(f"❌ Gemini token creation returned empty name")
             raise HTTPException(status_code=502, detail="Token creation failed — empty name")
 
-        print(f"✅ Gemini ephemeral token created for user {user_id}: {token_name[:20]}...")
+        # Constrained tokens → BidiGenerateContentConstrained
+        # Unconstrained tokens → BidiGenerateContent  
+        if constrained:
+            ws_endpoint = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained"
+        else:
+            ws_endpoint = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
+
+        print(f"✅ Gemini ephemeral token created for user {user_id}: {token_name[:20]}... constrained={constrained}")
         return {
             "success": True,
             "token": token_name,
             "model": GEMINI_LIVE_MODEL,
-            "ws_url": "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained"
+            "ws_url": ws_endpoint,
+            "constrained": constrained
         }
 
     except HTTPException:

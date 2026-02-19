@@ -1317,36 +1317,45 @@ export default function Dashboard() {
         throw new Error(errData.detail || `Token error: ${tokenResp.status}`)
       }
 
-      const { token, ws_url, model } = await tokenResp.json()
+      const { token, ws_url, model, constrained } = await tokenResp.json()
 
-      // Build setup message — model is required, config adds voice/transcription
-      const setupPayload = {
-        setup: {
-          model: `models/${model}`,
-          generationConfig: {
-            responseModalities: ['AUDIO'],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: {
-                  voiceName: 'Aoede'
+      // If constrained: config is locked in the token, send empty setup
+      // If unconstrained: send full setup with model + config
+      let setupPayload
+      if (constrained) {
+        // Constrained token — config already in the token, just send empty setup
+        setupPayload = { setup: {} }
+        console.log('🔒 Using constrained token — empty setup')
+      } else {
+        // Unconstrained token — must send full setup
+        setupPayload = {
+          setup: {
+            model: `models/${model}`,
+            generationConfig: {
+              responseModalities: ['AUDIO'],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: {
+                    voiceName: 'Aoede'
+                  }
                 }
               }
-            }
-          },
-          systemInstruction: {
-            parts: [{
-              text: 'Tu es ShopBrain, un assistant IA expert en e-commerce Shopify. Tu parles français avec un ton professionnel mais amical. Réponds de manière concise et naturelle, comme dans une vraie conversation téléphonique.'
-            }]
-          },
-          inputAudioTranscription: {},
-          outputAudioTranscription: {}
+            },
+            systemInstruction: {
+              parts: [{
+                text: 'Tu es ShopBrain, un assistant IA expert en e-commerce Shopify. Tu parles français avec un ton professionnel mais amical. Réponds de manière concise et naturelle, comme dans une vraie conversation téléphonique.'
+              }]
+            },
+            inputAudioTranscription: {},
+            outputAudioTranscription: {}
+          }
         }
+        console.log('🔓 Using unconstrained token — full setup')
       }
 
-      // Use the URL from backend (v1beta BidiGenerateContent)
-      // Pass token as access_token query param for ephemeral auth
+      // Connect via WebSocket with ephemeral token
       const wsUrl = `${ws_url}?access_token=${encodeURIComponent(token)}`
-      console.log('🔌 Connecting to Gemini Live:', ws_url)
+      console.log('🔌 Connecting to Gemini Live:', ws_url, 'constrained:', constrained)
 
       const ws = new WebSocket(wsUrl)
       geminiWsRef.current = ws
