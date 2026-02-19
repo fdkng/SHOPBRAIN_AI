@@ -1383,6 +1383,13 @@ export default function Dashboard() {
         geminiWsRef.current = ws
 
         let setupCompleteReceived = false
+        let attemptTimedOut = false
+        const attemptTimeoutMs = 5000
+        const attemptTimeout = setTimeout(() => {
+          if (!voiceCallModeRef.current || setupCompleteReceived) return
+          attemptTimedOut = true
+          try { ws.close() } catch {}
+        }, attemptTimeoutMs)
 
         ws.onopen = () => {
           console.log('✅ Gemini Live WebSocket connected', attempt)
@@ -1395,6 +1402,7 @@ export default function Dashboard() {
 
             if (msg.setupComplete) {
               setupCompleteReceived = true
+              clearTimeout(attemptTimeout)
               console.log('✅ Gemini Live setup complete')
               setVoiceCallTranscript('')
               startGeminiMic()
@@ -1457,9 +1465,13 @@ export default function Dashboard() {
         }
 
         ws.onclose = (event) => {
+          clearTimeout(attemptTimeout)
           console.log('Gemini Live WebSocket closed:', event.code, event.reason)
 
           if (voiceCallModeRef.current && !setupCompleteReceived) {
+            if (attemptTimedOut) {
+              console.warn('Gemini attempt timed out, trying next attempt')
+            }
             connectAttempt()
             return
           }
