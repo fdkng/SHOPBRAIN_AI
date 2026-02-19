@@ -5836,6 +5836,233 @@ async def gemini_live_token(request: Request):
 
 
 # ============================================================================
+# Gemini Voice Chat — Full server-side STT → Chat → TTS pipeline
+# ============================================================================
+@app.post("/api/gemini/voice-chat")
+async def gemini_voice_chat(request: Request):
+    """🎙️ Conversation vocale Gemini 100% backend.
+    Reçoit un fichier audio, transcrit (STT), génère une réponse (chat),
+    synthétise la voix (TTS) et renvoie texte + audio base64.
+    Aucune clé API n'est exposée côté frontend.
+    """
+    user_id = get_user_id(request)
+    print(f"🔔 /api/gemini/voice-chat called. user_id={user_id}")
+
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="Gemini API key not configured")
+
+    # ── 1. Lire l'audio envoyé par le frontend ──
+    try:
+        form = await request.form()
+        audio_file = form.get("audio")
+        if not audio_file:
+            raise HTTPException(status_code=400, detail="Aucun fichier audio fourni")
+
+        audio_content = await audio_file.read()
+        if len(audio_content) == 0:
+            raise HTTPException(status_code=400, detail="Fichier audio vide")
+        if len(audio_content) > 25 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="Fichier audio trop volumineux (max 25 MB)")
+
+        print(f"🎤 Gemini voice-chat: audio received {len(audio_content)} bytes")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Erreur lecture audio: {str(e)}")
+
+    # Optional conversation history from the frontend (JSON string)
+    history_raw = form.get("history")
+    conversation_history = []
+    if history_raw:
+        try:
+            if hasattr(history_raw, "read"):
+                history_raw = (await history_raw.read()).decode()
+            elif hasattr(history_raw, "file"):
+                history_raw = str(history_raw)
+            conversation_history = json.loads(history_raw) if isinstance(history_raw, str) else []
+        except Exception:
+            conversation_history = []
+
+    try:
+        from google import genai as google_genai
+
+        client = google_genai.Client(api_key=GEMINI_API_KEY)
+
+        # ── 2. STT — Transcrire l'audio avec Gemini ──
+        print("🔄 Gemini STT: transcribing audio...")
+        audio_b64 = base64.b64encode(audio_content).decode("utf-8")
+
+        stt_response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[
+                {
+                    "parts": [
+                        {"text": "Transcris exactement ce que dit la personne dans cet audio. Retourne UNIQUEMENT la transcription, sans commentaire ni ponctuation ajoutée."},
+                        {
+                            "inline_data": {
+                                "mime_type": "audio/webm",
+                                "data": audio_b64,
+                            }
+                        },
+                    ]
+                }
+            ],
+        )
+
+        user_text = (stt_response.text or "").strip()
+        if not user_text:
+            return {"success": False, "error": "Transcription vide — aucune parole détectée."}
+
+        print(f"✅ Gemini STT: '{user_text[:120]}...'")
+
+        # ── 3. Chat — Générer la réponse textuelle avec Gemini ──
+        print("🔄 Gemini Chat: generating response...")
+
+        system_instruction = (
+            "Tu es ShopBrain, un assistant IA expert en e-commerce Shopify. "
+            "Tu parles français avec un ton professionnel mais amical. "
+            "Réponds de manière concise et naturelle, comme dans une vraie conversation téléphonique. "
+            "Ne dépasse pas 3-4 phrases par réponse."
+        )
+
+        # Build messages from conversation history
+        chat_contents = []
+        for msg in conversation_history[-10:]:  # Keep last 10 messages for context
+            role = "user" if msg.get("role") == "user" else "model"
+            chat_contents.append({"role": role, "parts": [{"text": msg.get("text", "")}]})
+
+        # Add current user message
+        chat_contents.append({"role": "user", "parts": [{"text": user_text}]})
+
+        chat_response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=chat_contents,
+            config={
+                "system_instruction": system_instruction,
+                "max_output_tokens": 500,
+                "temperature": 0.7,
+            },
+        )
+
+        ai_text = (chat_response.text or "").strip()
+        if not ai_text:
+            ai_text = "Désolé, je n'ai pas pu générer de réponse. Peux-tu reformuler ?"
+
+        print(f"✅ Gemini Chat: '{ai_text[:120]}...'")
+
+        # ── 4. TTS — Synthétiser la réponse en audio avec Gemini ──
+        print("🔄 Gemini TTS: synthesizing speech...")
+        tts_audio_b64 = None
+        try:
+            tts_response = client.models.generate_content(
+                model="gemini-2.5-flash-preview-tts",
+                contents=ai_text,
+                config={
+                    "response_modalities": ["AUDIO"],
+                    "speech_config": {
+                        "voice_config": {
+                            "prebuilt_voice_config": {
+                                "voice_name": "Kore",
+                            }
+                        }
+                    },
+                },
+            )
+            # Extract audio data from the response
+            if tts_response.candidates:
+                for part in tts_response.candidates[0].content.parts:
+                    if part.inline_data and part.inline_data.data:
+                        tts_audio_b64 = base64.b64encode(part.inline_data.data).decode("utf-8")
+                        tts_mime = part.inline_data.mime_type or "audio/wav"
+                        break
+
+            if tts_audio_b64:
+                print(f"✅ Gemini TTS: audio generated ({len(tts_audio_b64)} base64 chars)")
+            else:
+                print("⚠️ Gemini TTS: no audio in response, falling back to text-only")
+        except Exception as tts_err:
+            print(f"⚠️ Gemini TTS error (non-fatal): {type(tts_err).__name__}: {tts_err}")
+            tts_audio_b64 = None
+            tts_mime = None
+
+        return {
+            "success": True,
+            "user_text": user_text,
+            "ai_text": ai_text,
+            "audio_base64": tts_audio_b64,
+            "audio_mime": tts_mime if tts_audio_b64 else None,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error in gemini voice-chat: {type(e).__name__}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Erreur Gemini voice-chat: {str(e)}")
+
+
+# ============================================================================
+# Gemini Text Chat — Full server-side chat (no audio)
+# ============================================================================
+class GeminiChatRequest(BaseModel):
+    message: str
+    history: list = []
+
+
+@app.post("/api/gemini/chat")
+async def gemini_text_chat(req: GeminiChatRequest, request: Request):
+    """💬 Chat texte via Gemini (100% backend, clé jamais exposée)."""
+    user_id = get_user_id(request)
+    print(f"🔔 /api/gemini/chat called. user_id={user_id}")
+
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="Gemini API key not configured")
+
+    message = req.message.strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message vide")
+
+    try:
+        from google import genai as google_genai
+        client = google_genai.Client(api_key=GEMINI_API_KEY)
+
+        system_instruction = (
+            "Tu es ShopBrain, un assistant IA expert en e-commerce Shopify. "
+            "Tu parles français avec un ton professionnel mais amical. "
+            "Fournis des conseils pratiques et actionnables."
+        )
+
+        chat_contents = []
+        for msg in req.history[-10:]:
+            role = "user" if msg.get("role") == "user" else "model"
+            chat_contents.append({"role": role, "parts": [{"text": msg.get("text", "")}]})
+        chat_contents.append({"role": "user", "parts": [{"text": message}]})
+
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=chat_contents,
+            config={
+                "system_instruction": system_instruction,
+                "max_output_tokens": 4000,
+                "temperature": 0.7,
+            },
+        )
+
+        ai_text = (response.text or "").strip()
+        if not ai_text:
+            ai_text = "Désolé, je n'ai pas pu générer de réponse."
+
+        return {"success": True, "message": ai_text, "user_id": user_id}
+
+    except Exception as e:
+        print(f"❌ Error in gemini chat: {type(e).__name__}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Erreur Gemini chat: {str(e)}")
+
+
+# ============================================================================
 @app.get("/api/ai/diag")
 async def ai_diag():
     """Detailed diagnostics for OpenAI key and header construction."""
