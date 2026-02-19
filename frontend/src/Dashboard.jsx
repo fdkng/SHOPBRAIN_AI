@@ -121,20 +121,14 @@ export default function Dashboard() {
   const [chatAttachments, setChatAttachments] = useState([])
   const [voiceListening, setVoiceListening] = useState(false)
   const voiceRecognitionRef = useRef(null)
-  const [voiceCallMode, setVoiceCallMode] = useState(false)
-  const [voiceCallListening, setVoiceCallListening] = useState(false)
-  const [voiceCallTranscript, setVoiceCallTranscript] = useState('')
-  const [voiceCallSpeaking, setVoiceCallSpeaking] = useState(false)
   const [voiceDictationMode, setVoiceDictationMode] = useState(false)
   const [voiceDictationTranscript, setVoiceDictationTranscript] = useState('')
   const voiceWaveIntervalRef = useRef(null)
-  const [voiceWaveBars, setVoiceWaveBars] = useState(Array(40).fill(2))
+  const [voiceWaveBars, setVoiceWaveBars] = useState(Array(5).fill(4))
   const audioContextRef = useRef(null)
   const analyserRef = useRef(null)
   const mediaStreamRef = useRef(null)
   const waveAnimFrameRef = useRef(null)
-  const voiceCallModeRef = useRef(false)
-  const voiceCallAudioRef = useRef(null)
   const mediaRecorderRef = useRef(null)
   const audioChunksRef = useRef([])
   const chatTextareaRef = useRef(null)
@@ -1048,7 +1042,7 @@ export default function Dashboard() {
     setChatAttachments(prev => prev.filter((_, i) => i !== idx))
   }
 
-  // Start waveform animation (volume-reactive via AudioContext)
+  // Start waveform animation (ChatGPT-style: 5 large bars, center tallest, voice-reactive)
   const startWaveAnimation = async () => {
     stopWaveAnimation()
     try {
@@ -1058,32 +1052,41 @@ export default function Dashboard() {
       audioContextRef.current = audioCtx
       const source = audioCtx.createMediaStreamSource(stream)
       const analyser = audioCtx.createAnalyser()
-      analyser.fftSize = 128
-      analyser.smoothingTimeConstant = 0.6
+      analyser.fftSize = 256
+      analyser.smoothingTimeConstant = 0.75
       source.connect(analyser)
       analyserRef.current = analyser
       const dataArray = new Uint8Array(analyser.frequencyBinCount)
+      // Weight multipliers: edge bars shorter, center bar tallest (ChatGPT style)
+      const barWeights = [0.6, 0.85, 1.0, 0.85, 0.6]
+      const smoothBars = [4, 4, 4, 4, 4]
       const updateBars = () => {
         analyser.getByteFrequencyData(dataArray)
-        // Map 64 frequency bins → 40 bars
-        const bars = []
-        const binStep = dataArray.length / 40
-        for (let i = 0; i < 40; i++) {
-          const idx = Math.floor(i * binStep)
-          const val = dataArray[idx] || 0
-          // Scale 0-255 → 2-20px height
-          bars.push(Math.max(2, (val / 255) * 20))
+        // Compute RMS volume from frequency data
+        let sum = 0
+        for (let i = 0; i < dataArray.length; i++) sum += dataArray[i]
+        const avg = sum / dataArray.length // 0-255
+        const normalized = avg / 255 // 0-1
+        // Map to bar heights: idle = 4px, max = 60px
+        const maxH = 60
+        const minH = 4
+        for (let i = 0; i < 5; i++) {
+          const target = minH + (normalized * (maxH - minH) * barWeights[i])
+          // Add slight random variation per bar for organic feel
+          const jitter = (Math.random() - 0.5) * 6 * normalized
+          const targetWithJitter = Math.max(minH, Math.min(maxH, target + jitter))
+          // Smooth interpolation (spring-like)
+          smoothBars[i] = smoothBars[i] + (targetWithJitter - smoothBars[i]) * 0.35
         }
-        setVoiceWaveBars(bars)
+        setVoiceWaveBars([...smoothBars])
         waveAnimFrameRef.current = requestAnimationFrame(updateBars)
       }
       updateBars()
     } catch (err) {
       console.warn('AudioContext waveform not available, falling back to random:', err)
-      // Fallback: random bars if microphone access fails
       voiceWaveIntervalRef.current = setInterval(() => {
-        setVoiceWaveBars(prev => prev.map(() => Math.random() * 18 + 2))
-      }, 80)
+        setVoiceWaveBars([0.6, 0.85, 1.0, 0.85, 0.6].map(w => 4 + Math.random() * 40 * w))
+      }, 100)
     }
   }
   const stopWaveAnimation = () => {
@@ -1092,7 +1095,7 @@ export default function Dashboard() {
     if (analyserRef.current) { analyserRef.current = null }
     if (audioContextRef.current) { try { audioContextRef.current.close() } catch {}; audioContextRef.current = null }
     if (mediaStreamRef.current) { mediaStreamRef.current.getTracks().forEach(t => t.stop()); mediaStreamRef.current = null }
-    setVoiceWaveBars(Array(40).fill(2))
+    setVoiceWaveBars(Array(5).fill(4))
   }
 
   // ── OpenAI Whisper transcription helper ──
@@ -1222,210 +1225,6 @@ export default function Dashboard() {
     stopWaveAnimation()
   }
 
-
-  // ── OpenAI Voice Call: Recording & Pipeline ──
-  const voiceCallRecorderRef = useRef(null)
-  const voiceCallChunksRef = useRef([])
-  const voiceCallStreamRef = useRef(null)
-
-  const startVoiceRecording = async () => {
-    console.log('🎙️ startVoiceRecording')
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      voiceCallStreamRef.current = stream
-      voiceCallChunksRef.current = []
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
-        : MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm'
-        : MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4'
-        : 'audio/wav'
-      const recorder = new MediaRecorder(stream, { mimeType })
-      recorder.ondataavailable = (e) => { if (e.data.size > 0) voiceCallChunksRef.current.push(e.data) }
-      recorder.onstop = () => {
-        console.log('🎙️ Recorder stopped, chunks:', voiceCallChunksRef.current.length)
-        if (voiceCallModeRef.current) {
-          const blob = new Blob(voiceCallChunksRef.current, { type: mimeType })
-          if (blob.size > 500) {
-            sendVoiceToBackend(blob)
-          } else {
-            console.warn('🎙️ Audio too short, skipping')
-            setVoiceCallListening(false)
-          }
-        }
-      }
-      recorder.start(250)
-      voiceCallRecorderRef.current = recorder
-      setVoiceCallListening(true)
-      setVoiceCallTranscript('Écoute en cours...')
-    } catch (err) {
-      console.error('🎙️ Mic access failed:', err)
-      setVoiceCallTranscript('Erreur: accès au micro refusé')
-      setVoiceCallListening(false)
-    }
-  }
-
-  const stopVoiceRecording = () => {
-    console.log('🎙️ stopVoiceRecording')
-    if (voiceCallRecorderRef.current && voiceCallRecorderRef.current.state !== 'inactive') {
-      try { voiceCallRecorderRef.current.stop() } catch {}
-    }
-    voiceCallRecorderRef.current = null
-    if (voiceCallStreamRef.current) {
-      voiceCallStreamRef.current.getTracks().forEach(t => t.stop())
-      voiceCallStreamRef.current = null
-    }
-    setVoiceCallListening(false)
-  }
-
-  const sendVoiceToBackend = async (audioBlob) => {
-    console.log('📤 sendVoiceToBackend, blob size:', audioBlob.size)
-    setVoiceCallTranscript('Traitement en cours...')
-    setVoiceCallSpeaking(true)
-    try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) { setVoiceCallTranscript('Session expirée'); setVoiceCallSpeaking(false); return }
-
-      // Build context from recent messages
-      const contextMessages = chatMessages.slice(-10).map(m => ({ role: m.role, text: m.text }))
-
-      const formData = new FormData()
-      formData.append('audio', audioBlob, 'recording.webm')
-      formData.append('context', JSON.stringify(contextMessages))
-
-      const resp = await fetch(`${API_URL}/api/voice`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${session.access_token}` },
-        body: formData
-      })
-
-      if (!resp.ok) {
-        const errData = await resp.json().catch(() => ({}))
-        throw new Error(errData.detail || `Erreur ${resp.status}`)
-      }
-
-      const data = await resp.json()
-      console.log('✅ Voice response:', data.user_text?.slice(0, 50), '→', data.ai_text?.slice(0, 50))
-
-      // Show transcript
-      if (data.user_text) setVoiceCallTranscript(data.ai_text || '')
-
-      // Add to chat history
-      if (data.user_text) {
-        setChatMessages(prev => {
-          const updated = [
-            ...prev,
-            { role: 'user', text: data.user_text },
-            { role: 'assistant', text: data.ai_text || '...' }
-          ]
-          if (activeConversationId) {
-            setChatConversations(prev2 => prev2.map(c =>
-              c.id === activeConversationId ? { ...c, messages: updated, updatedAt: new Date().toISOString() } : c
-            ))
-          }
-          return updated
-        })
-      }
-
-      // Play audio response
-      if (data.audio_base64) {
-        await playOpenAIAudio(data.audio_base64, data.audio_mime || 'audio/mpeg')
-      }
-
-      setVoiceCallSpeaking(false)
-
-      // Auto-restart recording if still in voice call mode
-      if (voiceCallModeRef.current) {
-        setTimeout(() => {
-          if (voiceCallModeRef.current) startVoiceRecording()
-        }, 500)
-      }
-    } catch (err) {
-      console.error('❌ Voice pipeline error:', err)
-      setVoiceCallTranscript('Erreur: ' + (err.message || 'Connexion impossible'))
-      setVoiceCallSpeaking(false)
-      // Auto-restart after error
-      if (voiceCallModeRef.current) {
-        setTimeout(() => {
-          if (voiceCallModeRef.current) startVoiceRecording()
-        }, 2000)
-      }
-    }
-  }
-
-  const playOpenAIAudio = (base64Audio, mimeType) => {
-    return new Promise((resolve) => {
-      try {
-        const audioSrc = `data:${mimeType};base64,${base64Audio}`
-        const audio = new Audio(audioSrc)
-        voiceCallAudioRef.current = audio
-        audio.onended = () => {
-          console.log('🔊 Audio playback ended')
-          voiceCallAudioRef.current = null
-          resolve()
-        }
-        audio.onerror = (e) => {
-          console.error('🔊 Audio playback error:', e)
-          voiceCallAudioRef.current = null
-          resolve()
-        }
-        audio.play().catch(err => {
-          console.error('🔊 Audio play() failed:', err)
-          resolve()
-        })
-      } catch (err) {
-        console.error('🔊 playOpenAIAudio error:', err)
-        resolve()
-      }
-    })
-  }
-
-  const startVoiceCall = async () => {
-    voiceCallModeRef.current = true
-    setVoiceCallMode(true)
-    setVoiceCallTranscript('')
-    setVoiceCallSpeaking(false)
-    setVoiceCallListening(false)
-    startWaveAnimation()
-
-    // Auto-create conversation if needed
-    if (!activeConversationId) {
-      const newId = Date.now().toString()
-      const newConv = {
-        id: newId,
-        title: '🎙️ Conversation vocale',
-        messages: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      }
-      setChatConversations(prev => [newConv, ...prev])
-      setActiveConversationId(newId)
-    }
-
-    // Start recording immediately
-    startVoiceRecording()
-  }
-
-  const endVoiceCall = () => {
-    voiceCallModeRef.current = false
-    // Stop any active recording
-    stopVoiceRecording()
-    // Clean up audio
-    if (voiceCallAudioRef.current) { try { voiceCallAudioRef.current.pause() } catch {}; voiceCallAudioRef.current = null }
-    if (window.speechSynthesis) window.speechSynthesis.cancel()
-    setVoiceCallMode(false)
-    setVoiceCallListening(false)
-    setVoiceCallTranscript('')
-    setVoiceCallSpeaking(false)
-    stopWaveAnimation()
-  }
-
-  const toggleVoiceCallMic = () => {
-    if (voiceCallSpeaking) return
-    if (voiceCallListening) {
-      stopVoiceRecording()
-    } else {
-      startVoiceRecording()
-    }
-  }
 
   // ============ CHAT SEND ============
   const sendChatMessage = async (directMessage) => {
@@ -5625,21 +5424,12 @@ export default function Dashboard() {
                   )}
 
                   <div className={`flex items-end gap-2 bg-[#1a1d27] border border-gray-700/50 rounded-xl px-3 py-2 transition-colors ${
-                    voiceDictationMode ? 'border-red-500/40' : 'focus-within:border-yellow-500/40'
+                    voiceDictationMode ? 'border-purple-500/60 shadow-[0_0_12px_rgba(139,92,246,0.15)]' : 'focus-within:border-yellow-500/40'
                   }`}>
-                    {/* Left buttons: + or Stop */}
+                    {/* Left buttons: + (always visible) */}
                     <div className="relative shrink-0" ref={attachMenuRef}>
-                      {voiceDictationMode ? (
-                        /* Stop button (red square) */
-                        <button
-                          onClick={cancelDictation}
-                          className="p-1.5 text-red-400 hover:text-red-300 rounded-lg transition-colors"
-                          title="Arrêter la dictée"
-                        >
-                          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><rect x="3" y="3" width="10" height="10" rx="2"/></svg>
-                        </button>
-                      ) : (
-                        /* + button */
+                      {!voiceDictationMode && (
+                        /* + button (normal mode only) */
                         <>
                           <button
                             onClick={() => setShowAttachMenu(!showAttachMenu)}
@@ -5682,13 +5472,17 @@ export default function Dashboard() {
 
                     {/* Waveform OR Textarea */}
                     {voiceDictationMode ? (
-                      /* Animated waveform bars */
-                      <div className="flex-1 flex items-center justify-center gap-[2px] h-10 px-2">
+                      /* ChatGPT-style animated waveform — 5 large bars */
+                      <div className="flex-1 flex items-center justify-center gap-[6px] h-11 px-4">
                         {voiceWaveBars.map((h, i) => (
                           <div
                             key={i}
-                            className="w-[2px] bg-gray-400 rounded-full transition-all duration-75"
-                            style={{ height: `${h}px` }}
+                            className="w-[4px] rounded-full transition-[height] duration-[80ms] ease-out"
+                            style={{
+                              height: `${Math.round(h)}px`,
+                              background: 'linear-gradient(180deg, #a78bfa 0%, #7c3aed 100%)',
+                              opacity: 0.85 + (h / 60) * 0.15
+                            }}
                           />
                         ))}
                       </div>
@@ -5775,18 +5569,8 @@ export default function Dashboard() {
                     )}
                   </div>
 
-                  <div className="flex items-center justify-between mt-2 px-1">
+                  <div className="flex items-center justify-center mt-2 px-1">
                     <p className="text-[10px] text-gray-600">ShopBrain IA peut faire des erreurs. Vérifiez les informations importantes.</p>
-                    {/* Voice call button */}
-                    <button
-                      onClick={startVoiceCall}
-                      className="p-1 text-gray-600 hover:text-yellow-500 transition-colors"
-                      title="Appel vocal"
-                    >
-                      <svg width="14" height="14" viewBox="0 0 20 20" fill="none">
-                        <path d="M3 5C3 3.9 3.9 3 5 3H7.5L9.5 7L7.5 8.5C8.57 10.67 10.33 12.43 12.5 13.5L14 11.5L18 13.5V16C18 17.1 17.1 18 16 18C8.82 18 3 12.18 3 5Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
-                      </svg>
-                    </button>
                   </div>
 
                   <input
@@ -5800,82 +5584,7 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* ── OpenAI Voice Call Overlay ── */}
-              {voiceCallMode && (
-                <div className="fixed inset-0 z-[100] bg-gradient-to-b from-[#0d0f1a] via-[#141726] to-[#0d0f1a] flex flex-col items-center justify-center">
-                  {/* Header */}
-                  <div className="absolute top-6 left-6 right-6 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                      <span className="text-xs text-gray-400 font-medium">ShopBrain Voice</span>
-                    </div>
-                    <span className="text-xs text-gray-500">OpenAI</span>
-                  </div>
 
-                  {/* Animated waveform */}
-                  <div className="flex items-center justify-center gap-[3px] h-24 mb-8">
-                    {voiceWaveBars.map((h, i) => (
-                      <div
-                        key={i}
-                        className={`w-[3px] rounded-full transition-all duration-100 ${
-                          voiceCallSpeaking ? 'bg-yellow-500/70' : voiceCallListening ? 'bg-green-400/60' : 'bg-gray-600/40'
-                        }`}
-                        style={{ height: `${Math.max(h * 1.5, 3)}px` }}
-                      />
-                    ))}
-                  </div>
-
-                  {/* Status & Transcript */}
-                  <div className="text-center mb-10 px-6 max-w-lg">
-                    <p className="text-sm text-gray-400 mb-2">
-                      {voiceCallSpeaking ? '🔊 Réponse en cours...' : voiceCallListening ? '🎤 Je vous écoute...' : '⏸ En pause'}
-                    </p>
-                    {voiceCallTranscript && (
-                      <p className="text-base text-gray-200 font-medium leading-relaxed">{voiceCallTranscript}</p>
-                    )}
-                  </div>
-
-                  {/* Controls */}
-                  <div className="flex items-center gap-8">
-                    {/* Mic toggle */}
-                    <button
-                      onClick={toggleVoiceCallMic}
-                      disabled={voiceCallSpeaking}
-                      className={`w-14 h-14 rounded-full flex items-center justify-center shadow-lg transition-all ${
-                        voiceCallListening
-                          ? 'bg-white text-gray-800 shadow-white/20'
-                          : 'bg-gray-700 text-gray-300 border border-gray-600'
-                      } ${voiceCallSpeaking ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105'}`}
-                      title={voiceCallListening ? 'Couper le micro' : 'Activer le micro'}
-                    >
-                      {voiceCallListening ? (
-                        <svg width="24" height="24" viewBox="0 0 20 20" fill="none">
-                          <rect x="7" y="2" width="6" height="10" rx="3" stroke="currentColor" strokeWidth="1.5"/>
-                          <path d="M5 10C5 12.76 7.24 15 10 15C12.76 15 15 12.76 15 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                          <path d="M10 15V18M7 18H13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                        </svg>
-                      ) : (
-                        <svg width="24" height="24" viewBox="0 0 20 20" fill="none">
-                          <rect x="7" y="2" width="6" height="10" rx="3" stroke="currentColor" strokeWidth="1.5"/>
-                          <path d="M5 10C5 12.76 7.24 15 10 15C12.76 15 15 12.76 15 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                          <path d="M10 15V18M7 18H13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                          <path d="M3 3L17 17" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                        </svg>
-                      )}
-                    </button>
-                    {/* Hang up button */}
-                    <button
-                      onClick={endVoiceCall}
-                      className="w-16 h-16 rounded-full bg-red-600 hover:bg-red-700 text-white flex items-center justify-center shadow-lg shadow-red-900/40 transition-all hover:scale-105"
-                      title="Raccrocher"
-                    >
-                      <svg width="28" height="28" viewBox="0 0 24 24" fill="white">
-                        <path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.956.956 0 010-1.36C3.49 8.83 7.54 7 12 7s8.51 1.83 11.71 4.72c.18.18.29.44.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28a11.27 11.27 0 00-2.67-1.85.996.996 0 01-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/>
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-              )}
             </>
           )}
         </main>
