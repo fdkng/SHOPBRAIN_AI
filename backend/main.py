@@ -5802,7 +5802,7 @@ async def gemini_live_token(request: Request):
             "success": True,
             "token": token_name,
             "model": GEMINI_LIVE_MODEL,
-            "ws_url": "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
+            "ws_url": "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained"
         }
 
     except HTTPException:
