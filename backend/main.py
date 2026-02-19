@@ -2977,6 +2977,137 @@ async def get_shopify_insights(
     }
 
 
+# ---------------------------------------------------------------------------
+# Stock Forecast / Rupture Prediction Endpoint
+# ---------------------------------------------------------------------------
+
+@app.get("/api/shopify/stock-forecast")
+async def get_stock_forecast(request: Request, range: str = "30d", threshold_days: int = 14):
+    """📦 Prévision des ruptures de stock.
+
+    Analyses all products: computes daily sales velocity from order history,
+    estimates days-to-stockout, and flags products below user threshold.
+    Returns ALL products (not just risky ones) so the frontend can display
+    a complete inventory table.
+    """
+    user_id = get_user_id(request)
+    shop_domain, access_token = _get_shopify_connection(user_id)
+
+    range_map = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}
+    days = range_map.get(range, 30)
+
+    # Fetch orders to compute sales velocity
+    orders = _fetch_shopify_orders(shop_domain, access_token, days)
+
+    # Aggregate quantity sold per product
+    product_sales: dict[str, dict] = {}
+    for order in orders:
+        for item in order.get("line_items", []):
+            pid = str(item.get("product_id") or item.get("id"))
+            if not pid or pid == "None":
+                continue
+            qty = int(item.get("quantity") or 0)
+            if pid not in product_sales:
+                product_sales[pid] = {"quantity_sold": 0, "order_count": 0}
+            product_sales[pid]["quantity_sold"] += qty
+            product_sales[pid]["order_count"] += 1
+
+    # Fetch all products for inventory + metadata
+    products_resp = get_shopify_products
+    products_payload = await products_resp(request)
+    products = products_payload.get("products", [])
+
+    forecast_items = []
+    total_inventory = 0
+    critical_count = 0
+    warning_count = 0
+    safe_count = 0
+
+    for product in products:
+        pid = str(product.get("id"))
+        title = product.get("title") or "Produit sans nom"
+
+        # Sum inventory across all variants
+        inventory = 0
+        variants = product.get("variants", []) or []
+        for variant in variants:
+            inventory += int(variant.get("inventory_quantity") or 0)
+
+        total_inventory += inventory
+
+        # Sales velocity
+        sales_data = product_sales.get(pid, {"quantity_sold": 0, "order_count": 0})
+        quantity_sold = sales_data["quantity_sold"]
+        order_count = sales_data["order_count"]
+        daily_velocity = quantity_sold / max(days, 1)
+
+        # Days to stockout
+        if daily_velocity > 0:
+            days_to_stockout = inventory / daily_velocity
+        else:
+            days_to_stockout = None  # No sales = can't predict
+
+        # Status classification
+        if inventory <= 0:
+            status = "rupture"  # Already out of stock
+            critical_count += 1
+        elif days_to_stockout is not None and days_to_stockout <= 7:
+            status = "critical"  # Less than 7 days
+            critical_count += 1
+        elif days_to_stockout is not None and days_to_stockout <= threshold_days:
+            status = "warning"  # Below user threshold
+            warning_count += 1
+        elif days_to_stockout is not None:
+            status = "safe"  # Above threshold
+            safe_count += 1
+        else:
+            status = "dormant"  # No sales data
+            safe_count += 1
+
+        # Get image for display
+        images = product.get("images", []) or []
+        image_url = images[0].get("src") if images else None
+
+        # Get price
+        price = None
+        if variants:
+            price = _safe_float(variants[0].get("price"), None)
+
+        forecast_items.append({
+            "product_id": pid,
+            "title": title,
+            "image_url": image_url,
+            "price": round(price, 2) if price else None,
+            "inventory": inventory,
+            "quantity_sold_period": quantity_sold,
+            "order_count": order_count,
+            "daily_velocity": round(daily_velocity, 2),
+            "days_to_stockout": round(days_to_stockout, 1) if days_to_stockout is not None else None,
+            "status": status,
+        })
+
+    # Sort: rupture first, then critical, warning, safe, dormant
+    status_order = {"rupture": 0, "critical": 1, "warning": 2, "safe": 3, "dormant": 4}
+    forecast_items.sort(key=lambda x: (
+        status_order.get(x["status"], 5),
+        x["days_to_stockout"] if x["days_to_stockout"] is not None else 99999,
+    ))
+
+    return {
+        "success": True,
+        "range_days": days,
+        "threshold_days": threshold_days,
+        "summary": {
+            "total_products": len(forecast_items),
+            "total_inventory": total_inventory,
+            "critical": critical_count,
+            "warning": warning_count,
+            "safe": safe_count,
+        },
+        "items": forecast_items,
+    }
+
+
 @app.get("/api/shopify/bundles")
 async def get_shopify_bundles(request: Request, range: str = "30d", limit: int = 10):
     """🧩 Bundles & cross-sell suggestions based on order co-occurrence.

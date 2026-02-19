@@ -148,6 +148,13 @@ export default function Dashboard() {
   const [selectedBundlesHistoryJobId, setSelectedBundlesHistoryJobId] = useState('')
   const [backendHealth, setBackendHealth] = useState(null)
   const [backendHealthTs, setBackendHealthTs] = useState(0)
+  // Stock forecast / rupture prediction
+  const [stockForecast, setStockForecast] = useState(null)
+  const [stockForecastLoading, setStockForecastLoading] = useState(false)
+  const [stockForecastError, setStockForecastError] = useState('')
+  const [stockThresholdDays, setStockThresholdDays] = useState(14)
+  const [stockSearchQuery, setStockSearchQuery] = useState('')
+  const [stockFilterStatus, setStockFilterStatus] = useState('all')
   const [shopCurrency, setShopCurrency] = useState(() => {
     if (typeof window === 'undefined') return ''
     return localStorage.getItem('shopCurrencyCache') || ''
@@ -1928,6 +1935,52 @@ export default function Dashboard() {
       throw new Error(errorMessage)
     } finally {
       if (!config?.silent) setInsightsLoading(false)
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Stock Forecast / Prévision ruptures
+  // ---------------------------------------------------------------------------
+  const loadStockForecast = async (thresholdOverride) => {
+    try {
+      setStockForecastLoading(true)
+      setStockForecastError('')
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) throw new Error('Session expirée, reconnectez-vous')
+
+      await waitForBackendReady({ retries: 8, retryDelayMs: 2000, timeoutMs: 22000 })
+      await warmupBackend(session.access_token)
+
+      const threshold = thresholdOverride ?? stockThresholdDays
+      const url = `${API_URL}/api/shopify/stock-forecast?range=${analyticsRange}&threshold_days=${threshold}`
+      const { response, data } = await fetchJsonWithRetry(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        }
+      }, {
+        retries: 3,
+        retryDelayMs: 2000,
+        timeoutMs: 60000,
+        retryStatuses: [429, 500, 502, 503, 504]
+      })
+
+      if (!response.ok) {
+        const errorData = data || {}
+        throw new Error(errorData.detail || `HTTP ${response.status}`)
+      }
+      if (!data.success) throw new Error(data.detail || 'Analyse indisponible')
+
+      setStockForecast(data)
+      setBackendHealthTs(Date.now())
+      return data
+    } catch (err) {
+      console.error('Error loading stock forecast:', err)
+      const errorMessage = normalizeNetworkErrorMessage(err)
+      setStockForecastError(errorMessage)
+    } finally {
+      setStockForecastLoading(false)
     }
   }
 
@@ -4172,34 +4225,315 @@ export default function Dashboard() {
         )}
 
         {activeTab === 'action-stock' && (
-          <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 space-y-6">
-            <div>
-              <h2 className="text-white text-xl font-bold mb-2">Prévision des ruptures</h2>
-              <p className="text-gray-400">Estime les jours restants selon les ventes actuelles.</p>
-            </div>
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <p className="text-sm text-gray-400">{getInsightCount(insightsData?.stock_risks)} alertes</p>
-              <button
-                onClick={() => runActionAnalysis('action-stock')}
-                disabled={insightsLoading}
-                className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
-              >
-                {insightsLoading ? 'Analyse en cours...' : 'Lancer l\'analyse IA'}
-              </button>
-            </div>
-            {renderStatus('action-stock')}
-            <div className="space-y-3">
-              {!insightsLoading && (!insightsData?.stock_risks || insightsData.stock_risks.length === 0) ? (
-                <p className="text-sm text-gray-500">Aucun risque détecté.</p>
-              ) : (
-                insightsData?.stock_risks?.slice(0, 8).map((item, index) => (
-                  <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
-                    <p className="text-white font-semibold">{item.title || item.product_id}</p>
-                    <p className="text-xs text-gray-500">{item.days_cover} jours restants</p>
-                  </div>
-                ))
+          <div className="space-y-6">
+            {/* Header + Controls */}
+            <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+              <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+                <div>
+                  <h2 className="text-white text-xl font-bold mb-1 flex items-center gap-2">
+                    <span>📦</span> Prévision des ruptures
+                  </h2>
+                  <p className="text-gray-400 text-sm">Analyse en temps réel de vos stocks et prédiction des ruptures basée sur la vélocité de ventes.</p>
+                </div>
+                <button
+                  onClick={() => loadStockForecast()}
+                  disabled={stockForecastLoading}
+                  className="bg-yellow-500 hover:bg-yellow-600 text-gray-900 font-bold py-3 px-6 rounded-lg disabled:opacity-50 transition-colors whitespace-nowrap flex items-center gap-2"
+                >
+                  {stockForecastLoading ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                      Analyse en cours...
+                    </>
+                  ) : 'Analyser les stocks'}
+                </button>
+              </div>
+
+              {stockForecastError && (
+                <div className="mt-4 bg-red-900/30 border border-red-700 rounded-lg p-3 text-red-300 text-sm">
+                  {stockForecastError}
+                </div>
               )}
             </div>
+
+            {/* Threshold Config */}
+            <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-yellow-400 text-lg">⚙️</span>
+                  <span className="text-white font-semibold text-sm">Seuil d'alerte</span>
+                </div>
+                <div className="flex items-center gap-3 flex-1">
+                  <input
+                    type="range"
+                    min={3}
+                    max={60}
+                    value={stockThresholdDays}
+                    onChange={(e) => setStockThresholdDays(Number(e.target.value))}
+                    className="flex-1 accent-yellow-500 h-2 rounded-lg cursor-pointer"
+                  />
+                  <div className="bg-gray-900 border border-gray-600 rounded-lg px-3 py-1.5 min-w-[80px] text-center">
+                    <span className="text-yellow-400 font-bold text-lg">{stockThresholdDays}</span>
+                    <span className="text-gray-400 text-xs ml-1">jours</span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => loadStockForecast(stockThresholdDays)}
+                  disabled={stockForecastLoading}
+                  className="text-xs bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg disabled:opacity-50 transition-colors whitespace-nowrap"
+                >
+                  Appliquer
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                Les produits avec moins de <span className="text-yellow-400 font-semibold">{stockThresholdDays} jours</span> de stock seront signalés en alerte.
+              </p>
+            </div>
+
+            {/* Summary Cards */}
+            {stockForecast?.summary && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 text-center">
+                  <p className="text-3xl font-bold text-white">{stockForecast.summary.total_products}</p>
+                  <p className="text-xs text-gray-400 mt-1">Produits</p>
+                </div>
+                <div className="bg-gray-800 rounded-lg p-4 border border-red-900/50 text-center">
+                  <p className="text-3xl font-bold text-red-400">{stockForecast.summary.critical}</p>
+                  <p className="text-xs text-gray-400 mt-1">🔴 Critiques</p>
+                </div>
+                <div className="bg-gray-800 rounded-lg p-4 border border-yellow-900/50 text-center">
+                  <p className="text-3xl font-bold text-yellow-400">{stockForecast.summary.warning}</p>
+                  <p className="text-xs text-gray-400 mt-1">🟡 Attention</p>
+                </div>
+                <div className="bg-gray-800 rounded-lg p-4 border border-green-900/50 text-center">
+                  <p className="text-3xl font-bold text-green-400">{stockForecast.summary.safe}</p>
+                  <p className="text-xs text-gray-400 mt-1">🟢 OK</p>
+                </div>
+              </div>
+            )}
+
+            {/* Search & Filters */}
+            {stockForecast?.items && stockForecast.items.length > 0 && (
+              <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <div className="relative flex-1">
+                    <input
+                      type="text"
+                      value={stockSearchQuery}
+                      onChange={(e) => setStockSearchQuery(e.target.value)}
+                      placeholder="Rechercher un produit..."
+                      className="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-2.5 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-yellow-500 transition-colors"
+                    />
+                    {stockSearchQuery && (
+                      <button
+                        onClick={() => setStockSearchQuery('')}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white text-sm"
+                      >✕</button>
+                    )}
+                  </div>
+                  <div className="flex gap-2 flex-wrap">
+                    {[
+                      { key: 'all', label: 'Tous', color: 'gray' },
+                      { key: 'critical', label: '🔴 Critiques', color: 'red' },
+                      { key: 'warning', label: '🟡 Attention', color: 'yellow' },
+                      { key: 'safe', label: '🟢 OK', color: 'green' },
+                      { key: 'dormant', label: '💤 Dormants', color: 'gray' },
+                    ].map(f => (
+                      <button
+                        key={f.key}
+                        onClick={() => setStockFilterStatus(f.key)}
+                        className={`px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${
+                          stockFilterStatus === f.key
+                            ? f.color === 'red' ? 'bg-red-600 text-white'
+                              : f.color === 'yellow' ? 'bg-yellow-500 text-gray-900'
+                              : f.color === 'green' ? 'bg-green-600 text-white'
+                              : 'bg-gray-600 text-white'
+                            : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+                        }`}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Product Inventory Table */}
+            {stockForecast?.items && stockForecast.items.length > 0 && (() => {
+              const filtered = stockForecast.items
+                .filter(item => {
+                  if (stockFilterStatus !== 'all') {
+                    if (stockFilterStatus === 'critical' && item.status !== 'critical' && item.status !== 'rupture') return false
+                    if (stockFilterStatus === 'warning' && item.status !== 'warning') return false
+                    if (stockFilterStatus === 'safe' && item.status !== 'safe') return false
+                    if (stockFilterStatus === 'dormant' && item.status !== 'dormant') return false
+                  }
+                  if (stockSearchQuery) {
+                    return (item.title || '').toLowerCase().includes(stockSearchQuery.toLowerCase())
+                  }
+                  return true
+                })
+              return (
+                <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+                  {/* Table Header */}
+                  <div className="hidden md:grid md:grid-cols-12 gap-2 px-4 py-3 bg-gray-900/60 text-xs text-gray-500 font-semibold uppercase border-b border-gray-700">
+                    <div className="col-span-4">Produit</div>
+                    <div className="col-span-2 text-center">Stock</div>
+                    <div className="col-span-2 text-center">Vélocité /jour</div>
+                    <div className="col-span-2 text-center">Jours restants</div>
+                    <div className="col-span-2 text-center">Statut</div>
+                  </div>
+
+                  {/* Table Rows */}
+                  <div className="divide-y divide-gray-700/50">
+                    {filtered.length === 0 ? (
+                      <div className="p-6 text-center text-gray-500 text-sm">
+                        Aucun produit ne correspond aux filtres sélectionnés.
+                      </div>
+                    ) : (
+                      filtered.map((item, idx) => {
+                        const statusConfig = {
+                          rupture: { label: 'Rupture', bg: 'bg-red-900/40', border: 'border-red-700/50', text: 'text-red-400', badge: 'bg-red-600', icon: '🔴' },
+                          critical: { label: 'Critique', bg: 'bg-red-900/20', border: 'border-red-800/30', text: 'text-red-400', badge: 'bg-red-600', icon: '🔴' },
+                          warning: { label: 'Attention', bg: 'bg-yellow-900/15', border: 'border-yellow-800/30', text: 'text-yellow-400', badge: 'bg-yellow-600', icon: '🟡' },
+                          safe: { label: 'OK', bg: 'bg-gray-800', border: 'border-transparent', text: 'text-green-400', badge: 'bg-green-600', icon: '🟢' },
+                          dormant: { label: 'Dormant', bg: 'bg-gray-800', border: 'border-transparent', text: 'text-gray-500', badge: 'bg-gray-600', icon: '💤' },
+                        }
+                        const sc = statusConfig[item.status] || statusConfig.safe
+
+                        // Progress bar for days to stockout (0-60 days scale)
+                        const daysVal = item.days_to_stockout ?? 999
+                        const barPercent = Math.min(100, Math.max(0, (daysVal / 60) * 100))
+                        const barColor = item.status === 'rupture' || item.status === 'critical'
+                          ? 'bg-red-500'
+                          : item.status === 'warning'
+                            ? 'bg-yellow-500'
+                            : item.status === 'dormant' ? 'bg-gray-600' : 'bg-green-500'
+
+                        return (
+                          <div
+                            key={item.product_id || idx}
+                            className={`${sc.bg} ${sc.border} border-l-4 px-4 py-3 hover:bg-gray-700/30 transition-colors`}
+                          >
+                            {/* Mobile Layout */}
+                            <div className="md:hidden space-y-2">
+                              <div className="flex items-start gap-3">
+                                {item.image_url && (
+                                  <img src={item.image_url} alt="" className="w-10 h-10 rounded object-cover flex-shrink-0" />
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-white font-semibold text-sm truncate">{item.title}</p>
+                                  <div className="flex items-center gap-3 mt-1 text-xs">
+                                    <span className="text-gray-400">Stock: <span className={`font-bold ${item.inventory <= 0 ? 'text-red-400' : 'text-white'}`}>{item.inventory}</span></span>
+                                    <span className="text-gray-400">Vélocité: <span className="text-white font-bold">{item.daily_velocity}</span>/j</span>
+                                  </div>
+                                </div>
+                                <span className={`${sc.badge} text-white text-xs font-bold px-2 py-1 rounded-full whitespace-nowrap`}>
+                                  {sc.icon} {sc.label}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <div className="flex-1 bg-gray-900 rounded-full h-2 overflow-hidden">
+                                  <div className={`${barColor} h-full rounded-full transition-all`} style={{ width: `${barPercent}%` }}/>
+                                </div>
+                                <span className={`text-xs font-bold ${sc.text} min-w-[70px] text-right`}>
+                                  {item.days_to_stockout !== null ? `${Math.round(item.days_to_stockout)}j restants` : 'N/A'}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Desktop Layout */}
+                            <div className="hidden md:grid md:grid-cols-12 gap-2 items-center">
+                              <div className="col-span-4 flex items-center gap-3 min-w-0">
+                                {item.image_url && (
+                                  <img src={item.image_url} alt="" className="w-9 h-9 rounded object-cover flex-shrink-0" />
+                                )}
+                                <div className="min-w-0">
+                                  <p className="text-white font-semibold text-sm truncate">{item.title}</p>
+                                  {item.price && <p className="text-xs text-gray-500">{item.price} {shopCurrency}</p>}
+                                </div>
+                              </div>
+                              <div className="col-span-2 text-center">
+                                <span className={`text-lg font-bold ${item.inventory <= 0 ? 'text-red-400' : item.inventory < 10 ? 'text-yellow-400' : 'text-white'}`}>
+                                  {item.inventory}
+                                </span>
+                                <p className="text-xs text-gray-500">{item.quantity_sold_period} vendus / {stockForecast.range_days}j</p>
+                              </div>
+                              <div className="col-span-2 text-center">
+                                <span className="text-white font-bold">{item.daily_velocity}</span>
+                                <span className="text-gray-500 text-xs"> /jour</span>
+                              </div>
+                              <div className="col-span-2 text-center">
+                                <div className="flex flex-col items-center gap-1">
+                                  <span className={`text-lg font-bold ${sc.text}`}>
+                                    {item.days_to_stockout !== null ? Math.round(item.days_to_stockout) : '∞'}
+                                  </span>
+                                  <div className="w-full bg-gray-900 rounded-full h-1.5 overflow-hidden">
+                                    <div className={`${barColor} h-full rounded-full transition-all`} style={{ width: `${barPercent}%` }}/>
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="col-span-2 text-center">
+                                <span className={`${sc.badge} text-white text-xs font-bold px-3 py-1 rounded-full`}>
+                                  {sc.icon} {sc.label}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })
+                    )}
+                  </div>
+
+                  {/* Table Footer */}
+                  <div className="px-4 py-3 bg-gray-900/40 border-t border-gray-700 flex items-center justify-between">
+                    <p className="text-xs text-gray-500">
+                      {filtered.length} / {stockForecast.items.length} produits affichés
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      Inventaire total: <span className="text-white font-semibold">{stockForecast.summary.total_inventory}</span> unités
+                    </p>
+                  </div>
+                </div>
+              )
+            })()}
+
+            {/* Empty state */}
+            {!stockForecastLoading && !stockForecast && (
+              <div className="bg-gray-800 rounded-lg p-12 border border-gray-700 text-center">
+                <div className="text-5xl mb-4">📦</div>
+                <h3 className="text-white font-bold text-lg mb-2">Analysez vos stocks</h3>
+                <p className="text-gray-400 text-sm max-w-md mx-auto mb-6">
+                  Cliquez sur "Analyser les stocks" pour voir vos niveaux d'inventaire, la vélocité de ventes et les prédictions de rupture pour chaque produit.
+                </p>
+                <button
+                  onClick={() => loadStockForecast()}
+                  disabled={stockForecastLoading}
+                  className="bg-yellow-500 hover:bg-yellow-600 text-gray-900 font-bold py-3 px-8 rounded-lg transition-colors"
+                >
+                  Analyser les stocks
+                </button>
+              </div>
+            )}
+
+            {/* Loading skeleton */}
+            {stockForecastLoading && !stockForecast && (
+              <div className="space-y-3">
+                {[1, 2, 3, 4, 5].map(i => (
+                  <div key={i} className="bg-gray-800 rounded-lg p-4 border border-gray-700 animate-pulse">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-gray-700 rounded"/>
+                      <div className="flex-1 space-y-2">
+                        <div className="h-4 bg-gray-700 rounded w-1/3"/>
+                        <div className="h-3 bg-gray-700 rounded w-1/5"/>
+                      </div>
+                      <div className="h-6 bg-gray-700 rounded-full w-20"/>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
