@@ -91,9 +91,6 @@ SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
 FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
 SERPAPI_KEY = os.getenv("SERPAPI_KEY") or os.getenv("SERPAPI_API_KEY")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-if GEMINI_API_KEY:
-    print(f"🔑 GEMINI_API_KEY loaded: {len(GEMINI_API_KEY)} chars")
 MARKET_TOLERANCE_PCT = float(os.getenv("MARKET_TOLERANCE_PCT", "5"))
 SERP_MAX_PRODUCTS = int(os.getenv("SERP_MAX_PRODUCTS", "8"))
 SERP_NUM_RESULTS = int(os.getenv("SERP_NUM_RESULTS", "20"))
@@ -941,8 +938,7 @@ async def health():
         "version": "1.4",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
-            "openai": "configured" if OPENAI_API_KEY else "not_configured",
-            "gemini": "configured" if GEMINI_API_KEY else "not_configured",
+                "openai": "configured" if OPENAI_API_KEY else "not_configured",
             "serpapi": "configured" if SERPAPI_KEY else "not_configured",
             "stripe": "configured" if STRIPE_SECRET_KEY else "not_configured",
             "supabase": "configured" if SUPABASE_URL else "not_configured"
@@ -5735,124 +5731,24 @@ async def speech_to_text(request: Request):
 
 
 # ============================================================================
-# Gemini Live API — Ephemeral Token for client-side WebSocket voice
+# OpenAI Voice Pipeline — Full server-side STT → GPT → TTS
 # ============================================================================
-@app.post("/api/gemini/live-token")
-async def gemini_live_token(request: Request):
-    """Generate an ephemeral token for Gemini Live API client-side WebSocket connection.
-    This allows the frontend to connect directly to Gemini Live for real-time voice conversation."""
-    user_id = get_user_id(request)
-    print(f"🔔 /api/gemini/live-token called. user_id={user_id}")
-
-    if not GEMINI_API_KEY:
-        raise HTTPException(status_code=500, detail="Gemini API key not configured")
-
-    GEMINI_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
-
-    try:
-        # Use the official google-genai SDK to create ephemeral tokens
-        # Docs: https://ai.google.dev/gemini-api/docs/ephemeral-tokens
-        from google import genai as google_genai
-
-        client = google_genai.Client(
-            api_key=GEMINI_API_KEY,
-            http_options={"api_version": "v1alpha"}
-        )
-
-        print(f"🔑 Requesting Gemini ephemeral token for model {GEMINI_LIVE_MODEL}")
-
-        # Create token with live_connect_constraints (locks config in token)
-        # Constrained tokens use BidiGenerateContentConstrained endpoint
-        # Unconstrained tokens use BidiGenerateContent endpoint
-        token = None
-        constrained = False
-        try:
-            token = client.auth_tokens.create(
-                config={
-                    "uses": 1,
-                    "live_connect_constraints": {
-                        "model": f"models/{GEMINI_LIVE_MODEL}",
-                        "config": {
-                            "response_modalities": ["AUDIO"],
-                            "speech_config": {
-                                "voice_config": {
-                                    "prebuilt_voice_config": {
-                                        "voice_name": "Aoede"
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    "http_options": {"api_version": "v1alpha"}
-                }
-            )
-            constrained = True
-            print(f"✅ Token created with live_connect_constraints")
-        except Exception as e1:
-            print(f"⚠️ live_connect_constraints failed ({type(e1).__name__}: {e1}), trying basic config...")
-            token = client.auth_tokens.create(
-                config={"uses": 1, "http_options": {"api_version": "v1alpha"}}
-            )
-            print(f"✅ Token created with basic config (no constraints)")
-
-        token_name = token.name
-        if not token_name:
-            print(f"❌ Gemini token creation returned empty name")
-            raise HTTPException(status_code=502, detail="Token creation failed — empty name")
-
-        # Constrained tokens → BidiGenerateContentConstrained
-        # Unconstrained tokens → BidiGenerateContent  
-        if constrained:
-            ws_endpoint = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained"
-        else:
-            ws_endpoint = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
-
-        ws_fallback_urls = [
-            "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained",
-            "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent",
-            "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained",
-            "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent"
-        ]
-
-        print(f"✅ Gemini ephemeral token created for user {user_id}: {token_name[:20]}... constrained={constrained}")
-        return {
-            "success": True,
-            "token": token_name,
-            "model": GEMINI_LIVE_MODEL,
-            "ws_url": ws_endpoint,
-            "constrained": constrained,
-            "auth_modes": ["access_token", "key"],
-            "ws_fallback_urls": ws_fallback_urls,
-            "recommended_setup": "empty" if constrained else "full"
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"❌ Error creating Gemini token: {type(e).__name__}: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Erreur Gemini: {str(e)}")
-
-
-# ============================================================================
-# Gemini Voice Chat — Full server-side STT → Chat → TTS pipeline
-# ============================================================================
-@app.post("/api/gemini/voice-chat")
-async def gemini_voice_chat(request: Request):
-    """🎙️ Conversation vocale Gemini 100% backend.
-    Reçoit un fichier audio, transcrit (STT), génère une réponse (chat),
-    synthétise la voix (TTS) et renvoie texte + audio base64.
-    Aucune clé API n'est exposée côté frontend.
+@app.post("/api/voice")
+async def openai_voice_pipeline(request: Request):
+    """🎙️ Voice Pipeline: Audio → Whisper STT → GPT → TTS → Audio response
+    Accepts multipart form with 'audio' file.
+    Returns JSON with user_text, ai_text, audio_base64, audio_mime.
     """
     user_id = get_user_id(request)
-    print(f"🔔 /api/gemini/voice-chat called. user_id={user_id}")
+    print(f"\n🎙️ ========== /api/voice called ==========")
+    print(f"🔔 user_id={user_id}")
 
-    if not GEMINI_API_KEY:
-        raise HTTPException(status_code=500, detail="Gemini API key not configured")
+    if not OPENAI_API_KEY:
+        print("❌ OPENAI_API_KEY not set!")
+        raise HTTPException(status_code=500, detail="OpenAI not configured")
 
-    # ── 1. Lire l'audio envoyé par le frontend ──
     try:
+        # ── Step 1: Receive audio ──
         form = await request.form()
         audio_file = form.get("audio")
         if not audio_file:
@@ -5862,204 +5758,92 @@ async def gemini_voice_chat(request: Request):
         if len(audio_content) == 0:
             raise HTTPException(status_code=400, detail="Fichier audio vide")
         if len(audio_content) > 25 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="Fichier audio trop volumineux (max 25 MB)")
+            raise HTTPException(status_code=400, detail="Fichier audio trop volumineux (max 25MB)")
 
-        print(f"🎤 Gemini voice-chat: audio received {len(audio_content)} bytes")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Erreur lecture audio: {str(e)}")
+        filename = getattr(audio_file, 'filename', 'audio.webm') or 'audio.webm'
+        print(f"📥 Audio received: {len(audio_content)} bytes, filename={filename}")
 
-    # Optional conversation history from the frontend (JSON string)
-    history_raw = form.get("history")
-    conversation_history = []
-    if history_raw:
-        try:
-            if hasattr(history_raw, "read"):
-                history_raw = (await history_raw.read()).decode()
-            elif hasattr(history_raw, "file"):
-                history_raw = str(history_raw)
-            conversation_history = json.loads(history_raw) if isinstance(history_raw, str) else []
-        except Exception:
-            conversation_history = []
+        client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
 
-    try:
-        from google import genai as google_genai
-
-        client = google_genai.Client(api_key=GEMINI_API_KEY)
-
-        # ── 2. STT — Transcrire l'audio avec Gemini ──
-        print("🔄 Gemini STT: transcribing audio...")
-        audio_b64 = base64.b64encode(audio_content).decode("utf-8")
-
-        stt_response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=[
-                {
-                    "parts": [
-                        {"text": "Transcris exactement ce que dit la personne dans cet audio. Retourne UNIQUEMENT la transcription, sans commentaire ni ponctuation ajoutée."},
-                        {
-                            "inline_data": {
-                                "mime_type": "audio/webm",
-                                "data": audio_b64,
-                            }
-                        },
-                    ]
-                }
-            ],
+        # ── Step 2: Whisper STT ──
+        print("🎤 Step 2: Whisper STT...")
+        audio_io = BytesIO(audio_content)
+        audio_io.name = filename
+        transcript_response = client.audio.transcriptions.create(
+            model="whisper-1",
+            file=audio_io,
+            language="fr",
+            response_format="text"
         )
+        user_text = transcript_response.strip() if isinstance(transcript_response, str) else str(transcript_response).strip()
+        print(f"✅ STT result: '{user_text[:100]}' ({len(user_text)} chars)")
 
-        user_text = (stt_response.text or "").strip()
         if not user_text:
-            return {"success": False, "error": "Transcription vide — aucune parole détectée."}
+            return {
+                "success": True,
+                "user_text": "",
+                "ai_text": "Je n'ai pas entendu. Peux-tu répéter?",
+                "audio_base64": None,
+                "audio_mime": None
+            }
 
-        print(f"✅ Gemini STT: '{user_text[:120]}...'")
+        # ── Step 3: GPT Chat ──
+        print("🧠 Step 3: GPT Chat...")
+        system_prompt = SHOPBRAIN_EXPERT_SYSTEM if SHOPBRAIN_EXPERT_SYSTEM else "Tu es un assistant expert en e-commerce Shopify. Réponds de façon concise et naturelle, comme dans une conversation vocale."
+        # Get conversation context from form if provided
+        context_json = form.get("context")
+        messages = [{"role": "system", "content": system_prompt + "\n\nIMPORTANT: Tu es en mode conversation vocale. Réponds de manière concise (2-4 phrases max), naturelle et conversationnelle. Pas de markdown, pas de listes, pas de formatage."}]
+        if context_json:
+            try:
+                context_messages = json.loads(context_json)
+                if isinstance(context_messages, list):
+                    for msg in context_messages[-10:]:
+                        role = msg.get("role", "user")
+                        text = msg.get("text", "")
+                        if role in ["user", "assistant"] and text:
+                            messages.append({"role": role, "content": text})
+            except Exception as ctx_err:
+                print(f"⚠️ Context parse warning: {ctx_err}")
+        messages.append({"role": "user", "content": user_text})
 
-        # ── 3. Chat — Générer la réponse textuelle avec Gemini ──
-        print("🔄 Gemini Chat: generating response...")
-
-        system_instruction = (
-            "Tu es ShopBrain, un assistant IA expert en e-commerce Shopify. "
-            "Tu parles français avec un ton professionnel mais amical. "
-            "Réponds de manière concise et naturelle, comme dans une vraie conversation téléphonique. "
-            "Ne dépasse pas 3-4 phrases par réponse."
+        chat_response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=messages,
+            max_tokens=300,
+            temperature=0.7
         )
+        ai_text = chat_response.choices[0].message.content.strip()
+        print(f"✅ GPT response: '{ai_text[:100]}' ({len(ai_text)} chars)")
 
-        # Build messages from conversation history
-        chat_contents = []
-        for msg in conversation_history[-10:]:  # Keep last 10 messages for context
-            role = "user" if msg.get("role") == "user" else "model"
-            chat_contents.append({"role": role, "parts": [{"text": msg.get("text", "")}]})
-
-        # Add current user message
-        chat_contents.append({"role": "user", "parts": [{"text": user_text}]})
-
-        chat_response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=chat_contents,
-            config={
-                "system_instruction": system_instruction,
-                "max_output_tokens": 500,
-                "temperature": 0.7,
-            },
+        # ── Step 4: OpenAI TTS ──
+        print("🔊 Step 4: OpenAI TTS...")
+        tts_text = ai_text[:4096]
+        tts_response = client.audio.speech.create(
+            model="tts-1",
+            voice="nova",
+            input=tts_text,
+            response_format="mp3"
         )
+        audio_bytes = tts_response.content
+        audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+        print(f"✅ TTS audio: {len(audio_bytes)} bytes → base64 {len(audio_b64)} chars")
 
-        ai_text = (chat_response.text or "").strip()
-        if not ai_text:
-            ai_text = "Désolé, je n'ai pas pu générer de réponse. Peux-tu reformuler ?"
-
-        print(f"✅ Gemini Chat: '{ai_text[:120]}...'")
-
-        # ── 4. TTS — Synthétiser la réponse en audio avec Gemini ──
-        print("🔄 Gemini TTS: synthesizing speech...")
-        tts_audio_b64 = None
-        try:
-            tts_response = client.models.generate_content(
-                model="gemini-2.5-flash-preview-tts",
-                contents=ai_text,
-                config={
-                    "response_modalities": ["AUDIO"],
-                    "speech_config": {
-                        "voice_config": {
-                            "prebuilt_voice_config": {
-                                "voice_name": "Kore",
-                            }
-                        }
-                    },
-                },
-            )
-            # Extract audio data from the response
-            if tts_response.candidates:
-                for part in tts_response.candidates[0].content.parts:
-                    if part.inline_data and part.inline_data.data:
-                        tts_audio_b64 = base64.b64encode(part.inline_data.data).decode("utf-8")
-                        tts_mime = part.inline_data.mime_type or "audio/wav"
-                        break
-
-            if tts_audio_b64:
-                print(f"✅ Gemini TTS: audio generated ({len(tts_audio_b64)} base64 chars)")
-            else:
-                print("⚠️ Gemini TTS: no audio in response, falling back to text-only")
-        except Exception as tts_err:
-            print(f"⚠️ Gemini TTS error (non-fatal): {type(tts_err).__name__}: {tts_err}")
-            tts_audio_b64 = None
-            tts_mime = None
-
+        print(f"🎙️ ========== /api/voice SUCCESS ==========")
         return {
             "success": True,
             "user_text": user_text,
             "ai_text": ai_text,
-            "audio_base64": tts_audio_b64,
-            "audio_mime": tts_mime if tts_audio_b64 else None,
+            "audio_base64": audio_b64,
+            "audio_mime": "audio/mpeg"
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ Error in gemini voice-chat: {type(e).__name__}: {str(e)}")
+        print(f"❌ /api/voice ERROR: {type(e).__name__}: {str(e)}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Erreur Gemini voice-chat: {str(e)}")
-
-
-# ============================================================================
-# Gemini Text Chat — Full server-side chat (no audio)
-# ============================================================================
-class GeminiChatRequest(BaseModel):
-    message: str
-    history: list = []
-
-
-@app.post("/api/gemini/chat")
-async def gemini_text_chat(req: GeminiChatRequest, request: Request):
-    """💬 Chat texte via Gemini (100% backend, clé jamais exposée)."""
-    user_id = get_user_id(request)
-    print(f"🔔 /api/gemini/chat called. user_id={user_id}")
-
-    if not GEMINI_API_KEY:
-        raise HTTPException(status_code=500, detail="Gemini API key not configured")
-
-    message = req.message.strip()
-    if not message:
-        raise HTTPException(status_code=400, detail="Message vide")
-
-    try:
-        from google import genai as google_genai
-        client = google_genai.Client(api_key=GEMINI_API_KEY)
-
-        system_instruction = (
-            "Tu es ShopBrain, un assistant IA expert en e-commerce Shopify. "
-            "Tu parles français avec un ton professionnel mais amical. "
-            "Fournis des conseils pratiques et actionnables."
-        )
-
-        chat_contents = []
-        for msg in req.history[-10:]:
-            role = "user" if msg.get("role") == "user" else "model"
-            chat_contents.append({"role": role, "parts": [{"text": msg.get("text", "")}]})
-        chat_contents.append({"role": "user", "parts": [{"text": message}]})
-
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=chat_contents,
-            config={
-                "system_instruction": system_instruction,
-                "max_output_tokens": 4000,
-                "temperature": 0.7,
-            },
-        )
-
-        ai_text = (response.text or "").strip()
-        if not ai_text:
-            ai_text = "Désolé, je n'ai pas pu générer de réponse."
-
-        return {"success": True, "message": ai_text, "user_id": user_id}
-
-    except Exception as e:
-        print(f"❌ Error in gemini chat: {type(e).__name__}: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Erreur Gemini chat: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erreur voice pipeline: {str(e)}")
 
 
 # ============================================================================

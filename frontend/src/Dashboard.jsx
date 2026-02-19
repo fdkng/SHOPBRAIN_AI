@@ -1222,142 +1222,100 @@ export default function Dashboard() {
     stopWaveAnimation()
   }
 
-  // ── Gemini Voice Call (server-side STT → Chat → TTS via /api/gemini/voice-chat) ──
-  const geminiWsRef = useRef(null)
-  const geminiAudioCtxRef = useRef(null)
-  const geminiMicStreamRef = useRef(null)
-  const geminiMicProcessorRef = useRef(null)
-  const geminiPlayQueueRef = useRef([])
-  const geminiIsPlayingRef = useRef(false)
 
-  // Play base64-encoded audio response from the backend
-  const playGeminiAudioBase64 = async (base64Audio, mimeType) => {
-    try {
-      const raw = atob(base64Audio)
-      const bytes = new Uint8Array(raw.length)
-      for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i)
-      const blob = new Blob([bytes], { type: mimeType || 'audio/wav' })
-      const url = URL.createObjectURL(blob)
-      const audio = new Audio(url)
-      voiceCallAudioRef.current = audio
-      setVoiceCallSpeaking(true)
-      audio.onended = () => {
-        setVoiceCallSpeaking(false)
-        URL.revokeObjectURL(url)
-        voiceCallAudioRef.current = null
-        // Auto-restart mic recording after playback ends
-        if (voiceCallModeRef.current) {
-          startVoiceRecording()
-        }
-      }
-      audio.onerror = () => {
-        setVoiceCallSpeaking(false)
-        URL.revokeObjectURL(url)
-        voiceCallAudioRef.current = null
-        if (voiceCallModeRef.current) startVoiceRecording()
-      }
-      await audio.play()
-    } catch (err) {
-      console.warn('Audio playback error:', err)
-      setVoiceCallSpeaking(false)
-      if (voiceCallModeRef.current) startVoiceRecording()
-    }
-  }
+  // ── OpenAI Voice Call: Recording & Pipeline ──
+  const voiceCallRecorderRef = useRef(null)
+  const voiceCallChunksRef = useRef([])
+  const voiceCallStreamRef = useRef(null)
 
-  // Record a voice clip then send it to the backend
   const startVoiceRecording = async () => {
-    if (!voiceCallModeRef.current) return
-    setVoiceCallListening(true)
-    setVoiceCallTranscript('')
+    console.log('🎙️ startVoiceRecording')
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true }
-      })
-      geminiMicStreamRef.current = stream
-
-      const chunks = []
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      voiceCallStreamRef.current = stream
+      voiceCallChunksRef.current = []
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
         : MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm'
-        : 'audio/mp4'
+        : MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4'
+        : 'audio/wav'
       const recorder = new MediaRecorder(stream, { mimeType })
-      mediaRecorderRef.current = recorder
-      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data) }
-      recorder.onstop = async () => {
-        setVoiceCallListening(false)
-        if (!voiceCallModeRef.current) return
-        if (chunks.length === 0) return
-        const blob = new Blob(chunks, { type: mimeType })
-        if (blob.size < 500) return // too short, ignore
-        await sendVoiceToBackend(blob)
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) voiceCallChunksRef.current.push(e.data) }
+      recorder.onstop = () => {
+        console.log('🎙️ Recorder stopped, chunks:', voiceCallChunksRef.current.length)
+        if (voiceCallModeRef.current) {
+          const blob = new Blob(voiceCallChunksRef.current, { type: mimeType })
+          if (blob.size > 500) {
+            sendVoiceToBackend(blob)
+          } else {
+            console.warn('🎙️ Audio too short, skipping')
+            setVoiceCallListening(false)
+          }
+        }
       }
-      recorder.start()
-
-      // Auto-stop after a silence detection timeout (use a fixed duration for simplicity)
-      // The user can also press stop manually
+      recorder.start(250)
+      voiceCallRecorderRef.current = recorder
+      setVoiceCallListening(true)
+      setVoiceCallTranscript('Écoute en cours...')
     } catch (err) {
-      console.error('Mic access error:', err)
-      setVoiceCallTranscript('Erreur micro: ' + err.message)
+      console.error('🎙️ Mic access failed:', err)
+      setVoiceCallTranscript('Erreur: accès au micro refusé')
       setVoiceCallListening(false)
     }
   }
 
   const stopVoiceRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      try { mediaRecorderRef.current.stop() } catch {}
+    console.log('🎙️ stopVoiceRecording')
+    if (voiceCallRecorderRef.current && voiceCallRecorderRef.current.state !== 'inactive') {
+      try { voiceCallRecorderRef.current.stop() } catch {}
     }
-    if (geminiMicStreamRef.current) {
-      geminiMicStreamRef.current.getTracks().forEach(t => t.stop())
-      geminiMicStreamRef.current = null
+    voiceCallRecorderRef.current = null
+    if (voiceCallStreamRef.current) {
+      voiceCallStreamRef.current.getTracks().forEach(t => t.stop())
+      voiceCallStreamRef.current = null
     }
+    setVoiceCallListening(false)
   }
 
-  // Send recorded audio to backend /api/gemini/voice-chat
   const sendVoiceToBackend = async (audioBlob) => {
-    if (!voiceCallModeRef.current) return
+    console.log('📤 sendVoiceToBackend, blob size:', audioBlob.size)
     setVoiceCallTranscript('Traitement en cours...')
-    setChatLoading(true)
+    setVoiceCallSpeaking(true)
     try {
       const { data: { session } } = await supabase.auth.getSession()
-      if (!session) throw new Error('Session expirée')
+      if (!session) { setVoiceCallTranscript('Session expirée'); setVoiceCallSpeaking(false); return }
+
+      // Build context from recent messages
+      const contextMessages = chatMessages.slice(-10).map(m => ({ role: m.role, text: m.text }))
 
       const formData = new FormData()
       formData.append('audio', audioBlob, 'recording.webm')
+      formData.append('context', JSON.stringify(contextMessages))
 
-      // Send conversation history for context
-      const historyPayload = chatMessages.slice(-10).map(m => ({
-        role: m.role, text: m.text
-      }))
-      formData.append('history', JSON.stringify(historyPayload))
-
-      const response = await fetch(`${API_URL}/api/gemini/voice-chat`, {
+      const resp = await fetch(`${API_URL}/api/voice`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${session.access_token}` },
         body: formData
       })
 
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}))
-        throw new Error(errData.detail || `Erreur serveur: ${response.status}`)
+      if (!resp.ok) {
+        const errData = await resp.json().catch(() => ({}))
+        throw new Error(errData.detail || `Erreur ${resp.status}`)
       }
 
-      const data = await response.json()
+      const data = await resp.json()
+      console.log('✅ Voice response:', data.user_text?.slice(0, 50), '→', data.ai_text?.slice(0, 50))
 
-      if (!data.success) {
-        setVoiceCallTranscript(data.error || 'Erreur de transcription')
-        setTimeout(() => { if (voiceCallModeRef.current) startVoiceRecording() }, 2000)
-        return
-      }
+      // Show transcript
+      if (data.user_text) setVoiceCallTranscript(data.ai_text || '')
 
-      // Add user message
+      // Add to chat history
       if (data.user_text) {
-        setChatMessages(prev => [...prev, { role: 'user', text: data.user_text, _geminiLive: true }])
-        setVoiceCallTranscript(data.user_text)
-      }
-
-      // Add AI message
-      if (data.ai_text) {
         setChatMessages(prev => {
-          const updated = [...prev, { role: 'assistant', text: data.ai_text, _geminiLive: true }]
+          const updated = [
+            ...prev,
+            { role: 'user', text: data.user_text },
+            { role: 'assistant', text: data.ai_text || '...' }
+          ]
           if (activeConversationId) {
             setChatConversations(prev2 => prev2.map(c =>
               c.id === activeConversationId ? { ...c, messages: updated, updatedAt: new Date().toISOString() } : c
@@ -1369,34 +1327,55 @@ export default function Dashboard() {
 
       // Play audio response
       if (data.audio_base64) {
-        await playGeminiAudioBase64(data.audio_base64, data.audio_mime)
-      } else {
-        // No audio — use browser TTS as fallback
-        if (data.ai_text && window.speechSynthesis) {
-          const utterance = new SpeechSynthesisUtterance(data.ai_text)
-          utterance.lang = 'fr-FR'
-          utterance.onend = () => {
-            setVoiceCallSpeaking(false)
-            if (voiceCallModeRef.current) startVoiceRecording()
-          }
-          setVoiceCallSpeaking(true)
-          window.speechSynthesis.speak(utterance)
-        } else {
-          // No TTS at all, restart recording
-          if (voiceCallModeRef.current) startVoiceRecording()
-        }
+        await playOpenAIAudio(data.audio_base64, data.audio_mime || 'audio/mpeg')
       }
 
+      setVoiceCallSpeaking(false)
+
+      // Auto-restart recording if still in voice call mode
+      if (voiceCallModeRef.current) {
+        setTimeout(() => {
+          if (voiceCallModeRef.current) startVoiceRecording()
+        }, 500)
+      }
     } catch (err) {
-      console.error('Voice chat error:', err)
-      setVoiceCallTranscript(`Erreur: ${err.message}`)
-      setTimeout(() => {
-        setVoiceCallTranscript('')
-        if (voiceCallModeRef.current) startVoiceRecording()
-      }, 3000)
-    } finally {
-      setChatLoading(false)
+      console.error('❌ Voice pipeline error:', err)
+      setVoiceCallTranscript('Erreur: ' + (err.message || 'Connexion impossible'))
+      setVoiceCallSpeaking(false)
+      // Auto-restart after error
+      if (voiceCallModeRef.current) {
+        setTimeout(() => {
+          if (voiceCallModeRef.current) startVoiceRecording()
+        }, 2000)
+      }
     }
+  }
+
+  const playOpenAIAudio = (base64Audio, mimeType) => {
+    return new Promise((resolve) => {
+      try {
+        const audioSrc = `data:${mimeType};base64,${base64Audio}`
+        const audio = new Audio(audioSrc)
+        voiceCallAudioRef.current = audio
+        audio.onended = () => {
+          console.log('🔊 Audio playback ended')
+          voiceCallAudioRef.current = null
+          resolve()
+        }
+        audio.onerror = (e) => {
+          console.error('🔊 Audio playback error:', e)
+          voiceCallAudioRef.current = null
+          resolve()
+        }
+        audio.play().catch(err => {
+          console.error('🔊 Audio play() failed:', err)
+          resolve()
+        })
+      } catch (err) {
+        console.error('🔊 playOpenAIAudio error:', err)
+        resolve()
+      }
+    })
   }
 
   const startVoiceCall = async () => {
@@ -1479,26 +1458,18 @@ export default function Dashboard() {
       }
       
       const { data: { session } } = await supabase.auth.getSession()
+      if (!session) throw new Error('Session expirée')
 
-      // Build history for Gemini context
-      const historyPayload = chatMessages.slice(-10).map(m => ({
-        role: m.role, text: m.text
-      }))
-
-      const response = await fetch(`${API_URL}/api/gemini/chat`, {
+      const resp = await fetch(`${API_URL}/api/ai/chat`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          message: userMessage,
-          history: historyPayload
-        })
+        body: JSON.stringify({ message: userMessage })
       })
-      
-      const data = await response.json()
-      
+      const data = await resp.json()
+
       if (data.success) {
         setChatMessages(prev => {
           const updated = [...prev, { role: 'assistant', text: data.message }]
@@ -5829,79 +5800,52 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* ══════ Voice Call Mode (Gemini Live — real-time voice-to-voice) ══════ */}
+              {/* ── OpenAI Voice Call Overlay ── */}
               {voiceCallMode && (
-                <div className="absolute inset-0 z-[70] bg-gradient-to-b from-gray-100 to-white flex flex-col items-center justify-between py-8">
-                  {/* Header icons */}
-                  <div className="absolute top-3 right-3 flex items-center gap-1">
-                    <button
-                      onClick={() => setChatExpanded(!chatExpanded)}
-                      className="p-2 text-gray-400 hover:text-gray-600 rounded-lg"
-                      title={chatExpanded ? 'Réduire' : 'Agrandir'}
-                    >
-                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 2L6 2V6M14 2L10 2V6M14 14L10 14V10M2 14L6 14V10" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                    </button>
-                    <button
-                      onClick={endVoiceCall}
-                      className="p-2 text-gray-400 hover:text-gray-600 rounded-lg"
-                      title="Fermer"
-                    >
-                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-                    </button>
-                  </div>
-                  {/* Gemini Live badge */}
-                  <div className="absolute top-3 left-3">
-                    <span className="text-[10px] tracking-widest uppercase text-gray-400 font-medium">Gemini Voice</span>
-                  </div>
-
-                  {/* Logo with rainbow halo */}
-                  <div className="flex flex-col items-center mt-16">
-                    <div className="relative">
-                      <div className={`absolute -inset-8 rounded-full transition-all duration-500 ${
-                        voiceCallSpeaking ? 'scale-110 opacity-80' : voiceCallListening ? 'scale-100 opacity-60 animate-pulse' : 'scale-90 opacity-30'
-                      }`} style={{
-                        background: 'conic-gradient(from 0deg, rgba(251,191,36,0.35), rgba(251,146,60,0.25), rgba(239,68,68,0.2), rgba(168,85,247,0.2), rgba(59,130,246,0.2), rgba(34,197,94,0.2), rgba(251,191,36,0.35))',
-                        filter: 'blur(24px)'
-                      }}></div>
-                      <div className="relative w-20 h-20 rounded-full bg-gradient-to-br from-yellow-500 to-yellow-700 flex items-center justify-center shadow-xl">
-                        <svg width="44" height="44" viewBox="0 0 32 32" fill="none">
-                          <circle cx="16" cy="13" r="8" fill="#0b0d12" opacity="0.85"/>
-                          <circle cx="12" cy="12" r="2.2" fill="#facc15"/>
-                          <circle cx="20" cy="12" r="2.2" fill="#facc15"/>
-                          <path d="M11 17 Q16 21 21 17" stroke="#facc15" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
-                          <circle cx="8" cy="8" r="1.5" fill="#facc15" opacity="0.7"/>
-                          <circle cx="24" cy="8" r="1.5" fill="#facc15" opacity="0.7"/>
-                        </svg>
-                      </div>
+                <div className="fixed inset-0 z-[100] bg-gradient-to-b from-[#0d0f1a] via-[#141726] to-[#0d0f1a] flex flex-col items-center justify-center">
+                  {/* Header */}
+                  <div className="absolute top-6 left-6 right-6 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                      <span className="text-xs text-gray-400 font-medium">ShopBrain Voice</span>
                     </div>
-
-                    {/* Status text */}
-                    <div className="mt-8 text-center max-w-[280px]">
-                      {voiceCallSpeaking && (
-                        <p className="text-gray-700 text-sm font-medium animate-pulse">ShopBrain parle...</p>
-                      )}
-                      {voiceCallTranscript && (
-                        <p className="text-gray-600 text-sm leading-relaxed mt-2">{voiceCallTranscript}</p>
-                      )}
-                      {!voiceCallTranscript && voiceCallListening && !voiceCallSpeaking && (
-                        <p className="text-gray-400 text-sm animate-pulse">Parlez maintenant...</p>
-                      )}
-                      {!voiceCallListening && !voiceCallSpeaking && !voiceCallTranscript && (
-                        <p className="text-gray-400 text-sm">Appuyez sur le micro pour parler</p>
-                      )}
-                    </div>
+                    <span className="text-xs text-gray-500">OpenAI</span>
                   </div>
 
-                  {/* Bottom controls: Mic + Hang up (phone icon) */}
-                  <div className="flex items-center gap-6 mb-6">
+                  {/* Animated waveform */}
+                  <div className="flex items-center justify-center gap-[3px] h-24 mb-8">
+                    {voiceWaveBars.map((h, i) => (
+                      <div
+                        key={i}
+                        className={`w-[3px] rounded-full transition-all duration-100 ${
+                          voiceCallSpeaking ? 'bg-yellow-500/70' : voiceCallListening ? 'bg-green-400/60' : 'bg-gray-600/40'
+                        }`}
+                        style={{ height: `${Math.max(h * 1.5, 3)}px` }}
+                      />
+                    ))}
+                  </div>
+
+                  {/* Status & Transcript */}
+                  <div className="text-center mb-10 px-6 max-w-lg">
+                    <p className="text-sm text-gray-400 mb-2">
+                      {voiceCallSpeaking ? '🔊 Réponse en cours...' : voiceCallListening ? '🎤 Je vous écoute...' : '⏸ En pause'}
+                    </p>
+                    {voiceCallTranscript && (
+                      <p className="text-base text-gray-200 font-medium leading-relaxed">{voiceCallTranscript}</p>
+                    )}
+                  </div>
+
+                  {/* Controls */}
+                  <div className="flex items-center gap-8">
+                    {/* Mic toggle */}
                     <button
                       onClick={toggleVoiceCallMic}
                       disabled={voiceCallSpeaking}
-                      className={`w-14 h-14 rounded-full flex items-center justify-center transition-all shadow-lg ${
+                      className={`w-14 h-14 rounded-full flex items-center justify-center shadow-lg transition-all ${
                         voiceCallListening
-                          ? 'bg-gray-200 text-gray-700'
-                          : 'bg-gray-100 text-gray-400 border border-gray-200'
-                      } ${voiceCallSpeaking ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          ? 'bg-white text-gray-800 shadow-white/20'
+                          : 'bg-gray-700 text-gray-300 border border-gray-600'
+                      } ${voiceCallSpeaking ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105'}`}
                       title={voiceCallListening ? 'Couper le micro' : 'Activer le micro'}
                     >
                       {voiceCallListening ? (
@@ -5919,13 +5863,13 @@ export default function Dashboard() {
                         </svg>
                       )}
                     </button>
-                    {/* Hang up button with phone icon */}
+                    {/* Hang up button */}
                     <button
                       onClick={endVoiceCall}
-                      className="w-14 h-14 rounded-full bg-red-600 hover:bg-red-700 text-white flex items-center justify-center shadow-lg transition-colors"
+                      className="w-16 h-16 rounded-full bg-red-600 hover:bg-red-700 text-white flex items-center justify-center shadow-lg shadow-red-900/40 transition-all hover:scale-105"
                       title="Raccrocher"
                     >
-                      <svg width="26" height="26" viewBox="0 0 24 24" fill="white">
+                      <svg width="28" height="28" viewBox="0 0 24 24" fill="white">
                         <path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.956.956 0 010-1.36C3.49 8.83 7.54 7 12 7s8.51 1.83 11.71 4.72c.18.18.29.44.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28a11.27 11.27 0 00-2.67-1.85.996.996 0 01-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/>
                       </svg>
                     </button>
