@@ -5747,52 +5747,56 @@ async def gemini_live_token(request: Request):
     if not GEMINI_API_KEY:
         raise HTTPException(status_code=500, detail="Gemini API key not configured")
 
+    GEMINI_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
+
     try:
         # Use the Gemini API to create an ephemeral token
-        # POST https://generativelanguage.googleapis.com/v1alpha/authTokens
+        # Docs: https://ai.google.dev/gemini-api/docs/ephemeral-tokens
+        token_body = {
+            "uses": 1,
+            "liveConnectConstraints": {
+                "model": f"models/{GEMINI_LIVE_MODEL}",
+                "config": {
+                    "responseModalities": ["AUDIO"],
+                    "speechConfig": {
+                        "voiceConfig": {
+                            "prebuiltVoiceConfig": {
+                                "voiceName": "Aoede"
+                            }
+                        }
+                    },
+                    "systemInstruction": {
+                        "parts": [{
+                            "text": (
+                                "Tu es ShopBrain, un assistant IA expert en e-commerce Shopify. "
+                                "Tu parles français avec un ton professionnel mais amical. "
+                                "Tu aides les marchands à optimiser leur boutique en ligne: "
+                                "prix, produits, marketing, conversion, SEO. "
+                                "Réponds de manière concise et naturelle, comme dans une vraie conversation téléphonique. "
+                                "Ne fais pas de listes ou de formatage markdown — parle naturellement."
+                            )
+                        }]
+                    },
+                    "inputAudioTranscription": {},
+                    "outputAudioTranscription": {}
+                }
+            }
+        }
+
+        print(f"🔑 Requesting Gemini ephemeral token for model {GEMINI_LIVE_MODEL}")
         resp = requests.post(
             f"https://generativelanguage.googleapis.com/v1alpha/authTokens?key={GEMINI_API_KEY}",
-            json={
-                "authToken": {
-                    "uses": 1,
-                    "bidiGenerateContentSetup": {
-                        "model": "models/gemini-2.5-flash-preview-native-audio-dialog",
-                        "generationConfig": {
-                            "responseModalities": ["AUDIO"],
-                            "speechConfig": {
-                                "voiceConfig": {
-                                    "prebuiltVoiceConfig": {
-                                        "voiceName": "Aoede"
-                                    }
-                                }
-                            }
-                        },
-                        "systemInstruction": {
-                            "parts": [{
-                                "text": (
-                                    "Tu es ShopBrain, un assistant IA expert en e-commerce Shopify. "
-                                    "Tu parles français avec un ton professionnel mais amical. "
-                                    "Tu aides les marchands à optimiser leur boutique en ligne: "
-                                    "prix, produits, marketing, conversion, SEO. "
-                                    "Réponds de manière concise et naturelle, comme dans une vraie conversation téléphonique. "
-                                    "Ne fais pas de listes ou de formatage markdown — parle naturellement."
-                                )
-                            }]
-                        },
-                        "inputAudioTranscription": {},
-                        "outputAudioTranscription": {}
-                    }
-                }
-            },
+            json=token_body,
             headers={"Content-Type": "application/json"},
             timeout=15
         )
 
         if resp.status_code != 200:
             print(f"❌ Gemini token error: {resp.status_code} - {resp.text[:500]}")
-            raise HTTPException(status_code=502, detail=f"Gemini API error: {resp.status_code}")
+            raise HTTPException(status_code=502, detail=f"Gemini API error: {resp.status_code} — {resp.text[:200]}")
 
         data = resp.json()
+        print(f"🔍 Gemini token response keys: {list(data.keys())}")
         token_name = data.get("name") or data.get("authToken", {}).get("name")
         if not token_name:
             print(f"❌ Gemini token response missing 'name': {json.dumps(data)[:500]}")
@@ -5802,7 +5806,7 @@ async def gemini_live_token(request: Request):
         return {
             "success": True,
             "token": token_name,
-            "model": "gemini-2.5-flash-preview-native-audio-dialog",
+            "model": GEMINI_LIVE_MODEL,
             "ws_url": "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent"
         }
 

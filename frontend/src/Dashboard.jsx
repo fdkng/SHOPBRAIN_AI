@@ -1326,25 +1326,11 @@ export default function Dashboard() {
 
       ws.onopen = () => {
         console.log('✅ Gemini Live WebSocket connected')
-        // Send setup message
+        // When using ephemeral tokens with liveConnectConstraints,
+        // the config is locked server-side. Just send minimal setup.
         ws.send(JSON.stringify({
           setup: {
-            model: `models/${model}`,
-            generationConfig: {
-              responseModalities: ['AUDIO'],
-              speechConfig: {
-                voiceConfig: {
-                  prebuiltVoiceConfig: { voiceName: 'Aoede' }
-                }
-              }
-            },
-            systemInstruction: {
-              parts: [{
-                text: `Tu es ShopBrain, un assistant IA expert en e-commerce Shopify. Tu parles français avec un ton professionnel mais amical. Tu aides les marchands à optimiser leur boutique en ligne. Réponds de manière concise et naturelle, comme dans une vraie conversation. Le marchand s'appelle ${profile?.first_name || 'là'}.${shopifyUrl ? ` Sa boutique est: ${shopifyUrl}` : ''}`
-              }]
-            },
-            inputAudioTranscription: {},
-            outputAudioTranscription: {}
+            model: `models/${model}`
           }
         }))
       }
