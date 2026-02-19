@@ -2852,24 +2852,23 @@ export default function Dashboard() {
 
   if (loading && !user) {
     return (
-      <div className="min-h-screen bg-blue-900 flex items-center justify-center">
-        <div className="text-white text-xl">Chargement...</div>
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-10 h-10 border-2 border-gray-600 border-t-yellow-500 rounded-full animate-spin"></div>
+          <p className="text-gray-400 text-sm">Chargement...</p>
+        </div>
       </div>
     )
   }
 
   if (isProcessingPayment) {
     return (
-      <div className="min-h-screen bg-blue-900 flex items-center justify-center">
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
         <div className="text-center text-white">
-          <h2 className="text-3xl font-bold mb-4">Paiement en cours de traitement...</h2>
-          <p className="text-gray-300 mb-8">Merci! Nous enregistrons ton abonnement.</p>
-          <div className="flex justify-center gap-2 mb-4">
-            <div className="w-3 h-3 bg-white rounded-full animate-bounce"></div>
-            <div className="w-3 h-3 bg-white rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-            <div className="w-3 h-3 bg-white rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
-          </div>
-          <p className="text-sm text-gray-400">Tu seras redirigé automatiquement...</p>
+          <div className="w-12 h-12 border-2 border-gray-600 border-t-yellow-500 rounded-full animate-spin mx-auto mb-6"></div>
+          <h2 className="text-2xl font-bold mb-3">Paiement en cours de traitement...</h2>
+          <p className="text-gray-400 mb-6">Merci! Nous enregistrons ton abonnement.</p>
+          <p className="text-xs text-gray-500">Tu seras redirigé automatiquement...</p>
         </div>
       </div>
     )
@@ -2877,12 +2876,12 @@ export default function Dashboard() {
 
   if (!user || (!subscription && subscriptionMissing)) {
     return (
-      <div className="min-h-screen bg-blue-900 flex items-center justify-center">
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
         <div className="text-center text-white">
           <div className="text-xl mb-2">Synchronisation de l’abonnement…</div>
           <div className="text-gray-300 text-sm mb-4">Si tu viens de payer, ça peut prendre quelques secondes.</div>
           <div className="flex gap-3 justify-center">
-            <button onClick={initializeUser} className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-white">Réessayer</button>
+            <button onClick={initializeUser} className="bg-yellow-600 hover:bg-yellow-700 px-5 py-2 rounded-lg text-white text-sm font-medium transition-colors">Réessayer</button>
             <button onClick={() => { window.location.hash = '#stripe-pricing' }} className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-white">Voir les plans</button>
           </div>
         </div>
