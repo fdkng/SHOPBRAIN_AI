@@ -7615,7 +7615,7 @@ def _stock_monitor_loop():
        - Send email notification
        - Log alert in stock_alert_log
     """
-    INTERVAL_SECONDS = int(os.getenv("STOCK_MONITOR_INTERVAL", "3600"))  # default 1 hour
+    INTERVAL_SECONDS = int(os.getenv("STOCK_MONITOR_INTERVAL", "300"))  # default 5 minutes
 
     # Wait 60s after startup before first check (let the app warm up)
     time.sleep(60)

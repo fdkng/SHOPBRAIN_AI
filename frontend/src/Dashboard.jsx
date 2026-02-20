@@ -161,6 +161,7 @@ export default function Dashboard() {
   const [stockSearchQuery, setStockSearchQuery] = useState('')
   const [stockFilterStatus, setStockFilterStatus] = useState('all')
   const [stockAlertToasts, setStockAlertToasts] = useState([])
+  const [stockAlertModalOpen, setStockAlertModalOpen] = useState(false)
   const stockAlertCheckedRef = useRef(false)
   const [shopCurrency, setShopCurrency] = useState(() => {
     if (typeof window === 'undefined') return ''
@@ -2044,7 +2045,23 @@ export default function Dashboard() {
     }
   }
 
-  // Check stock alerts on page load — shows toast if products are below threshold
+  const dismissBackgroundStockAlerts = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+      await fetch(`${API_URL}/api/stock-alerts/dismiss`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        }
+      })
+    } catch (_) {
+      // best-effort
+    }
+  }
+
+  // Check stock alerts on page load — opens modal if products are below threshold
   const checkStockAlerts = async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession()
@@ -2054,29 +2071,37 @@ export default function Dashboard() {
       })
       if (!resp.ok) return
       const data = await resp.json()
-      if (data.success && data.alert_count > 0) {
-        // Show toast notifications for products below threshold
-        const toasts = data.alerts.slice(0, 5).map(alert => ({
-          id: alert.product_id,
-          title: alert.title,
-          inventory: alert.inventory,
-          isOutOfStock: alert.is_out_of_stock,
-          image_url: alert.image_url,
-          visible: true,
-        }))
-        setStockAlertToasts(toasts)
-        // Auto-dismiss after 15 seconds
-        setTimeout(() => {
-          setStockAlertToasts(prev => prev.map(t => ({ ...t, visible: false })))
-        }, 15000)
-        setTimeout(() => {
-          setStockAlertToasts([])
-          // Mark background alerts as dismissed
-          fetch(`${API_URL}/api/stock-alerts/dismiss`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' }
-          }).catch(() => {})
-        }, 15500)
+      if (data.success) {
+        const directAlerts = Array.isArray(data.alerts)
+          ? data.alerts.map(alert => ({
+              id: String(alert.product_id),
+              title: alert.title,
+              inventory: Number(alert.inventory || 0),
+              isOutOfStock: Boolean(alert.is_out_of_stock),
+              image_url: alert.image_url || ''
+            }))
+          : []
+
+        const backgroundAlerts = Array.isArray(data.background_alerts)
+          ? data.background_alerts.map(alert => ({
+              id: String(alert.product_id),
+              title: alert.product_title,
+              inventory: Number(alert.inventory_at_alert || 0),
+              isOutOfStock: Number(alert.inventory_at_alert || 0) <= 0,
+              image_url: ''
+            }))
+          : []
+
+        const mergedById = new Map()
+        for (const alert of [...directAlerts, ...backgroundAlerts]) {
+          if (!mergedById.has(alert.id)) mergedById.set(alert.id, alert)
+        }
+        const mergedAlerts = Array.from(mergedById.values()).slice(0, 8)
+
+        if (mergedAlerts.length > 0) {
+          setStockAlertToasts(mergedAlerts)
+          setStockAlertModalOpen(true)
+        }
       }
     } catch (err) {
       console.error('Error checking stock alerts:', err)
@@ -6034,62 +6059,73 @@ export default function Dashboard() {
         </main>
       </div>
 
-      {/* Stock Alert Toast Notifications — Bottom Left */}
-      {stockAlertToasts.length > 0 && (
-        <div className="fixed bottom-4 left-4 z-[9999] space-y-3 max-w-md w-full pointer-events-none">
-          {stockAlertToasts.map((toast, idx) => (
-            <div
-              key={toast.id}
-              className={`pointer-events-auto bg-gray-900 border-2 rounded-xl p-4 shadow-2xl transition-all duration-500 ${
-                toast.visible ? 'translate-x-0 opacity-100' : '-translate-x-full opacity-0'
-              } ${toast.isOutOfStock ? 'border-red-500' : 'border-yellow-500'}`}
-              style={{ transitionDelay: `${idx * 150}ms` }}
-            >
-              <div className="flex items-start gap-3">
-                {toast.image_url && (
-                  <img src={toast.image_url} alt="" className="w-12 h-12 rounded-lg object-cover flex-shrink-0 border border-gray-700" />
-                )}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                      toast.isOutOfStock ? 'bg-red-600 text-white' : 'bg-yellow-500 text-gray-900'
-                    }`}>
-                      {toast.isOutOfStock ? '🔴 Rupture de stock' : '⚠️ Stock bas'}
-                    </span>
-                  </div>
-                  <p className="text-white text-base font-bold">{toast.title}</p>
-                  <p className="text-gray-300 text-sm mt-0.5">
-                    {toast.isOutOfStock
-                      ? 'Ce produit est en rupture de stock !'
-                      : `Il ne reste que ${toast.inventory} unité${toast.inventory > 1 ? 's' : ''} en stock`
-                    }
-                  </p>
-                  <p className="text-yellow-400 text-sm mt-1.5 font-semibold">
-                    ↗ Pensez à réapprovisionner
-                  </p>
-                </div>
-                <button
-                  onClick={() => setStockAlertToasts(prev => prev.filter(t => t.id !== toast.id))}
-                  className="text-gray-500 hover:text-white transition-colors flex-shrink-0 mt-0.5 text-lg"
-                >
-                  ✕
-                </button>
+      {/* Stock Alert Modal */}
+      {stockAlertModalOpen && stockAlertToasts.length > 0 && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-2xl rounded-2xl border border-yellow-600/40 bg-gray-900 shadow-2xl">
+            <div className="flex items-start justify-between border-b border-gray-800 px-5 py-4">
+              <div>
+                <h3 className="text-lg font-bold text-white">⚠️ Alerte stock</h3>
+                <p className="text-sm text-gray-300">Des produits atteignent votre limite d’unités. Pensez à restock.</p>
               </div>
-            </div>
-          ))}
-          {stockAlertToasts.length > 1 && (
-            <div className="pointer-events-auto">
               <button
-                onClick={() => {
-                  setStockAlertToasts([])
-                  setActiveTab('action-stock')
+                onClick={async () => {
+                  setStockAlertModalOpen(false)
+                  await dismissBackgroundStockAlerts()
                 }}
-                className="text-sm text-yellow-400 hover:text-yellow-300 font-semibold transition-colors bg-gray-900/90 border border-yellow-600/50 rounded-lg px-4 py-2"
+                className="rounded-md px-2 py-1 text-gray-400 hover:bg-gray-800 hover:text-white"
               >
-                📦 Voir tous les stocks ({stockAlertToasts.length} alertes)
+                ✕
               </button>
             </div>
-          )}
+
+            <div className="max-h-[55vh] overflow-y-auto px-5 py-4 space-y-3">
+              {stockAlertToasts.map((alert) => (
+                <div key={alert.id} className={`rounded-xl border p-3 ${alert.isOutOfStock ? 'border-red-500/50 bg-red-900/20' : 'border-yellow-500/50 bg-yellow-900/20'}`}>
+                  <div className="flex items-start gap-3">
+                    {alert.image_url ? (
+                      <img src={alert.image_url} alt="" className="h-12 w-12 rounded-lg object-cover border border-gray-700" />
+                    ) : (
+                      <div className="h-12 w-12 rounded-lg bg-gray-800 border border-gray-700 flex items-center justify-center text-xl">📦</div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-base font-bold text-white">{alert.title}</p>
+                      <p className="mt-0.5 text-sm text-gray-200">
+                        {alert.isOutOfStock
+                          ? 'Rupture de stock.'
+                          : `Stock restant: ${alert.inventory} unité${alert.inventory > 1 ? 's' : ''}.`}
+                      </p>
+                    </div>
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${alert.isOutOfStock ? 'bg-red-600 text-white' : 'bg-yellow-500 text-gray-900'}`}>
+                      {alert.isOutOfStock ? 'RUPTURE' : 'STOCK BAS'}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-gray-800 px-5 py-4">
+              <button
+                onClick={async () => {
+                  setStockAlertModalOpen(false)
+                  await dismissBackgroundStockAlerts()
+                }}
+                className="rounded-lg border border-gray-700 px-4 py-2 text-sm font-semibold text-gray-200 hover:bg-gray-800"
+              >
+                Plus tard
+              </button>
+              <button
+                onClick={async () => {
+                  setStockAlertModalOpen(false)
+                  setActiveTab('action-stock')
+                  await dismissBackgroundStockAlerts()
+                }}
+                className="rounded-lg bg-yellow-500 px-4 py-2 text-sm font-bold text-gray-900 hover:bg-yellow-400"
+              >
+                Voir prévision rupture
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
