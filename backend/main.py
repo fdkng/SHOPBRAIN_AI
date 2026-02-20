@@ -2982,13 +2982,13 @@ async def get_shopify_insights(
 # ---------------------------------------------------------------------------
 
 @app.get("/api/shopify/stock-forecast")
-async def get_stock_forecast(request: Request, range: str = "30d", threshold_days: int = 14):
-    """📦 Prévision des ruptures de stock.
+async def get_stock_forecast(request: Request, range: str = "30d", threshold_units: int = 15):
+    """Prevision des ruptures de stock.
 
     Analyses all products: computes daily sales velocity from order history,
     estimates days-to-stockout, and flags products below user threshold.
-    Returns ALL products (not just risky ones) so the frontend can display
-    a complete inventory table.
+    threshold_units = minimum inventory count. Below this = alert.
+    Returns ALL products so the frontend can display a complete inventory table.
     """
     user_id = get_user_id(request)
     shop_domain, access_token = _get_shopify_connection(user_id)
@@ -3047,21 +3047,18 @@ async def get_stock_forecast(request: Request, range: str = "30d", threshold_day
         else:
             days_to_stockout = None  # No sales = can't predict
 
-        # Status classification
+        # Status classification based on INVENTORY UNITS vs threshold
         if inventory <= 0:
-            status = "rupture"  # Already out of stock
+            status = "rupture"    # Already out of stock
             critical_count += 1
-        elif days_to_stockout is not None and days_to_stockout <= 7:
-            status = "critical"  # Less than 7 days
+        elif inventory <= max(1, threshold_units // 3):
+            status = "critical"   # Very low stock (below 1/3 of threshold)
             critical_count += 1
-        elif days_to_stockout is not None and days_to_stockout <= threshold_days:
-            status = "warning"  # Below user threshold
+        elif inventory <= threshold_units:
+            status = "warning"    # Below user threshold
             warning_count += 1
-        elif days_to_stockout is not None:
-            status = "safe"  # Above threshold
-            safe_count += 1
         else:
-            status = "dormant"  # No sales data
+            status = "safe"       # Above threshold
             safe_count += 1
 
         # Get image for display
@@ -3086,17 +3083,17 @@ async def get_stock_forecast(request: Request, range: str = "30d", threshold_day
             "status": status,
         })
 
-    # Sort: rupture first, then critical, warning, safe, dormant
-    status_order = {"rupture": 0, "critical": 1, "warning": 2, "safe": 3, "dormant": 4}
+    # Sort: rupture first, then critical, warning, safe
+    status_order = {"rupture": 0, "critical": 1, "warning": 2, "safe": 3}
     forecast_items.sort(key=lambda x: (
         status_order.get(x["status"], 5),
-        x["days_to_stockout"] if x["days_to_stockout"] is not None else 99999,
+        x["inventory"],
     ))
 
     return {
         "success": True,
         "range_days": days,
-        "threshold_days": threshold_days,
+        "threshold_units": threshold_units,
         "summary": {
             "total_products": len(forecast_items),
             "total_inventory": total_inventory,
@@ -3105,6 +3102,106 @@ async def get_stock_forecast(request: Request, range: str = "30d", threshold_day
             "safe": safe_count,
         },
         "items": forecast_items,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Stock Alert Settings (persisted in Supabase)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/stock-alerts/settings")
+async def get_stock_alert_settings(request: Request):
+    """Load user's saved stock alert threshold from Supabase."""
+    user_id = get_user_id(request)
+    sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    result = sb.table("stock_alert_settings").select("*").eq("user_id", user_id).limit(1).execute()
+    if result.data and len(result.data) > 0:
+        row = result.data[0]
+        return {
+            "success": True,
+            "threshold_units": row.get("threshold_units", 15),
+            "enabled": row.get("enabled", True),
+        }
+    return {"success": True, "threshold_units": 15, "enabled": True}
+
+
+@app.post("/api/stock-alerts/settings")
+async def save_stock_alert_settings(request: Request):
+    """Save user's stock alert threshold to Supabase (persists across sessions)."""
+    user_id = get_user_id(request)
+    body = await request.json()
+    threshold_units = int(body.get("threshold_units", 15))
+    enabled = bool(body.get("enabled", True))
+
+    sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    # Upsert: insert or update
+    sb.table("stock_alert_settings").upsert({
+        "user_id": user_id,
+        "threshold_units": threshold_units,
+        "enabled": enabled,
+        "updated_at": datetime.utcnow().isoformat(),
+    }, on_conflict="user_id").execute()
+
+    return {"success": True, "threshold_units": threshold_units, "enabled": enabled}
+
+
+@app.get("/api/stock-alerts/check")
+async def check_stock_alerts(request: Request):
+    """Quick inventory check against saved threshold.
+
+    Designed to be called once on page load. Fetches current Shopify
+    inventory and compares to the user's saved threshold. Returns
+    only products BELOW threshold so the frontend can show a toast.
+    Does NOT call OpenAI — zero AI cost.
+    """
+    user_id = get_user_id(request)
+
+    # Load saved threshold
+    sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    settings_result = sb.table("stock_alert_settings").select("*").eq("user_id", user_id).limit(1).execute()
+    threshold_units = 15
+    enabled = True
+    if settings_result.data and len(settings_result.data) > 0:
+        threshold_units = settings_result.data[0].get("threshold_units", 15)
+        enabled = settings_result.data[0].get("enabled", True)
+
+    if not enabled:
+        return {"success": True, "alerts": [], "threshold_units": threshold_units, "enabled": False}
+
+    # Fetch Shopify products for inventory
+    shop_domain, access_token = _get_shopify_connection(user_id)
+    products_resp = get_shopify_products
+    products_payload = await products_resp(request)
+    products = products_payload.get("products", [])
+
+    alerts = []
+    for product in products:
+        pid = str(product.get("id"))
+        title = product.get("title") or "Produit"
+        inventory = 0
+        for variant in product.get("variants", []) or []:
+            inventory += int(variant.get("inventory_quantity") or 0)
+
+        if inventory <= threshold_units:
+            images = product.get("images", []) or []
+            image_url = images[0].get("src") if images else None
+            alerts.append({
+                "product_id": pid,
+                "title": title,
+                "inventory": inventory,
+                "image_url": image_url,
+                "is_out_of_stock": inventory <= 0,
+            })
+
+    # Sort: out of stock first, then by lowest inventory
+    alerts.sort(key=lambda x: (0 if x["is_out_of_stock"] else 1, x["inventory"]))
+
+    return {
+        "success": True,
+        "threshold_units": threshold_units,
+        "enabled": enabled,
+        "alert_count": len(alerts),
+        "alerts": alerts,
     }
 
 

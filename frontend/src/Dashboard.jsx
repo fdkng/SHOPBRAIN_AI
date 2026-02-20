@@ -152,9 +152,16 @@ export default function Dashboard() {
   const [stockForecast, setStockForecast] = useState(null)
   const [stockForecastLoading, setStockForecastLoading] = useState(false)
   const [stockForecastError, setStockForecastError] = useState('')
-  const [stockThresholdDays, setStockThresholdDays] = useState(14)
+  const [stockThresholdUnits, setStockThresholdUnits] = useState(() => {
+    if (typeof window === 'undefined') return 15
+    const cached = localStorage.getItem('stockThresholdUnits')
+    return cached ? Number(cached) : 15
+  })
+  const [stockThresholdSaving, setStockThresholdSaving] = useState(false)
   const [stockSearchQuery, setStockSearchQuery] = useState('')
   const [stockFilterStatus, setStockFilterStatus] = useState('all')
+  const [stockAlertToasts, setStockAlertToasts] = useState([])
+  const stockAlertCheckedRef = useRef(false)
   const [shopCurrency, setShopCurrency] = useState(() => {
     if (typeof window === 'undefined') return ''
     return localStorage.getItem('shopCurrencyCache') || ''
@@ -743,6 +750,17 @@ export default function Dashboard() {
   useEffect(() => {
     if (shopifyConnected) {
       loadShopCurrency()
+    }
+  }, [shopifyConnected])
+
+  // Auto-check stock alerts on page load (once, when Shopify is connected)
+  useEffect(() => {
+    if (shopifyConnected && !stockAlertCheckedRef.current) {
+      stockAlertCheckedRef.current = true
+      // Load saved threshold first, then check alerts after a short delay
+      loadStockAlertSettings().then(() => {
+        setTimeout(() => checkStockAlerts(), 3000)
+      })
     }
   }, [shopifyConnected])
 
@@ -1951,8 +1969,8 @@ export default function Dashboard() {
       await waitForBackendReady({ retries: 8, retryDelayMs: 2000, timeoutMs: 22000 })
       await warmupBackend(session.access_token)
 
-      const threshold = thresholdOverride ?? stockThresholdDays
-      const url = `${API_URL}/api/shopify/stock-forecast?range=${analyticsRange}&threshold_days=${threshold}`
+      const threshold = thresholdOverride ?? stockThresholdUnits
+      const url = `${API_URL}/api/shopify/stock-forecast?range=${analyticsRange}&threshold_units=${threshold}`
       const { response, data } = await fetchJsonWithRetry(url, {
         method: 'GET',
         headers: {
@@ -1981,6 +1999,82 @@ export default function Dashboard() {
       setStockForecastError(errorMessage)
     } finally {
       setStockForecastLoading(false)
+    }
+  }
+
+  // Save stock threshold to Supabase (persists across sessions)
+  const saveStockThreshold = async (units) => {
+    try {
+      setStockThresholdSaving(true)
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+      localStorage.setItem('stockThresholdUnits', String(units))
+      await fetch(`${API_URL}/api/stock-alerts/settings`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ threshold_units: units, enabled: true })
+      })
+    } catch (err) {
+      console.error('Error saving stock threshold:', err)
+    } finally {
+      setStockThresholdSaving(false)
+    }
+  }
+
+  // Load saved threshold from Supabase on mount
+  const loadStockAlertSettings = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+      const resp = await fetch(`${API_URL}/api/stock-alerts/settings`, {
+        headers: { 'Authorization': `Bearer ${session.access_token}` }
+      })
+      if (resp.ok) {
+        const data = await resp.json()
+        if (data.success && data.threshold_units) {
+          setStockThresholdUnits(data.threshold_units)
+          localStorage.setItem('stockThresholdUnits', String(data.threshold_units))
+        }
+      }
+    } catch (err) {
+      console.error('Error loading stock alert settings:', err)
+    }
+  }
+
+  // Check stock alerts on page load — shows toast if products are below threshold
+  const checkStockAlerts = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+      const resp = await fetch(`${API_URL}/api/stock-alerts/check`, {
+        headers: { 'Authorization': `Bearer ${session.access_token}` }
+      })
+      if (!resp.ok) return
+      const data = await resp.json()
+      if (data.success && data.alert_count > 0) {
+        // Show toast notifications for products below threshold
+        const toasts = data.alerts.slice(0, 5).map(alert => ({
+          id: alert.product_id,
+          title: alert.title,
+          inventory: alert.inventory,
+          isOutOfStock: alert.is_out_of_stock,
+          image_url: alert.image_url,
+          visible: true,
+        }))
+        setStockAlertToasts(toasts)
+        // Auto-dismiss after 12 seconds
+        setTimeout(() => {
+          setStockAlertToasts(prev => prev.map(t => ({ ...t, visible: false })))
+        }, 12000)
+        setTimeout(() => {
+          setStockAlertToasts([])
+        }, 12500)
+      }
+    } catch (err) {
+      console.error('Error checking stock alerts:', err)
     }
   }
 
@@ -4256,7 +4350,7 @@ export default function Dashboard() {
               )}
             </div>
 
-            {/* Threshold Config */}
+            {/* Threshold Config — Stock Units */}
             <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
               <div className="flex flex-col sm:flex-row sm:items-center gap-4">
                 <div className="flex items-center gap-2">
@@ -4266,27 +4360,42 @@ export default function Dashboard() {
                 <div className="flex items-center gap-3 flex-1">
                   <input
                     type="range"
-                    min={3}
-                    max={60}
-                    value={stockThresholdDays}
-                    onChange={(e) => setStockThresholdDays(Number(e.target.value))}
+                    min={1}
+                    max={200}
+                    value={stockThresholdUnits}
+                    onChange={(e) => setStockThresholdUnits(Number(e.target.value))}
                     className="flex-1 accent-yellow-500 h-2 rounded-lg cursor-pointer"
                   />
-                  <div className="bg-gray-900 border border-gray-600 rounded-lg px-3 py-1.5 min-w-[80px] text-center">
-                    <span className="text-yellow-400 font-bold text-lg">{stockThresholdDays}</span>
-                    <span className="text-gray-400 text-xs ml-1">jours</span>
+                  <div className="bg-gray-900 border border-gray-600 rounded-lg flex items-center overflow-hidden min-w-[120px]">
+                    <input
+                      type="number"
+                      min={1}
+                      max={9999}
+                      value={stockThresholdUnits}
+                      onChange={(e) => {
+                        const v = Math.max(1, Number(e.target.value) || 1)
+                        setStockThresholdUnits(v)
+                      }}
+                      className="w-16 bg-transparent text-yellow-400 font-bold text-lg text-center py-1.5 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    />
+                    <span className="text-gray-400 text-xs pr-3">unités</span>
                   </div>
                 </div>
                 <button
-                  onClick={() => loadStockForecast(stockThresholdDays)}
-                  disabled={stockForecastLoading}
-                  className="text-xs bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg disabled:opacity-50 transition-colors whitespace-nowrap"
+                  onClick={async () => {
+                    await saveStockThreshold(stockThresholdUnits)
+                    loadStockForecast(stockThresholdUnits)
+                  }}
+                  disabled={stockForecastLoading || stockThresholdSaving}
+                  className="text-xs bg-yellow-600 hover:bg-yellow-500 text-white px-4 py-2 rounded-lg disabled:opacity-50 transition-colors whitespace-nowrap flex items-center gap-1.5"
                 >
-                  Appliquer
+                  {stockThresholdSaving ? (
+                    <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                  ) : '💾'} Sauvegarder
                 </button>
               </div>
               <p className="text-xs text-gray-500 mt-2">
-                Les produits avec moins de <span className="text-yellow-400 font-semibold">{stockThresholdDays} jours</span> de stock seront signalés en alerte.
+                Alerte quand un produit a moins de <span className="text-yellow-400 font-semibold">{stockThresholdUnits} unités</span> en stock. Le seuil est sauvegardé et actif même quand vous fermez la page.
               </p>
             </div>
 
@@ -4337,7 +4446,6 @@ export default function Dashboard() {
                       { key: 'critical', label: '🔴 Critiques', color: 'red' },
                       { key: 'warning', label: '🟡 Attention', color: 'yellow' },
                       { key: 'safe', label: '🟢 OK', color: 'green' },
-                      { key: 'dormant', label: '💤 Dormants', color: 'gray' },
                     ].map(f => (
                       <button
                         key={f.key}
@@ -4367,7 +4475,6 @@ export default function Dashboard() {
                     if (stockFilterStatus === 'critical' && item.status !== 'critical' && item.status !== 'rupture') return false
                     if (stockFilterStatus === 'warning' && item.status !== 'warning') return false
                     if (stockFilterStatus === 'safe' && item.status !== 'safe') return false
-                    if (stockFilterStatus === 'dormant' && item.status !== 'dormant') return false
                   }
                   if (stockSearchQuery) {
                     return (item.title || '').toLowerCase().includes(stockSearchQuery.toLowerCase())
@@ -4379,9 +4486,9 @@ export default function Dashboard() {
                   {/* Table Header */}
                   <div className="hidden md:grid md:grid-cols-12 gap-2 px-4 py-3 bg-gray-900/60 text-xs text-gray-500 font-semibold uppercase border-b border-gray-700">
                     <div className="col-span-4">Produit</div>
-                    <div className="col-span-2 text-center">Stock</div>
+                    <div className="col-span-2 text-center">Stock actuel</div>
                     <div className="col-span-2 text-center">Vélocité /jour</div>
-                    <div className="col-span-2 text-center">Jours restants</div>
+                    <div className="col-span-2 text-center">Estimation rupture</div>
                     <div className="col-span-2 text-center">Statut</div>
                   </div>
 
@@ -4398,18 +4505,17 @@ export default function Dashboard() {
                           critical: { label: 'Critique', bg: 'bg-red-900/20', border: 'border-red-800/30', text: 'text-red-400', badge: 'bg-red-600', icon: '🔴' },
                           warning: { label: 'Attention', bg: 'bg-yellow-900/15', border: 'border-yellow-800/30', text: 'text-yellow-400', badge: 'bg-yellow-600', icon: '🟡' },
                           safe: { label: 'OK', bg: 'bg-gray-800', border: 'border-transparent', text: 'text-green-400', badge: 'bg-green-600', icon: '🟢' },
-                          dormant: { label: 'Dormant', bg: 'bg-gray-800', border: 'border-transparent', text: 'text-gray-500', badge: 'bg-gray-600', icon: '💤' },
                         }
                         const sc = statusConfig[item.status] || statusConfig.safe
 
-                        // Progress bar for days to stockout (0-60 days scale)
-                        const daysVal = item.days_to_stockout ?? 999
-                        const barPercent = Math.min(100, Math.max(0, (daysVal / 60) * 100))
+                        // Progress bar: inventory vs threshold (fills up as stock increases)
+                        const thresholdRef = stockThresholdUnits || 15
+                        const barPercent = Math.min(100, Math.max(0, (item.inventory / (thresholdRef * 3)) * 100))
                         const barColor = item.status === 'rupture' || item.status === 'critical'
                           ? 'bg-red-500'
                           : item.status === 'warning'
                             ? 'bg-yellow-500'
-                            : item.status === 'dormant' ? 'bg-gray-600' : 'bg-green-500'
+                            : 'bg-green-500'
 
                         return (
                           <div
@@ -4438,7 +4544,7 @@ export default function Dashboard() {
                                   <div className={`${barColor} h-full rounded-full transition-all`} style={{ width: `${barPercent}%` }}/>
                                 </div>
                                 <span className={`text-xs font-bold ${sc.text} min-w-[70px] text-right`}>
-                                  {item.days_to_stockout !== null ? `${Math.round(item.days_to_stockout)}j restants` : 'N/A'}
+                                  {item.inventory} unité{item.inventory !== 1 ? 's' : ''}
                                 </span>
                               </div>
                             </div>
@@ -4455,10 +4561,10 @@ export default function Dashboard() {
                                 </div>
                               </div>
                               <div className="col-span-2 text-center">
-                                <span className={`text-lg font-bold ${item.inventory <= 0 ? 'text-red-400' : item.inventory < 10 ? 'text-yellow-400' : 'text-white'}`}>
+                                <span className={`text-lg font-bold ${item.inventory <= 0 ? 'text-red-400' : item.inventory <= stockThresholdUnits ? 'text-yellow-400' : 'text-white'}`}>
                                   {item.inventory}
                                 </span>
-                                <p className="text-xs text-gray-500">{item.quantity_sold_period} vendus / {stockForecast.range_days}j</p>
+                                <p className="text-xs text-gray-500">seuil: {stockThresholdUnits}</p>
                               </div>
                               <div className="col-span-2 text-center">
                                 <span className="text-white font-bold">{item.daily_velocity}</span>
@@ -4466,8 +4572,8 @@ export default function Dashboard() {
                               </div>
                               <div className="col-span-2 text-center">
                                 <div className="flex flex-col items-center gap-1">
-                                  <span className={`text-lg font-bold ${sc.text}`}>
-                                    {item.days_to_stockout !== null ? Math.round(item.days_to_stockout) : '∞'}
+                                  <span className={`text-sm font-bold ${sc.text}`}>
+                                    {item.days_to_stockout !== null ? `~${Math.round(item.days_to_stockout)}j` : '—'}
                                   </span>
                                   <div className="w-full bg-gray-900 rounded-full h-1.5 overflow-hidden">
                                     <div className={`${barColor} h-full rounded-full transition-all`} style={{ width: `${barPercent}%` }}/>
@@ -5922,6 +6028,65 @@ export default function Dashboard() {
           )}
         </main>
       </div>
+
+      {/* Stock Alert Toast Notifications */}
+      {stockAlertToasts.length > 0 && (
+        <div className="fixed top-4 right-4 z-[9999] space-y-3 max-w-sm w-full pointer-events-none">
+          {stockAlertToasts.map((toast, idx) => (
+            <div
+              key={toast.id}
+              className={`pointer-events-auto bg-gray-900 border rounded-xl p-4 shadow-2xl transition-all duration-500 ${
+                toast.visible ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'
+              } ${toast.isOutOfStock ? 'border-red-600' : 'border-yellow-600'}`}
+              style={{ transitionDelay: `${idx * 100}ms` }}
+            >
+              <div className="flex items-start gap-3">
+                {toast.image_url && (
+                  <img src={toast.image_url} alt="" className="w-10 h-10 rounded object-cover flex-shrink-0" />
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                      toast.isOutOfStock ? 'bg-red-600 text-white' : 'bg-yellow-600 text-white'
+                    }`}>
+                      {toast.isOutOfStock ? '🔴 Rupture' : '⚠️ Stock bas'}
+                    </span>
+                  </div>
+                  <p className="text-white text-sm font-semibold truncate">{toast.title}</p>
+                  <p className="text-gray-400 text-xs mt-0.5">
+                    {toast.isOutOfStock
+                      ? 'Ce produit est en rupture de stock !'
+                      : `Il ne reste que ${toast.inventory} unité${toast.inventory > 1 ? 's' : ''} en stock`
+                    }
+                  </p>
+                  <p className="text-yellow-400 text-xs mt-1 font-medium">
+                    Pensez à réapprovisionner votre stock
+                  </p>
+                </div>
+                <button
+                  onClick={() => setStockAlertToasts(prev => prev.filter(t => t.id !== toast.id))}
+                  className="text-gray-500 hover:text-white transition-colors flex-shrink-0 mt-0.5"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+          ))}
+          {stockAlertToasts.length > 1 && (
+            <div className="pointer-events-auto text-center">
+              <button
+                onClick={() => {
+                  setStockAlertToasts([])
+                  setActiveTab('action-stock')
+                }}
+                className="text-xs text-yellow-400 hover:text-yellow-300 underline transition-colors"
+              >
+                Voir tous les stocks →
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
