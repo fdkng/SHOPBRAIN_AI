@@ -3151,8 +3151,9 @@ async def check_stock_alerts(request: Request):
 
     Designed to be called once on page load. Fetches current Shopify
     inventory and compares to the user's saved threshold. Returns
-    only products BELOW threshold so the frontend can show a toast.
-    Does NOT call OpenAI — zero AI cost.
+    products BELOW threshold so the frontend can show a toast.
+    Also returns any unread alerts from the background monitor.
+    Does NOT call OpenAI -- zero AI cost.
     """
     user_id = get_user_id(request)
 
@@ -3193,6 +3194,14 @@ async def check_stock_alerts(request: Request):
                 "is_out_of_stock": inventory <= 0,
             })
 
+    # Also fetch any pending (not dismissed) alerts from background monitor
+    try:
+        cutoff = (datetime.utcnow() - timedelta(hours=24)).isoformat()
+        log_result = sb.table("stock_alert_log").select("*").eq("user_id", user_id).eq("dismissed", False).gte("created_at", cutoff).order("created_at", desc=True).limit(20).execute()
+        pending_bg_alerts = log_result.data or []
+    except Exception:
+        pending_bg_alerts = []
+
     # Sort: out of stock first, then by lowest inventory
     alerts.sort(key=lambda x: (0 if x["is_out_of_stock"] else 1, x["inventory"]))
 
@@ -3202,7 +3211,17 @@ async def check_stock_alerts(request: Request):
         "enabled": enabled,
         "alert_count": len(alerts),
         "alerts": alerts,
+        "background_alerts": pending_bg_alerts,
     }
+
+
+@app.post("/api/stock-alerts/dismiss")
+async def dismiss_stock_alerts(request: Request):
+    """Mark background alerts as dismissed so they don't show again."""
+    user_id = get_user_id(request)
+    sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    sb.table("stock_alert_log").update({"dismissed": True}).eq("user_id", user_id).eq("dismissed", False).execute()
+    return {"success": True}
 
 
 @app.get("/api/shopify/bundles")
@@ -7511,14 +7530,219 @@ print(f"========== BACKEND READY ==========\n")
 
 @app.on_event("startup")
 async def startup_event():
-    """Log when the app actually starts"""
+    """Log when the app actually starts + launch background stock monitor"""
     startup_time = datetime.utcnow().isoformat()
     print(f"\n🟢 APP STARTUP EVENT FIRED at {startup_time}")
     print(f"Environment: STRIPE_SECRET_KEY={'present' if STRIPE_SECRET_KEY else 'MISSING'}")
     print(f"Environment: SUPABASE_URL={'present' if SUPABASE_URL else 'MISSING'}")
-    # Write to stdout with timestamp for Render logs
     sys.stdout.flush()
     sys.stderr.flush()
+
+    # Start background stock monitor thread
+    monitor_thread = threading.Thread(target=_stock_monitor_loop, daemon=True)
+    monitor_thread.start()
+    print("📦 Stock monitor background thread started (checks every hour)")
+
+
+# ---------------------------------------------------------------------------
+# Background Stock Monitor — runs 24/7, checks every hour
+# ---------------------------------------------------------------------------
+
+def _send_stock_alert_email(to_email: str, alerts: list, threshold: int) -> bool:
+    """Send stock alert email to user via SMTP. Returns True if sent."""
+    smtp_host = os.getenv("SMTP_HOST")
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_pass = os.getenv("SMTP_PASS")
+    smtp_from = os.getenv("SMTP_FROM") or smtp_user
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_secure = (os.getenv("SMTP_SECURE") or "tls").lower()
+
+    if not smtp_host or not smtp_user or not smtp_pass or not smtp_from:
+        print("⚠️ [STOCK MONITOR] SMTP not configured, skipping email")
+        return False
+
+    # Build product list for email body
+    product_lines = []
+    for a in alerts[:10]:
+        stock_label = "EN RUPTURE" if a["inventory"] <= 0 else f"{a['inventory']} restant(s)"
+        product_lines.append(f"  - {a['title']}  →  {stock_label}")
+
+    products_text = "\n".join(product_lines)
+    extra = f"\n  ... et {len(alerts) - 10} autre(s)" if len(alerts) > 10 else ""
+
+    subject = f"⚠️ ShopBrain — {len(alerts)} produit(s) en alerte stock"
+    body = (
+        f"Bonjour,\n\n"
+        f"ShopBrain a detecte {len(alerts)} produit(s) en dessous de votre seuil de {threshold} unites :\n\n"
+        f"{products_text}{extra}\n\n"
+        f"Pensez a reapprovisionner vos stocks pour eviter les ruptures.\n\n"
+        f"Connectez-vous a ShopBrain pour voir le detail :\n"
+        f"https://shopbrain-ai.onrender.com/#dashboard\n\n"
+        f"— ShopBrain IA"
+    )
+
+    try:
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = smtp_from
+        msg["To"] = to_email
+        msg.set_content(body)
+
+        if smtp_secure == "ssl":
+            context = ssl.create_default_context()
+            with smtplib.SMTP_SSL(smtp_host, smtp_port, context=context) as server:
+                server.login(smtp_user, smtp_pass)
+                server.send_message(msg)
+        else:
+            with smtplib.SMTP(smtp_host, smtp_port) as server:
+                server.starttls(context=ssl.create_default_context())
+                server.login(smtp_user, smtp_pass)
+                server.send_message(msg)
+        print(f"✅ [STOCK MONITOR] Alert email sent to {to_email} ({len(alerts)} products)")
+        return True
+    except Exception as e:
+        print(f"❌ [STOCK MONITOR] Email send failed: {e}")
+        return False
+
+
+def _stock_monitor_loop():
+    """Background thread: checks all users' inventory every hour.
+
+    For each user with stock_alert_settings enabled:
+    1. Fetch Shopify products + inventory
+    2. Compare to saved threshold
+    3. If products below threshold AND not already alerted in last 24h:
+       - Send email notification
+       - Log alert in stock_alert_log
+    """
+    INTERVAL_SECONDS = int(os.getenv("STOCK_MONITOR_INTERVAL", "3600"))  # default 1 hour
+
+    # Wait 60s after startup before first check (let the app warm up)
+    time.sleep(60)
+
+    while True:
+        try:
+            print(f"\n📦 [STOCK MONITOR] Starting check cycle at {datetime.utcnow().isoformat()}")
+
+            if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+                print("⚠️ [STOCK MONITOR] Supabase not configured, sleeping...")
+                time.sleep(INTERVAL_SECONDS)
+                continue
+
+            sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+            # Get all users with stock alerts enabled
+            settings_result = sb.table("stock_alert_settings").select("*").eq("enabled", True).execute()
+            users_settings = settings_result.data or []
+
+            if not users_settings:
+                print("📦 [STOCK MONITOR] No users with stock alerts enabled")
+                time.sleep(INTERVAL_SECONDS)
+                continue
+
+            print(f"📦 [STOCK MONITOR] Checking {len(users_settings)} user(s)...")
+
+            for setting in users_settings:
+                user_id = setting.get("user_id")
+                threshold = setting.get("threshold_units", 15)
+
+                try:
+                    # Get Shopify connection for this user
+                    connection = sb.table("shopify_connections").select("shop_domain,access_token").eq("user_id", user_id).execute()
+                    if not connection.data:
+                        continue
+
+                    shop_domain = connection.data[0].get("shop_domain")
+                    access_token = connection.data[0].get("access_token")
+                    if not shop_domain or not access_token:
+                        continue
+
+                    # Fetch products directly from Shopify (no Request object needed)
+                    products_url = f"https://{shop_domain}/admin/api/2024-10/products.json?limit=250"
+                    headers = {
+                        "X-Shopify-Access-Token": access_token,
+                        "Content-Type": "application/json",
+                    }
+                    resp = requests.get(products_url, headers=headers, timeout=30)
+                    if resp.status_code != 200:
+                        print(f"⚠️ [STOCK MONITOR] Shopify API error for user {user_id}: {resp.status_code}")
+                        continue
+
+                    products = resp.json().get("products", [])
+
+                    # Find products below threshold
+                    alerts_for_user = []
+                    for product in products:
+                        pid = str(product.get("id"))
+                        title = product.get("title") or "Produit"
+                        inventory = 0
+                        for variant in product.get("variants", []) or []:
+                            inventory += int(variant.get("inventory_quantity") or 0)
+
+                        if inventory <= threshold:
+                            alerts_for_user.append({
+                                "product_id": pid,
+                                "title": title,
+                                "inventory": inventory,
+                            })
+
+                    if not alerts_for_user:
+                        # Update last_checked_at
+                        sb.table("stock_alert_settings").update({"last_checked_at": datetime.utcnow().isoformat()}).eq("user_id", user_id).execute()
+                        continue
+
+                    # Check which products were already alerted in last 24h
+                    cutoff_24h = (datetime.utcnow() - timedelta(hours=24)).isoformat()
+                    recent_logs = sb.table("stock_alert_log").select("product_id").eq("user_id", user_id).gte("created_at", cutoff_24h).execute()
+                    already_alerted = {row["product_id"] for row in (recent_logs.data or [])}
+
+                    new_alerts = [a for a in alerts_for_user if a["product_id"] not in already_alerted]
+
+                    if not new_alerts:
+                        sb.table("stock_alert_settings").update({"last_checked_at": datetime.utcnow().isoformat()}).eq("user_id", user_id).execute()
+                        continue
+
+                    # Get user email
+                    user_email = None
+                    try:
+                        profile = sb.table("user_profiles").select("email").eq("id", user_id).execute()
+                        if profile.data:
+                            user_email = profile.data[0].get("email")
+                    except Exception:
+                        pass
+
+                    # Send email
+                    email_sent = False
+                    if user_email:
+                        email_sent = _send_stock_alert_email(user_email, new_alerts, threshold)
+
+                    # Log alerts in stock_alert_log
+                    for alert in new_alerts:
+                        sb.table("stock_alert_log").insert({
+                            "user_id": user_id,
+                            "product_id": alert["product_id"],
+                            "product_title": alert["title"],
+                            "inventory_at_alert": alert["inventory"],
+                            "threshold_at_alert": threshold,
+                            "email_sent": email_sent,
+                            "dismissed": False,
+                        }).execute()
+
+                    # Update last_checked_at
+                    sb.table("stock_alert_settings").update({"last_checked_at": datetime.utcnow().isoformat()}).eq("user_id", user_id).execute()
+
+                    print(f"📦 [STOCK MONITOR] User {user_id}: {len(new_alerts)} new alert(s), email={'sent' if email_sent else 'skipped'}")
+
+                except Exception as e:
+                    print(f"❌ [STOCK MONITOR] Error for user {user_id}: {e}")
+                    continue
+
+            print(f"📦 [STOCK MONITOR] Cycle complete. Next check in {INTERVAL_SECONDS}s")
+
+        except Exception as e:
+            print(f"❌ [STOCK MONITOR] Global error: {e}")
+
+        time.sleep(INTERVAL_SECONDS)
 
 
 # ============== SETTINGS ENDPOINTS ==============

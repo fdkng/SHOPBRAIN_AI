@@ -2065,13 +2065,18 @@ export default function Dashboard() {
           visible: true,
         }))
         setStockAlertToasts(toasts)
-        // Auto-dismiss after 12 seconds
+        // Auto-dismiss after 15 seconds
         setTimeout(() => {
           setStockAlertToasts(prev => prev.map(t => ({ ...t, visible: false })))
-        }, 12000)
+        }, 15000)
         setTimeout(() => {
           setStockAlertToasts([])
-        }, 12500)
+          // Mark background alerts as dismissed
+          fetch(`${API_URL}/api/stock-alerts/dismiss`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' }
+          }).catch(() => {})
+        }, 15500)
       }
     } catch (err) {
       console.error('Error checking stock alerts:', err)
@@ -6029,43 +6034,43 @@ export default function Dashboard() {
         </main>
       </div>
 
-      {/* Stock Alert Toast Notifications */}
+      {/* Stock Alert Toast Notifications — Bottom Left */}
       {stockAlertToasts.length > 0 && (
-        <div className="fixed top-4 right-4 z-[9999] space-y-3 max-w-sm w-full pointer-events-none">
+        <div className="fixed bottom-4 left-4 z-[9999] space-y-3 max-w-md w-full pointer-events-none">
           {stockAlertToasts.map((toast, idx) => (
             <div
               key={toast.id}
-              className={`pointer-events-auto bg-gray-900 border rounded-xl p-4 shadow-2xl transition-all duration-500 ${
-                toast.visible ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'
-              } ${toast.isOutOfStock ? 'border-red-600' : 'border-yellow-600'}`}
-              style={{ transitionDelay: `${idx * 100}ms` }}
+              className={`pointer-events-auto bg-gray-900 border-2 rounded-xl p-4 shadow-2xl transition-all duration-500 ${
+                toast.visible ? 'translate-x-0 opacity-100' : '-translate-x-full opacity-0'
+              } ${toast.isOutOfStock ? 'border-red-500' : 'border-yellow-500'}`}
+              style={{ transitionDelay: `${idx * 150}ms` }}
             >
               <div className="flex items-start gap-3">
                 {toast.image_url && (
-                  <img src={toast.image_url} alt="" className="w-10 h-10 rounded object-cover flex-shrink-0" />
+                  <img src={toast.image_url} alt="" className="w-12 h-12 rounded-lg object-cover flex-shrink-0 border border-gray-700" />
                 )}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
                     <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                      toast.isOutOfStock ? 'bg-red-600 text-white' : 'bg-yellow-600 text-white'
+                      toast.isOutOfStock ? 'bg-red-600 text-white' : 'bg-yellow-500 text-gray-900'
                     }`}>
-                      {toast.isOutOfStock ? '🔴 Rupture' : '⚠️ Stock bas'}
+                      {toast.isOutOfStock ? '🔴 Rupture de stock' : '⚠️ Stock bas'}
                     </span>
                   </div>
-                  <p className="text-white text-sm font-semibold truncate">{toast.title}</p>
-                  <p className="text-gray-400 text-xs mt-0.5">
+                  <p className="text-white text-base font-bold">{toast.title}</p>
+                  <p className="text-gray-300 text-sm mt-0.5">
                     {toast.isOutOfStock
                       ? 'Ce produit est en rupture de stock !'
                       : `Il ne reste que ${toast.inventory} unité${toast.inventory > 1 ? 's' : ''} en stock`
                     }
                   </p>
-                  <p className="text-yellow-400 text-xs mt-1 font-medium">
-                    Pensez à réapprovisionner votre stock
+                  <p className="text-yellow-400 text-sm mt-1.5 font-semibold">
+                    ↗ Pensez à réapprovisionner
                   </p>
                 </div>
                 <button
                   onClick={() => setStockAlertToasts(prev => prev.filter(t => t.id !== toast.id))}
-                  className="text-gray-500 hover:text-white transition-colors flex-shrink-0 mt-0.5"
+                  className="text-gray-500 hover:text-white transition-colors flex-shrink-0 mt-0.5 text-lg"
                 >
                   ✕
                 </button>
@@ -6073,15 +6078,15 @@ export default function Dashboard() {
             </div>
           ))}
           {stockAlertToasts.length > 1 && (
-            <div className="pointer-events-auto text-center">
+            <div className="pointer-events-auto">
               <button
                 onClick={() => {
                   setStockAlertToasts([])
                   setActiveTab('action-stock')
                 }}
-                className="text-xs text-yellow-400 hover:text-yellow-300 underline transition-colors"
+                className="text-sm text-yellow-400 hover:text-yellow-300 font-semibold transition-colors bg-gray-900/90 border border-yellow-600/50 rounded-lg px-4 py-2"
               >
-                Voir tous les stocks →
+                📦 Voir tous les stocks ({stockAlertToasts.length} alertes)
               </button>
             </div>
           )}
