@@ -5,9 +5,8 @@
 CREATE TABLE IF NOT EXISTS stock_alert_settings (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   user_id UUID NOT NULL UNIQUE REFERENCES auth.users(id) ON DELETE CASCADE,
-  threshold_units INTEGER NOT NULL DEFAULT 15,
+  threshold INTEGER NOT NULL DEFAULT 15,
   enabled BOOLEAN NOT NULL DEFAULT true,
-  last_checked_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
