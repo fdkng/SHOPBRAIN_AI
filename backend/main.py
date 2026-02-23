@@ -7498,7 +7498,55 @@ async def startup_event():
 # Background Stock Monitor — 24/7, toutes les 5 minutes
 # ---------------------------------------------------------------------------
 
-def _send_stock_alert_email(to_email: str, product_name: str, stock_remaining: int, threshold: int) -> bool:
+def _send_stock_alert_via_shopify_invoice(shop_domain: str, access_token: str, to_email: str, product_name: str, stock_remaining: int, threshold: int) -> bool:
+    """Fallback: envoie l'alerte via Draft Order Shopify + send_invoice (même canal que facturation)."""
+    try:
+        headers = {
+            "X-Shopify-Access-Token": access_token,
+            "Content-Type": "application/json",
+        }
+        note = (
+            "⚠️ Alerte Stock\n"
+            f"Produit: {product_name}\n"
+            f"Stock restant: {stock_remaining}\n"
+            f"Seuil configuré: {threshold}\n"
+            f"Heure UTC: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+
+        draft_payload = {
+            "draft_order": {
+                "email": to_email,
+                "line_items": [{"title": "Alerte Stock ShopBrain", "quantity": 1, "price": "0.00"}],
+                "note": note,
+            }
+        }
+
+        draft_url = f"https://{shop_domain}/admin/api/2024-10/draft_orders.json"
+        draft_resp = requests.post(draft_url, headers=headers, data=json.dumps(draft_payload), timeout=30)
+        if draft_resp.status_code not in [200, 201]:
+            print(f"❌ [STOCK] Shopify draft_order échoué: {draft_resp.status_code} {draft_resp.text[:300]}")
+            return False
+
+        draft_order = draft_resp.json().get("draft_order", {})
+        draft_id = draft_order.get("id")
+        if not draft_id:
+            print("❌ [STOCK] Shopify draft_order sans id")
+            return False
+
+        send_url = f"https://{shop_domain}/admin/api/2024-10/draft_orders/{draft_id}/send_invoice.json"
+        send_resp = requests.post(send_url, headers=headers, timeout=30)
+        if send_resp.status_code not in [200, 201]:
+            print(f"❌ [STOCK] Shopify send_invoice échoué: {send_resp.status_code} {send_resp.text[:300]}")
+            return False
+
+        print(f"✅ [STOCK] Email envoyé via Shopify invoice à {to_email} pour {product_name}")
+        return True
+    except Exception as e:
+        print(f"❌ [STOCK] Fallback Shopify invoice échoué: {e}")
+        return False
+
+
+def _send_stock_alert_email(to_email: str, product_name: str, stock_remaining: int, threshold: int, shop_domain: str | None = None, access_token: str | None = None) -> bool:
     """Envoie un email d'alerte pour UN produit avec seuil + heure."""
     smtp_host = os.getenv("SMTP_HOST")
     smtp_user = os.getenv("SMTP_USER")
@@ -7510,6 +7558,9 @@ def _send_stock_alert_email(to_email: str, product_name: str, stock_remaining: i
     if not smtp_host or not smtp_user or not smtp_pass or not smtp_from:
         print("⚠️ [STOCK] SMTP non configuré")
         print(f"⚠️ [STOCK] SMTP_HOST={'set' if smtp_host else 'missing'} SMTP_USER={'set' if smtp_user else 'missing'} SMTP_PASS={'set' if smtp_pass else 'missing'} SMTP_FROM={'set' if smtp_from else 'missing'}")
+        if shop_domain and access_token:
+            print("🔁 [STOCK] Tentative fallback via Shopify send_invoice...")
+            return _send_stock_alert_via_shopify_invoice(shop_domain, access_token, to_email, product_name, stock_remaining, threshold)
         return False
 
     now_str = datetime.utcnow().strftime("%H:%M")
@@ -7544,6 +7595,9 @@ def _send_stock_alert_email(to_email: str, product_name: str, stock_remaining: i
         return True
     except Exception as e:
         print(f"❌ [STOCK] Email échoué: {e}")
+        if shop_domain and access_token:
+            print("🔁 [STOCK] Tentative fallback via Shopify send_invoice après échec SMTP...")
+            return _send_stock_alert_via_shopify_invoice(shop_domain, access_token, to_email, product_name, stock_remaining, threshold)
         return False
 
 
@@ -7656,7 +7710,14 @@ def _stock_monitor_once() -> dict:
                     print(f"❌ [STOCK] Email utilisateur manquant pour {user_id}")
                     continue
 
-                email_ok = _send_stock_alert_email(user_email, title, inventory, threshold)
+                email_ok = _send_stock_alert_email(
+                    user_email,
+                    title,
+                    inventory,
+                    threshold,
+                    shop_domain=shop,
+                    access_token=token,
+                )
                 if email_ok:
                     summary["alerts_sent"] += 1
 
