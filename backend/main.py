@@ -3106,56 +3106,85 @@ async def get_stock_forecast(request: Request, range: str = "30d", threshold_uni
 
 
 # ---------------------------------------------------------------------------
-# Stock Alert — Prévision rupture des stocks
+# Stock Alert — Prévision rupture des stocks (minimaliste)
 # ---------------------------------------------------------------------------
 
 @app.get("/api/stock-alerts/settings")
 async def get_stock_alert_settings(request: Request):
-    """Récupérer le seuil d'alerte stock de l'utilisateur."""
+    """Récupérer la config d'alerte stock de l'utilisateur."""
     user_id = get_user_id(request)
     sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
     result = sb.table("stock_alert_settings").select("*").eq("user_id", user_id).limit(1).execute()
     if result.data:
         row = result.data[0]
-        return {"success": True, "threshold": row.get("threshold", 10), "enabled": row.get("enabled", True)}
-    return {"success": True, "threshold": 10, "enabled": True}
+        return {
+            "success": True,
+            "threshold": row.get("threshold", 10),
+            "product_id": row.get("product_id", ""),
+            "product_title": row.get("product_title", ""),
+            "enabled": row.get("enabled", False),
+        }
+    return {"success": True, "threshold": 10, "product_id": "", "product_title": "", "enabled": False}
 
 
 @app.post("/api/stock-alerts/settings")
 async def save_stock_alert_settings(request: Request):
-    """Sauvegarder le seuil d'alerte stock."""
+    """Sauvegarder / activer l'alerte stock pour UN produit."""
     user_id = get_user_id(request)
     body = await request.json()
     threshold = max(1, int(body.get("threshold", 10)))
+    product_id = str(body.get("product_id", "")).strip()
+    product_title = str(body.get("product_title", "")).strip()
     enabled = bool(body.get("enabled", True))
     sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
     sb.table("stock_alert_settings").upsert({
         "user_id": user_id,
         "threshold": threshold,
+        "product_id": product_id,
+        "product_title": product_title,
         "enabled": enabled,
         "updated_at": datetime.utcnow().isoformat(),
     }, on_conflict="user_id").execute()
-    return {"success": True, "threshold": threshold, "enabled": enabled}
+    return {"success": True, "threshold": threshold, "product_id": product_id, "product_title": product_title, "enabled": enabled}
 
 
 @app.get("/api/stock-alerts/check")
 async def check_stock_alerts(request: Request):
-    """Vérifie les alertes actives (non-dismissed) pour afficher le popup dashboard."""
+    """Vérifie les alertes actives (non-dismissed) pour afficher le popup."""
     user_id = get_user_id(request)
     sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
     cutoff = (datetime.utcnow() - timedelta(hours=48)).isoformat()
-    log_result = sb.table("stock_alert_log").select("*").eq("user_id", user_id).eq("dismissed", False).gte("created_at", cutoff).order("created_at", desc=True).limit(20).execute()
+    log_result = sb.table("stock_alert_log").select("*").eq("user_id", user_id).eq("dismissed", False).gte("created_at", cutoff).order("created_at", desc=True).limit(5).execute()
     alerts = log_result.data or []
     return {"success": True, "alert_count": len(alerts), "alerts": alerts}
 
 
 @app.post("/api/stock-alerts/dismiss")
 async def dismiss_stock_alerts(request: Request):
-    """Marquer toutes les alertes de l'utilisateur comme vues."""
+    """Marquer les alertes comme vues."""
     user_id = get_user_id(request)
     sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
     sb.table("stock_alert_log").update({"dismissed": True}).eq("user_id", user_id).eq("dismissed", False).execute()
     return {"success": True}
+
+
+@app.get("/api/stock-alerts/products")
+async def get_stock_alert_products(request: Request):
+    """Liste déroulante: retourne id+title de tous les produits Shopify."""
+    user_id = get_user_id(request)
+    shop_domain, access_token = _get_shopify_connection(user_id)
+    resp = requests.get(
+        f"https://{shop_domain}/admin/api/2024-10/products.json?limit=250&fields=id,title",
+        headers={"X-Shopify-Access-Token": access_token},
+        timeout=30
+    )
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail="Impossible de charger les produits Shopify")
+    products = resp.json().get("products", [])
+    return {
+        "success": True,
+        "products": [{"id": str(p["id"]), "title": p.get("title", "")} for p in products]
+    }
 
 
 @app.get("/api/shopify/bundles")
@@ -7480,8 +7509,8 @@ async def startup_event():
 # Background Stock Monitor — 24/7, toutes les 5 minutes
 # ---------------------------------------------------------------------------
 
-def _send_stock_alert_email(to_email: str, product_name: str, stock_remaining: int) -> bool:
-    """Envoie un email d'alerte pour UN produit. Retourne True si envoyé."""
+def _send_stock_alert_email(to_email: str, product_name: str, stock_remaining: int, threshold: int) -> bool:
+    """Envoie un email d'alerte pour UN produit avec seuil + heure."""
     smtp_host = os.getenv("SMTP_HOST")
     smtp_user = os.getenv("SMTP_USER")
     smtp_pass = os.getenv("SMTP_PASS")
@@ -7493,11 +7522,14 @@ def _send_stock_alert_email(to_email: str, product_name: str, stock_remaining: i
         print("⚠️ [STOCK] SMTP non configuré")
         return False
 
-    subject = "⚠️ Alerte rupture de stock"
+    now_str = datetime.utcnow().strftime("%H:%M")
+    subject = "⚠️ Alerte Stock"
     body = (
-        f"Bonjour,\n\n"
-        f"Le produit {product_name} a atteint {stock_remaining} unités restantes.\n"
-        f"Pense à restock rapidement.\n\n"
+        f"⚠️ Alerte Stock\n\n"
+        f"Produit : {product_name}\n"
+        f"Stock restant : {stock_remaining} unités\n"
+        f"Seuil configuré : {threshold} unités\n"
+        f"Heure : {now_str}\n\n"
         f"— ShopBrain"
     )
 
@@ -7526,13 +7558,7 @@ def _send_stock_alert_email(to_email: str, product_name: str, stock_remaining: i
 
 
 def _stock_monitor_loop():
-    """Thread background: vérifie les stocks de tous les utilisateurs toutes les 5 min.
-
-    Pour chaque user avec stock_alert_settings.enabled = true :
-    1. Fetch produits Shopify
-    2. Compare stock vs threshold
-    3. Si stock <= threshold ET pas déjà alerté (24h) → email + log
-    """
+    """Thread background: vérifie le stock du produit configuré par chaque user, toutes les 5 min."""
     INTERVAL = int(os.getenv("STOCK_MONITOR_INTERVAL", "300"))  # 5 min
     time.sleep(30)  # attendre que l'app démarre
 
@@ -7548,6 +7574,11 @@ def _stock_monitor_loop():
             for row in (settings.data or []):
                 user_id = row["user_id"]
                 threshold = row.get("threshold", 10)
+                target_pid = str(row.get("product_id", "")).strip()
+                target_title = row.get("product_title", "Produit")
+
+                if not target_pid:
+                    continue  # pas de produit configuré
 
                 try:
                     # Connexion Shopify
@@ -7559,21 +7590,27 @@ def _stock_monitor_loop():
                     if not shop or not token:
                         continue
 
-                    # Fetch produits Shopify
+                    # Fetch uniquement le produit ciblé
                     resp = requests.get(
-                        f"https://{shop}/admin/api/2024-10/products.json?limit=250",
+                        f"https://{shop}/admin/api/2024-10/products/{target_pid}.json",
                         headers={"X-Shopify-Access-Token": token},
                         timeout=30
                     )
                     if resp.status_code != 200:
                         continue
 
-                    products = resp.json().get("products", [])
+                    product = resp.json().get("product", {})
+                    inventory = sum(int(v.get("inventory_quantity") or 0) for v in product.get("variants", []))
+                    title = product.get("title") or target_title
 
-                    # Produits déjà alertés dans les 24h
+                    if inventory > threshold:
+                        continue  # stock OK, rien à faire
+
+                    # Vérifier anti-spam 24h
                     cutoff = (datetime.utcnow() - timedelta(hours=24)).isoformat()
-                    logs = sb.table("stock_alert_log").select("product_id").eq("user_id", user_id).gte("created_at", cutoff).execute()
-                    already_alerted = {r["product_id"] for r in (logs.data or [])}
+                    logs = sb.table("stock_alert_log").select("id").eq("user_id", user_id).eq("product_id", target_pid).gte("created_at", cutoff).limit(1).execute()
+                    if logs.data:
+                        continue  # déjà alerté
 
                     # Email de l'utilisateur
                     user_email = None
@@ -7584,29 +7621,20 @@ def _stock_monitor_loop():
                     except Exception:
                         pass
 
-                    for product in products:
-                        pid = str(product.get("id"))
-                        title = product.get("title") or "Produit"
-                        inventory = sum(int(v.get("inventory_quantity") or 0) for v in product.get("variants", []))
+                    email_ok = False
+                    if user_email:
+                        email_ok = _send_stock_alert_email(user_email, title, inventory, threshold)
 
-                        if inventory <= threshold and pid not in already_alerted:
-                            # Envoyer email
-                            email_ok = False
-                            if user_email:
-                                email_ok = _send_stock_alert_email(user_email, title, inventory)
-
-                            # Logger l'alerte (anti-spam + popup dashboard)
-                            sb.table("stock_alert_log").insert({
-                                "user_id": user_id,
-                                "product_id": pid,
-                                "product_title": title,
-                                "inventory_at_alert": inventory,
-                                "threshold_at_alert": threshold,
-                                "email_sent": email_ok,
-                                "dismissed": False,
-                            }).execute()
-
-                    sb.table("stock_alert_settings").update({"updated_at": datetime.utcnow().isoformat()}).eq("user_id", user_id).execute()
+                    # Logger l'alerte
+                    sb.table("stock_alert_log").insert({
+                        "user_id": user_id,
+                        "product_id": target_pid,
+                        "product_title": title,
+                        "inventory_at_alert": inventory,
+                        "threshold_at_alert": threshold,
+                        "email_sent": email_ok,
+                        "dismissed": False,
+                    }).execute()
 
                 except Exception as e:
                     print(f"❌ [STOCK] User {user_id}: {e}")
