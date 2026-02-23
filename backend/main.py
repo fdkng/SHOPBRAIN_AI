@@ -7501,11 +7501,11 @@ async def startup_event():
 # Bouton "Ne plus me rappeler" avec token sécurisé
 # ---------------------------------------------------------------------------
 
-STOCK_ALERT_SMTP_HOST = "smtp.office365.com"
-STOCK_ALERT_SMTP_PORT = 587
-STOCK_ALERT_SMTP_USER = "shopbrainai@outlook.com"
-STOCK_ALERT_SMTP_PASS = os.getenv("STOCK_ALERT_SMTP_PASS", "")
-STOCK_ALERT_SMTP_FROM = "shopbrainai@outlook.com"
+STOCK_ALERT_SMTP_HOST = os.getenv("STOCK_ALERT_SMTP_HOST") or os.getenv("SMTP_HOST") or "smtp.office365.com"
+STOCK_ALERT_SMTP_PORT = int(os.getenv("STOCK_ALERT_SMTP_PORT") or os.getenv("SMTP_PORT") or "587")
+STOCK_ALERT_SMTP_USER = os.getenv("STOCK_ALERT_SMTP_USER") or os.getenv("SMTP_USER") or "shopbrainai@outlook.com"
+STOCK_ALERT_SMTP_PASS = os.getenv("STOCK_ALERT_SMTP_PASS") or os.getenv("SMTP_PASS") or ""
+STOCK_ALERT_SMTP_FROM = os.getenv("STOCK_ALERT_SMTP_FROM") or os.getenv("SMTP_FROM") or STOCK_ALERT_SMTP_USER
 STOCK_ALERT_COOLDOWN_DAYS = 5
 STOCK_ALERT_TOKEN_EXPIRY_DAYS = 30
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "https://shopbrain-backend.onrender.com")
