@@ -7498,7 +7498,7 @@ async def startup_event():
 # Background Stock Monitor — 24/7, toutes les 5 minutes
 # ---------------------------------------------------------------------------
 
-def _send_stock_alert_email(to_email: str, product_name: str, stock_remaining: int, threshold: int, shop_domain: str | None = None, access_token: str | None = None) -> bool:
+def _send_stock_alert_email(to_email: str, product_name: str, stock_remaining: int, threshold: int) -> bool:
     """Envoie un email interne d'alerte stock (sans marketing)."""
     smtp_host = os.getenv("SMTP_HOST")
     smtp_user = os.getenv("SMTP_USER")
@@ -7514,18 +7514,12 @@ def _send_stock_alert_email(to_email: str, product_name: str, stock_remaining: i
         return False
 
     timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-    subject = "⚠️ Alerte : Stock seuil atteint"
+    subject = "Alerte Stock"
     body = (
-        "Bonjour,\n\n"
-        "Le stock du produit suivant a atteint le seuil d’alerte que vous avez configuré.\n\n"
-        f"Produit : {product_name}\n"
-        f"Stock actuel : {stock_remaining} unités\n"
-        f"Seuil configuré : {threshold} unités\n"
-        "\n"
-        "Nous vous recommandons de réapprovisionner ce produit dès que possible afin d’éviter une rupture complète.\n\n"
-        f"Date de détection : {timestamp}\n\n"
-        "—\n"
-        "Système automatique de surveillance de stock"
+        f"Le produit {product_name} a atteint le seuil configuré.\n"
+        f"Stock actuel : {stock_remaining}\n"
+        f"Seuil : {threshold}\n\n"
+        "Veuillez restocker ce produit."
     )
 
     try:
@@ -7560,7 +7554,6 @@ def _stock_monitor_once() -> dict:
         "users_checked": 0,
         "products_checked": 0,
         "alerts_sent": 0,
-        "alerts_skipped_already_sent": 0,
         "alerts_skipped_no_email": 0,
         "errors": 0,
     }
@@ -7611,10 +7604,6 @@ def _stock_monitor_once() -> dict:
                 inventory_map[pid] = sum(int(v.get("inventory_quantity") or 0) for v in p.get("variants", []))
                 title_map[pid] = p.get("title", "Produit")
 
-            cutoff = (datetime.utcnow() - timedelta(hours=24)).isoformat()
-            logs = sb.table("stock_alert_log").select("product_id").eq("user_id", user_id).gte("created_at", cutoff).execute()
-            already_alerted = {r["product_id"] for r in (logs.data or [])}
-
             user_email = None
             try:
                 profile = sb.table("user_profiles").select("email").eq("id", user_id).execute()
@@ -7652,11 +7641,6 @@ def _stock_monitor_once() -> dict:
 
                 print(f"✅ [STOCK] Condition atteinte pour : {title} (stock={inventory} <= seuil={threshold})")
 
-                if pid in already_alerted:
-                    summary["alerts_skipped_already_sent"] += 1
-                    print(f"⏸️ [STOCK] Déjà alerté (24h): {title}")
-                    continue
-
                 if not user_email:
                     summary["alerts_skipped_no_email"] += 1
                     print(f"❌ [STOCK] Email utilisateur manquant pour {user_id}")
@@ -7667,8 +7651,6 @@ def _stock_monitor_once() -> dict:
                     title,
                     inventory,
                     threshold,
-                    shop_domain=shop,
-                    access_token=token,
                 )
                 if email_ok:
                     summary["alerts_sent"] += 1
