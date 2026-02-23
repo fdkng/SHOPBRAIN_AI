@@ -148,18 +148,10 @@ export default function Dashboard() {
   const [selectedBundlesHistoryJobId, setSelectedBundlesHistoryJobId] = useState('')
   const [backendHealth, setBackendHealth] = useState(null)
   const [backendHealthTs, setBackendHealthTs] = useState(0)
-  // Stock alert — minimaliste
-  const [stockThreshold, setStockThreshold] = useState(10)
-  const [stockSelectedProduct, setStockSelectedProduct] = useState('')
-  const [stockSelectedProductTitle, setStockSelectedProductTitle] = useState('')
-  const [stockProductsList, setStockProductsList] = useState([])
+  // Stock alert — liste multi-produit, auto-save, zéro popup
+  const [stockProducts, setStockProducts] = useState([])
   const [stockProductsLoading, setStockProductsLoading] = useState(false)
-  const [stockAlertEnabled, setStockAlertEnabled] = useState(false)
-  const [stockSaving, setStockSaving] = useState(false)
-  const [stockSaveMsg, setStockSaveMsg] = useState('')
-  const [stockAlerts, setStockAlerts] = useState([])
-  const [stockAlertModalOpen, setStockAlertModalOpen] = useState(false)
-  const stockAlertCheckedRef = useRef(false)
+  const stockLoadedRef = useRef(false)
   const [shopCurrency, setShopCurrency] = useState(() => {
     if (typeof window === 'undefined') return ''
     return localStorage.getItem('shopCurrencyCache') || ''
@@ -751,14 +743,11 @@ export default function Dashboard() {
     }
   }, [shopifyConnected])
 
-  // Auto-load stock config + check alerts on Shopify connect
+  // Auto-load stock products when Shopify is connected
   useEffect(() => {
-    if (shopifyConnected && !stockAlertCheckedRef.current) {
-      stockAlertCheckedRef.current = true
+    if (shopifyConnected && !stockLoadedRef.current) {
+      stockLoadedRef.current = true
       loadStockProducts()
-      loadStockAlertSettings().then(() => {
-        setTimeout(() => checkStockAlerts(), 3000)
-      })
     }
   }, [shopifyConnected])
 
@@ -1955,112 +1944,42 @@ export default function Dashboard() {
   }
 
   // ---------------------------------------------------------------------------
-  // Stock Alert — fonctions minimalistes
+  // Stock Alert — chargement + auto-save multi-produit (zéro popup)
   // ---------------------------------------------------------------------------
 
-  // Charger la liste des produits Shopify (dropdown)
+  // Charger tous les produits Shopify avec leurs seuils sauvegardés
   const loadStockProducts = async () => {
     try {
       setStockProductsLoading(true)
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) return
-      const resp = await fetch(`${API_URL}/api/stock-alerts/products`, {
+      const resp = await fetch(`${API_URL}/api/stock-alerts/products-with-thresholds`, {
         headers: { 'Authorization': `Bearer ${session.access_token}` }
       })
       if (resp.ok) {
         const d = await resp.json()
-        if (d.success) setStockProductsList(d.products || [])
+        if (d.success) setStockProducts(d.products || [])
       }
     } catch (err) {
-      console.error('Erreur chargement produits:', err)
+      console.error('Erreur chargement produits stock:', err)
     } finally {
       setStockProductsLoading(false)
     }
   }
 
-  // Charger la config sauvegardée
-  const loadStockAlertSettings = async () => {
+  // Auto-save seuil pour un produit (appelé à chaque modification du champ)
+  const autoSaveThreshold = async (productId, productTitle, threshold) => {
     try {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) return
-      const resp = await fetch(`${API_URL}/api/stock-alerts/settings`, {
-        headers: { 'Authorization': `Bearer ${session.access_token}` }
-      })
-      if (resp.ok) {
-        const d = await resp.json()
-        if (d.success) {
-          setStockThreshold(d.threshold || 10)
-          setStockSelectedProduct(d.product_id || '')
-          setStockSelectedProductTitle(d.product_title || '')
-          setStockAlertEnabled(d.enabled || false)
-        }
-      }
-    } catch (err) {
-      console.error('Erreur chargement config:', err)
-    }
-  }
-
-  // Sauvegarder / activer l'alerte
-  const saveStockAlert = async () => {
-    if (!stockSelectedProduct) { setStockSaveMsg('Sélectionne un produit.'); return }
-    try {
-      setStockSaving(true)
-      setStockSaveMsg('')
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) return
-      const resp = await fetch(`${API_URL}/api/stock-alerts/settings`, {
+      await fetch(`${API_URL}/api/stock-alerts/save-threshold`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          threshold: stockThreshold,
-          product_id: stockSelectedProduct,
-          product_title: stockSelectedProductTitle,
-          enabled: true
-        })
+        body: JSON.stringify({ product_id: productId, product_title: productTitle, threshold })
       })
-      if (resp.ok) {
-        setStockAlertEnabled(true)
-        setStockSaveMsg('✅ Alerte activée ! Surveillance 24/7 en cours.')
-      }
     } catch (err) {
-      console.error('Erreur sauvegarde alerte:', err)
-      setStockSaveMsg('Erreur de sauvegarde.')
-    } finally {
-      setStockSaving(false)
+      console.error('Erreur auto-save seuil:', err)
     }
-  }
-
-  // Vérifier popup alertes au login
-  const checkStockAlerts = async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) return
-      const resp = await fetch(`${API_URL}/api/stock-alerts/check`, {
-        headers: { 'Authorization': `Bearer ${session.access_token}` }
-      })
-      if (!resp.ok) return
-      const d = await resp.json()
-      if (d.success && d.alert_count > 0) {
-        setStockAlerts(d.alerts)
-        setStockAlertModalOpen(true)
-      }
-    } catch (err) {
-      console.error('Erreur check alertes:', err)
-    }
-  }
-
-  // Marquer alertes comme vues
-  const dismissStockAlerts = async () => {
-    setStockAlertModalOpen(false)
-    setStockAlerts([])
-    try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) return
-      await fetch(`${API_URL}/api/stock-alerts/dismiss`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' }
-      })
-    } catch (_) {}
   }
 
   // Nouveau flow asynchrone bundles
@@ -4304,74 +4223,69 @@ export default function Dashboard() {
         )}
 
         {activeTab === 'action-stock' && (
-          <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-            <h2 className="text-white text-xl font-bold mb-1 flex items-center gap-2">
-              <span>📦</span> Alerte rupture de stock
-            </h2>
-            <p className="text-gray-400 text-sm mb-6">Sélectionnez un produit, définissez un seuil, et le système vous alerte automatiquement par email.</p>
-
-            {/* Champ 1: Produit */}
-            <div className="mb-5">
-              <label className="block text-sm font-semibold text-gray-300 mb-2">Produit</label>
-              <select
-                value={stockSelectedProduct}
-                onChange={(e) => {
-                  const pid = e.target.value
-                  setStockSelectedProduct(pid)
-                  const found = stockProductsList.find(p => p.id === pid)
-                  setStockSelectedProductTitle(found ? found.title : '')
-                }}
-                className="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-2.5 text-white text-sm outline-none focus:border-yellow-500"
-              >
-                <option value="">— Sélectionner un produit —</option>
-                {stockProductsList.map(p => (
-                  <option key={p.id} value={p.id}>{p.title}</option>
-                ))}
-              </select>
-              {stockProductsLoading && <p className="text-xs text-gray-500 mt-1">Chargement des produits...</p>}
+          <div className="bg-gray-800 rounded-lg border border-gray-700">
+            <div className="px-6 py-5 border-b border-gray-700">
+              <h2 className="text-white text-xl font-bold flex items-center gap-2">
+                <span>📦</span> Alertes rupture de stock
+              </h2>
+              <p className="text-gray-400 text-sm mt-1">Entrez un seuil à côté de chaque produit. La sauvegarde est automatique. Vous recevrez un email si le stock atteint le seuil.</p>
             </div>
 
-            {/* Champ 2: Seuil */}
-            <div className="mb-6">
-              <label className="block text-sm font-semibold text-gray-300 mb-2">Seuil d'alerte (unités)</label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min={1}
-                  max={9999}
-                  value={stockThreshold}
-                  onChange={(e) => setStockThreshold(Math.max(1, Number(e.target.value) || 1))}
-                  className="w-28 bg-gray-900 border border-gray-600 rounded-lg px-4 py-2.5 text-yellow-400 font-bold text-lg text-center outline-none focus:border-yellow-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                />
-                <span className="text-gray-400 text-sm">unités restantes → alerte</span>
+            {stockProductsLoading ? (
+              <div className="p-8 text-center">
+                <svg className="animate-spin h-6 w-6 text-yellow-400 mx-auto mb-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                <p className="text-gray-400 text-sm">Chargement des produits...</p>
               </div>
+            ) : stockProducts.length === 0 ? (
+              <div className="p-8 text-center">
+                <p className="text-gray-500 text-sm">Aucun produit Shopify trouvé.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-gray-700 bg-gray-900/50">
+                      <th className="text-left px-6 py-3 text-xs text-gray-400 font-semibold uppercase">Produit</th>
+                      <th className="text-center px-4 py-3 text-xs text-gray-400 font-semibold uppercase w-28">Stock</th>
+                      <th className="text-center px-4 py-3 text-xs text-gray-400 font-semibold uppercase w-36">Seuil d'alerte</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-700/50">
+                    {stockProducts.map((p) => (
+                      <tr key={p.id} className="hover:bg-gray-700/20 transition-colors">
+                        <td className="px-6 py-3">
+                          <p className="text-white text-sm font-medium">{p.title}</p>
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <span className={`text-sm font-bold ${p.inventory <= 0 ? 'text-red-400' : p.inventory <= (p.threshold || 999999) ? 'text-yellow-400' : 'text-green-400'}`}>
+                            {p.inventory}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <input
+                            type="number"
+                            min={0}
+                            max={9999}
+                            defaultValue={p.threshold || ''}
+                            placeholder="—"
+                            onBlur={(e) => {
+                              const val = Math.max(0, Number(e.target.value) || 0)
+                              autoSaveThreshold(p.id, p.title, val)
+                              setStockProducts(prev => prev.map(x => x.id === p.id ? { ...x, threshold: val } : x))
+                            }}
+                            className="w-20 bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-yellow-400 font-bold text-sm text-center outline-none focus:border-yellow-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div className="px-6 py-3 border-t border-gray-700 bg-gray-900/30">
+              <p className="text-xs text-gray-500">Le serveur vérifie automatiquement vos stocks <span className="text-yellow-400">toutes les 5 minutes</span>, 24/7. Un email est envoyé quand le stock atteint le seuil configuré.</p>
             </div>
-
-            {/* Bouton unique */}
-            <button
-              onClick={saveStockAlert}
-              disabled={stockSaving || !stockSelectedProduct}
-              className="w-full bg-yellow-500 hover:bg-yellow-600 text-gray-900 font-bold py-3 px-6 rounded-lg disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
-            >
-              {stockSaving ? (
-                <><svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg> Sauvegarde...</>
-              ) : '🔔 Sauvegarder / Activer l\'alerte'}
-            </button>
-
-            {/* Message de confirmation */}
-            {stockSaveMsg && (
-              <p className={`text-sm mt-3 ${stockSaveMsg.startsWith('✅') ? 'text-green-400' : 'text-red-400'}`}>{stockSaveMsg}</p>
-            )}
-
-            {/* Statut actuel */}
-            {stockAlertEnabled && stockSelectedProductTitle && (
-              <div className="mt-5 bg-green-900/20 border border-green-700/40 rounded-lg p-4">
-                <p className="text-green-400 text-sm font-semibold">🟢 Surveillance active</p>
-                <p className="text-gray-300 text-xs mt-1">Produit : <span className="text-white font-semibold">{stockSelectedProductTitle}</span></p>
-                <p className="text-gray-300 text-xs">Seuil : <span className="text-yellow-400 font-semibold">{stockThreshold} unités</span></p>
-                <p className="text-gray-500 text-xs mt-1">Vérification toutes les 5 minutes, 24/7. Email envoyé si le stock atteint le seuil.</p>
-              </div>
-            )}
           </div>
         )}
 
@@ -5761,30 +5675,6 @@ export default function Dashboard() {
         </main>
       </div>
 
-      {/* Stock Alert Popup */}
-      {stockAlertModalOpen && stockAlerts.length > 0 && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-4">
-          <div className="w-full max-w-md rounded-2xl border border-yellow-600/40 bg-gray-900 shadow-2xl">
-            <div className="flex items-start justify-between border-b border-gray-800 px-5 py-4">
-              <h3 className="text-lg font-bold text-white">⚠️ Alerte Stock</h3>
-              <button onClick={dismissStockAlerts} className="rounded-md px-2 py-1 text-gray-400 hover:bg-gray-800 hover:text-white">✕</button>
-            </div>
-            <div className="px-5 py-4 space-y-3">
-              {stockAlerts.map((a) => (
-                <div key={a.id || a.product_id} className="bg-yellow-900/20 border border-yellow-600/30 rounded-lg p-4">
-                  <p className="text-white font-bold">Produit : {a.product_title}</p>
-                  <p className="text-gray-300 text-sm mt-1">Stock restant : <span className="text-yellow-400 font-bold">{a.inventory_at_alert} unités</span></p>
-                  <p className="text-gray-300 text-sm">Seuil configuré : <span className="text-white font-semibold">{a.threshold_at_alert} unités</span></p>
-                  <p className="text-gray-400 text-xs mt-1">Détecté le {new Date(a.created_at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
-                </div>
-              ))}
-            </div>
-            <div className="flex justify-end border-t border-gray-800 px-5 py-4">
-              <button onClick={dismissStockAlerts} className="rounded-lg bg-yellow-500 px-5 py-2 text-sm font-bold text-gray-900 hover:bg-yellow-400">Compris</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

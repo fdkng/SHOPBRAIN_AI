@@ -1,16 +1,16 @@
 -- Stock Alert Settings table
--- Stores per-user stock alert config: which product to watch + threshold
--- One alert config per user (upsert on user_id)
+-- One row per user per product. Threshold = 0 or row deleted means disabled.
 
 CREATE TABLE IF NOT EXISTS stock_alert_settings (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id UUID NOT NULL UNIQUE REFERENCES auth.users(id) ON DELETE CASCADE,
-  product_id TEXT NOT NULL DEFAULT '',
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  product_id TEXT NOT NULL,
   product_title TEXT NOT NULL DEFAULT '',
-  threshold INTEGER NOT NULL DEFAULT 10,
-  enabled BOOLEAN NOT NULL DEFAULT false,
+  threshold INTEGER NOT NULL DEFAULT 0,
+  enabled BOOLEAN NOT NULL DEFAULT true,
   created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(user_id, product_id)
 );
 
 -- Index for fast lookup by user
