@@ -21,7 +21,7 @@ import threading
 from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException, Request, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import RedirectResponse, StreamingResponse, HTMLResponse
 from pydantic import BaseModel
 from io import BytesIO
 from email.message import EmailMessage
@@ -7495,124 +7495,229 @@ async def startup_event():
 
 
 # ---------------------------------------------------------------------------
-# Background Stock Monitor — 24/7, toutes les 5 minutes
+# Background Stock Monitor — SMTP Email System
+# Expéditeur: shopbrainai@outlook.com
+# Cooldown: 1 email par produit par user tous les 5 jours
+# Bouton "Ne plus me rappeler" avec token sécurisé
 # ---------------------------------------------------------------------------
 
-def _send_stock_alert_via_shopify_invoice(shop_domain: str, access_token: str, to_email: str, product_name: str, stock_remaining: int, threshold: int) -> bool:
-    """Envoie l'alerte stock via le même mécanisme Shopify que la facture (draft_orders/send_invoice)."""
+STOCK_ALERT_SMTP_HOST = "smtp.office365.com"
+STOCK_ALERT_SMTP_PORT = 587
+STOCK_ALERT_SMTP_USER = "shopbrainai@outlook.com"
+STOCK_ALERT_SMTP_PASS = os.getenv("STOCK_ALERT_SMTP_PASS", "")
+STOCK_ALERT_SMTP_FROM = "shopbrainai@outlook.com"
+STOCK_ALERT_COOLDOWN_DAYS = 5
+STOCK_ALERT_TOKEN_EXPIRY_DAYS = 30
+BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "https://shopbrain-backend.onrender.com")
+
+
+def _generate_unsubscribe_token(user_id: str, product_id: str) -> str:
+    """Génère un token sécurisé unique pour le lien unsubscribe."""
+    raw = f"{user_id}:{product_id}:{uuid.uuid4().hex}:{time.time()}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _get_or_create_unsubscribe_token(sb, user_id: str, product_id: str) -> str:
+    """Récupère un token existant valide ou en crée un nouveau."""
     try:
-        headers = {
-            "X-Shopify-Access-Token": access_token,
-            "Content-Type": "application/json",
-        }
-        note = (
-            "Alerte Stock\n"
-            f"Le produit {product_name} a atteint le seuil configuré.\n"
-            f"Stock actuel : {stock_remaining}\n"
-            f"Seuil : {threshold}\n\n"
-            "Veuillez restocker ce produit."
-        )
+        row = sb.table("stock_alert_settings").select(
+            "unsubscribe_token,unsubscribe_token_expires"
+        ).eq("user_id", user_id).eq("product_id", product_id).execute()
 
-        draft_payload = {
-            "draft_order": {
-                "email": to_email,
-                "line_items": [{"title": "Alerte Stock", "quantity": 1, "price": "0.00"}],
-                "note": note,
-            }
-        }
+        if row.data:
+            existing_token = row.data[0].get("unsubscribe_token")
+            expires_str = row.data[0].get("unsubscribe_token_expires")
+            if existing_token and expires_str:
+                try:
+                    expires_dt = datetime.fromisoformat(expires_str.replace("Z", "+00:00"))
+                    if expires_dt.replace(tzinfo=None) > datetime.utcnow():
+                        return existing_token
+                except Exception:
+                    pass
 
-        draft_url = f"https://{shop_domain}/admin/api/2024-10/draft_orders.json"
-        draft_resp = requests.post(draft_url, headers=headers, data=json.dumps(draft_payload), timeout=30)
-        if draft_resp.status_code not in [200, 201]:
-            print(f"❌ [STOCK] Draft order échoué: {draft_resp.status_code} {draft_resp.text[:300]}")
-            return False
-
-        draft_order = draft_resp.json().get("draft_order", {})
-        draft_id = draft_order.get("id")
-        if not draft_id:
-            print("❌ [STOCK] Draft order sans id")
-            return False
-
-        send_url = f"https://{shop_domain}/admin/api/2024-10/draft_orders/{draft_id}/send_invoice.json"
-        send_resp = requests.post(send_url, headers=headers, timeout=30)
-        if send_resp.status_code not in [200, 201]:
-            print(f"❌ [STOCK] send_invoice échoué: {send_resp.status_code} {send_resp.text[:300]}")
-            return False
-
-        print(f"✅ [STOCK] Email envoyé via Shopify invoice à {to_email} pour {product_name}")
-        return True
+        # Créer un nouveau token
+        new_token = _generate_unsubscribe_token(user_id, product_id)
+        expires_at = (datetime.utcnow() + timedelta(days=STOCK_ALERT_TOKEN_EXPIRY_DAYS)).isoformat()
+        sb.table("stock_alert_settings").update({
+            "unsubscribe_token": new_token,
+            "unsubscribe_token_expires": expires_at,
+        }).eq("user_id", user_id).eq("product_id", product_id).execute()
+        return new_token
     except Exception as e:
-        print(f"❌ [STOCK] Envoi Shopify invoice échoué: {e}")
+        print(f"⚠️ [STOCK] Erreur génération token unsubscribe: {e}")
+        return _generate_unsubscribe_token(user_id, product_id)
+
+
+def _build_stock_alert_html(
+    first_name: str,
+    product_name: str,
+    stock_remaining: int,
+    threshold: int,
+    unsubscribe_url: str,
+) -> str:
+    """Construit le HTML professionnel pour l'email d'alerte stock."""
+    return f"""<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Alerte stock faible</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f4f4f7;font-family:Arial,Helvetica,sans-serif;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#f4f4f7;padding:40px 0;">
+<tr><td align="center">
+<table role="presentation" width="600" cellspacing="0" cellpadding="0" style="background-color:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+
+<!-- Header -->
+<tr><td style="background-color:#e74c3c;padding:24px 32px;">
+<h1 style="margin:0;color:#ffffff;font-size:22px;">⚠️ Alerte stock faible</h1>
+</td></tr>
+
+<!-- Body -->
+<tr><td style="padding:32px;">
+<p style="margin:0 0 20px;font-size:16px;color:#333;">Bonjour {first_name},</p>
+
+<p style="margin:0 0 20px;font-size:15px;color:#555;">Votre produit :</p>
+
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#fef3f2;border-radius:6px;border:1px solid #fecaca;margin-bottom:24px;">
+<tr><td style="padding:20px;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="4">
+<tr>
+  <td style="font-size:14px;color:#777;width:140px;">Nom :</td>
+  <td style="font-size:15px;color:#333;font-weight:bold;">{product_name}</td>
+</tr>
+<tr>
+  <td style="font-size:14px;color:#777;">Stock actuel :</td>
+  <td style="font-size:15px;color:#e74c3c;font-weight:bold;">{stock_remaining}</td>
+</tr>
+<tr>
+  <td style="font-size:14px;color:#777;">Seuil d'alerte :</td>
+  <td style="font-size:15px;color:#333;font-weight:bold;">{threshold}</td>
+</tr>
+</table>
+</td></tr>
+</table>
+
+<p style="margin:0 0 20px;font-size:15px;color:#555;">a atteint ou dépassé votre seuil d'alerte.</p>
+
+<p style="margin:0 0 32px;font-size:15px;color:#555;">Nous vous recommandons de réapprovisionner rapidement afin d'éviter une rupture de stock.</p>
+
+</td></tr>
+
+<!-- Footer -->
+<tr><td style="padding:24px 32px;border-top:1px solid #eee;background-color:#fafafa;">
+<p style="margin:0 0 12px;font-size:12px;color:#999;text-align:center;">
+Cet email a été envoyé automatiquement par ShopBrain AI.
+</p>
+<p style="margin:0;text-align:center;">
+<a href="{unsubscribe_url}" style="display:inline-block;padding:10px 24px;background-color:#dc2626;color:#ffffff;text-decoration:none;border-radius:6px;font-size:13px;font-weight:bold;">
+❌ Ne plus me rappeler pour ce produit
+</a>
+</p>
+<p style="margin:8px 0 0;font-size:11px;color:#bbb;text-align:center;">
+Ce lien est valide pendant {STOCK_ALERT_TOKEN_EXPIRY_DAYS} jours.
+</p>
+</td></tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>"""
+
+
+def _send_stock_alert_smtp(
+    to_email: str,
+    first_name: str,
+    product_name: str,
+    stock_remaining: int,
+    threshold: int,
+    unsubscribe_url: str,
+) -> bool:
+    """Envoie l'alerte stock par SMTP via shopbrainai@outlook.com."""
+    if not STOCK_ALERT_SMTP_PASS:
+        print("⛔ [STOCK] STOCK_ALERT_SMTP_PASS non configuré — email impossible")
+        print("⛔ [STOCK] Ajouter la variable STOCK_ALERT_SMTP_PASS sur Render")
         return False
 
-
-def _send_stock_alert_email(to_email: str, product_name: str, stock_remaining: int, threshold: int, shop_domain: str | None = None, access_token: str | None = None) -> bool:
-    """Envoie l'alerte stock (priorité: même flux que facture Shopify)."""
-    if shop_domain and access_token:
-        return _send_stock_alert_via_shopify_invoice(
-            shop_domain,
-            access_token,
-            to_email,
-            product_name,
-            stock_remaining,
-            threshold,
-        )
-
-    print("⚠️ [STOCK] Shopify non disponible pour envoi facture, fallback SMTP")
-    smtp_host = os.getenv("SMTP_HOST")
-    smtp_user = os.getenv("SMTP_USER")
-    smtp_pass = os.getenv("SMTP_PASS")
-    smtp_from = os.getenv("SMTP_FROM") or smtp_user
-    smtp_port = int(os.getenv("SMTP_PORT", "587"))
-    smtp_secure = (os.getenv("SMTP_SECURE") or "tls").lower()
-
-    if not smtp_host or not smtp_user or not smtp_pass or not smtp_from:
-        print("⚠️ [STOCK] SMTP non configuré")
-        print(f"⚠️ [STOCK] SMTP_HOST={'set' if smtp_host else 'missing'} SMTP_USER={'set' if smtp_user else 'missing'} SMTP_PASS={'set' if smtp_pass else 'missing'} SMTP_FROM={'set' if smtp_from else 'missing'}")
-        print("⛔ [STOCK] Envoi annulé: fallback Shopify désactivé (template marketing non autorisé)")
-        return False
-
-    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-    subject = "Alerte Stock"
-    body = (
-        f"Le produit {product_name} a atteint le seuil configuré.\n"
-        f"Stock actuel : {stock_remaining}\n"
-        f"Seuil : {threshold}\n\n"
-        "Veuillez restocker ce produit."
+    subject = f"⚠️ Alerte stock faible – {product_name}"
+    html_body = _build_stock_alert_html(
+        first_name, product_name, stock_remaining, threshold, unsubscribe_url
+    )
+    plain_body = (
+        f"Bonjour {first_name},\n\n"
+        f"Votre produit :\n"
+        f"  Nom : {product_name}\n"
+        f"  Stock actuel : {stock_remaining}\n"
+        f"  Seuil d'alerte : {threshold}\n\n"
+        f"a atteint ou dépassé votre seuil d'alerte.\n\n"
+        f"Nous vous recommandons de réapprovisionner rapidement "
+        f"afin d'éviter une rupture de stock.\n\n"
+        f"Ne plus me rappeler pour ce produit : {unsubscribe_url}\n"
     )
 
     try:
         msg = EmailMessage()
         msg["Subject"] = subject
-        msg["From"] = smtp_from
+        msg["From"] = STOCK_ALERT_SMTP_FROM
         msg["To"] = to_email
-        msg.set_content(body)
+        msg.set_content(plain_body)
+        msg.add_alternative(html_body, subtype="html")
 
-        if smtp_secure == "ssl":
-            ctx = ssl.create_default_context()
-            with smtplib.SMTP_SSL(smtp_host, smtp_port, context=ctx) as s:
-                s.login(smtp_user, smtp_pass)
-                s.send_message(msg)
-        else:
-            with smtplib.SMTP(smtp_host, smtp_port) as s:
-                s.starttls(context=ssl.create_default_context())
-                s.login(smtp_user, smtp_pass)
-                s.send_message(msg)
-        print(f"✅ [STOCK] Email envoyé à {to_email} pour {product_name}")
+        with smtplib.SMTP(STOCK_ALERT_SMTP_HOST, STOCK_ALERT_SMTP_PORT) as server:
+            server.ehlo()
+            server.starttls(context=ssl.create_default_context())
+            server.ehlo()
+            server.login(STOCK_ALERT_SMTP_USER, STOCK_ALERT_SMTP_PASS)
+            server.send_message(msg)
+
+        print(f"✅ [STOCK] Email SMTP envoyé à {to_email} pour « {product_name} »")
         return True
+
+    except smtplib.SMTPAuthenticationError as e:
+        print(f"❌ [STOCK] SMTP Auth échoué (vérifier STOCK_ALERT_SMTP_PASS): {e}")
+        return False
+    except smtplib.SMTPException as e:
+        print(f"❌ [STOCK] SMTP erreur: {e}")
+        return False
     except Exception as e:
-        print(f"❌ [STOCK] Email échoué: {e}")
-        print("⛔ [STOCK] Aucun fallback Shopify (template marketing non autorisé)")
+        print(f"❌ [STOCK] Email échoué (exception): {e}")
         return False
 
 
+def _should_send_stock_alert(row: dict) -> tuple[bool, str]:
+    """Vérifie si on doit envoyer un email pour ce produit.
+    Returns (should_send: bool, reason: str)
+    """
+    # 1. Notifications désactivées ?
+    if row.get("stock_alert_disabled"):
+        return False, "notifications désactivées par l'utilisateur"
+
+    # 2. Cooldown 5 jours
+    last_sent_str = row.get("last_alert_email_sent_at")
+    if last_sent_str:
+        try:
+            last_sent = datetime.fromisoformat(str(last_sent_str).replace("Z", "+00:00"))
+            last_sent_naive = last_sent.replace(tzinfo=None)
+            delta = datetime.utcnow() - last_sent_naive
+            if delta.days < STOCK_ALERT_COOLDOWN_DAYS:
+                remaining = STOCK_ALERT_COOLDOWN_DAYS - delta.days
+                return False, f"cooldown actif (dernier email il y a {delta.days}j, prochain dans {remaining}j)"
+        except Exception as e:
+            print(f"⚠️ [STOCK] Erreur parsing last_alert_email_sent_at: {e}")
+
+    return True, "OK"
+
+
 def _stock_monitor_once() -> dict:
-    """Exécute un cycle de vérification stock (utile pour debug manuel)."""
+    """Exécute un cycle de vérification stock avec envoi SMTP."""
     print("🕒 [STOCK] Vérification stock en cours...")
     summary = {
         "users_checked": 0,
         "products_checked": 0,
         "alerts_sent": 0,
+        "alerts_skipped_cooldown": 0,
+        "alerts_skipped_disabled": 0,
         "alerts_skipped_no_email": 0,
         "errors": 0,
     }
@@ -7626,7 +7731,7 @@ def _stock_monitor_once() -> dict:
     print(f"🧾 [STOCK] Configs actives: {len(settings.data or [])}")
 
     from collections import defaultdict
-    by_user = defaultdict(list)
+    by_user: dict[str, list] = defaultdict(list)
     for row in (settings.data or []):
         uid = row.get("user_id")
         pid = str(row.get("product_id", "")).strip()
@@ -7636,6 +7741,7 @@ def _stock_monitor_once() -> dict:
     for user_id, user_rows in by_user.items():
         summary["users_checked"] += 1
         try:
+            # --- Shopify connection ---
             conn = sb.table("shopify_connections").select("shop_domain,access_token").eq("user_id", user_id).execute()
             if not conn.data:
                 print(f"⚠️ [STOCK] User {user_id}: aucun shopify_connection")
@@ -7646,28 +7752,32 @@ def _stock_monitor_once() -> dict:
                 print(f"⚠️ [STOCK] User {user_id}: shop_domain/access_token manquant")
                 continue
 
+            # --- Fetch inventaire Shopify ---
             resp = requests.get(
                 f"https://{shop}/admin/api/2024-10/products.json?limit=250",
                 headers={"X-Shopify-Access-Token": token},
-                timeout=30
+                timeout=30,
             )
             if resp.status_code != 200:
                 print(f"❌ [STOCK] User {user_id}: Shopify API {resp.status_code}")
                 continue
 
             products = resp.json().get("products", [])
-            inventory_map = {}
-            title_map = {}
+            inventory_map: dict[str, int] = {}
+            title_map: dict[str, str] = {}
             for p in products:
                 pid = str(p.get("id"))
                 inventory_map[pid] = sum(int(v.get("inventory_quantity") or 0) for v in p.get("variants", []))
                 title_map[pid] = p.get("title", "Produit")
 
+            # --- Récupérer email + prénom ---
             user_email = None
+            user_first_name = "Commerçant"
             try:
-                profile = sb.table("user_profiles").select("email").eq("id", user_id).execute()
+                profile = sb.table("user_profiles").select("email,first_name").eq("id", user_id).execute()
                 if profile.data:
                     user_email = profile.data[0].get("email")
+                    user_first_name = profile.data[0].get("first_name") or "Commerçant"
             except Exception as e:
                 print(f"⚠️ [STOCK] User {user_id}: erreur lecture user_profiles: {e}")
 
@@ -7679,8 +7789,9 @@ def _stock_monitor_once() -> dict:
                 except Exception as e:
                     print(f"⚠️ [STOCK] User {user_id}: erreur lecture auth user: {e}")
 
-            print(f"👤 [STOCK] User {user_id} email: {user_email}")
+            print(f"👤 [STOCK] User {user_id} | email={user_email} | prénom={user_first_name}")
 
+            # --- Boucle produits ---
             for row in user_rows:
                 pid = str(row.get("product_id", "")).strip()
                 threshold = row.get("threshold", 10)
@@ -7690,52 +7801,81 @@ def _stock_monitor_once() -> dict:
                     threshold = 0
                 inventory = inventory_map.get(pid)
                 if inventory is None:
-                    print(f"⚠️ [STOCK] Produit introuvable: {pid}")
+                    print(f"⚠️ [STOCK] Produit introuvable dans Shopify: {pid}")
                     continue
                 title = title_map.get(pid, row.get("product_title", "Produit"))
                 summary["products_checked"] += 1
 
+                # Condition de déclenchement
                 if inventory > threshold:
                     continue
 
-                print(f"✅ [STOCK] Condition atteinte pour : {title} (stock={inventory} <= seuil={threshold})")
+                print(f"🔔 [STOCK] Seuil atteint: « {title} » stock={inventory} <= seuil={threshold}")
+
+                # Vérifications avant envoi
+                should_send, reason = _should_send_stock_alert(row)
+                if not should_send:
+                    if "désactivées" in reason:
+                        summary["alerts_skipped_disabled"] += 1
+                    else:
+                        summary["alerts_skipped_cooldown"] += 1
+                    print(f"⏭️ [STOCK] Skip « {title} »: {reason}")
+                    continue
 
                 if not user_email:
                     summary["alerts_skipped_no_email"] += 1
                     print(f"❌ [STOCK] Email utilisateur manquant pour {user_id}")
                     continue
 
-                email_ok = _send_stock_alert_email(
-                    user_email,
-                    title,
-                    inventory,
-                    threshold,
-                    shop_domain=shop,
-                    access_token=token,
+                # Générer token unsubscribe
+                unsub_token = _get_or_create_unsubscribe_token(sb, user_id, pid)
+                unsub_url = f"{BACKEND_BASE_URL}/api/stock-alerts/unsubscribe?token={unsub_token}"
+
+                # Envoyer email SMTP
+                email_ok = _send_stock_alert_smtp(
+                    to_email=user_email,
+                    first_name=user_first_name,
+                    product_name=title,
+                    stock_remaining=inventory,
+                    threshold=threshold,
+                    unsubscribe_url=unsub_url,
                 )
+
                 if email_ok:
                     summary["alerts_sent"] += 1
+                    # Mettre à jour last_alert_email_sent_at
+                    try:
+                        sb.table("stock_alert_settings").update({
+                            "last_alert_email_sent_at": datetime.utcnow().isoformat(),
+                        }).eq("user_id", user_id).eq("product_id", pid).execute()
+                    except Exception as e:
+                        print(f"⚠️ [STOCK] Erreur MAJ last_alert_email_sent_at: {e}")
 
-                sb.table("stock_alert_log").insert({
-                    "user_id": user_id,
-                    "product_id": pid,
-                    "product_title": title,
-                    "inventory_at_alert": inventory,
-                    "threshold_at_alert": threshold,
-                    "email_sent": email_ok,
-                    "dismissed": False,
-                }).execute()
+                # Log en base
+                try:
+                    sb.table("stock_alert_log").insert({
+                        "user_id": user_id,
+                        "product_id": pid,
+                        "product_title": title,
+                        "inventory_at_alert": inventory,
+                        "threshold_at_alert": threshold,
+                        "email_sent": email_ok,
+                        "dismissed": False,
+                    }).execute()
+                except Exception as e:
+                    print(f"⚠️ [STOCK] Erreur insertion stock_alert_log: {e}")
 
         except Exception as e:
             summary["errors"] += 1
             print(f"❌ [STOCK] User {user_id}: {e}")
 
     print(f"📦 [STOCK] Résumé: {summary}")
+    sys.stdout.flush()
     return summary
 
 
 def _stock_monitor_loop():
-    """Thread background: vérifie les stocks de TOUS les produits configurés, toutes les 5 min."""
+    """Thread background: vérifie les stocks toutes les 5 min, envoie email SMTP."""
     INTERVAL = int(os.getenv("STOCK_MONITOR_INTERVAL", "300"))  # 5 min
     time.sleep(30)  # attendre que l'app démarre
 
@@ -7744,16 +7884,180 @@ def _stock_monitor_loop():
             _stock_monitor_once()
         except Exception as e:
             print(f"❌ [STOCK] Global: {e}")
-
+        sys.stdout.flush()
         time.sleep(INTERVAL)
+
+
+# ---------------------------------------------------------------------------
+# Unsubscribe endpoint — "Ne plus me rappeler pour ce produit"
+# ---------------------------------------------------------------------------
+
+@app.get("/api/stock-alerts/unsubscribe")
+async def stock_alert_unsubscribe(token: str = ""):
+    """Désactive les alertes stock pour un produit via token sécurisé."""
+    if not token:
+        return HTMLResponse(
+            content="<h2>❌ Token manquant</h2><p>Lien invalide.</p>",
+            status_code=400,
+        )
+
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        return HTMLResponse(
+            content="<h2>❌ Erreur serveur</h2><p>Service temporairement indisponible.</p>",
+            status_code=500,
+        )
+
+    sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+    # Chercher le token
+    result = sb.table("stock_alert_settings").select(
+        "user_id,product_id,product_title,stock_alert_disabled,unsubscribe_token_expires"
+    ).eq("unsubscribe_token", token).execute()
+
+    if not result.data:
+        return HTMLResponse(
+            content="""<html><body style="font-family:Arial;text-align:center;padding:60px;">
+            <h2>❌ Lien invalide</h2>
+            <p>Ce lien de désabonnement n'existe pas ou a déjà été utilisé.</p>
+            </body></html>""",
+            status_code=404,
+        )
+
+    row = result.data[0]
+    product_title = row.get("product_title", "ce produit")
+
+    # Vérifier expiration
+    expires_str = row.get("unsubscribe_token_expires")
+    if expires_str:
+        try:
+            expires_dt = datetime.fromisoformat(str(expires_str).replace("Z", "+00:00"))
+            if expires_dt.replace(tzinfo=None) < datetime.utcnow():
+                return HTMLResponse(
+                    content=f"""<html><body style="font-family:Arial;text-align:center;padding:60px;">
+                    <h2>⏰ Lien expiré</h2>
+                    <p>Ce lien de désabonnement a expiré. Un nouveau lien sera inclus dans le prochain email d'alerte.</p>
+                    </body></html>""",
+                    status_code=410,
+                )
+        except Exception:
+            pass
+
+    # Déjà désactivé ?
+    if row.get("stock_alert_disabled"):
+        return HTMLResponse(
+            content=f"""<html><body style="font-family:Arial;text-align:center;padding:60px;">
+            <h2>✅ Déjà désactivé</h2>
+            <p>Les alertes pour <strong>{product_title}</strong> sont déjà désactivées.</p>
+            </body></html>""",
+            status_code=200,
+        )
+
+    # Désactiver
+    sb.table("stock_alert_settings").update({
+        "stock_alert_disabled": True,
+        "unsubscribe_token": None,
+        "unsubscribe_token_expires": None,
+        "updated_at": datetime.utcnow().isoformat(),
+    }).eq("unsubscribe_token", token).execute()
+
+    print(f"🔕 [STOCK] Unsubscribe: user={row.get('user_id')} produit=« {product_title} »")
+
+    return HTMLResponse(
+        content=f"""<html><body style="font-family:Arial;text-align:center;padding:60px;background:#f9fafb;">
+        <div style="max-width:500px;margin:0 auto;background:#fff;padding:40px;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+        <h2 style="color:#16a34a;">✅ Notifications désactivées</h2>
+        <p style="color:#555;">Vous ne recevrez plus d'alertes de stock pour :</p>
+        <p style="font-size:18px;font-weight:bold;color:#333;">« {product_title} »</p>
+        <p style="color:#999;font-size:13px;margin-top:24px;">
+        Vous pouvez réactiver les alertes depuis votre tableau de bord ShopBrain AI.
+        </p>
+        </div>
+        </body></html>""",
+        status_code=200,
+    )
 
 
 @app.post("/api/stock-alerts/run-check")
 async def run_stock_alert_check(request: Request):
-    """Exécute un cycle de vérification stock (debug)."""
+    """Exécute un cycle de vérification stock manuellement (debug)."""
     _ = get_user_id(request)
     summary = _stock_monitor_once()
     return {"success": True, "summary": summary}
+
+
+@app.post("/api/stock-alerts/test-email")
+async def test_stock_alert_email(request: Request):
+    """Envoie un email de test pour valider la configuration SMTP."""
+    user_id = get_user_id(request)
+
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        raise HTTPException(status_code=500, detail="Supabase non configuré")
+
+    sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+    # Récupérer email + prénom
+    user_email = None
+    user_first_name = "Commerçant"
+    try:
+        profile = sb.table("user_profiles").select("email,first_name").eq("id", user_id).execute()
+        if profile.data:
+            user_email = profile.data[0].get("email")
+            user_first_name = profile.data[0].get("first_name") or "Commerçant"
+    except Exception:
+        pass
+
+    if not user_email:
+        try:
+            auth_user = sb.auth.admin.get_user_by_id(user_id)
+            if auth_user and auth_user.user:
+                user_email = auth_user.user.email
+        except Exception:
+            pass
+
+    if not user_email:
+        raise HTTPException(status_code=400, detail="Email utilisateur introuvable")
+
+    test_unsub_url = f"{BACKEND_BASE_URL}/api/stock-alerts/unsubscribe?token=TEST_TOKEN_INVALID"
+
+    email_ok = _send_stock_alert_smtp(
+        to_email=user_email,
+        first_name=user_first_name,
+        product_name="Produit Test (démo)",
+        stock_remaining=3,
+        threshold=10,
+        unsubscribe_url=test_unsub_url,
+    )
+
+    return {
+        "success": email_ok,
+        "email_sent_to": user_email,
+        "smtp_host": STOCK_ALERT_SMTP_HOST,
+        "smtp_user": STOCK_ALERT_SMTP_USER,
+        "smtp_pass_configured": bool(STOCK_ALERT_SMTP_PASS),
+        "message": "Email de test envoyé !" if email_ok else "Échec envoi — vérifier STOCK_ALERT_SMTP_PASS",
+    }
+
+
+@app.post("/api/stock-alerts/re-enable")
+async def re_enable_stock_alert(request: Request):
+    """Réactive les alertes pour un produit (depuis le dashboard)."""
+    user_id = get_user_id(request)
+    body = await request.json()
+    product_id = str(body.get("product_id", "")).strip()
+
+    if not product_id:
+        raise HTTPException(status_code=400, detail="product_id requis")
+
+    sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    sb.table("stock_alert_settings").update({
+        "stock_alert_disabled": False,
+        "last_alert_email_sent_at": None,
+        "unsubscribe_token": None,
+        "unsubscribe_token_expires": None,
+        "updated_at": datetime.utcnow().isoformat(),
+    }).eq("user_id", user_id).eq("product_id", product_id).execute()
+
+    return {"success": True, "product_id": product_id, "message": "Alertes réactivées"}
 
 
 # ============== SETTINGS ENDPOINTS ==============
