@@ -7498,8 +7498,67 @@ async def startup_event():
 # Background Stock Monitor — 24/7, toutes les 5 minutes
 # ---------------------------------------------------------------------------
 
-def _send_stock_alert_email(to_email: str, product_name: str, stock_remaining: int, threshold: int) -> bool:
-    """Envoie un email interne d'alerte stock (sans marketing)."""
+def _send_stock_alert_via_shopify_invoice(shop_domain: str, access_token: str, to_email: str, product_name: str, stock_remaining: int, threshold: int) -> bool:
+    """Envoie l'alerte stock via le même mécanisme Shopify que la facture (draft_orders/send_invoice)."""
+    try:
+        headers = {
+            "X-Shopify-Access-Token": access_token,
+            "Content-Type": "application/json",
+        }
+        note = (
+            "Alerte Stock\n"
+            f"Le produit {product_name} a atteint le seuil configuré.\n"
+            f"Stock actuel : {stock_remaining}\n"
+            f"Seuil : {threshold}\n\n"
+            "Veuillez restocker ce produit."
+        )
+
+        draft_payload = {
+            "draft_order": {
+                "email": to_email,
+                "line_items": [{"title": "Alerte Stock", "quantity": 1, "price": "0.00"}],
+                "note": note,
+            }
+        }
+
+        draft_url = f"https://{shop_domain}/admin/api/2024-10/draft_orders.json"
+        draft_resp = requests.post(draft_url, headers=headers, data=json.dumps(draft_payload), timeout=30)
+        if draft_resp.status_code not in [200, 201]:
+            print(f"❌ [STOCK] Draft order échoué: {draft_resp.status_code} {draft_resp.text[:300]}")
+            return False
+
+        draft_order = draft_resp.json().get("draft_order", {})
+        draft_id = draft_order.get("id")
+        if not draft_id:
+            print("❌ [STOCK] Draft order sans id")
+            return False
+
+        send_url = f"https://{shop_domain}/admin/api/2024-10/draft_orders/{draft_id}/send_invoice.json"
+        send_resp = requests.post(send_url, headers=headers, timeout=30)
+        if send_resp.status_code not in [200, 201]:
+            print(f"❌ [STOCK] send_invoice échoué: {send_resp.status_code} {send_resp.text[:300]}")
+            return False
+
+        print(f"✅ [STOCK] Email envoyé via Shopify invoice à {to_email} pour {product_name}")
+        return True
+    except Exception as e:
+        print(f"❌ [STOCK] Envoi Shopify invoice échoué: {e}")
+        return False
+
+
+def _send_stock_alert_email(to_email: str, product_name: str, stock_remaining: int, threshold: int, shop_domain: str | None = None, access_token: str | None = None) -> bool:
+    """Envoie l'alerte stock (priorité: même flux que facture Shopify)."""
+    if shop_domain and access_token:
+        return _send_stock_alert_via_shopify_invoice(
+            shop_domain,
+            access_token,
+            to_email,
+            product_name,
+            stock_remaining,
+            threshold,
+        )
+
+    print("⚠️ [STOCK] Shopify non disponible pour envoi facture, fallback SMTP")
     smtp_host = os.getenv("SMTP_HOST")
     smtp_user = os.getenv("SMTP_USER")
     smtp_pass = os.getenv("SMTP_PASS")
@@ -7651,6 +7710,8 @@ def _stock_monitor_once() -> dict:
                     title,
                     inventory,
                     threshold,
+                    shop_domain=shop,
+                    access_token=token,
                 )
                 if email_ok:
                     summary["alerts_sent"] += 1
