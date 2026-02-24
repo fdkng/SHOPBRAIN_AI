@@ -949,6 +949,72 @@ async def health():
     }
 
 
+@app.get("/api/stock-alerts/send-test-now")
+async def send_test_email_now(to: str = "", secret: str = ""):
+    """Envoie un email de test SMTP — pas besoin de JWT, juste un secret."""
+    expected_secret = os.getenv("STOCK_CHECK_SECRET", "shopbrain-stock-2026")
+    if secret != expected_secret:
+        raise HTTPException(status_code=403, detail="Secret invalide")
+
+    target_email = to or "louis-felix.gilbert@outlook.com"
+    result = {
+        "smtp_pass_set": bool(STOCK_ALERT_SMTP_PASS),
+        "smtp_pass_length": len(STOCK_ALERT_SMTP_PASS),
+        "smtp_host": STOCK_ALERT_SMTP_HOST,
+        "smtp_port": STOCK_ALERT_SMTP_PORT,
+        "smtp_user": STOCK_ALERT_SMTP_USER,
+        "target_email": target_email,
+    }
+
+    if not STOCK_ALERT_SMTP_PASS:
+        result["error"] = "STOCK_ALERT_SMTP_PASS (et SMTP_PASS) non configuré sur Render"
+        result["email_sent"] = False
+        return result
+
+    # Test connexion SMTP
+    try:
+        import smtplib as _smtp
+        with _smtp.SMTP(STOCK_ALERT_SMTP_HOST, STOCK_ALERT_SMTP_PORT, timeout=15) as srv:
+            srv.ehlo()
+            srv.starttls(context=ssl.create_default_context())
+            srv.ehlo()
+            srv.login(STOCK_ALERT_SMTP_USER, STOCK_ALERT_SMTP_PASS)
+            result["smtp_login"] = "SUCCESS"
+    except Exception as e:
+        result["smtp_login"] = f"FAILED: {e}"
+        result["email_sent"] = False
+        return result
+
+    # Envoyer email de test
+    try:
+        unsub_url = f"{BACKEND_BASE_URL}/api/stock-alerts/unsubscribe?token=TEST"
+        ok = _send_stock_alert_smtp(
+            to_email=target_email,
+            first_name="Louis-felix",
+            product_name="Produit Test (Vérification SMTP)",
+            stock_remaining=3,
+            threshold=10,
+            unsubscribe_url=unsub_url,
+        )
+        result["email_sent"] = ok
+        if ok:
+            result["message"] = f"✅ Email envoyé à {target_email} !"
+        else:
+            result["message"] = "❌ Échec envoi — voir logs Render"
+    except Exception as e:
+        result["email_sent"] = False
+        result["error"] = str(e)
+
+    # Aussi déclencher un vrai cycle de vérification stock
+    try:
+        summary = _stock_monitor_once()
+        result["stock_check_summary"] = summary
+    except Exception as e:
+        result["stock_check_error"] = str(e)
+
+    return result
+
+
 @app.post("/api/stripe/payment-link")
 async def create_payment_link(payload: dict, request: Request):
     """Create a Stripe Payment Link for a subscription plan.
