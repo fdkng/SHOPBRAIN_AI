@@ -935,13 +935,16 @@ async def health():
     """Health check endpoint for Render - MUST ALWAYS WORK"""
     return {
         "status": "ok",
-        "version": "1.4",
+        "version": "1.5",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
                 "openai": "configured" if OPENAI_API_KEY else "not_configured",
             "serpapi": "configured" if SERPAPI_KEY else "not_configured",
             "stripe": "configured" if STRIPE_SECRET_KEY else "not_configured",
-            "supabase": "configured" if SUPABASE_URL else "not_configured"
+            "supabase": "configured" if SUPABASE_URL else "not_configured",
+            "smtp_stock_alerts": "configured" if STOCK_ALERT_SMTP_PASS else "NOT_CONFIGURED — STOCK_ALERT_SMTP_PASS manquant",
+            "smtp_host": STOCK_ALERT_SMTP_HOST,
+            "smtp_user": STOCK_ALERT_SMTP_USER,
         }
     }
 
@@ -7981,6 +7984,62 @@ async def stock_alert_unsubscribe(token: str = ""):
 async def run_stock_alert_check(request: Request):
     """Exécute un cycle de vérification stock manuellement (debug)."""
     _ = get_user_id(request)
+    summary = _stock_monitor_once()
+    return {"success": True, "summary": summary}
+
+
+@app.get("/api/stock-alerts/diagnose")
+async def diagnose_stock_alerts():
+    """Diagnostic public (sans auth) — montre l'état SMTP et DB."""
+    diag = {
+        "smtp_pass_configured": bool(STOCK_ALERT_SMTP_PASS),
+        "smtp_pass_length": len(STOCK_ALERT_SMTP_PASS) if STOCK_ALERT_SMTP_PASS else 0,
+        "smtp_host": STOCK_ALERT_SMTP_HOST,
+        "smtp_port": STOCK_ALERT_SMTP_PORT,
+        "smtp_user": STOCK_ALERT_SMTP_USER,
+        "smtp_from": STOCK_ALERT_SMTP_FROM,
+        "backend_base_url": BACKEND_BASE_URL,
+        "supabase_configured": bool(SUPABASE_URL and SUPABASE_SERVICE_KEY),
+    }
+    # Test DB columns exist
+    if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+        try:
+            sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+            test = sb.table("stock_alert_settings").select(
+                "user_id,product_id,enabled,threshold,last_alert_email_sent_at,stock_alert_disabled,unsubscribe_token"
+            ).limit(1).execute()
+            diag["db_columns_ok"] = True
+            diag["active_settings_sample"] = len(test.data or [])
+        except Exception as e:
+            diag["db_columns_ok"] = False
+            diag["db_error"] = str(e)
+
+    # Quick SMTP connection test (no email sent)
+    if STOCK_ALERT_SMTP_PASS:
+        try:
+            with smtplib.SMTP(STOCK_ALERT_SMTP_HOST, STOCK_ALERT_SMTP_PORT, timeout=10) as server:
+                server.ehlo()
+                server.starttls(context=ssl.create_default_context())
+                server.ehlo()
+                server.login(STOCK_ALERT_SMTP_USER, STOCK_ALERT_SMTP_PASS)
+                server.quit()
+            diag["smtp_login_test"] = "SUCCESS"
+        except smtplib.SMTPAuthenticationError as e:
+            diag["smtp_login_test"] = f"AUTH_FAILED: {e}"
+        except Exception as e:
+            diag["smtp_login_test"] = f"ERROR: {e}"
+    else:
+        diag["smtp_login_test"] = "SKIPPED — no password configured"
+
+    return diag
+
+
+@app.get("/api/stock-alerts/force-run")
+async def force_run_stock_check(secret: str = ""):
+    """Déclenche un cycle stock check avec une clé secrète (pas besoin de JWT)."""
+    expected = os.getenv("STOCK_CHECK_SECRET", "shopbrain-stock-2026")
+    if secret != expected:
+        raise HTTPException(status_code=403, detail="Clé secrète invalide")
     summary = _stock_monitor_once()
     return {"success": True, "summary": summary}
 
