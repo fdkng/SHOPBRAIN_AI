@@ -942,54 +942,48 @@ async def health():
             "serpapi": "configured" if SERPAPI_KEY else "not_configured",
             "stripe": "configured" if STRIPE_SECRET_KEY else "not_configured",
             "supabase": "configured" if SUPABASE_URL else "not_configured",
-            "graph_stock_alerts": "configured" if (GRAPH_CLIENT_ID and GRAPH_CLIENT_SECRET and GRAPH_TENANT_ID) else "NOT_CONFIGURED — CLIENT_ID/CLIENT_SECRET/TENANT_ID manquant",
-            "graph_sender": GRAPH_SENDER_EMAIL,
+            "mailgun_stock_alerts": "configured" if (MAILGUN_API_KEY and MAILGUN_DOMAIN) else "NOT_CONFIGURED — MAILGUN_API_KEY/MAILGUN_DOMAIN manquant",
+            "mailgun_domain": MAILGUN_DOMAIN,
+            "mailgun_from": MAILGUN_FROM_EMAIL,
         }
     }
 
 
 @app.get("/api/stock-alerts/send-test-now")
 async def send_test_email_now(to: str = "", secret: str = ""):
-    """Envoie un email de test via Microsoft Graph — pas besoin de JWT, juste un secret."""
+    """Envoie un email de test via Mailgun API — pas besoin de JWT, juste un secret."""
     expected_secret = os.getenv("STOCK_CHECK_SECRET", "shopbrain-stock-2026")
     if secret != expected_secret:
         raise HTTPException(status_code=403, detail="Secret invalide")
 
     target_email = to or "louis-felix.gilbert@outlook.com"
-    graph_configured = bool(GRAPH_CLIENT_ID and GRAPH_CLIENT_SECRET and GRAPH_TENANT_ID)
+    mailgun_configured = bool(MAILGUN_API_KEY and MAILGUN_DOMAIN)
     result = {
-        "graph_configured": graph_configured,
-        "graph_sender": GRAPH_SENDER_EMAIL,
+        "mailgun_configured": mailgun_configured,
+        "mailgun_domain": MAILGUN_DOMAIN,
+        "mailgun_from": MAILGUN_FROM_EMAIL,
         "target_email": target_email,
     }
 
-    if not graph_configured:
-        result["error"] = "CLIENT_ID, CLIENT_SECRET ou TENANT_ID non configuré sur Render"
+    if not mailgun_configured:
+        result["error"] = "MAILGUN_API_KEY ou MAILGUN_DOMAIN non configuré sur Render"
         result["email_sent"] = False
         return result
 
-    # Test obtention du token Graph
-    token = _get_graph_token()
-    if not token:
-        result["graph_token"] = "FAILED"
-        result["email_sent"] = False
-        return result
-    result["graph_token"] = "SUCCESS"
-
-    # Envoyer email de test
+    # Envoyer email de test via Mailgun
     try:
         unsub_url = f"{BACKEND_BASE_URL}/api/stock-alerts/unsubscribe?token=TEST"
         ok = _send_stock_alert_email(
             to_email=target_email,
             first_name="Louis-felix",
-            product_name="Produit Test (Vérification Graph API)",
+            product_name="Produit Test (Vérification Mailgun)",
             stock_remaining=3,
             threshold=10,
             unsubscribe_url=unsub_url,
         )
         result["email_sent"] = ok
         if ok:
-            result["message"] = f"✅ Email envoyé à {target_email} via Graph API !"
+            result["message"] = f"✅ Email envoyé à {target_email} via Mailgun !"
         else:
             result["message"] = "❌ Échec envoi — voir logs Render"
     except Exception as e:
@@ -7562,115 +7556,73 @@ async def startup_event():
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# Microsoft Graph API — envoi d'email via HTTP (pas de SMTP)
+# Mailgun API — envoi d'email via HTTP POST (pas de SMTP, pas d'Azure)
 # ---------------------------------------------------------------------------
-GRAPH_CLIENT_ID = os.getenv("CLIENT_ID", "")
-GRAPH_CLIENT_SECRET = os.getenv("CLIENT_SECRET", "")
-GRAPH_TENANT_ID = os.getenv("TENANT_ID", "")
-GRAPH_SENDER_EMAIL = os.getenv("GRAPH_SENDER_EMAIL", "shopbrainai@outlook.com")
+MAILGUN_API_KEY = os.getenv("MAILGUN_API_KEY", "")
+MAILGUN_DOMAIN = os.getenv("MAILGUN_DOMAIN", "")  # ex: sandboxXXX.mailgun.org ou shopbrainai.com
+MAILGUN_FROM_EMAIL = os.getenv("MAILGUN_FROM_EMAIL", "ShopBrain AI <alerts@shopbrainai.com>")
 
 STOCK_ALERT_COOLDOWN_DAYS = 5
 STOCK_ALERT_TOKEN_EXPIRY_DAYS = 30
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "https://shopbrain-backend.onrender.com")
 
-# --- Token cache (en mémoire, thread-safe) ---
-_graph_token_cache: dict = {"access_token": None, "expires_at": 0.0}
-_graph_token_lock = threading.Lock()
 
+def send_alert_email(user_email: str, product_name: str, current_stock: int = 0, alert_threshold: int = 0) -> bool:
+    """Envoie un email d'alerte stock via l'API Mailgun (HTTP POST).
 
-def _get_graph_token() -> str | None:
-    """Obtient un access_token Microsoft Graph via client_credentials.
-    Cache le token en mémoire jusqu'à 5 min avant expiration.
-    Ne log jamais CLIENT_SECRET.
+    - Utilise requests.post() avec authentification API Mailgun.
+    - Variables d'environnement : MAILGUN_API_KEY, MAILGUN_DOMAIN, MAILGUN_FROM_EMAIL.
+    - Gère les erreurs (try/except).
+    - Ne log jamais la clé API.
+    - Retourne True si envoyé (200), False sinon.
     """
-    now = time.time()
-    with _graph_token_lock:
-        if _graph_token_cache["access_token"] and now < _graph_token_cache["expires_at"] - 300:
-            return _graph_token_cache["access_token"]
-
-    if not GRAPH_CLIENT_ID or not GRAPH_CLIENT_SECRET or not GRAPH_TENANT_ID:
-        print("⛔ [GRAPH] CLIENT_ID, CLIENT_SECRET ou TENANT_ID manquant")
-        return None
-
-    token_url = f"https://login.microsoftonline.com/{GRAPH_TENANT_ID}/oauth2/v2.0/token"
-    payload = {
-        "client_id": GRAPH_CLIENT_ID,
-        "client_secret": GRAPH_CLIENT_SECRET,
-        "scope": "https://graph.microsoft.com/.default",
-        "grant_type": "client_credentials",
-    }
-    try:
-        resp = requests.post(token_url, data=payload, timeout=15)
-        if resp.status_code == 401:
-            print("❌ [GRAPH] 401 — client_id/client_secret invalide")
-            return None
-        if resp.status_code == 400:
-            err_desc = resp.json().get("error_description", resp.text[:200])
-            print(f"❌ [GRAPH] 400 — {err_desc}")
-            return None
-        resp.raise_for_status()
-        data = resp.json()
-        access_token = data.get("access_token")
-        expires_in = int(data.get("expires_in", 3600))
-        with _graph_token_lock:
-            _graph_token_cache["access_token"] = access_token
-            _graph_token_cache["expires_at"] = time.time() + expires_in
-        print(f"✅ [GRAPH] Token obtenu (expire dans {expires_in}s)")
-        return access_token
-    except requests.RequestException as e:
-        print(f"❌ [GRAPH] Erreur réseau token: {e}")
-        return None
-
-
-def _send_via_graph(
-    to_email: str,
-    subject: str,
-    text_body: str,
-) -> bool:
-    """Envoie un email via Microsoft Graph API (HTTP POST, contenu Text).
-    Gestion: 401 → token invalide, 403 → permission Mail.Send manquante.
-    Ne log jamais CLIENT_SECRET.
-    """
-    token = _get_graph_token()
-    if not token:
+    # --- Vérifier la configuration ---
+    if not MAILGUN_API_KEY:
+        print("⛔ [MAILGUN] MAILGUN_API_KEY non configurée — email impossible")
+        return False
+    if not MAILGUN_DOMAIN:
+        print("⛔ [MAILGUN] MAILGUN_DOMAIN non configuré — email impossible")
         return False
 
-    url = f"https://graph.microsoft.com/v1.0/users/{GRAPH_SENDER_EMAIL}/sendMail"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    }
-    body = {
-        "message": {
-            "subject": subject,
-            "body": {
-                "contentType": "Text",
-                "content": text_body,
-            },
-            "toRecipients": [
-                {"emailAddress": {"address": to_email}}
-            ],
-        }
-    }
+    # --- Construire le message ---
+    subject = "Alerte stock faible"
+    text_body = (
+        f"Le produit {product_name} a atteint le seuil critique.\n\n"
+        f"Stock actuel : {current_stock}\n"
+        f"Seuil d'alerte : {alert_threshold}\n\n"
+        "Nous vous recommandons de réapprovisionner rapidement "
+        "afin d'éviter une rupture de stock.\n\n"
+        "— ShopBrain AI"
+    )
 
+    # --- Envoi via Mailgun API (HTTP POST) ---
+    url = f"https://api.mailgun.net/v3/{MAILGUN_DOMAIN}/messages"
     try:
-        resp = requests.post(url, json=body, headers=headers, timeout=20)
-        if resp.status_code == 202:
-            print(f"✅ [GRAPH] Email envoyé à {to_email}")
+        resp = requests.post(
+            url,
+            auth=("api", MAILGUN_API_KEY),
+            data={
+                "from": MAILGUN_FROM_EMAIL,
+                "to": [user_email],
+                "subject": subject,
+                "text": text_body,
+            },
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            msg_id = resp.json().get("id", "")
+            print(f"✅ [MAILGUN] Email envoyé à {user_email} (id={msg_id})")
             return True
         if resp.status_code == 401:
-            print("❌ [GRAPH] 401 — token invalide ou expiré")
-            # Invalider le cache pour forcer un nouveau token
-            with _graph_token_lock:
-                _graph_token_cache["access_token"] = None
+            print("❌ [MAILGUN] 401 — clé API invalide")
             return False
-        if resp.status_code == 403:
-            print("❌ [GRAPH] 403 — permission Mail.Send manquante dans Azure AD")
+        if resp.status_code == 404:
+            print(f"❌ [MAILGUN] 404 — domaine '{MAILGUN_DOMAIN}' introuvable")
             return False
-        print(f"❌ [GRAPH] Erreur {resp.status_code}: {resp.text[:300]}")
+        print(f"❌ [MAILGUN] Erreur {resp.status_code}: {resp.text[:300]}")
         return False
     except requests.RequestException as e:
-        print(f"❌ [GRAPH] Erreur réseau sendMail: {e}")
+        print(f"❌ [MAILGUN] Erreur réseau: {e}")
         return False
 
 
@@ -7797,15 +7749,16 @@ def _send_stock_alert_email(
     threshold: int,
     unsubscribe_url: str,
 ) -> bool:
-    """Envoie l'alerte stock via Microsoft Graph API (HTTP, contenu Text).
-    Pas de SMTP. Utilise uniquement l'API Graph sécurisée.
+    """Envoie l'alerte stock via l'API Mailgun (HTTP POST).
+    Pas de SMTP, pas d'Azure, pas d'Outlook.
+    Utilise uniquement requests.post() + authentification API Mailgun.
     """
-    if not GRAPH_CLIENT_ID or not GRAPH_CLIENT_SECRET or not GRAPH_TENANT_ID:
-        print("⛔ [STOCK] CLIENT_ID, CLIENT_SECRET ou TENANT_ID manquant — email impossible")
+    if not MAILGUN_API_KEY or not MAILGUN_DOMAIN:
+        print("⛔ [STOCK] MAILGUN_API_KEY ou MAILGUN_DOMAIN manquant — email impossible")
         print("⛔ [STOCK] Ajouter les variables sur Render")
         return False
 
-    subject = "⚠️ Alerte de seuil atteint"
+    subject = "Alerte stock faible"
     text_body = (
         f"Bonjour {first_name},\n\n"
         f"Le produit {product_name} a atteint le seuil critique.\n\n"
@@ -7817,7 +7770,35 @@ def _send_stock_alert_email(
         f"Ne plus me rappeler pour ce produit : {unsubscribe_url}\n"
     )
 
-    return _send_via_graph(to_email, subject, text_body)
+    # --- Envoi via Mailgun API (HTTP POST) ---
+    url = f"https://api.mailgun.net/v3/{MAILGUN_DOMAIN}/messages"
+    try:
+        resp = requests.post(
+            url,
+            auth=("api", MAILGUN_API_KEY),
+            data={
+                "from": MAILGUN_FROM_EMAIL,
+                "to": [to_email],
+                "subject": subject,
+                "text": text_body,
+            },
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            msg_id = resp.json().get("id", "")
+            print(f"✅ [MAILGUN] Email envoyé à {to_email} pour « {product_name} » (id={msg_id})")
+            return True
+        if resp.status_code == 401:
+            print("❌ [MAILGUN] 401 — clé API invalide")
+            return False
+        if resp.status_code == 404:
+            print(f"❌ [MAILGUN] 404 — domaine '{MAILGUN_DOMAIN}' introuvable")
+            return False
+        print(f"❌ [MAILGUN] Erreur {resp.status_code}: {resp.text[:300]}")
+        return False
+    except requests.RequestException as e:
+        print(f"❌ [MAILGUN] Erreur réseau: {e}")
+        return False
 
 
 def _should_send_stock_alert(row: dict) -> tuple[bool, str]:
@@ -8122,15 +8103,14 @@ async def run_stock_alert_check(request: Request):
 
 @app.get("/api/stock-alerts/diagnose")
 async def diagnose_stock_alerts():
-    """Diagnostic public (sans auth) — montre l'état Graph API et DB."""
-    graph_configured = bool(GRAPH_CLIENT_ID and GRAPH_CLIENT_SECRET and GRAPH_TENANT_ID)
+    """Diagnostic public (sans auth) — montre l'état Mailgun API et DB."""
+    mailgun_configured = bool(MAILGUN_API_KEY and MAILGUN_DOMAIN)
     diag = {
-        "mode": "microsoft_graph_api",
-        "graph_configured": graph_configured,
-        "graph_client_id_set": bool(GRAPH_CLIENT_ID),
-        "graph_tenant_id_set": bool(GRAPH_TENANT_ID),
-        "graph_client_secret_set": bool(GRAPH_CLIENT_SECRET),
-        "graph_sender": GRAPH_SENDER_EMAIL,
+        "mode": "mailgun_api",
+        "mailgun_configured": mailgun_configured,
+        "mailgun_api_key_set": bool(MAILGUN_API_KEY),
+        "mailgun_domain": MAILGUN_DOMAIN or "(non configuré)",
+        "mailgun_from": MAILGUN_FROM_EMAIL,
         "backend_base_url": BACKEND_BASE_URL,
         "supabase_configured": bool(SUPABASE_URL and SUPABASE_SERVICE_KEY),
     }
@@ -8147,18 +8127,28 @@ async def diagnose_stock_alerts():
             diag["db_columns_ok"] = False
             diag["db_error"] = str(e)
 
-    # Quick Graph token test (no email sent)
-    if graph_configured:
+    # Quick Mailgun domain validation test (no email sent)
+    if mailgun_configured:
         try:
-            token = _get_graph_token()
-            if token:
-                diag["graph_token_test"] = "SUCCESS"
+            resp = requests.get(
+                f"https://api.mailgun.net/v3/domains/{MAILGUN_DOMAIN}",
+                auth=("api", MAILGUN_API_KEY),
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                domain_info = resp.json().get("domain", {})
+                diag["mailgun_domain_test"] = "SUCCESS"
+                diag["mailgun_domain_state"] = domain_info.get("state", "unknown")
+            elif resp.status_code == 401:
+                diag["mailgun_domain_test"] = "FAILED — clé API invalide"
+            elif resp.status_code == 404:
+                diag["mailgun_domain_test"] = f"FAILED — domaine '{MAILGUN_DOMAIN}' introuvable"
             else:
-                diag["graph_token_test"] = "FAILED — voir logs"
+                diag["mailgun_domain_test"] = f"FAILED — HTTP {resp.status_code}"
         except Exception as e:
-            diag["graph_token_test"] = f"ERROR: {e}"
+            diag["mailgun_domain_test"] = f"ERROR: {e}"
     else:
-        diag["graph_token_test"] = "SKIPPED — credentials manquantes"
+        diag["mailgun_domain_test"] = "SKIPPED — MAILGUN_API_KEY ou MAILGUN_DOMAIN manquant"
 
     return diag
 
@@ -8219,9 +8209,9 @@ async def test_stock_alert_email(request: Request):
     return {
         "success": email_ok,
         "email_sent_to": user_email,
-        "graph_sender": GRAPH_SENDER_EMAIL,
-        "graph_configured": bool(GRAPH_CLIENT_ID and GRAPH_CLIENT_SECRET and GRAPH_TENANT_ID),
-        "message": "Email de test envoyé via Graph API !" if email_ok else "Échec envoi — vérifier CLIENT_ID/CLIENT_SECRET/TENANT_ID",
+        "mailgun_domain": MAILGUN_DOMAIN,
+        "mailgun_configured": bool(MAILGUN_API_KEY and MAILGUN_DOMAIN),
+        "message": "Email de test envoyé via Mailgun !" if email_ok else "Échec envoi — vérifier MAILGUN_API_KEY/MAILGUN_DOMAIN",
     }
 
 
