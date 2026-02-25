@@ -942,63 +942,54 @@ async def health():
             "serpapi": "configured" if SERPAPI_KEY else "not_configured",
             "stripe": "configured" if STRIPE_SECRET_KEY else "not_configured",
             "supabase": "configured" if SUPABASE_URL else "not_configured",
-            "smtp_stock_alerts": "configured" if STOCK_ALERT_SMTP_PASS else "NOT_CONFIGURED — STOCK_ALERT_SMTP_PASS manquant",
-            "smtp_host": STOCK_ALERT_SMTP_HOST,
-            "smtp_user": STOCK_ALERT_SMTP_USER,
+            "graph_stock_alerts": "configured" if (GRAPH_CLIENT_ID and GRAPH_CLIENT_SECRET and GRAPH_TENANT_ID) else "NOT_CONFIGURED — CLIENT_ID/CLIENT_SECRET/TENANT_ID manquant",
+            "graph_sender": GRAPH_SENDER_EMAIL,
         }
     }
 
 
 @app.get("/api/stock-alerts/send-test-now")
 async def send_test_email_now(to: str = "", secret: str = ""):
-    """Envoie un email de test SMTP — pas besoin de JWT, juste un secret."""
+    """Envoie un email de test via Microsoft Graph — pas besoin de JWT, juste un secret."""
     expected_secret = os.getenv("STOCK_CHECK_SECRET", "shopbrain-stock-2026")
     if secret != expected_secret:
         raise HTTPException(status_code=403, detail="Secret invalide")
 
     target_email = to or "louis-felix.gilbert@outlook.com"
+    graph_configured = bool(GRAPH_CLIENT_ID and GRAPH_CLIENT_SECRET and GRAPH_TENANT_ID)
     result = {
-        "smtp_pass_set": bool(STOCK_ALERT_SMTP_PASS),
-        "smtp_pass_length": len(STOCK_ALERT_SMTP_PASS),
-        "smtp_host": STOCK_ALERT_SMTP_HOST,
-        "smtp_port": STOCK_ALERT_SMTP_PORT,
-        "smtp_user": STOCK_ALERT_SMTP_USER,
+        "graph_configured": graph_configured,
+        "graph_sender": GRAPH_SENDER_EMAIL,
         "target_email": target_email,
     }
 
-    if not STOCK_ALERT_SMTP_PASS:
-        result["error"] = "STOCK_ALERT_SMTP_PASS (et SMTP_PASS) non configuré sur Render"
+    if not graph_configured:
+        result["error"] = "CLIENT_ID, CLIENT_SECRET ou TENANT_ID non configuré sur Render"
         result["email_sent"] = False
         return result
 
-    # Test connexion SMTP
-    try:
-        import smtplib as _smtp
-        with _smtp.SMTP(STOCK_ALERT_SMTP_HOST, STOCK_ALERT_SMTP_PORT, timeout=15) as srv:
-            srv.ehlo()
-            srv.starttls(context=ssl.create_default_context())
-            srv.ehlo()
-            srv.login(STOCK_ALERT_SMTP_USER, STOCK_ALERT_SMTP_PASS)
-            result["smtp_login"] = "SUCCESS"
-    except Exception as e:
-        result["smtp_login"] = f"FAILED: {e}"
+    # Test obtention du token Graph
+    token = _get_graph_token()
+    if not token:
+        result["graph_token"] = "FAILED"
         result["email_sent"] = False
         return result
+    result["graph_token"] = "SUCCESS"
 
     # Envoyer email de test
     try:
         unsub_url = f"{BACKEND_BASE_URL}/api/stock-alerts/unsubscribe?token=TEST"
-        ok = _send_stock_alert_smtp(
+        ok = _send_stock_alert_email(
             to_email=target_email,
             first_name="Louis-felix",
-            product_name="Produit Test (Vérification SMTP)",
+            product_name="Produit Test (Vérification Graph API)",
             stock_remaining=3,
             threshold=10,
             unsubscribe_url=unsub_url,
         )
         result["email_sent"] = ok
         if ok:
-            result["message"] = f"✅ Email envoyé à {target_email} !"
+            result["message"] = f"✅ Email envoyé à {target_email} via Graph API !"
         else:
             result["message"] = "❌ Échec envoi — voir logs Render"
     except Exception as e:
@@ -7570,14 +7561,117 @@ async def startup_event():
 # Bouton "Ne plus me rappeler" avec token sécurisé
 # ---------------------------------------------------------------------------
 
-STOCK_ALERT_SMTP_HOST = os.getenv("STOCK_ALERT_SMTP_HOST") or os.getenv("SMTP_HOST") or "smtp.office365.com"
-STOCK_ALERT_SMTP_PORT = int(os.getenv("STOCK_ALERT_SMTP_PORT") or os.getenv("SMTP_PORT") or "587")
-STOCK_ALERT_SMTP_USER = os.getenv("STOCK_ALERT_SMTP_USER") or os.getenv("SMTP_USER") or "shopbrainai@outlook.com"
-STOCK_ALERT_SMTP_PASS = os.getenv("STOCK_ALERT_SMTP_PASS") or os.getenv("SMTP_PASS") or ""
-STOCK_ALERT_SMTP_FROM = os.getenv("STOCK_ALERT_SMTP_FROM") or os.getenv("SMTP_FROM") or STOCK_ALERT_SMTP_USER
+# ---------------------------------------------------------------------------
+# Microsoft Graph API — envoi d'email via HTTP (pas de SMTP)
+# ---------------------------------------------------------------------------
+GRAPH_CLIENT_ID = os.getenv("CLIENT_ID", "")
+GRAPH_CLIENT_SECRET = os.getenv("CLIENT_SECRET", "")
+GRAPH_TENANT_ID = os.getenv("TENANT_ID", "")
+GRAPH_SENDER_EMAIL = os.getenv("GRAPH_SENDER_EMAIL", "shopbrainai@outlook.com")
+
 STOCK_ALERT_COOLDOWN_DAYS = 5
 STOCK_ALERT_TOKEN_EXPIRY_DAYS = 30
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "https://shopbrain-backend.onrender.com")
+
+# --- Token cache (en mémoire, thread-safe) ---
+_graph_token_cache: dict = {"access_token": None, "expires_at": 0.0}
+_graph_token_lock = threading.Lock()
+
+
+def _get_graph_token() -> str | None:
+    """Obtient un access_token Microsoft Graph via client_credentials.
+    Cache le token en mémoire jusqu'à 5 min avant expiration.
+    Ne log jamais CLIENT_SECRET.
+    """
+    now = time.time()
+    with _graph_token_lock:
+        if _graph_token_cache["access_token"] and now < _graph_token_cache["expires_at"] - 300:
+            return _graph_token_cache["access_token"]
+
+    if not GRAPH_CLIENT_ID or not GRAPH_CLIENT_SECRET or not GRAPH_TENANT_ID:
+        print("⛔ [GRAPH] CLIENT_ID, CLIENT_SECRET ou TENANT_ID manquant")
+        return None
+
+    token_url = f"https://login.microsoftonline.com/{GRAPH_TENANT_ID}/oauth2/v2.0/token"
+    payload = {
+        "client_id": GRAPH_CLIENT_ID,
+        "client_secret": GRAPH_CLIENT_SECRET,
+        "scope": "https://graph.microsoft.com/.default",
+        "grant_type": "client_credentials",
+    }
+    try:
+        resp = requests.post(token_url, data=payload, timeout=15)
+        if resp.status_code == 401:
+            print("❌ [GRAPH] 401 — client_id/client_secret invalide")
+            return None
+        if resp.status_code == 400:
+            err_desc = resp.json().get("error_description", resp.text[:200])
+            print(f"❌ [GRAPH] 400 — {err_desc}")
+            return None
+        resp.raise_for_status()
+        data = resp.json()
+        access_token = data.get("access_token")
+        expires_in = int(data.get("expires_in", 3600))
+        with _graph_token_lock:
+            _graph_token_cache["access_token"] = access_token
+            _graph_token_cache["expires_at"] = time.time() + expires_in
+        print(f"✅ [GRAPH] Token obtenu (expire dans {expires_in}s)")
+        return access_token
+    except requests.RequestException as e:
+        print(f"❌ [GRAPH] Erreur réseau token: {e}")
+        return None
+
+
+def _send_via_graph(
+    to_email: str,
+    subject: str,
+    text_body: str,
+) -> bool:
+    """Envoie un email via Microsoft Graph API (HTTP POST, contenu Text).
+    Gestion: 401 → token invalide, 403 → permission Mail.Send manquante.
+    Ne log jamais CLIENT_SECRET.
+    """
+    token = _get_graph_token()
+    if not token:
+        return False
+
+    url = f"https://graph.microsoft.com/v1.0/users/{GRAPH_SENDER_EMAIL}/sendMail"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    body = {
+        "message": {
+            "subject": subject,
+            "body": {
+                "contentType": "Text",
+                "content": text_body,
+            },
+            "toRecipients": [
+                {"emailAddress": {"address": to_email}}
+            ],
+        }
+    }
+
+    try:
+        resp = requests.post(url, json=body, headers=headers, timeout=20)
+        if resp.status_code == 202:
+            print(f"✅ [GRAPH] Email envoyé à {to_email}")
+            return True
+        if resp.status_code == 401:
+            print("❌ [GRAPH] 401 — token invalide ou expiré")
+            # Invalider le cache pour forcer un nouveau token
+            with _graph_token_lock:
+                _graph_token_cache["access_token"] = None
+            return False
+        if resp.status_code == 403:
+            print("❌ [GRAPH] 403 — permission Mail.Send manquante dans Azure AD")
+            return False
+        print(f"❌ [GRAPH] Erreur {resp.status_code}: {resp.text[:300]}")
+        return False
+    except requests.RequestException as e:
+        print(f"❌ [GRAPH] Erreur réseau sendMail: {e}")
+        return False
 
 
 def _generate_unsubscribe_token(user_id: str, product_id: str) -> str:
@@ -7695,7 +7789,7 @@ Ce lien est valide pendant {STOCK_ALERT_TOKEN_EXPIRY_DAYS} jours.
 </html>"""
 
 
-def _send_stock_alert_smtp(
+def _send_stock_alert_email(
     to_email: str,
     first_name: str,
     product_name: str,
@@ -7703,55 +7797,27 @@ def _send_stock_alert_smtp(
     threshold: int,
     unsubscribe_url: str,
 ) -> bool:
-    """Envoie l'alerte stock par SMTP via shopbrainai@outlook.com."""
-    if not STOCK_ALERT_SMTP_PASS:
-        print("⛔ [STOCK] STOCK_ALERT_SMTP_PASS non configuré — email impossible")
-        print("⛔ [STOCK] Ajouter la variable STOCK_ALERT_SMTP_PASS sur Render")
+    """Envoie l'alerte stock via Microsoft Graph API (HTTP, contenu Text).
+    Pas de SMTP. Utilise uniquement l'API Graph sécurisée.
+    """
+    if not GRAPH_CLIENT_ID or not GRAPH_CLIENT_SECRET or not GRAPH_TENANT_ID:
+        print("⛔ [STOCK] CLIENT_ID, CLIENT_SECRET ou TENANT_ID manquant — email impossible")
+        print("⛔ [STOCK] Ajouter les variables sur Render")
         return False
 
-    subject = f"⚠️ Alerte stock faible – {product_name}"
-    html_body = _build_stock_alert_html(
-        first_name, product_name, stock_remaining, threshold, unsubscribe_url
-    )
-    plain_body = (
+    subject = "⚠️ Alerte de seuil atteint"
+    text_body = (
         f"Bonjour {first_name},\n\n"
-        f"Votre produit :\n"
-        f"  Nom : {product_name}\n"
-        f"  Stock actuel : {stock_remaining}\n"
-        f"  Seuil d'alerte : {threshold}\n\n"
-        f"a atteint ou dépassé votre seuil d'alerte.\n\n"
-        f"Nous vous recommandons de réapprovisionner rapidement "
-        f"afin d'éviter une rupture de stock.\n\n"
+        f"Le produit {product_name} a atteint le seuil critique.\n\n"
+        f"Stock actuel : {stock_remaining}\n"
+        f"Seuil : {threshold}\n\n"
+        "Nous vous recommandons de réapprovisionner rapidement "
+        "afin d'éviter une rupture de stock.\n\n"
+        "Merci,\nShopBrain AI\n\n"
         f"Ne plus me rappeler pour ce produit : {unsubscribe_url}\n"
     )
 
-    try:
-        msg = EmailMessage()
-        msg["Subject"] = subject
-        msg["From"] = STOCK_ALERT_SMTP_FROM
-        msg["To"] = to_email
-        msg.set_content(plain_body)
-        msg.add_alternative(html_body, subtype="html")
-
-        with smtplib.SMTP(STOCK_ALERT_SMTP_HOST, STOCK_ALERT_SMTP_PORT) as server:
-            server.ehlo()
-            server.starttls(context=ssl.create_default_context())
-            server.ehlo()
-            server.login(STOCK_ALERT_SMTP_USER, STOCK_ALERT_SMTP_PASS)
-            server.send_message(msg)
-
-        print(f"✅ [STOCK] Email SMTP envoyé à {to_email} pour « {product_name} »")
-        return True
-
-    except smtplib.SMTPAuthenticationError as e:
-        print(f"❌ [STOCK] SMTP Auth échoué (vérifier STOCK_ALERT_SMTP_PASS): {e}")
-        return False
-    except smtplib.SMTPException as e:
-        print(f"❌ [STOCK] SMTP erreur: {e}")
-        return False
-    except Exception as e:
-        print(f"❌ [STOCK] Email échoué (exception): {e}")
-        return False
+    return _send_via_graph(to_email, subject, text_body)
 
 
 def _should_send_stock_alert(row: dict) -> tuple[bool, str]:
@@ -7900,8 +7966,8 @@ def _stock_monitor_once() -> dict:
                 unsub_token = _get_or_create_unsubscribe_token(sb, user_id, pid)
                 unsub_url = f"{BACKEND_BASE_URL}/api/stock-alerts/unsubscribe?token={unsub_token}"
 
-                # Envoyer email SMTP
-                email_ok = _send_stock_alert_smtp(
+                # Envoyer email via Microsoft Graph API
+                email_ok = _send_stock_alert_email(
                     to_email=user_email,
                     first_name=user_first_name,
                     product_name=title,
@@ -7944,7 +8010,7 @@ def _stock_monitor_once() -> dict:
 
 
 def _stock_monitor_loop():
-    """Thread background: vérifie les stocks toutes les 5 min, envoie email SMTP."""
+    """Thread background: vérifie les stocks toutes les 5 min, envoie email via Graph API."""
     INTERVAL = int(os.getenv("STOCK_MONITOR_INTERVAL", "300"))  # 5 min
     time.sleep(30)  # attendre que l'app démarre
 
@@ -8056,14 +8122,15 @@ async def run_stock_alert_check(request: Request):
 
 @app.get("/api/stock-alerts/diagnose")
 async def diagnose_stock_alerts():
-    """Diagnostic public (sans auth) — montre l'état SMTP et DB."""
+    """Diagnostic public (sans auth) — montre l'état Graph API et DB."""
+    graph_configured = bool(GRAPH_CLIENT_ID and GRAPH_CLIENT_SECRET and GRAPH_TENANT_ID)
     diag = {
-        "smtp_pass_configured": bool(STOCK_ALERT_SMTP_PASS),
-        "smtp_pass_length": len(STOCK_ALERT_SMTP_PASS) if STOCK_ALERT_SMTP_PASS else 0,
-        "smtp_host": STOCK_ALERT_SMTP_HOST,
-        "smtp_port": STOCK_ALERT_SMTP_PORT,
-        "smtp_user": STOCK_ALERT_SMTP_USER,
-        "smtp_from": STOCK_ALERT_SMTP_FROM,
+        "mode": "microsoft_graph_api",
+        "graph_configured": graph_configured,
+        "graph_client_id_set": bool(GRAPH_CLIENT_ID),
+        "graph_tenant_id_set": bool(GRAPH_TENANT_ID),
+        "graph_client_secret_set": bool(GRAPH_CLIENT_SECRET),
+        "graph_sender": GRAPH_SENDER_EMAIL,
         "backend_base_url": BACKEND_BASE_URL,
         "supabase_configured": bool(SUPABASE_URL and SUPABASE_SERVICE_KEY),
     }
@@ -8080,22 +8147,18 @@ async def diagnose_stock_alerts():
             diag["db_columns_ok"] = False
             diag["db_error"] = str(e)
 
-    # Quick SMTP connection test (no email sent)
-    if STOCK_ALERT_SMTP_PASS:
+    # Quick Graph token test (no email sent)
+    if graph_configured:
         try:
-            with smtplib.SMTP(STOCK_ALERT_SMTP_HOST, STOCK_ALERT_SMTP_PORT, timeout=10) as server:
-                server.ehlo()
-                server.starttls(context=ssl.create_default_context())
-                server.ehlo()
-                server.login(STOCK_ALERT_SMTP_USER, STOCK_ALERT_SMTP_PASS)
-                server.quit()
-            diag["smtp_login_test"] = "SUCCESS"
-        except smtplib.SMTPAuthenticationError as e:
-            diag["smtp_login_test"] = f"AUTH_FAILED: {e}"
+            token = _get_graph_token()
+            if token:
+                diag["graph_token_test"] = "SUCCESS"
+            else:
+                diag["graph_token_test"] = "FAILED — voir logs"
         except Exception as e:
-            diag["smtp_login_test"] = f"ERROR: {e}"
+            diag["graph_token_test"] = f"ERROR: {e}"
     else:
-        diag["smtp_login_test"] = "SKIPPED — no password configured"
+        diag["graph_token_test"] = "SKIPPED — credentials manquantes"
 
     return diag
 
@@ -8144,7 +8207,7 @@ async def test_stock_alert_email(request: Request):
 
     test_unsub_url = f"{BACKEND_BASE_URL}/api/stock-alerts/unsubscribe?token=TEST_TOKEN_INVALID"
 
-    email_ok = _send_stock_alert_smtp(
+    email_ok = _send_stock_alert_email(
         to_email=user_email,
         first_name=user_first_name,
         product_name="Produit Test (démo)",
@@ -8156,10 +8219,9 @@ async def test_stock_alert_email(request: Request):
     return {
         "success": email_ok,
         "email_sent_to": user_email,
-        "smtp_host": STOCK_ALERT_SMTP_HOST,
-        "smtp_user": STOCK_ALERT_SMTP_USER,
-        "smtp_pass_configured": bool(STOCK_ALERT_SMTP_PASS),
-        "message": "Email de test envoyé !" if email_ok else "Échec envoi — vérifier STOCK_ALERT_SMTP_PASS",
+        "graph_sender": GRAPH_SENDER_EMAIL,
+        "graph_configured": bool(GRAPH_CLIENT_ID and GRAPH_CLIENT_SECRET and GRAPH_TENANT_ID),
+        "message": "Email de test envoyé via Graph API !" if email_ok else "Échec envoi — vérifier CLIENT_ID/CLIENT_SECRET/TENANT_ID",
     }
 
 
