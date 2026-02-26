@@ -949,7 +949,7 @@ async def health():
 
 
 @app.get("/api/stock-alerts/send-test-now")
-async def send_test_email_now(to: str = "", secret: str = ""):
+async def send_test_email_now(to: str = "", secret: str = "", user_id: str = "", product_id: str = ""):
     """Envoie un email de test via Gmail API (OAuth2) — pas besoin de JWT, juste un secret."""
     expected_secret = os.getenv("STOCK_CHECK_SECRET", "shopbrain-stock-2026")
     if secret != expected_secret:
@@ -971,10 +971,36 @@ async def send_test_email_now(to: str = "", secret: str = ""):
     # Envoyer email de test via Gmail API
     try:
         unsub_url = f"{BACKEND_BASE_URL}/api/stock-alerts/unsubscribe?token=TEST"
+        unsubscribe_mode = "placeholder"
+        product_name = "Produit Test (Vérification Gmail API)"
+
+        if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+            sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+            chosen_user_id = user_id.strip() or ""
+            chosen_product_id = product_id.strip() or ""
+
+            if chosen_user_id and not chosen_product_id:
+                row = sb.table("stock_alert_settings").select(
+                    "product_id,product_title"
+                ).eq("user_id", chosen_user_id).limit(1).execute()
+                if row.data:
+                    chosen_product_id = str(row.data[0].get("product_id", "") or "").strip()
+                    if row.data[0].get("product_title"):
+                        product_name = row.data[0].get("product_title")
+
+            if chosen_user_id and chosen_product_id:
+                token = _get_or_create_unsubscribe_token(sb, chosen_user_id, chosen_product_id)
+                unsub_url = f"{BACKEND_BASE_URL}/api/stock-alerts/unsubscribe?token={token}"
+                unsubscribe_mode = "generated"
+
+        result["unsubscribe_mode"] = unsubscribe_mode
+        result["unsubscribe_url"] = unsub_url
+
         ok = _send_stock_alert_email(
             to_email=target_email,
             first_name="Louis-felix",
-            product_name="Produit Test (Vérification Gmail API)",
+            product_name=product_name,
             stock_remaining=3,
             threshold=10,
             unsubscribe_url=unsub_url,
