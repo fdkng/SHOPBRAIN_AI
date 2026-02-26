@@ -8211,23 +8211,22 @@ async def diagnose_stock_alerts():
             else:
                 access_token = token_resp.json().get("access_token", "")
                 diag["oauth2_refresh_status"] = "OK"
-                # Step 2: tester l'accès Gmail
-                profile_resp = requests.get(
-                    "https://gmail.googleapis.com/gmail/v1/users/me/profile",
-                    headers={"Authorization": f"Bearer {access_token}"},
+                # Step 2: vérifier le token (tokeninfo fonctionne avec tout scope)
+                info_resp = requests.get(
+                    f"https://oauth2.googleapis.com/tokeninfo?access_token={access_token}",
                     timeout=10,
                 )
-                if profile_resp.status_code == 200:
-                    profile = profile_resp.json()
+                if info_resp.status_code == 200:
+                    info = info_resp.json()
                     diag["gmail_token_test"] = "SUCCESS"
-                    diag["gmail_email_address"] = profile.get("emailAddress", "")
-                    diag["gmail_messages_total"] = profile.get("messagesTotal", 0)
-                elif profile_resp.status_code == 403:
-                    diag["gmail_token_test"] = "FAILED — Gmail API non activée ou scope manquant"
-                    diag["gmail_profile_error"] = profile_resp.text[:500]
+                    diag["gmail_email_address"] = info.get("email", "")
+                    diag["gmail_scope"] = info.get("scope", "")
+                    has_send = "gmail.send" in info.get("scope", "")
+                    diag["gmail_send_scope_ok"] = has_send
+                    if not has_send:
+                        diag["hint"] = "Le scope gmail.send est manquant. Regénérer le refresh_token avec le scope https://www.googleapis.com/auth/gmail.send"
                 else:
-                    diag["gmail_token_test"] = f"FAILED — HTTP {profile_resp.status_code}"
-                    diag["gmail_profile_error"] = profile_resp.text[:500]
+                    diag["gmail_token_test"] = f"FAILED — tokeninfo HTTP {info_resp.status_code}"
         except Exception as e:
             diag["gmail_token_test"] = f"ERROR: {e}"
     else:
