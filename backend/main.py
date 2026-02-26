@@ -8186,22 +8186,48 @@ async def diagnose_stock_alerts():
 
     # Quick Gmail OAuth2 token test (no email sent)
     if gmail_configured:
+        # Step 1: tester le refresh token
         try:
-            access_token = _get_gmail_access_token()
-            # Vérifier le token avec un appel profile (léger, pas d'email)
-            resp = requests.get(
-                "https://gmail.googleapis.com/gmail/v1/users/me/profile",
-                headers={"Authorization": f"Bearer {access_token}"},
-                timeout=10,
+            token_resp = requests.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "client_id": GMAIL_CLIENT_ID,
+                    "client_secret": GMAIL_CLIENT_SECRET,
+                    "refresh_token": GMAIL_REFRESH_TOKEN,
+                    "grant_type": "refresh_token",
+                },
+                timeout=15,
             )
-            if resp.status_code == 200:
-                profile = resp.json()
-                diag["gmail_token_test"] = "SUCCESS"
-                diag["gmail_email_address"] = profile.get("emailAddress", "")
-            elif resp.status_code == 401:
-                diag["gmail_token_test"] = "FAILED — access_token invalide"
+            diag["oauth2_refresh_status"] = token_resp.status_code
+            if token_resp.status_code != 200:
+                err_body = token_resp.json() if token_resp.headers.get("content-type", "").startswith("application/json") else token_resp.text[:500]
+                diag["oauth2_refresh_error"] = err_body
+                diag["gmail_token_test"] = f"FAILED — refresh token returned {token_resp.status_code}"
+                diag["hint"] = (
+                    "Vérifier: 1) Gmail API activée dans Google Cloud Console, "
+                    "2) Le refresh_token a été généré avec le même Client ID/Secret, "
+                    "3) L'app OAuth n'est pas révoquée dans https://myaccount.google.com/permissions"
+                )
             else:
-                diag["gmail_token_test"] = f"FAILED — HTTP {resp.status_code}"
+                access_token = token_resp.json().get("access_token", "")
+                diag["oauth2_refresh_status"] = "OK"
+                # Step 2: tester l'accès Gmail
+                profile_resp = requests.get(
+                    "https://gmail.googleapis.com/gmail/v1/users/me/profile",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    timeout=10,
+                )
+                if profile_resp.status_code == 200:
+                    profile = profile_resp.json()
+                    diag["gmail_token_test"] = "SUCCESS"
+                    diag["gmail_email_address"] = profile.get("emailAddress", "")
+                    diag["gmail_messages_total"] = profile.get("messagesTotal", 0)
+                elif profile_resp.status_code == 403:
+                    diag["gmail_token_test"] = "FAILED — Gmail API non activée ou scope manquant"
+                    diag["gmail_profile_error"] = profile_resp.text[:500]
+                else:
+                    diag["gmail_token_test"] = f"FAILED — HTTP {profile_resp.status_code}"
+                    diag["gmail_profile_error"] = profile_resp.text[:500]
         except Exception as e:
             diag["gmail_token_test"] = f"ERROR: {e}"
     else:
