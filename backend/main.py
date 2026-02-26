@@ -980,6 +980,17 @@ async def send_test_email_now(to: str = "", secret: str = "", user_id: str = "",
             chosen_user_id = user_id.strip() or ""
             chosen_product_id = product_id.strip() or ""
 
+            # Auto-detect: si aucun user_id fourni, prendre le premier dispo
+            if not chosen_user_id:
+                auto_row = sb.table("stock_alert_settings").select(
+                    "user_id,product_id,product_title"
+                ).limit(1).execute()
+                if auto_row.data:
+                    chosen_user_id = str(auto_row.data[0].get("user_id", "")).strip()
+                    chosen_product_id = str(auto_row.data[0].get("product_id", "")).strip()
+                    if auto_row.data[0].get("product_title"):
+                        product_name = auto_row.data[0].get("product_title")
+
             if chosen_user_id and not chosen_product_id:
                 row = sb.table("stock_alert_settings").select(
                     "product_id,product_title"
@@ -988,6 +999,9 @@ async def send_test_email_now(to: str = "", secret: str = "", user_id: str = "",
                     chosen_product_id = str(row.data[0].get("product_id", "") or "").strip()
                     if row.data[0].get("product_title"):
                         product_name = row.data[0].get("product_title")
+
+            result["resolved_user_id"] = chosen_user_id
+            result["resolved_product_id"] = chosen_product_id
 
             if chosen_user_id and chosen_product_id:
                 token = _get_or_create_unsubscribe_token(sb, chosen_user_id, chosen_product_id)
