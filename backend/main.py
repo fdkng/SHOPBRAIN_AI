@@ -942,48 +942,46 @@ async def health():
             "serpapi": "configured" if SERPAPI_KEY else "not_configured",
             "stripe": "configured" if STRIPE_SECRET_KEY else "not_configured",
             "supabase": "configured" if SUPABASE_URL else "not_configured",
-            "mailgun_stock_alerts": "configured" if (MAILGUN_API_KEY and MAILGUN_DOMAIN) else "NOT_CONFIGURED — MAILGUN_API_KEY/MAILGUN_DOMAIN manquant",
-            "mailgun_domain": MAILGUN_DOMAIN,
-            "mailgun_from": MAILGUN_FROM_EMAIL,
+            "gmail_stock_alerts": "configured" if (GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET and GMAIL_REFRESH_TOKEN and GMAIL_SENDER_EMAIL) else "NOT_CONFIGURED — GMAIL_CLIENT_ID/CLIENT_SECRET/REFRESH_TOKEN/SENDER_EMAIL manquant",
+            "gmail_sender": GMAIL_SENDER_EMAIL or "(non configuré)",
         }
     }
 
 
 @app.get("/api/stock-alerts/send-test-now")
 async def send_test_email_now(to: str = "", secret: str = ""):
-    """Envoie un email de test via Mailgun API — pas besoin de JWT, juste un secret."""
+    """Envoie un email de test via Gmail API (OAuth2) — pas besoin de JWT, juste un secret."""
     expected_secret = os.getenv("STOCK_CHECK_SECRET", "shopbrain-stock-2026")
     if secret != expected_secret:
         raise HTTPException(status_code=403, detail="Secret invalide")
 
     target_email = to or "louis-felix.gilbert@outlook.com"
-    mailgun_configured = bool(MAILGUN_API_KEY and MAILGUN_DOMAIN)
+    gmail_configured = bool(GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET and GMAIL_REFRESH_TOKEN and GMAIL_SENDER_EMAIL)
     result = {
-        "mailgun_configured": mailgun_configured,
-        "mailgun_domain": MAILGUN_DOMAIN,
-        "mailgun_from": MAILGUN_FROM_EMAIL,
+        "gmail_configured": gmail_configured,
+        "gmail_sender": GMAIL_SENDER_EMAIL or "(non configuré)",
         "target_email": target_email,
     }
 
-    if not mailgun_configured:
-        result["error"] = "MAILGUN_API_KEY ou MAILGUN_DOMAIN non configuré sur Render"
+    if not gmail_configured:
+        result["error"] = "Variables Gmail manquantes sur Render (GMAIL_CLIENT_ID/CLIENT_SECRET/REFRESH_TOKEN/SENDER_EMAIL)"
         result["email_sent"] = False
         return result
 
-    # Envoyer email de test via Mailgun
+    # Envoyer email de test via Gmail API
     try:
         unsub_url = f"{BACKEND_BASE_URL}/api/stock-alerts/unsubscribe?token=TEST"
         ok = _send_stock_alert_email(
             to_email=target_email,
             first_name="Louis-felix",
-            product_name="Produit Test (Vérification Mailgun)",
+            product_name="Produit Test (Vérification Gmail API)",
             stock_remaining=3,
             threshold=10,
             unsubscribe_url=unsub_url,
         )
         result["email_sent"] = ok
         if ok:
-            result["message"] = f"✅ Email envoyé à {target_email} via Mailgun !"
+            result["message"] = f"✅ Email envoyé à {target_email} via Gmail API !"
         else:
             result["message"] = "❌ Échec envoi — voir logs Render"
     except Exception as e:
@@ -7556,35 +7554,64 @@ async def startup_event():
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# Mailgun API — envoi d'email via HTTP POST (pas de SMTP, pas d'Azure)
+# Gmail API — envoi d'email via OAuth2 refresh_token (HTTP, pas de SMTP)
 # ---------------------------------------------------------------------------
-MAILGUN_API_KEY = os.getenv("MAILGUN_API_KEY", "")
-MAILGUN_DOMAIN = os.getenv("MAILGUN_DOMAIN", "")  # ex: sandboxXXX.mailgun.org ou shopbrainai.com
-MAILGUN_FROM_EMAIL = os.getenv("MAILGUN_FROM_EMAIL", "ShopBrain AI <alerts@shopbrainai.com>")
+GMAIL_CLIENT_ID = os.getenv("GMAIL_CLIENT_ID", "")
+GMAIL_CLIENT_SECRET = os.getenv("GMAIL_CLIENT_SECRET", "")
+GMAIL_REFRESH_TOKEN = os.getenv("GMAIL_REFRESH_TOKEN", "")
+GMAIL_SENDER_EMAIL = os.getenv("GMAIL_SENDER_EMAIL", "")  # ex: shopbrainai@gmail.com
 
 STOCK_ALERT_COOLDOWN_DAYS = 5
 STOCK_ALERT_TOKEN_EXPIRY_DAYS = 30
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "https://shopbrain-backend.onrender.com")
 
+# --- Cache access_token en mémoire (expire ~3600 s) ---
+_gmail_access_token: str = ""
+_gmail_token_expires_at: float = 0.0
+
+
+def _get_gmail_access_token() -> str:
+    """Échange le refresh_token contre un access_token via Google OAuth2.
+    Met en cache le token jusqu'à expiration (~1 h).
+    """
+    global _gmail_access_token, _gmail_token_expires_at
+    if _gmail_access_token and time.time() < _gmail_token_expires_at - 60:
+        return _gmail_access_token
+
+    resp = requests.post(
+        "https://oauth2.googleapis.com/token",
+        data={
+            "client_id": GMAIL_CLIENT_ID,
+            "client_secret": GMAIL_CLIENT_SECRET,
+            "refresh_token": GMAIL_REFRESH_TOKEN,
+            "grant_type": "refresh_token",
+        },
+        timeout=15,
+    )
+    if resp.status_code != 200:
+        print(f"❌ [GMAIL] OAuth2 token refresh failed {resp.status_code}: {resp.text[:300]}")
+        raise RuntimeError(f"Gmail OAuth2 refresh failed: {resp.status_code}")
+
+    data = resp.json()
+    _gmail_access_token = data["access_token"]
+    _gmail_token_expires_at = time.time() + data.get("expires_in", 3600)
+    print("✅ [GMAIL] Access token refreshed")
+    return _gmail_access_token
+
 
 def send_alert_email(user_email: str, product_name: str, current_stock: int = 0, alert_threshold: int = 0) -> bool:
-    """Envoie un email d'alerte stock via l'API Mailgun (HTTP POST).
+    """Envoie un email d'alerte stock via l'API Gmail REST (OAuth2).
 
-    - Utilise requests.post() avec authentification API Mailgun.
-    - Variables d'environnement : MAILGUN_API_KEY, MAILGUN_DOMAIN, MAILGUN_FROM_EMAIL.
-    - Gère les erreurs (try/except).
-    - Ne log jamais la clé API.
+    - Échange le refresh_token pour un access_token.
+    - Construit un message RFC 2822, encode en base64url.
+    - POST à https://gmail.googleapis.com/gmail/v1/users/me/messages/send
     - Retourne True si envoyé (200), False sinon.
     """
-    # --- Vérifier la configuration ---
-    if not MAILGUN_API_KEY:
-        print("⛔ [MAILGUN] MAILGUN_API_KEY non configurée — email impossible")
-        return False
-    if not MAILGUN_DOMAIN:
-        print("⛔ [MAILGUN] MAILGUN_DOMAIN non configuré — email impossible")
+    if not all([GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN, GMAIL_SENDER_EMAIL]):
+        print("⛔ [GMAIL] Variables manquantes (GMAIL_CLIENT_ID/CLIENT_SECRET/REFRESH_TOKEN/SENDER_EMAIL)")
         return False
 
-    # --- Construire le message ---
+    import email.message
     subject = "Alerte stock faible"
     text_body = (
         f"Le produit {product_name} a atteint le seuil critique.\n\n"
@@ -7595,34 +7622,34 @@ def send_alert_email(user_email: str, product_name: str, current_stock: int = 0,
         "— ShopBrain AI"
     )
 
-    # --- Envoi via Mailgun API (HTTP POST) ---
-    url = f"https://api.mailgun.net/v3/{MAILGUN_DOMAIN}/messages"
     try:
+        access_token = _get_gmail_access_token()
+
+        msg = email.message.EmailMessage()
+        msg["From"] = f"ShopBrain AI <{GMAIL_SENDER_EMAIL}>"
+        msg["To"] = user_email
+        msg["Subject"] = subject
+        msg.set_content(text_body)
+
+        raw_msg = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
+
         resp = requests.post(
-            url,
-            auth=("api", MAILGUN_API_KEY),
-            data={
-                "from": MAILGUN_FROM_EMAIL,
-                "to": [user_email],
-                "subject": subject,
-                "text": text_body,
-            },
+            "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+            headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+            json={"raw": raw_msg},
             timeout=15,
         )
         if resp.status_code == 200:
             msg_id = resp.json().get("id", "")
-            print(f"✅ [MAILGUN] Email envoyé à {user_email} (id={msg_id})")
+            print(f"✅ [GMAIL] Email envoyé à {user_email} (id={msg_id})")
             return True
         if resp.status_code == 401:
-            print("❌ [MAILGUN] 401 — clé API invalide")
+            print("❌ [GMAIL] 401 — access_token expiré ou invalide")
             return False
-        if resp.status_code == 404:
-            print(f"❌ [MAILGUN] 404 — domaine '{MAILGUN_DOMAIN}' introuvable")
-            return False
-        print(f"❌ [MAILGUN] Erreur {resp.status_code}: {resp.text[:300]}")
+        print(f"❌ [GMAIL] Erreur {resp.status_code}: {resp.text[:300]}")
         return False
-    except requests.RequestException as e:
-        print(f"❌ [MAILGUN] Erreur réseau: {e}")
+    except Exception as e:
+        print(f"❌ [GMAIL] Erreur: {e}")
         return False
 
 
@@ -7749,16 +7776,25 @@ def _send_stock_alert_email(
     threshold: int,
     unsubscribe_url: str,
 ) -> bool:
-    """Envoie l'alerte stock via l'API Mailgun (HTTP POST).
-    Pas de SMTP, pas d'Azure, pas d'Outlook.
-    Utilise uniquement requests.post() + authentification API Mailgun.
+    """Envoie l'alerte stock via l'API Gmail REST (OAuth2 refresh_token).
+    Pas de SMTP, pas d'Azure, pas de Mailgun.
+    Utilise uniquement requests + OAuth2 + Gmail REST API.
     """
-    if not MAILGUN_API_KEY or not MAILGUN_DOMAIN:
-        print("⛔ [STOCK] MAILGUN_API_KEY ou MAILGUN_DOMAIN manquant — email impossible")
-        print("⛔ [STOCK] Ajouter les variables sur Render")
+    if not all([GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN, GMAIL_SENDER_EMAIL]):
+        print("⛔ [STOCK] Variables Gmail manquantes — email impossible")
+        print("⛔ [STOCK] Ajouter GMAIL_CLIENT_ID/CLIENT_SECRET/REFRESH_TOKEN/SENDER_EMAIL sur Render")
         return False
 
+    import email.message
+
     subject = "Alerte stock faible"
+    html_body = _build_stock_alert_html(
+        first_name=first_name,
+        product_name=product_name,
+        stock_remaining=stock_remaining,
+        threshold=threshold,
+        unsubscribe_url=unsubscribe_url,
+    )
     text_body = (
         f"Bonjour {first_name},\n\n"
         f"Le produit {product_name} a atteint le seuil critique.\n\n"
@@ -7770,34 +7806,54 @@ def _send_stock_alert_email(
         f"Ne plus me rappeler pour ce produit : {unsubscribe_url}\n"
     )
 
-    # --- Envoi via Mailgun API (HTTP POST) ---
-    url = f"https://api.mailgun.net/v3/{MAILGUN_DOMAIN}/messages"
     try:
+        access_token = _get_gmail_access_token()
+
+        msg = email.message.EmailMessage()
+        msg["From"] = f"ShopBrain AI <{GMAIL_SENDER_EMAIL}>"
+        msg["To"] = to_email
+        msg["Subject"] = subject
+        msg.set_content(text_body)
+        msg.add_alternative(html_body, subtype="html")
+
+        raw_msg = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
+
         resp = requests.post(
-            url,
-            auth=("api", MAILGUN_API_KEY),
-            data={
-                "from": MAILGUN_FROM_EMAIL,
-                "to": [to_email],
-                "subject": subject,
-                "text": text_body,
-            },
+            "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+            headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+            json={"raw": raw_msg},
             timeout=15,
         )
         if resp.status_code == 200:
             msg_id = resp.json().get("id", "")
-            print(f"✅ [MAILGUN] Email envoyé à {to_email} pour « {product_name} » (id={msg_id})")
+            print(f"✅ [GMAIL] Email envoyé à {to_email} pour « {product_name} » (id={msg_id})")
             return True
         if resp.status_code == 401:
-            print("❌ [MAILGUN] 401 — clé API invalide")
+            print("❌ [GMAIL] 401 — access_token expiré ou invalide, retry...")
+            # Forcer un refresh et réessayer une fois
+            global _gmail_access_token, _gmail_token_expires_at
+            _gmail_access_token = ""
+            _gmail_token_expires_at = 0.0
+            try:
+                access_token = _get_gmail_access_token()
+                resp2 = requests.post(
+                    "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+                    headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+                    json={"raw": raw_msg},
+                    timeout=15,
+                )
+                if resp2.status_code == 200:
+                    msg_id = resp2.json().get("id", "")
+                    print(f"✅ [GMAIL] Email envoyé (retry) à {to_email} (id={msg_id})")
+                    return True
+                print(f"❌ [GMAIL] Retry échoué {resp2.status_code}: {resp2.text[:300]}")
+            except Exception as e2:
+                print(f"❌ [GMAIL] Retry erreur: {e2}")
             return False
-        if resp.status_code == 404:
-            print(f"❌ [MAILGUN] 404 — domaine '{MAILGUN_DOMAIN}' introuvable")
-            return False
-        print(f"❌ [MAILGUN] Erreur {resp.status_code}: {resp.text[:300]}")
+        print(f"❌ [GMAIL] Erreur {resp.status_code}: {resp.text[:300]}")
         return False
-    except requests.RequestException as e:
-        print(f"❌ [MAILGUN] Erreur réseau: {e}")
+    except Exception as e:
+        print(f"❌ [GMAIL] Erreur: {e}")
         return False
 
 
@@ -7826,7 +7882,7 @@ def _should_send_stock_alert(row: dict) -> tuple[bool, str]:
 
 
 def _stock_monitor_once() -> dict:
-    """Exécute un cycle de vérification stock avec envoi SMTP."""
+    """Exécute un cycle de vérification stock avec envoi Gmail API."""
     print("🕒 [STOCK] Vérification stock en cours...")
     summary = {
         "users_checked": 0,
@@ -7947,7 +8003,7 @@ def _stock_monitor_once() -> dict:
                 unsub_token = _get_or_create_unsubscribe_token(sb, user_id, pid)
                 unsub_url = f"{BACKEND_BASE_URL}/api/stock-alerts/unsubscribe?token={unsub_token}"
 
-                # Envoyer email via Microsoft Graph API
+                # Envoyer email via Gmail API
                 email_ok = _send_stock_alert_email(
                     to_email=user_email,
                     first_name=user_first_name,
@@ -7991,7 +8047,7 @@ def _stock_monitor_once() -> dict:
 
 
 def _stock_monitor_loop():
-    """Thread background: vérifie les stocks toutes les 5 min, envoie email via Graph API."""
+    """Thread background: vérifie les stocks toutes les 5 min, envoie email via Gmail API."""
     INTERVAL = int(os.getenv("STOCK_MONITOR_INTERVAL", "300"))  # 5 min
     time.sleep(30)  # attendre que l'app démarre
 
@@ -8103,14 +8159,15 @@ async def run_stock_alert_check(request: Request):
 
 @app.get("/api/stock-alerts/diagnose")
 async def diagnose_stock_alerts():
-    """Diagnostic public (sans auth) — montre l'état Mailgun API et DB."""
-    mailgun_configured = bool(MAILGUN_API_KEY and MAILGUN_DOMAIN)
+    """Diagnostic public (sans auth) — montre l'état Gmail API et DB."""
+    gmail_configured = bool(GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET and GMAIL_REFRESH_TOKEN and GMAIL_SENDER_EMAIL)
     diag = {
-        "mode": "mailgun_api",
-        "mailgun_configured": mailgun_configured,
-        "mailgun_api_key_set": bool(MAILGUN_API_KEY),
-        "mailgun_domain": MAILGUN_DOMAIN or "(non configuré)",
-        "mailgun_from": MAILGUN_FROM_EMAIL,
+        "mode": "gmail_api_oauth2",
+        "gmail_configured": gmail_configured,
+        "gmail_client_id_set": bool(GMAIL_CLIENT_ID),
+        "gmail_client_secret_set": bool(GMAIL_CLIENT_SECRET),
+        "gmail_refresh_token_set": bool(GMAIL_REFRESH_TOKEN),
+        "gmail_sender": GMAIL_SENDER_EMAIL or "(non configuré)",
         "backend_base_url": BACKEND_BASE_URL,
         "supabase_configured": bool(SUPABASE_URL and SUPABASE_SERVICE_KEY),
     }
@@ -8127,28 +8184,28 @@ async def diagnose_stock_alerts():
             diag["db_columns_ok"] = False
             diag["db_error"] = str(e)
 
-    # Quick Mailgun domain validation test (no email sent)
-    if mailgun_configured:
+    # Quick Gmail OAuth2 token test (no email sent)
+    if gmail_configured:
         try:
+            access_token = _get_gmail_access_token()
+            # Vérifier le token avec un appel profile (léger, pas d'email)
             resp = requests.get(
-                f"https://api.mailgun.net/v3/domains/{MAILGUN_DOMAIN}",
-                auth=("api", MAILGUN_API_KEY),
+                "https://gmail.googleapis.com/gmail/v1/users/me/profile",
+                headers={"Authorization": f"Bearer {access_token}"},
                 timeout=10,
             )
             if resp.status_code == 200:
-                domain_info = resp.json().get("domain", {})
-                diag["mailgun_domain_test"] = "SUCCESS"
-                diag["mailgun_domain_state"] = domain_info.get("state", "unknown")
+                profile = resp.json()
+                diag["gmail_token_test"] = "SUCCESS"
+                diag["gmail_email_address"] = profile.get("emailAddress", "")
             elif resp.status_code == 401:
-                diag["mailgun_domain_test"] = "FAILED — clé API invalide"
-            elif resp.status_code == 404:
-                diag["mailgun_domain_test"] = f"FAILED — domaine '{MAILGUN_DOMAIN}' introuvable"
+                diag["gmail_token_test"] = "FAILED — access_token invalide"
             else:
-                diag["mailgun_domain_test"] = f"FAILED — HTTP {resp.status_code}"
+                diag["gmail_token_test"] = f"FAILED — HTTP {resp.status_code}"
         except Exception as e:
-            diag["mailgun_domain_test"] = f"ERROR: {e}"
+            diag["gmail_token_test"] = f"ERROR: {e}"
     else:
-        diag["mailgun_domain_test"] = "SKIPPED — MAILGUN_API_KEY ou MAILGUN_DOMAIN manquant"
+        diag["gmail_token_test"] = "SKIPPED — variables Gmail manquantes"
 
     return diag
 
@@ -8165,7 +8222,7 @@ async def force_run_stock_check(secret: str = ""):
 
 @app.post("/api/stock-alerts/test-email")
 async def test_stock_alert_email(request: Request):
-    """Envoie un email de test pour valider la configuration SMTP."""
+    """Envoie un email de test pour valider la configuration Gmail API."""
     user_id = get_user_id(request)
 
     if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
@@ -8209,9 +8266,9 @@ async def test_stock_alert_email(request: Request):
     return {
         "success": email_ok,
         "email_sent_to": user_email,
-        "mailgun_domain": MAILGUN_DOMAIN,
-        "mailgun_configured": bool(MAILGUN_API_KEY and MAILGUN_DOMAIN),
-        "message": "Email de test envoyé via Mailgun !" if email_ok else "Échec envoi — vérifier MAILGUN_API_KEY/MAILGUN_DOMAIN",
+        "gmail_sender": GMAIL_SENDER_EMAIL or "(non configuré)",
+        "gmail_configured": bool(GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET and GMAIL_REFRESH_TOKEN and GMAIL_SENDER_EMAIL),
+        "message": "Email de test envoyé via Gmail API !" if email_ok else "Échec envoi — vérifier GMAIL_CLIENT_ID/CLIENT_SECRET/REFRESH_TOKEN/SENDER_EMAIL",
     }
 
 
