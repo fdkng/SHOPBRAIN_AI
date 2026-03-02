@@ -7687,6 +7687,9 @@ def send_alert_email(user_email: str, product_name: str, current_stock: int = 0,
 
         msg = email.message.EmailMessage()
         msg["From"] = f"ShopBrain AI <{GMAIL_SENDER_EMAIL}>"
+        msg["Reply-To"] = GMAIL_SENDER_EMAIL
+        msg["List-Unsubscribe"] = f"<{BACKEND_BASE_URL}/api/stock-alerts/unsubscribe?token=EMAIL_LIST>"
+        msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
         msg["To"] = user_email
         msg["Subject"] = subject
         msg.set_content(text_body)
@@ -7909,6 +7912,9 @@ def _send_stock_alert_email(
 
         msg = email.message.EmailMessage()
         msg["From"] = f"ShopBrain AI <{GMAIL_SENDER_EMAIL}>"
+        msg["Reply-To"] = GMAIL_SENDER_EMAIL
+        msg["List-Unsubscribe"] = f"<{unsubscribe_url}>"
+        msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
         msg["To"] = to_email
         msg["Subject"] = subject
         msg.set_content(text_body)
