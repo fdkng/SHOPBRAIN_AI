@@ -935,7 +935,7 @@ async def health():
     """Health check endpoint for Render - MUST ALWAYS WORK"""
     return {
         "status": "ok",
-        "version": "1.6-unsubscribe-fix",
+        "version": "1.7-smart-alerts",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
                 "openai": "configured" if OPENAI_API_KEY else "not_configured",
@@ -3252,7 +3252,18 @@ async def save_stock_alert_threshold(request: Request):
 
     sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
-    if threshold == 0:
+    # Support multi-seuils: body peut contenir "thresholds": [10, 5, 2]
+    thresholds_raw = body.get("thresholds", [])
+    if isinstance(thresholds_raw, list) and thresholds_raw:
+        thresholds = sorted([int(t) for t in thresholds_raw if int(t) > 0], reverse=True)
+    elif threshold > 0:
+        thresholds = [threshold]
+    else:
+        thresholds = []
+
+    import json as _json
+
+    if threshold == 0 and not thresholds:
         # Seuil 0 = désactiver la surveillance pour ce produit
         sb.table("stock_alert_settings").delete().eq("user_id", user_id).eq("product_id", product_id).execute()
     else:
@@ -3260,12 +3271,13 @@ async def save_stock_alert_threshold(request: Request):
             "user_id": user_id,
             "product_id": product_id,
             "product_title": product_title,
-            "threshold": threshold,
+            "threshold": thresholds[0] if thresholds else threshold,  # rétrocompatibilité
+            "thresholds": _json.dumps(thresholds),  # multi-seuils
             "enabled": True,
             "updated_at": datetime.utcnow().isoformat(),
         }, on_conflict="user_id,product_id").execute()
 
-    return {"success": True, "product_id": product_id, "threshold": threshold}
+    return {"success": True, "product_id": product_id, "threshold": threshold, "thresholds": thresholds}
 
 
 @app.get("/api/shopify/bundles")
@@ -7652,14 +7664,22 @@ def send_alert_email(user_email: str, product_name: str, current_stock: int = 0,
         return False
 
     import email.message
-    subject = "Alerte stock faible"
+    subject = "⚠️ Alerte Stock Critique – Action requise"
+    alert_date = datetime.utcnow().strftime("%d/%m/%Y à %H:%M UTC")
     text_body = (
-        f"Le produit {product_name} a atteint le seuil critique.\n\n"
-        f"Stock actuel : {current_stock}\n"
-        f"Seuil d'alerte : {alert_threshold}\n\n"
-        "Nous vous recommandons de réapprovisionner rapidement "
-        "afin d'éviter une rupture de stock.\n\n"
-        "— ShopBrain AI"
+        f"Bonjour,\n\n"
+        f"Nous souhaitons vous informer qu'un produit a atteint un seuil critique "
+        f"de stock dans votre boutique.\n\n"
+        f"Détails du produit :\n"
+        f"  Nom du produit : {product_name}\n"
+        f"  Stock actuel : {current_stock} unités\n"
+        f"  Seuil d'alerte atteint : {alert_threshold} unités\n"
+        f"  Date : {alert_date}\n\n"
+        f"Nous vous recommandons de procéder à un réapprovisionnement "
+        f"dès que possible afin d'éviter toute rupture de stock.\n\n"
+        f"Cordialement,\n"
+        f"Système intelligent de surveillance des stocks\n"
+        f"ShopBrain AI"
     )
 
     try:
@@ -7737,13 +7757,28 @@ def _build_stock_alert_html(
     threshold: int,
     unsubscribe_url: str,
 ) -> str:
-    """Construit le HTML professionnel pour l'email d'alerte stock."""
+    """Construit le HTML professionnel pour l'email d'alerte stock critique."""
+    alert_date = datetime.utcnow().strftime("%d/%m/%Y à %H:%M UTC")
+    # Couleur dynamique selon gravité
+    if stock_remaining <= 2:
+        severity_color = "#991b1b"  # rouge foncé — critique
+        severity_label = "🔴 CRITIQUE"
+        severity_bg = "#fef2f2"
+    elif stock_remaining <= 5:
+        severity_color = "#c2410c"  # orange foncé — urgent
+        severity_label = "🟠 URGENT"
+        severity_bg = "#fff7ed"
+    else:
+        severity_color = "#b91c1c"  # rouge standard
+        severity_label = "⚠️ ATTENTION"
+        severity_bg = "#fef3f2"
+
     return f"""<!DOCTYPE html>
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Alerte stock faible</title>
+<title>Alerte Stock Critique</title>
 </head>
 <body style="margin:0;padding:0;background-color:#f4f4f7;font-family:Arial,Helvetica,sans-serif;">
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#f4f4f7;padding:40px 0;">
@@ -7751,43 +7786,56 @@ def _build_stock_alert_html(
 <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="background-color:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
 
 <!-- Header -->
-<tr><td style="background-color:#e74c3c;padding:24px 32px;">
-<h1 style="margin:0;color:#ffffff;font-size:22px;">⚠️ Alerte stock faible</h1>
+<tr><td style="background-color:{severity_color};padding:24px 32px;">
+<h1 style="margin:0;color:#ffffff;font-size:22px;">{severity_label} Alerte Stock Critique – Action requise</h1>
 </td></tr>
 
 <!-- Body -->
 <tr><td style="padding:32px;">
-<p style="margin:0 0 20px;font-size:16px;color:#333;">Bonjour {first_name},</p>
+<p style="margin:0 0 20px;font-size:16px;color:#333;">Bonjour,</p>
 
-<p style="margin:0 0 20px;font-size:15px;color:#555;">Votre produit :</p>
+<p style="margin:0 0 24px;font-size:15px;color:#555;line-height:1.6;">
+Nous souhaitons vous informer qu'un produit a atteint un <strong>seuil critique de stock</strong> dans votre boutique.
+</p>
 
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#fef3f2;border-radius:6px;border:1px solid #fecaca;margin-bottom:24px;">
-<tr><td style="padding:20px;">
-<table role="presentation" width="100%" cellspacing="0" cellpadding="4">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:{severity_bg};border-radius:8px;border:1px solid #fecaca;margin-bottom:24px;">
+<tr><td style="padding:24px;">
+<p style="margin:0 0 16px;font-size:14px;color:#666;font-weight:bold;text-transform:uppercase;letter-spacing:0.5px;">Détails du produit</p>
+<table role="presentation" width="100%" cellspacing="0" cellpadding="6">
 <tr>
-  <td style="font-size:14px;color:#777;width:140px;">Nom :</td>
-  <td style="font-size:15px;color:#333;font-weight:bold;">{product_name}</td>
+  <td style="font-size:14px;color:#777;width:180px;padding:6px 0;">Nom du produit :</td>
+  <td style="font-size:15px;color:#333;font-weight:bold;padding:6px 0;">{product_name}</td>
 </tr>
 <tr>
-  <td style="font-size:14px;color:#777;">Stock actuel :</td>
-  <td style="font-size:15px;color:#e74c3c;font-weight:bold;">{stock_remaining}</td>
+  <td style="font-size:14px;color:#777;padding:6px 0;">Stock actuel :</td>
+  <td style="font-size:16px;color:{severity_color};font-weight:bold;padding:6px 0;">{stock_remaining} unités</td>
 </tr>
 <tr>
-  <td style="font-size:14px;color:#777;">Seuil d'alerte :</td>
-  <td style="font-size:15px;color:#333;font-weight:bold;">{threshold}</td>
+  <td style="font-size:14px;color:#777;padding:6px 0;">Seuil d'alerte atteint :</td>
+  <td style="font-size:15px;color:#333;font-weight:bold;padding:6px 0;">{threshold} unités</td>
+</tr>
+<tr>
+  <td style="font-size:14px;color:#777;padding:6px 0;">Date :</td>
+  <td style="font-size:14px;color:#333;padding:6px 0;">{alert_date}</td>
 </tr>
 </table>
 </td></tr>
 </table>
 
-<p style="margin:0 0 20px;font-size:15px;color:#555;">a atteint ou dépassé votre seuil d'alerte.</p>
+<p style="margin:0 0 20px;font-size:15px;color:#555;line-height:1.6;">
+Nous vous recommandons de procéder à un <strong>réapprovisionnement dès que possible</strong> afin d'éviter toute rupture de stock et perte potentielle de ventes.
+</p>
 
-<p style="margin:0 0 32px;font-size:15px;color:#555;">Nous vous recommandons de réapprovisionner rapidement afin d'éviter une rupture de stock.</p>
+<p style="margin:0 0 32px;font-size:14px;color:#888;line-height:1.5;font-style:italic;">
+Si vous avez récemment mis à jour votre inventaire, veuillez ignorer ce message.
+</p>
 
 </td></tr>
 
 <!-- Footer -->
 <tr><td style="padding:24px 32px;border-top:1px solid #eee;background-color:#fafafa;">
+<p style="margin:0 0 6px;font-size:13px;color:#555;text-align:center;">Cordialement,</p>
+<p style="margin:0 0 16px;font-size:13px;color:#555;text-align:center;font-weight:bold;">Système intelligent de surveillance des stocks — ShopBrain AI</p>
 <p style="margin:0 0 12px;font-size:12px;color:#999;text-align:center;">
 Cet email a été envoyé automatiquement par ShopBrain AI.
 </p>
@@ -7827,7 +7875,8 @@ def _send_stock_alert_email(
 
     import email.message
 
-    subject = "Alerte stock faible"
+    subject = "⚠️ Alerte Stock Critique – Action requise"
+    alert_date = datetime.utcnow().strftime("%d/%m/%Y à %H:%M UTC")
     html_body = _build_stock_alert_html(
         first_name=first_name,
         product_name=product_name,
@@ -7836,13 +7885,22 @@ def _send_stock_alert_email(
         unsubscribe_url=unsubscribe_url,
     )
     text_body = (
-        f"Bonjour {first_name},\n\n"
-        f"Le produit {product_name} a atteint le seuil critique.\n\n"
-        f"Stock actuel : {stock_remaining}\n"
-        f"Seuil : {threshold}\n\n"
-        "Nous vous recommandons de réapprovisionner rapidement "
-        "afin d'éviter une rupture de stock.\n\n"
-        "Merci,\nShopBrain AI\n\n"
+        f"Bonjour,\n\n"
+        f"Nous souhaitons vous informer qu'un produit a atteint un seuil critique "
+        f"de stock dans votre boutique.\n\n"
+        f"Détails du produit :\n"
+        f"  Nom du produit : {product_name}\n"
+        f"  Stock actuel : {stock_remaining} unités\n"
+        f"  Seuil d'alerte atteint : {threshold} unités\n"
+        f"  Date : {alert_date}\n\n"
+        f"Nous vous recommandons de procéder à un réapprovisionnement "
+        f"dès que possible afin d'éviter toute rupture de stock "
+        f"et perte potentielle de ventes.\n\n"
+        f"Si vous avez récemment mis à jour votre inventaire, "
+        f"veuillez ignorer ce message.\n\n"
+        f"Cordialement,\n"
+        f"Système intelligent de surveillance des stocks\n"
+        f"ShopBrain AI\n\n"
         f"Ne plus me rappeler pour ce produit : {unsubscribe_url}\n"
     )
 
@@ -7897,40 +7955,115 @@ def _send_stock_alert_email(
         return False
 
 
-def _should_send_stock_alert(row: dict) -> tuple[bool, str]:
+def _get_sorted_thresholds(row: dict) -> list[int]:
+    """Retourne les seuils triés du plus haut au plus bas.
+    Compatibilité: si 'thresholds' est vide, utilise 'threshold' unique.
+    """
+    thresholds_raw = row.get("thresholds") or []
+    if isinstance(thresholds_raw, str):
+        import json as _json
+        try:
+            thresholds_raw = _json.loads(thresholds_raw)
+        except Exception:
+            thresholds_raw = []
+    if not thresholds_raw:
+        single = row.get("threshold", 0)
+        try:
+            single = int(single)
+        except Exception:
+            single = 0
+        if single > 0:
+            thresholds_raw = [single]
+        else:
+            return []
+    thresholds = sorted([int(t) for t in thresholds_raw if int(t) > 0], reverse=True)
+    return thresholds
+
+
+def _find_triggered_threshold(inventory: int, thresholds: list[int]) -> int | None:
+    """Trouve le seuil le plus critique (le plus bas) atteint par le stock actuel.
+    Thresholds sont triés du plus haut au plus bas.
+    Retourne le seuil atteint ou None si aucun.
+    Ex: thresholds=[10, 5, 2], stock=3 → retourne 5
+    Ex: thresholds=[10, 5, 2], stock=1 → retourne 2
+    Ex: thresholds=[10, 5, 2], stock=12 → retourne None
+    """
+    triggered = None
+    for t in thresholds:  # [10, 5, 2] — du plus haut au plus bas
+        if inventory <= t:
+            triggered = t
+    return triggered
+
+
+def _should_send_stock_alert(row: dict, inventory: int) -> tuple[bool, str, int | None]:
     """Vérifie si on doit envoyer un email pour ce produit.
-    Returns (should_send: bool, reason: str)
+    Logique intelligente multi-seuils:
+    1. Si notifications désactivées → skip
+    2. Récupère les seuils configurés et trouve le seuil déclenché
+    3. Si aucun seuil déclenché (stock OK) → skip, réinitialise si nécessaire
+    4. Si le seuil déclenché = dernier seuil alerté → skip (déjà envoyé)
+    5. Si le seuil déclenché est PLUS critique (plus bas) que le dernier alerté → envoyer
+    6. Réinitialisation: si stock remonte au-dessus de TOUS les seuils → reset
+    Returns (should_send: bool, reason: str, triggered_threshold: int | None)
     """
     # 1. Notifications désactivées ?
     if row.get("stock_alert_disabled"):
-        return False, "notifications désactivées par l'utilisateur"
+        return False, "notifications désactivées par l'utilisateur", None
 
-    # 2. Cooldown 5 jours
-    last_sent_str = row.get("last_alert_email_sent_at")
-    if last_sent_str:
+    # 2. Récupérer les seuils
+    thresholds = _get_sorted_thresholds(row)
+    if not thresholds:
+        return False, "aucun seuil configuré", None
+
+    # 3. Trouver le seuil déclenché
+    triggered = _find_triggered_threshold(inventory, thresholds)
+    highest_threshold = thresholds[0]  # le plus haut seuil
+
+    if triggered is None:
+        # Stock au-dessus de tous les seuils → réinitialiser
+        return False, f"stock OK ({inventory} > tous les seuils {thresholds}), réinitialisation", None
+
+    # 4. Comparer avec le dernier seuil alerté
+    last_alerted = row.get("last_alerted_threshold")
+    if last_alerted is not None:
         try:
-            last_sent = datetime.fromisoformat(str(last_sent_str).replace("Z", "+00:00"))
-            last_sent_naive = last_sent.replace(tzinfo=None)
-            delta = datetime.utcnow() - last_sent_naive
-            if delta.days < STOCK_ALERT_COOLDOWN_DAYS:
-                remaining = STOCK_ALERT_COOLDOWN_DAYS - delta.days
-                return False, f"cooldown actif (dernier email il y a {delta.days}j, prochain dans {remaining}j)"
-        except Exception as e:
-            print(f"⚠️ [STOCK] Erreur parsing last_alert_email_sent_at: {e}")
+            last_alerted = int(last_alerted)
+        except Exception:
+            last_alerted = None
 
-    return True, "OK"
+    if last_alerted is not None:
+        if triggered >= last_alerted:
+            # Même seuil ou seuil moins critique → déjà alerté
+            return False, f"seuil {triggered} déjà alerté (dernier={last_alerted})", triggered
+        else:
+            # Seuil PLUS critique → envoyer
+            return True, f"nouveau seuil critique: {triggered} < dernier alerté {last_alerted}", triggered
+
+    # 5. Première alerte pour ce produit
+    return True, f"première alerte — seuil {triggered} atteint (stock={inventory})", triggered
 
 
 def _stock_monitor_once() -> dict:
-    """Exécute un cycle de vérification stock avec envoi Gmail API."""
-    print("🕒 [STOCK] Vérification stock en cours...")
+    """Exécute un cycle de vérification stock intelligent avec multi-seuils.
+    
+    Logique:
+    1. Pour chaque user avec Shopify connecté, fetch l'inventaire
+    2. Pour chaque produit avec seuils configurés:
+       a. Trouver le seuil le plus critique atteint
+       b. Si stock remonté au-dessus de TOUS les seuils → réinitialiser (prêt pour ré-alerte)
+       c. Si nouveau seuil plus critique que le dernier alerté → envoyer email
+       d. Si même seuil déjà alerté → skip
+    3. Logger chaque alerte avec le seuil déclenché
+    """
+    print("🕒 [STOCK] Vérification stock intelligente en cours...")
     summary = {
         "users_checked": 0,
         "products_checked": 0,
         "alerts_sent": 0,
-        "alerts_skipped_cooldown": 0,
+        "alerts_skipped_already_sent": 0,
         "alerts_skipped_disabled": 0,
         "alerts_skipped_no_email": 0,
+        "alerts_reset": 0,
         "errors": 0,
     }
 
@@ -8003,14 +8136,9 @@ def _stock_monitor_once() -> dict:
 
             print(f"👤 [STOCK] User {user_id} | email={user_email} | prénom={user_first_name}")
 
-            # --- Boucle produits ---
+            # --- Boucle produits (logique multi-seuils intelligente) ---
             for row in user_rows:
                 pid = str(row.get("product_id", "")).strip()
-                threshold = row.get("threshold", 10)
-                try:
-                    threshold = int(threshold)
-                except Exception:
-                    threshold = 0
                 inventory = inventory_map.get(pid)
                 if inventory is None:
                     print(f"⚠️ [STOCK] Produit introuvable dans Shopify: {pid}")
@@ -8018,20 +8146,69 @@ def _stock_monitor_once() -> dict:
                 title = title_map.get(pid, row.get("product_title", "Produit"))
                 summary["products_checked"] += 1
 
-                # Condition de déclenchement
-                if inventory > threshold:
+                # Récupérer les seuils configurés
+                thresholds = _get_sorted_thresholds(row)
+                if not thresholds:
                     continue
 
-                print(f"🔔 [STOCK] Seuil atteint: « {title} » stock={inventory} <= seuil={threshold}")
+                highest_threshold = thresholds[0]
+                last_known = row.get("last_known_inventory")
 
-                # Vérifications avant envoi
-                should_send, reason = _should_send_stock_alert(row)
+                # --- Détection de réapprovisionnement ---
+                # Si le stock est remonté AU-DESSUS de tous les seuils → réinitialiser
+                if inventory > highest_threshold:
+                    last_alerted = row.get("last_alerted_threshold")
+                    if last_alerted is not None:
+                        print(f"🔄 [STOCK] Réinitialisation « {title} »: stock={inventory} > seuil max={highest_threshold} (réappro détecté)")
+                        try:
+                            sb.table("stock_alert_settings").update({
+                                "last_alerted_threshold": None,
+                                "last_known_inventory": inventory,
+                                "alert_reset_above": True,
+                                "updated_at": datetime.utcnow().isoformat(),
+                            }).eq("user_id", user_id).eq("product_id", pid).execute()
+                        except Exception as e:
+                            print(f"⚠️ [STOCK] Erreur reset alertes: {e}")
+                        summary["alerts_reset"] += 1
+                    else:
+                        # Juste mettre à jour l'inventaire connu
+                        try:
+                            sb.table("stock_alert_settings").update({
+                                "last_known_inventory": inventory,
+                            }).eq("user_id", user_id).eq("product_id", pid).execute()
+                        except Exception:
+                            pass
+                    continue
+
+                # --- Vérification multi-seuils intelligente ---
+                should_send, reason, triggered_threshold = _should_send_stock_alert(row, inventory)
+
+                print(f"📊 [STOCK] « {title} » stock={inventory} | seuils={thresholds} | résultat={reason}")
+
                 if not should_send:
                     if "désactivées" in reason:
                         summary["alerts_skipped_disabled"] += 1
+                    elif "réinitialisation" in reason:
+                        # Stock OK, au-dessus de tous les seuils — réinitialiser
+                        summary["alerts_reset"] += 1
+                        try:
+                            sb.table("stock_alert_settings").update({
+                                "last_alerted_threshold": None,
+                                "last_known_inventory": inventory,
+                                "alert_reset_above": True,
+                                "updated_at": datetime.utcnow().isoformat(),
+                            }).eq("user_id", user_id).eq("product_id", pid).execute()
+                        except Exception:
+                            pass
                     else:
-                        summary["alerts_skipped_cooldown"] += 1
-                    print(f"⏭️ [STOCK] Skip « {title} »: {reason}")
+                        summary["alerts_skipped_already_sent"] += 1
+                    # Mettre à jour l'inventaire connu
+                    try:
+                        sb.table("stock_alert_settings").update({
+                            "last_known_inventory": inventory,
+                        }).eq("user_id", user_id).eq("product_id", pid).execute()
+                    except Exception:
+                        pass
                     continue
 
                 if not user_email:
@@ -8049,28 +8226,33 @@ def _stock_monitor_once() -> dict:
                     first_name=user_first_name,
                     product_name=title,
                     stock_remaining=inventory,
-                    threshold=threshold,
+                    threshold=triggered_threshold or thresholds[0],
                     unsubscribe_url=unsub_url,
                 )
 
                 if email_ok:
                     summary["alerts_sent"] += 1
-                    # Mettre à jour last_alert_email_sent_at
+                    # Mettre à jour last_alerted_threshold + last_alert_email_sent_at
                     try:
                         sb.table("stock_alert_settings").update({
                             "last_alert_email_sent_at": datetime.utcnow().isoformat(),
+                            "last_alerted_threshold": triggered_threshold,
+                            "last_known_inventory": inventory,
+                            "alert_reset_above": False,
+                            "updated_at": datetime.utcnow().isoformat(),
                         }).eq("user_id", user_id).eq("product_id", pid).execute()
                     except Exception as e:
-                        print(f"⚠️ [STOCK] Erreur MAJ last_alert_email_sent_at: {e}")
+                        print(f"⚠️ [STOCK] Erreur MAJ last_alerted_threshold: {e}")
 
-                # Log en base
+                # Log en base avec le seuil déclenché
                 try:
                     sb.table("stock_alert_log").insert({
                         "user_id": user_id,
                         "product_id": pid,
                         "product_title": title,
                         "inventory_at_alert": inventory,
-                        "threshold_at_alert": threshold,
+                        "threshold_at_alert": triggered_threshold or thresholds[0],
+                        "threshold_triggered": triggered_threshold,
                         "email_sent": email_ok,
                         "dismissed": False,
                     }).execute()
