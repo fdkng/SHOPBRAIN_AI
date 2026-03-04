@@ -7614,6 +7614,7 @@ GMAIL_REFRESH_TOKEN = os.getenv("GMAIL_REFRESH_TOKEN", "")
 GMAIL_SENDER_EMAIL = os.getenv("GMAIL_SENDER_EMAIL", "")  # ex: shopbrainai@gmail.com
 
 STOCK_ALERT_COOLDOWN_DAYS = 5
+STOCK_ALERT_REMINDER_DAYS = 7
 STOCK_ALERT_TOKEN_EXPIRY_DAYS = 30
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "https://shopbrain-backend.onrender.com")
 
@@ -8039,8 +8040,22 @@ def _should_send_stock_alert(row: dict, inventory: int) -> tuple[bool, str, int 
 
     if last_alerted is not None:
         if triggered >= last_alerted:
-            # Même seuil ou seuil moins critique → déjà alerté
-            return False, f"seuil {triggered} déjà alerté (dernier={last_alerted})", triggered
+            # Même seuil ou seuil moins critique → envoyer uniquement un rappel hebdo
+            last_sent_str = row.get("last_alert_email_sent_at")
+            if last_sent_str:
+                try:
+                    last_sent = datetime.fromisoformat(str(last_sent_str).replace("Z", "+00:00"))
+                    last_sent_naive = last_sent.replace(tzinfo=None)
+                    delta = datetime.utcnow() - last_sent_naive
+                    if delta.days < STOCK_ALERT_REMINDER_DAYS:
+                        remaining = STOCK_ALERT_REMINDER_DAYS - delta.days
+                        return False, f"seuil {triggered} déjà alerté (rappel dans {remaining}j)", triggered
+                    return True, f"rappel hebdo seuil {triggered} (dernier email il y a {delta.days}j)", triggered
+                except Exception as e:
+                    print(f"⚠️ [STOCK] Erreur parsing last_alert_email_sent_at: {e}")
+                    return False, f"seuil {triggered} déjà alerté", triggered
+            # Pas de last_alert_email_sent_at → ne pas renvoyer immédiatement
+            return False, f"seuil {triggered} déjà alerté", triggered
         else:
             # Seuil PLUS critique → envoyer
             return True, f"nouveau seuil critique: {triggered} < dernier alerté {last_alerted}", triggered
