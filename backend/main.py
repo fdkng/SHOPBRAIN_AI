@@ -4930,6 +4930,262 @@ async def get_shopify_image_risks(request: Request, range: str = "30d", limit: i
         raise HTTPException(status_code=500, detail=f"Erreur image-risks: {str(e)[:200]}")
 
 
+# ---------------------------------------------------------------------------
+# PRODUITS SOUS-PERFORMANTS — faibles ventes / faible CA / mauvaise tendance
+# ---------------------------------------------------------------------------
+@app.get("/api/shopify/underperforming")
+async def get_underperforming_products(request: Request, range: str = "30d", limit: int = 12):
+    """📉 Détecte les produits qui se vendent mal (faible CA, peu de commandes, stock dormant)."""
+    user_id = get_user_id(request)
+    tier = get_user_tier(user_id)
+    ensure_feature_allowed(tier, "product_analysis")
+
+    shop_domain, access_token = _get_shopify_connection(user_id)
+    range_map = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}
+    days = range_map.get(range, 30)
+    start_date = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    headers = {"X-Shopify-Access-Token": access_token, "Content-Type": "application/json"}
+
+    # ---- Fetch orders ----
+    orders = []
+    next_url = (
+        f"https://{shop_domain}/admin/api/2024-10/orders.json"
+        f"?status=any&created_at_min={start_date}&limit=250"
+        f"&fields=id,created_at,total_price,financial_status,currency,line_items,refunds"
+    )
+    page = 0
+    while next_url and page < 2 and len(orders) < 500:
+        try:
+            resp = requests.get(next_url, headers=headers, timeout=20)
+        except Exception:
+            break
+        if resp.status_code != 200:
+            break
+        orders.extend(resp.json().get("orders", []))
+        next_url = _parse_shopify_next_link(resp.headers.get("Link"))
+        page += 1
+
+    # ---- Fetch all products ----
+    products = []
+    try:
+        resp = requests.get(
+            f"https://{shop_domain}/admin/api/2024-10/products.json?limit=250&fields=id,title,body_html,images,variants,product_type,vendor,status,created_at",
+            headers=headers, timeout=20,
+        )
+        if resp.status_code == 200:
+            products = resp.json().get("products", [])
+    except Exception:
+        pass
+
+    # ---- Build stats per product ----
+    product_stats: dict[str, dict] = {}
+    refunds_by_product: dict[str, int] = {}
+    currency = None
+    for order in orders:
+        if not currency and order.get("currency"):
+            currency = order["currency"]
+        fin_status = (order.get("financial_status") or "").lower()
+        if fin_status in {"voided"}:
+            continue
+        oid = order.get("id")
+        for item in order.get("line_items", []) or []:
+            pid = str(item.get("product_id") or "")
+            if not pid:
+                continue
+            qty = int(item.get("quantity") or 0)
+            price = _safe_float(item.get("price"), 0.0)
+            stat = product_stats.setdefault(pid, {"order_ids": set(), "quantity": 0, "revenue": 0.0})
+            if oid:
+                stat["order_ids"].add(oid)
+            stat["quantity"] += qty
+            stat["revenue"] += qty * price
+
+        for refund in order.get("refunds", []) or []:
+            for rl in refund.get("refund_line_items", []) or []:
+                item = rl.get("line_item") or {}
+                pid = str(item.get("product_id") or "")
+                if pid:
+                    refunds_by_product[pid] = refunds_by_product.get(pid, 0) + 1
+
+    # Index products
+    products_by_id = {str(p.get("id")): p for p in products}
+    for p in products:
+        pid = str(p.get("id"))
+        if pid not in product_stats:
+            product_stats[pid] = {"order_ids": set(), "quantity": 0, "revenue": 0.0}
+
+    # Averages
+    all_orders_counts = [len(s["order_ids"]) for s in product_stats.values()]
+    avg_orders = sum(all_orders_counts) / max(1, len(all_orders_counts))
+    all_revenues = [s["revenue"] for s in product_stats.values()]
+    avg_revenue = sum(all_revenues) / max(1, len(all_revenues))
+    median_orders = sorted(all_orders_counts)[len(all_orders_counts) // 2] if all_orders_counts else 0
+
+    underperformers = []
+    for pid, stat in product_stats.items():
+        product = products_by_id.get(pid, {})
+        title = product.get("title") or f"Produit {pid}"
+        orders_count = len(stat["order_ids"])
+        revenue = stat["revenue"]
+        quantity = stat["quantity"]
+        variants = product.get("variants", []) or []
+        price_current = _safe_float(variants[0].get("price"), 0.0) if variants else 0.0
+        inventory = sum(v.get("inventory_quantity", 0) or 0 for v in variants) if variants else 0
+        images_count = len(product.get("images", []) or [])
+        description_len = len(_strip_html(product.get("body_html") or ""))
+        refund_count = refunds_by_product.get(pid, 0)
+        refund_rate = (refund_count / orders_count) if orders_count else 0.0
+        daily_sales = quantity / max(days, 1)
+        days_of_stock = (inventory / daily_sales) if daily_sales > 0 else 999
+
+        # ---- Scoring sous-performance ----
+        score = 0
+        reasons = []
+
+        # Pas de commandes du tout
+        if orders_count == 0:
+            score += 35
+            reasons.append("Aucune commande sur la période")
+        elif orders_count <= max(1, int(median_orders * 0.3)):
+            score += 25
+            reasons.append(f"Très peu de commandes ({orders_count} vs médiane {median_orders})")
+        elif orders_count <= max(1, int(avg_orders * 0.5)):
+            score += 15
+            reasons.append(f"Commandes sous la moyenne ({orders_count} vs moy. {avg_orders:.0f})")
+
+        # Revenu faible
+        if revenue == 0:
+            score += 20
+            reasons.append("Aucun revenu généré")
+        elif avg_revenue > 0 and revenue < avg_revenue * 0.3:
+            score += 12
+            reasons.append(f"Revenu faible ({revenue:.2f} vs moy. {avg_revenue:.2f})")
+
+        # Stock dormant (beaucoup de stock, peu de ventes)
+        if inventory > 20 and orders_count == 0:
+            score += 15
+            reasons.append(f"Stock dormant ({inventory} unités, 0 ventes)")
+        elif inventory > 10 and daily_sales < 0.1:
+            score += 8
+            reasons.append(f"Rotation très lente ({days_of_stock:.0f} jours de stock)")
+
+        # Taux de remboursement élevé
+        if refund_count > 0 and refund_rate > 0.15:
+            score += 10
+            reasons.append(f"Taux remboursement élevé ({refund_rate:.0%})")
+
+        # Contenu faible
+        if description_len < 100:
+            score += 5
+            reasons.append(f"Description courte ({description_len} car.)")
+        if images_count < 2:
+            score += 5
+            reasons.append(f"Peu d'images ({images_count})")
+
+        if score < 10:
+            continue
+
+        # ---- Catégorisation ----
+        if orders_count == 0 and inventory > 10:
+            category = "💤 Stock dormant"
+        elif orders_count == 0:
+            category = "❌ Aucune vente"
+        elif revenue < avg_revenue * 0.2:
+            category = "📉 Sous-performant critique"
+        elif revenue < avg_revenue * 0.5:
+            category = "⚠️ En dessous de la moyenne"
+        else:
+            category = "👁️ À surveiller"
+
+        # ---- Actions recommandées ----
+        actions = []
+        if orders_count == 0 and inventory > 20:
+            actions.append({
+                "type": "price",
+                "label": f"Créer une promo (-15%)",
+                "reason": "Stock dormant sans ventes",
+                "can_apply": True,
+                "suggested_price": round(price_current * 0.85, 2) if price_current else None,
+            })
+        if description_len < 100:
+            actions.append({
+                "type": "description",
+                "label": "Réécrire la description",
+                "reason": f"Contenu trop court ({description_len} car.)",
+                "can_apply": True,
+            })
+        if len(product.get("title", "")) < 20 or len(product.get("title", "")) > 70:
+            actions.append({
+                "type": "title",
+                "label": "Optimiser le titre",
+                "reason": f"Titre non optimal ({len(product.get('title', ''))} car.)",
+                "can_apply": True,
+            })
+        if images_count < 2:
+            actions.append({
+                "type": "image",
+                "label": "Ajouter des images",
+                "reason": "Moins de 2 images produit",
+                "can_apply": False,
+            })
+        if avg_revenue > 0 and revenue < avg_revenue * 0.3 and price_current > 0:
+            suggested = round(price_current * 0.9, 2)
+            actions.append({
+                "type": "price",
+                "label": f"Baisser le prix à {suggested}",
+                "reason": "Revenu très en dessous de la moyenne",
+                "can_apply": True,
+                "suggested_price": suggested,
+            })
+        if orders_count > 0 and refund_rate > 0.15:
+            actions.append({
+                "type": "review",
+                "label": "Vérifier qualité produit",
+                "reason": f"Taux de retour {refund_rate:.0%}",
+                "can_apply": False,
+            })
+
+        underperformers.append({
+            "product_id": pid,
+            "title": title,
+            "category": category,
+            "score": min(100, score),
+            "orders": orders_count,
+            "quantity": quantity,
+            "revenue": round(revenue, 2),
+            "price": price_current,
+            "inventory": inventory,
+            "images": images_count,
+            "daily_sales": round(daily_sales, 2),
+            "days_of_stock": round(days_of_stock, 1) if days_of_stock < 999 else None,
+            "refund_count": refund_count,
+            "refund_rate": round(refund_rate, 3),
+            "reasons": reasons,
+            "actions": actions,
+        })
+
+    underperformers.sort(key=lambda x: x["score"], reverse=True)
+
+    return {
+        "success": True,
+        "shop": shop_domain,
+        "range": range,
+        "currency": currency,
+        "total_products": len(products),
+        "underperforming_count": len(underperformers),
+        "benchmarks": {
+            "avg_orders": round(avg_orders, 1),
+            "median_orders": median_orders,
+            "avg_revenue": round(avg_revenue, 2),
+            "period_days": days,
+        },
+        "underperformers": underperformers[:max(1, min(limit, 50))],
+    }
+
+
+# ---------------------------------------------------------------------------
+# PRODUITS FREINS — cassent la conversion (taux de sortie, abandon, friction)
+# ---------------------------------------------------------------------------
 @app.get("/api/shopify/blockers")
 async def get_shopify_blockers(request: Request, range: str = "30d", limit: int = 12):
     """🔎 Détecte les produits qui cassent la conversion (basé sur données de ventes réelles)."""
@@ -5327,9 +5583,46 @@ async def get_shopify_blockers(request: Request, range: str = "30d", limit: int 
                 "can_apply": False,
             })
 
+        # ---- Categorize the friction type ----
+        friction_reasons = []
+        friction_category = "⚠️ À analyser"
+
+        has_view_issue = (views >= max(10, avg_views) and view_to_cart is not None and view_to_cart < 0.03)
+        has_cart_issue = (add_to_cart >= max(5, avg_add_to_cart) and cart_to_order is not None and cart_to_order < 0.2)
+        has_content_issue = (description_len < 120 or images_count < 2)
+        has_price_issue = (avg_price and price_current > avg_price * 1.3 and orders_count < avg_orders)
+
+        if has_view_issue and has_cart_issue:
+            friction_category = "🚫 Double friction (vue + panier)"
+            friction_reasons.append(f"Vue→panier: {view_to_cart:.1%} (moy. attendue >3%)")
+            friction_reasons.append(f"Panier→achat: {cart_to_order:.1%} (moy. attendue >20%)")
+        elif has_view_issue:
+            friction_category = "👁️ Frein à l'ajout panier"
+            friction_reasons.append(f"Vue→panier: {view_to_cart:.1%} (moy. attendue >3%)")
+            friction_reasons.append("Le produit est vu mais ne donne pas envie d'acheter")
+        elif has_cart_issue:
+            friction_category = "🛒 Frein à l'achat"
+            friction_reasons.append(f"Panier→achat: {cart_to_order:.1%} (moy. attendue >20%)")
+            friction_reasons.append("Les clients ajoutent au panier mais n'achètent pas")
+        elif has_price_issue:
+            friction_category = "💰 Prix dissuasif"
+            friction_reasons.append(f"Prix {price_current:.2f} > moyenne boutique {avg_price:.2f}")
+        elif has_content_issue:
+            friction_category = "📝 Fiche produit faible"
+            if description_len < 120:
+                friction_reasons.append(f"Description trop courte ({description_len} car.)")
+            if images_count < 2:
+                friction_reasons.append(f"Pas assez d'images ({images_count})")
+
+        if orders_count <= 1 and not friction_reasons:
+            friction_reasons.append(f"Seulement {orders_count} commande(s) sur {days} jours")
+        if inventory_total > 20 and orders_count < avg_orders * 0.3:
+            friction_reasons.append(f"Stock élevé ({inventory_total}) vs ventes faibles")
+
         blockers.append({
             "product_id": product_id,
             "title": title or f"Produit {product_id}",
+            "category": friction_category,
             "orders": orders_count,
             "quantity": quantity,
             "revenue": round(revenue, 2),
@@ -5341,6 +5634,7 @@ async def get_shopify_blockers(request: Request, range: str = "30d", limit: int 
             "view_to_cart_rate": round(view_to_cart, 4) if view_to_cart is not None else None,
             "cart_to_order_rate": round(cart_to_order, 4) if cart_to_order is not None else None,
             "score": score,
+            "friction_reasons": friction_reasons,
             "actions": actions,
         })
 
