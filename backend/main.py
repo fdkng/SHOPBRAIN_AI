@@ -8060,6 +8060,20 @@ def _should_send_stock_alert(row: dict, inventory: int) -> tuple[bool, str, int 
             # Seuil PLUS critique → envoyer
             return True, f"nouveau seuil critique: {triggered} < dernier alerté {last_alerted}", triggered
 
+    # Garde-fou: si un email a déjà été envoyé récemment mais last_alerted_threshold est null,
+    # on bloque les renvois agressifs (ex: toutes les 5 minutes) pendant 7 jours.
+    last_sent_str = row.get("last_alert_email_sent_at")
+    if last_sent_str:
+        try:
+            last_sent = datetime.fromisoformat(str(last_sent_str).replace("Z", "+00:00"))
+            last_sent_naive = last_sent.replace(tzinfo=None)
+            delta = datetime.utcnow() - last_sent_naive
+            if delta.days < STOCK_ALERT_REMINDER_DAYS:
+                remaining = STOCK_ALERT_REMINDER_DAYS - delta.days
+                return False, f"rappel dans {remaining}j (dernier email il y a {delta.days}j)", triggered
+        except Exception as e:
+            print(f"⚠️ [STOCK] Erreur parsing last_alert_email_sent_at: {e}")
+
     # 5. Première alerte pour ce produit
     return True, f"première alerte — seuil {triggered} atteint (stock={inventory})", triggered
 
