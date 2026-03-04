@@ -935,7 +935,7 @@ async def health():
     """Health check endpoint for Render - MUST ALWAYS WORK"""
     return {
         "status": "ok",
-        "version": "1.7-smart-alerts",
+        "version": "1.8-fix-alerts",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
                 "openai": "configured" if OPENAI_API_KEY else "not_configured",
@@ -8004,13 +8004,16 @@ def _find_triggered_threshold(inventory: int, thresholds: list[int]) -> int | No
 
 def _should_send_stock_alert(row: dict, inventory: int) -> tuple[bool, str, int | None]:
     """Vérifie si on doit envoyer un email pour ce produit.
-    Logique intelligente multi-seuils:
+    
+    Logique SIMPLE et robuste:
     1. Si notifications désactivées → skip
-    2. Récupère les seuils configurés et trouve le seuil déclenché
-    3. Si aucun seuil déclenché (stock OK) → skip, réinitialise si nécessaire
-    4. Si le seuil déclenché = dernier seuil alerté → skip (déjà envoyé)
-    5. Si le seuil déclenché est PLUS critique (plus bas) que le dernier alerté → envoyer
-    6. Réinitialisation: si stock remonte au-dessus de TOUS les seuils → reset
+    2. Si stock > seuil → stock OK, pas d'alerte
+    3. Si stock <= seuil ET aucun email jamais envoyé → ENVOYER (première alerte)
+    4. Si stock <= seuil ET email déjà envoyé → BLOQUER (déjà alerté)
+       Exception: si stock remonte au-dessus du seuil puis redescend, on reset et re-alerte.
+    
+    Le reset se fait dans _stock_monitor_once quand stock > seuil → on efface last_alert_email_sent_at.
+    
     Returns (should_send: bool, reason: str, triggered_threshold: int | None)
     """
     # 1. Notifications désactivées ?
@@ -8022,75 +8025,35 @@ def _should_send_stock_alert(row: dict, inventory: int) -> tuple[bool, str, int 
     if not thresholds:
         return False, "aucun seuil configuré", None
 
-    # 3. Trouver le seuil déclenché
+    # 3. Trouver le seuil déclenché (le plus critique = le plus bas atteint)
     triggered = _find_triggered_threshold(inventory, thresholds)
     highest_threshold = thresholds[0]  # le plus haut seuil
 
     if triggered is None:
-        # Stock au-dessus de tous les seuils → réinitialiser
-        return False, f"stock OK ({inventory} > tous les seuils {thresholds}), réinitialisation", None
+        # Stock au-dessus de tous les seuils → pas d'alerte
+        return False, f"stock OK ({inventory} > seuils {thresholds})", None
 
-    # 4. Comparer avec le dernier seuil alerté
-    last_alerted = row.get("last_alerted_threshold")
-    if last_alerted is not None:
-        try:
-            last_alerted = int(last_alerted)
-        except Exception:
-            last_alerted = None
-
-    if last_alerted is not None:
-        if triggered >= last_alerted:
-            # Même seuil ou seuil moins critique → envoyer uniquement un rappel hebdo
-            last_sent_str = row.get("last_alert_email_sent_at")
-            if last_sent_str:
-                try:
-                    last_sent = datetime.fromisoformat(str(last_sent_str).replace("Z", "+00:00"))
-                    last_sent_naive = last_sent.replace(tzinfo=None)
-                    delta = datetime.utcnow() - last_sent_naive
-                    if delta.days < STOCK_ALERT_REMINDER_DAYS:
-                        remaining = STOCK_ALERT_REMINDER_DAYS - delta.days
-                        return False, f"seuil {triggered} déjà alerté (rappel dans {remaining}j)", triggered
-                    return True, f"rappel hebdo seuil {triggered} (dernier email il y a {delta.days}j)", triggered
-                except Exception as e:
-                    print(f"⚠️ [STOCK] Erreur parsing last_alert_email_sent_at: {e}")
-                    return False, f"seuil {triggered} déjà alerté", triggered
-            # Pas de last_alert_email_sent_at → ne pas renvoyer immédiatement
-            return False, f"seuil {triggered} déjà alerté", triggered
-        else:
-            # Seuil PLUS critique → envoyer
-            return True, f"nouveau seuil critique: {triggered} < dernier alerté {last_alerted}", triggered
-
-    # Garde-fou: si un email a déjà été envoyé récemment mais last_alerted_threshold est null,
-    # on bloque les renvois agressifs (ex: toutes les 5 minutes) pendant 7 jours.
+    # 4. Stock est sous un seuil — vérifier si on a DÉJÀ envoyé un email
     last_sent_str = row.get("last_alert_email_sent_at")
     if last_sent_str:
-        try:
-            last_sent = datetime.fromisoformat(str(last_sent_str).replace("Z", "+00:00"))
-            last_sent_naive = last_sent.replace(tzinfo=None)
-            delta = datetime.utcnow() - last_sent_naive
-            if delta.days < STOCK_ALERT_REMINDER_DAYS:
-                remaining = STOCK_ALERT_REMINDER_DAYS - delta.days
-                return False, f"rappel dans {remaining}j (dernier email il y a {delta.days}j)", triggered
-        except Exception as e:
-            print(f"⚠️ [STOCK] Erreur parsing last_alert_email_sent_at: {e}")
+        # Un email a déjà été envoyé → BLOQUER (pas de double)
+        return False, f"email déjà envoyé pour ce seuil (stock={inventory}, seuil={triggered})", triggered
 
-    # 5. Première alerte pour ce produit
-    return True, f"première alerte — seuil {triggered} atteint (stock={inventory})", triggered
+    # 5. Aucun email envoyé → ENVOYER maintenant
+    return True, f"ALERTE: stock={inventory} <= seuil {triggered} (première alerte)", triggered
 
 
 def _stock_monitor_once() -> dict:
-    """Exécute un cycle de vérification stock intelligent avec multi-seuils.
+    """Exécute un cycle de vérification stock.
     
-    Logique:
-    1. Pour chaque user avec Shopify connecté, fetch l'inventaire
-    2. Pour chaque produit avec seuils configurés:
-       a. Trouver le seuil le plus critique atteint
-       b. Si stock remonté au-dessus de TOUS les seuils → réinitialiser (prêt pour ré-alerte)
-       c. Si nouveau seuil plus critique que le dernier alerté → envoyer email
-       d. Si même seuil déjà alerté → skip
-    3. Logger chaque alerte avec le seuil déclenché
+    Logique SIMPLE:
+    1. Pour chaque produit avec alerte activée:
+       - Si stock > seuil → RESET (efface last_alert_email_sent_at pour permettre future alerte)
+       - Si stock <= seuil ET pas d'email récent → ENVOYER un email
+       - Si stock <= seuil ET email déjà envoyé → SKIP (pas de doublon)
+    2. Quand le stock remonte au-dessus du seuil, on reset → prochaine descente = nouvel email
     """
-    print("🕒 [STOCK] Vérification stock intelligente en cours...")
+    print("🕒 [STOCK] Vérification stock en cours...")
     summary = {
         "users_checked": 0,
         "products_checked": 0,
@@ -8100,6 +8063,7 @@ def _stock_monitor_once() -> dict:
         "alerts_skipped_no_email": 0,
         "alerts_reset": 0,
         "errors": 0,
+        "details": [],
     }
 
     if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
@@ -8171,7 +8135,7 @@ def _stock_monitor_once() -> dict:
 
             print(f"👤 [STOCK] User {user_id} | email={user_email} | prénom={user_first_name}")
 
-            # --- Boucle produits (logique multi-seuils intelligente) ---
+            # --- Boucle produits ---
             for row in user_rows:
                 pid = str(row.get("product_id", "")).strip()
                 inventory = inventory_map.get(pid)
@@ -8181,79 +8145,75 @@ def _stock_monitor_once() -> dict:
                 title = title_map.get(pid, row.get("product_title", "Produit"))
                 summary["products_checked"] += 1
 
-                # Récupérer les seuils configurés
+                # Récupérer le seuil configuré
                 thresholds = _get_sorted_thresholds(row)
                 if not thresholds:
                     continue
+                highest_threshold = thresholds[0]  # seuil principal
 
-                highest_threshold = thresholds[0]
-                last_known = row.get("last_known_inventory")
+                detail = {
+                    "product": title,
+                    "product_id": pid,
+                    "inventory": inventory,
+                    "threshold": highest_threshold,
+                    "disabled": bool(row.get("stock_alert_disabled")),
+                    "last_alert_email_sent_at": row.get("last_alert_email_sent_at"),
+                }
 
-                # --- Détection de réapprovisionnement ---
-                # Si le stock est remonté AU-DESSUS de tous les seuils → réinitialiser
+                # --- CAS 1: Stock AU-DESSUS du seuil → RESET ---
                 if inventory > highest_threshold:
-                    last_alerted = row.get("last_alerted_threshold")
-                    if last_alerted is not None:
-                        print(f"🔄 [STOCK] Réinitialisation « {title} »: stock={inventory} > seuil max={highest_threshold} (réappro détecté)")
+                    last_sent = row.get("last_alert_email_sent_at")
+                    if last_sent:
+                        # Stock remonté — effacer le flag pour permettre future alerte
+                        print(f"🔄 [STOCK] RESET « {title} »: stock={inventory} > seuil={highest_threshold} → prêt pour ré-alerte")
                         try:
                             sb.table("stock_alert_settings").update({
-                                "last_alerted_threshold": None,
-                                "last_known_inventory": inventory,
-                                "alert_reset_above": True,
+                                "last_alert_email_sent_at": None,
                                 "updated_at": datetime.utcnow().isoformat(),
                             }).eq("user_id", user_id).eq("product_id", pid).execute()
                         except Exception as e:
-                            print(f"⚠️ [STOCK] Erreur reset alertes: {e}")
+                            print(f"⚠️ [STOCK] Erreur reset: {e}")
                         summary["alerts_reset"] += 1
+                        detail["action"] = "RESET (stock remonté)"
                     else:
-                        # Juste mettre à jour l'inventaire connu
-                        try:
-                            sb.table("stock_alert_settings").update({
-                                "last_known_inventory": inventory,
-                            }).eq("user_id", user_id).eq("product_id", pid).execute()
-                        except Exception:
-                            pass
+                        detail["action"] = "OK (stock au-dessus du seuil)"
+                    summary["details"].append(detail)
                     continue
 
-                # --- Vérification multi-seuils intelligente ---
-                should_send, reason, triggered_threshold = _should_send_stock_alert(row, inventory)
-
-                print(f"📊 [STOCK] « {title} » stock={inventory} | seuils={thresholds} | résultat={reason}")
-
-                if not should_send:
-                    if "désactivées" in reason:
-                        summary["alerts_skipped_disabled"] += 1
-                    elif "réinitialisation" in reason:
-                        # Stock OK, au-dessus de tous les seuils — réinitialiser
-                        summary["alerts_reset"] += 1
-                        try:
-                            sb.table("stock_alert_settings").update({
-                                "last_alerted_threshold": None,
-                                "last_known_inventory": inventory,
-                                "alert_reset_above": True,
-                                "updated_at": datetime.utcnow().isoformat(),
-                            }).eq("user_id", user_id).eq("product_id", pid).execute()
-                        except Exception:
-                            pass
-                    else:
-                        summary["alerts_skipped_already_sent"] += 1
-                    # Mettre à jour l'inventaire connu
-                    try:
-                        sb.table("stock_alert_settings").update({
-                            "last_known_inventory": inventory,
-                        }).eq("user_id", user_id).eq("product_id", pid).execute()
-                    except Exception:
-                        pass
+                # --- CAS 2: Stock SOUS le seuil ---
+                # Vérifier si notifications désactivées
+                if row.get("stock_alert_disabled"):
+                    summary["alerts_skipped_disabled"] += 1
+                    detail["action"] = "SKIP (notifications désactivées)"
+                    print(f"🔕 [STOCK] « {title} » stock={inventory} <= seuil={highest_threshold} MAIS notifications désactivées")
+                    summary["details"].append(detail)
                     continue
 
+                # Vérifier si email déjà envoyé (pas de doublon)
+                last_sent_str = row.get("last_alert_email_sent_at")
+                if last_sent_str:
+                    summary["alerts_skipped_already_sent"] += 1
+                    detail["action"] = f"SKIP (email déjà envoyé le {last_sent_str})"
+                    print(f"⏭️ [STOCK] « {title} » stock={inventory} <= seuil={highest_threshold} — email déjà envoyé le {last_sent_str}")
+                    summary["details"].append(detail)
+                    continue
+
+                # --- ENVOYER L'EMAIL ---
                 if not user_email:
                     summary["alerts_skipped_no_email"] += 1
+                    detail["action"] = "SKIP (pas d'email utilisateur)"
                     print(f"❌ [STOCK] Email utilisateur manquant pour {user_id}")
+                    summary["details"].append(detail)
                     continue
+
+                print(f"📧 [STOCK] ENVOI ALERTE « {title} » stock={inventory} <= seuil={highest_threshold}")
 
                 # Générer token unsubscribe
                 unsub_token = _get_or_create_unsubscribe_token(sb, user_id, pid)
                 unsub_url = f"{BACKEND_BASE_URL}/api/stock-alerts/unsubscribe?token={unsub_token}"
+
+                # Trouver le seuil le plus critique atteint
+                triggered = _find_triggered_threshold(inventory, thresholds)
 
                 # Envoyer email via Gmail API
                 email_ok = _send_stock_alert_email(
@@ -8261,38 +8221,43 @@ def _stock_monitor_once() -> dict:
                     first_name=user_first_name,
                     product_name=title,
                     stock_remaining=inventory,
-                    threshold=triggered_threshold or thresholds[0],
+                    threshold=triggered or highest_threshold,
                     unsubscribe_url=unsub_url,
                 )
 
                 if email_ok:
                     summary["alerts_sent"] += 1
-                    # Mettre à jour last_alerted_threshold + last_alert_email_sent_at
+                    detail["action"] = "EMAIL ENVOYÉ ✅"
+                    # CRITIQUE: Marquer comme envoyé — update MINIMAL pour éviter erreur colonnes manquantes
                     try:
                         sb.table("stock_alert_settings").update({
                             "last_alert_email_sent_at": datetime.utcnow().isoformat(),
-                            "last_alerted_threshold": triggered_threshold,
-                            "last_known_inventory": inventory,
-                            "alert_reset_above": False,
                             "updated_at": datetime.utcnow().isoformat(),
                         }).eq("user_id", user_id).eq("product_id", pid).execute()
+                        print(f"✅ [STOCK] last_alert_email_sent_at mis à jour pour « {title} »")
                     except Exception as e:
-                        print(f"⚠️ [STOCK] Erreur MAJ last_alerted_threshold: {e}")
+                        print(f"❌ [STOCK] ERREUR CRITIQUE: impossible de marquer l'email comme envoyé: {e}")
+                        summary["errors"] += 1
+                else:
+                    detail["action"] = "ÉCHEC ENVOI EMAIL ❌"
+                    summary["errors"] += 1
 
-                # Log en base avec le seuil déclenché
+                # Log en base (best effort — colonnes optionnelles gérées)
                 try:
-                    sb.table("stock_alert_log").insert({
+                    log_entry = {
                         "user_id": user_id,
                         "product_id": pid,
                         "product_title": title,
                         "inventory_at_alert": inventory,
-                        "threshold_at_alert": triggered_threshold or thresholds[0],
-                        "threshold_triggered": triggered_threshold,
+                        "threshold_at_alert": triggered or highest_threshold,
                         "email_sent": email_ok,
                         "dismissed": False,
-                    }).execute()
+                    }
+                    sb.table("stock_alert_log").insert(log_entry).execute()
                 except Exception as e:
                     print(f"⚠️ [STOCK] Erreur insertion stock_alert_log: {e}")
+
+                summary["details"].append(detail)
 
         except Exception as e:
             summary["errors"] += 1
@@ -8490,6 +8455,46 @@ async def diagnose_stock_alerts():
         diag["gmail_token_test"] = "SKIPPED — variables Gmail manquantes"
 
     return diag
+
+
+@app.get("/api/stock-alerts/debug-state")
+async def debug_stock_alert_state(secret: str = ""):
+    """Affiche l'état complet des alertes stock en DB (debug)."""
+    expected = os.getenv("STOCK_CHECK_SECRET", "shopbrain-stock-2026")
+    if secret != expected:
+        raise HTTPException(status_code=403, detail="Clé secrète invalide")
+    sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    rows = sb.table("stock_alert_settings").select("*").execute()
+    result = []
+    for r in (rows.data or []):
+        result.append({
+            "product_id": r.get("product_id"),
+            "product_title": r.get("product_title"),
+            "enabled": r.get("enabled"),
+            "threshold": r.get("threshold"),
+            "thresholds": r.get("thresholds"),
+            "stock_alert_disabled": r.get("stock_alert_disabled"),
+            "last_alert_email_sent_at": r.get("last_alert_email_sent_at"),
+            "last_alerted_threshold": r.get("last_alerted_threshold"),
+            "last_known_inventory": r.get("last_known_inventory"),
+        })
+    return {"settings": result}
+
+
+@app.get("/api/stock-alerts/reset-all")
+async def reset_all_stock_alerts(secret: str = ""):
+    """Réinitialise toutes les alertes: réactive tout et efface les flags d'envoi.
+    Utile pour forcer le ré-envoi de tous les emails."""
+    expected = os.getenv("STOCK_CHECK_SECRET", "shopbrain-stock-2026")
+    if secret != expected:
+        raise HTTPException(status_code=403, detail="Clé secrète invalide")
+    sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    sb.table("stock_alert_settings").update({
+        "stock_alert_disabled": False,
+        "last_alert_email_sent_at": None,
+        "updated_at": datetime.utcnow().isoformat(),
+    }).eq("enabled", True).execute()
+    return {"success": True, "message": "Toutes les alertes ont été réinitialisées. Le prochain cycle enverra un email pour chaque produit sous son seuil."}
 
 
 @app.get("/api/stock-alerts/force-run")
