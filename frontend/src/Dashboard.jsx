@@ -2460,13 +2460,17 @@ export default function Dashboard() {
           setStatus(actionKey, 'warning', 'Sélectionne un produit à analyser')
           return
         }
+        const rewriteController = new AbortController()
+        const rewriteTimeout = setTimeout(() => rewriteController.abort(), 90000)
         const response = await fetch(`${API_URL}/api/shopify/rewrite?product_id=${encodeURIComponent(options.productId)}`, {
           method: 'GET',
           headers: {
             'Authorization': `Bearer ${session.access_token}`,
             'Content-Type': 'application/json'
-          }
+          },
+          signal: rewriteController.signal
         })
+        clearTimeout(rewriteTimeout)
         if (!response.ok) {
           const errorData = await response.json()
           throw new Error(errorData.detail || `HTTP ${response.status}`)
@@ -2602,6 +2606,8 @@ export default function Dashboard() {
         return
       }
 
+      const applyController = new AbortController()
+      const applyTimeout = setTimeout(() => applyController.abort(), 60000)
       const response = await fetch(`${API_URL}/api/shopify/blockers/apply`, {
         method: 'POST',
         headers: {
@@ -2614,8 +2620,10 @@ export default function Dashboard() {
           suggested_price: action.suggested_price,
           suggested_title: action.suggested_title,
           suggested_description: action.suggested_description
-        })
+        }),
+        signal: applyController.signal
       })
+      clearTimeout(applyTimeout)
 
       if (!response.ok) {
         const errorData = await response.json()

@@ -67,7 +67,7 @@ class ContentGenerator:
 
         try:
             response = self.client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": "Tu es un expert en copywriting e-commerce et SEO."},
                     {"role": "user", "content": prompt}
@@ -148,7 +148,7 @@ class ContentGenerator:
 
         try:
             response = self.client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": "Tu es un copywriter e-commerce expert qui booste les conversions."},
                     {"role": "user", "content": prompt}
@@ -188,7 +188,7 @@ Fournis en JSON:
 
         try:
             response = self.client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": "Tu es un expert SEO e-commerce."},
                     {"role": "user", "content": prompt}
