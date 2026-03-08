@@ -7,6 +7,8 @@ Endpoints, logique asynchrone, cache, persistance Supabase, gestion d’erreurs,
 
 import os
 import sys
+# Add repo root to sys.path so AI_engine package can be found
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import re
 import json
 import time
