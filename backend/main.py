@@ -5183,13 +5183,11 @@ async def get_underperforming_products(request: Request, range: str = "30d", lim
             score += 10
             reasons.append(f"Taux remboursement élevé ({refund_rate:.0%})")
 
-        # Contenu faible
+        # Contenu faible (scoring only, no reason shown)
         if description_len < 100:
             score += 5
-            reasons.append(f"Description courte ({description_len} car.)")
         if images_count < 2:
             score += 5
-            reasons.append(f"Peu d'images ({images_count})")
 
         if score < 10:
             continue
@@ -5405,35 +5403,10 @@ async def get_shopify_blockers(request: Request, range: str = "30d", limit: int 
             if score < 2:
                 continue
 
-            # Build friction reasons for fallback path
-            fallback_friction_reasons = []
-            if description_len < 120:
-                fallback_friction_reasons.append(f"Description courte ({description_len} caractères)")
-            if len(title) < 20 or len(title) > 70:
-                fallback_friction_reasons.append(f"Titre non optimal ({len(title)} caractères)")
-            if images_count < 2:
-                fallback_friction_reasons.append(f"Pas assez d'images ({images_count})")
-            if avg_price and price_current > avg_price * 1.3:
-                fallback_friction_reasons.append(f"Prix élevé ({price_current:.2f}) vs moyenne boutique ({avg_price:.2f})")
-            if inventory_total > 20:
-                fallback_friction_reasons.append(f"Stock élevé ({inventory_total} unités) sans ventes")
-
-            # Categorize friction
-            has_content = description_len < 120 or images_count < 2
-            has_price = avg_price and price_current > avg_price * 1.3
-            if has_content and has_price:
-                fallback_category = "📝💰 Fiche faible + prix élevé"
-            elif has_price:
-                fallback_category = "💰 Prix dissuasif"
-            elif has_content:
-                fallback_category = "📝 Fiche produit faible"
-            else:
-                fallback_category = "⚠️ Frein détecté"
-
             blockers.append({
                 "product_id": product_id,
                 "title": title or f"Produit {product_id}",
-                "category": fallback_category,
+                "category": "⚠️ Frein détecté",
                 "orders": 0,
                 "quantity": 0,
                 "revenue": 0.0,
@@ -5445,7 +5418,7 @@ async def get_shopify_blockers(request: Request, range: str = "30d", limit: int 
                 "view_to_cart_rate": round(view_to_cart, 4) if view_to_cart is not None else None,
                 "cart_to_order_rate": None,
                 "score": score,
-                "friction_reasons": fallback_friction_reasons,
+                "friction_reasons": [],
             })
 
         blockers.sort(key=lambda item: item["score"], reverse=True)
@@ -5595,30 +5568,16 @@ async def get_shopify_blockers(request: Request, range: str = "30d", limit: int 
 
         if has_view_issue and has_cart_issue:
             friction_category = "🚫 Double friction (vue + panier)"
-            friction_reasons.append(f"Vue→panier: {view_to_cart:.1%} (moy. attendue >3%)")
-            friction_reasons.append(f"Panier→achat: {cart_to_order:.1%} (moy. attendue >20%)")
+            friction_reasons.append(f"Vue→panier: {view_to_cart:.1%}")
+            friction_reasons.append(f"Panier→achat: {cart_to_order:.1%}")
         elif has_view_issue:
             friction_category = "👁️ Frein à l'ajout panier"
-            friction_reasons.append(f"Vue→panier: {view_to_cart:.1%} (moy. attendue >3%)")
-            friction_reasons.append("Le produit est vu mais ne donne pas envie d'acheter")
+            friction_reasons.append(f"Vue→panier: {view_to_cart:.1%}")
         elif has_cart_issue:
             friction_category = "🛒 Frein à l'achat"
-            friction_reasons.append(f"Panier→achat: {cart_to_order:.1%} (moy. attendue >20%)")
-            friction_reasons.append("Les clients ajoutent au panier mais n'achètent pas")
-        elif has_price_issue:
-            friction_category = "💰 Prix dissuasif"
-            friction_reasons.append(f"Prix {price_current:.2f} > moyenne boutique {avg_price:.2f}")
-        elif has_content_issue:
-            friction_category = "📝 Fiche produit faible"
-            if description_len < 120:
-                friction_reasons.append(f"Description trop courte ({description_len} car.)")
-            if images_count < 2:
-                friction_reasons.append(f"Pas assez d'images ({images_count})")
-
-        if orders_count <= 1 and not friction_reasons:
-            friction_reasons.append(f"Seulement {orders_count} commande(s) sur {days} jours")
-        if inventory_total > 20 and orders_count < avg_orders * 0.3:
-            friction_reasons.append(f"Stock élevé ({inventory_total}) vs ventes faibles")
+            friction_reasons.append(f"Panier→achat: {cart_to_order:.1%}")
+        else:
+            friction_category = "⚠️ Frein détecté"
 
         blockers.append({
             "product_id": product_id,

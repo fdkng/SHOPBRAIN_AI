@@ -3763,7 +3763,6 @@ export default function Dashboard() {
                       <div className="flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-sm">{item.category || '⚠️ Frein détecté'}</span>
-                          <span className="text-xs bg-red-900/40 text-red-300 px-2 py-0.5 rounded-full">Score: {item.score}</span>
                         </div>
                         <p className="text-white font-semibold mt-1">{item.title || 'Produit'}</p>
                         <div className="flex flex-wrap gap-3 mt-2 text-xs text-gray-400">
@@ -3774,13 +3773,6 @@ export default function Dashboard() {
                           {item.view_to_cart_rate != null && <span className={item.view_to_cart_rate < 0.03 ? 'text-red-400' : 'text-green-400'}>Vue→Panier: {(item.view_to_cart_rate * 100).toFixed(1)}%</span>}
                           {item.cart_to_order_rate != null && <span className={item.cart_to_order_rate < 0.2 ? 'text-red-400' : 'text-green-400'}>Panier→Achat: {(item.cart_to_order_rate * 100).toFixed(1)}%</span>}
                         </div>
-                        {item.friction_reasons?.length > 0 && (
-                          <div className="mt-2 space-y-1">
-                            {item.friction_reasons.map((r, i) => (
-                              <div key={i} className="text-xs text-red-300/80">• {r}</div>
-                            ))}
-                          </div>
-                        )}
                       </div>
                     </div>
                   ))
