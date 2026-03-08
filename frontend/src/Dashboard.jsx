@@ -161,6 +161,8 @@ export default function Dashboard() {
   const [blockersLoading, setBlockersLoading] = useState(false)
   const [underperformingData, setUnderperformingData] = useState(null)
   const [underperformingLoading, setUnderperformingLoading] = useState(false)
+  const [pixelStatus, setPixelStatus] = useState(null)
+  const [pixelLoading, setPixelLoading] = useState(false)
   const [customers, setCustomers] = useState([])
   const [customersLoading, setCustomersLoading] = useState(false)
   const [invoiceCustomerId, setInvoiceCustomerId] = useState('')
@@ -2236,6 +2238,30 @@ export default function Dashboard() {
     }
   }
 
+  const loadPixelStatus = async () => {
+    try {
+      setPixelLoading(true)
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+      await waitForBackendReady({ retries: 4, retryDelayMs: 2000, timeoutMs: 12000 })
+      const resp = await fetch(`${API_URL}/api/shopify/pixel-status`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        }
+      })
+      if (resp.ok) {
+        const data = await resp.json()
+        if (data.success) setPixelStatus(data)
+      }
+    } catch (err) {
+      console.error('Error loading pixel status:', err)
+    } finally {
+      setPixelLoading(false)
+    }
+  }
+
   const runActionAnalysis = async (actionKey, options = {}) => {
     try {
       setStatus(actionKey, 'info', 'Analyse en cours...')
@@ -2741,6 +2767,7 @@ export default function Dashboard() {
     }
     if (activeTab === 'action-blockers') {
       loadBlockers(analyticsRange)
+      loadPixelStatus()
     }
   }, [activeTab, analyticsRange])
 
@@ -3633,7 +3660,7 @@ export default function Dashboard() {
                 <div>
                   <p className="text-xs uppercase tracking-[0.3em] text-amber-400">📉 Performance commerciale</p>
                   <h3 className="text-white text-2xl font-bold mt-2">Produits sous-performants</h3>
-                  <p className="text-sm text-gray-400 mt-1">Produits avec peu de ventes, faible CA ou stock dormant. Focus: volume de ventes.</p>
+                  <p className="text-sm text-gray-400 mt-1">Produits avec peu de ventes, faible CA ou stock dormant.</p>
                 </div>
                 <div className="text-right">
                   <div className="text-xs text-gray-500">{underperformingData?.underperforming_count ?? '—'} / {underperformingData?.total_products ?? '—'} produits</div>
@@ -3651,51 +3678,28 @@ export default function Dashboard() {
                 ) : (
                   underperformingData.underperformers.slice(0, 10).map((item) => (
                     <div key={item.product_id || item.title} className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
-                      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm">{item.category}</span>
-                            <span className="text-xs bg-amber-900/40 text-amber-300 px-2 py-0.5 rounded-full">Score: {item.score}/100</span>
-                          </div>
-                          <p className="text-white font-semibold mt-1">{item.title || 'Produit'}</p>
-                          <div className="flex flex-wrap gap-3 mt-2 text-xs text-gray-400">
-                            <span>🛒 {item.orders} cmd{item.orders !== 1 ? 's' : ''}</span>
-                            <span>💰 CA: {formatCurrency(item.revenue, underperformingData?.currency || 'EUR')}</span>
-                            <span>📦 Stock: {item.inventory}</span>
-                            <span>🏷️ Prix: {formatCurrency(item.price, underperformingData?.currency || 'EUR')}</span>
-                            {item.daily_sales != null && <span>📊 {item.daily_sales}/jour</span>}
-                            {item.days_of_stock != null && <span>⏱️ {item.days_of_stock}j de stock</span>}
-                            {item.refund_count > 0 && <span className="text-red-400">↩️ {item.refund_count} retour{item.refund_count > 1 ? 's' : ''} ({(item.refund_rate * 100).toFixed(0)}%)</span>}
-                          </div>
-                          {item.reasons?.length > 0 && (
-                            <div className="mt-2 space-y-1">
-                              {item.reasons.map((r, i) => (
-                                <div key={i} className="text-xs text-amber-300/80">• {r}</div>
-                              ))}
-                            </div>
-                          )}
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm">{item.category}</span>
+                          <span className="text-xs bg-amber-900/40 text-amber-300 px-2 py-0.5 rounded-full">Score: {item.score}/100</span>
                         </div>
-                        <div className="flex flex-wrap gap-2 shrink-0">
-                          {item.actions?.length ? item.actions.map((action) => (
-                            action.can_apply ? (
-                              <button
-                                key={action.type}
-                                onClick={() => handleApplyBlockerAction(item.product_id, action, 'underperforming')}
-                                className="px-3 py-1.5 rounded-lg bg-amber-600/20 hover:bg-amber-600/40 border border-amber-600/30 text-xs text-amber-200 transition"
-                                disabled={applyingBlockerActionId === `${item.product_id}-${action.type}`}
-                                title={action.reason || action.label}
-                              >
-                                {action.label}
-                              </button>
-                            ) : (
-                              <span key={action.type} className="px-3 py-1.5 rounded-lg bg-gray-800 text-xs text-gray-500 border border-gray-700" title={action.reason || action.label}>
-                                {action.label}
-                              </span>
-                            )
-                          )) : (
-                            <span className="text-xs text-gray-600">Aucune action auto.</span>
-                          )}
+                        <p className="text-white font-semibold mt-1">{item.title || 'Produit'}</p>
+                        <div className="flex flex-wrap gap-3 mt-2 text-xs text-gray-400">
+                          <span>🛒 {item.orders} cmd{item.orders !== 1 ? 's' : ''}</span>
+                          <span>💰 CA: {formatCurrency(item.revenue, underperformingData?.currency || 'EUR')}</span>
+                          <span>📦 Stock: {item.inventory}</span>
+                          <span>🏷️ Prix: {formatCurrency(item.price, underperformingData?.currency || 'EUR')}</span>
+                          {item.daily_sales != null && <span>📊 {item.daily_sales}/jour</span>}
+                          {item.days_of_stock != null && <span>⏱️ {item.days_of_stock}j de stock</span>}
+                          {item.refund_count > 0 && <span className="text-red-400">↩️ {item.refund_count} retour{item.refund_count > 1 ? 's' : ''} ({(item.refund_rate * 100).toFixed(0)}%)</span>}
                         </div>
+                        {item.reasons?.length > 0 && (
+                          <div className="mt-2 space-y-1">
+                            {item.reasons.map((r, i) => (
+                              <div key={i} className="text-xs text-amber-300/80">• {r}</div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))
@@ -3715,77 +3719,68 @@ export default function Dashboard() {
                   <h3 className="text-white text-2xl font-bold mt-2">Produits freins</h3>
                   <p className="text-sm text-gray-400 mt-1">Produits qui cassent la conversion : vus mais pas ajoutés au panier, ou ajoutés mais pas achetés.</p>
                 </div>
-                <button
-                  onClick={() => runActionAnalysis('action-blockers')}
-                  disabled={blockersLoading}
-                  className="bg-red-600/80 hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50 transition shrink-0"
-                >
-                  {blockersLoading ? '⏳ Analyse en cours...' : '🔍 Analyser les produits freins'}
-                </button>
+                <div className="text-right">
+                  <div className="text-xs text-gray-500">{blockersData?.blockers?.length ?? '—'} produit{(blockersData?.blockers?.length ?? 0) > 1 ? 's' : ''} frein{(blockersData?.blockers?.length ?? 0) > 1 ? 's' : ''}</div>
+                </div>
               </div>
 
-              {blockersData?.notes?.length > 0 && (
-                <div className="mt-3 text-xs text-gray-500 space-y-1">
-                  {blockersData.notes.map((note, idx) => (
-                    <div key={idx}>ℹ️ {note}</div>
-                  ))}
+              {/* Shopify Pixel Status */}
+              <div className="mt-4 p-3 rounded-lg border border-gray-700 bg-gray-900/50">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-gray-300">Shopify Pixel :</span>
+                  {pixelLoading ? (
+                    <span className="text-xs text-gray-500">⏳ Vérification...</span>
+                  ) : pixelStatus ? (
+                    <span className={`text-xs font-medium ${
+                      pixelStatus.status === 'active' ? 'text-green-400' :
+                      pixelStatus.status === 'installed_inactive' ? 'text-yellow-400' :
+                      'text-red-400'
+                    }`}>
+                      {pixelStatus.status_label}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-gray-500">—</span>
+                  )}
                 </div>
-              )}
+                {pixelStatus && !pixelStatus.pixel_installed && (
+                  <p className="text-xs text-gray-500 mt-1">Sans le Pixel, les données de vues et d'ajouts panier ne sont pas disponibles. L'analyse se base sur les commandes et la qualité des fiches produits.</p>
+                )}
+                {pixelStatus?.has_recent_events && (
+                  <p className="text-xs text-green-400/70 mt-1">✅ Des événements Pixel ont été reçus au cours des 30 derniers jours.</p>
+                )}
+              </div>
 
               {renderStatus('action-blockers')}
 
               <div className="mt-5 space-y-3">
                 {blockersLoading ? (
-                  <div className="px-4 py-8 text-sm text-gray-500 text-center">⏳ Analyse des taux de conversion en cours...</div>
+                  <div className="px-4 py-8 text-sm text-gray-500 text-center">⏳ Analyse des produits freins en cours...</div>
                 ) : (!blockersData?.blockers || blockersData.blockers.length === 0) ? (
                   <div className="px-4 py-8 text-sm text-gray-500 text-center">✅ Aucun produit frein détecté. Bonne conversion !</div>
                 ) : (
                   blockersData.blockers.slice(0, 10).map((item) => (
                     <div key={item.product_id || item.title} className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
-                      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-sm">{item.category || '⚠️ Frein détecté'}</span>
-                            <span className="text-xs bg-red-900/40 text-red-300 px-2 py-0.5 rounded-full">Score: {item.score}</span>
-                          </div>
-                          <p className="text-white font-semibold mt-1">{item.title || 'Produit'}</p>
-                          <div className="flex flex-wrap gap-3 mt-2 text-xs text-gray-400">
-                            <span>🛒 {item.orders} cmd{item.orders !== 1 ? 's' : ''}</span>
-                            <span>💰 {formatCurrency(item.revenue, blockersData?.currency || analyticsData?.currency || 'EUR')}</span>
-                            {item.views > 0 && <span>👁️ {item.views} vues</span>}
-                            {item.add_to_cart > 0 && <span>🛒 {item.add_to_cart} ajouts panier</span>}
-                            {item.view_to_cart_rate != null && <span className={item.view_to_cart_rate < 0.03 ? 'text-red-400' : 'text-green-400'}>Vue→Panier: {(item.view_to_cart_rate * 100).toFixed(1)}%</span>}
-                            {item.cart_to_order_rate != null && <span className={item.cart_to_order_rate < 0.2 ? 'text-red-400' : 'text-green-400'}>Panier→Achat: {(item.cart_to_order_rate * 100).toFixed(1)}%</span>}
-                          </div>
-                          {item.friction_reasons?.length > 0 && (
-                            <div className="mt-2 space-y-1">
-                              {item.friction_reasons.map((r, i) => (
-                                <div key={i} className="text-xs text-red-300/80">• {r}</div>
-                              ))}
-                            </div>
-                          )}
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm">{item.category || '⚠️ Frein détecté'}</span>
+                          <span className="text-xs bg-red-900/40 text-red-300 px-2 py-0.5 rounded-full">Score: {item.score}</span>
                         </div>
-                        <div className="flex flex-wrap gap-2 shrink-0">
-                          {item.actions?.length ? item.actions.map((action) => (
-                            action.can_apply ? (
-                              <button
-                                key={action.type}
-                                onClick={() => handleApplyBlockerAction(item.product_id, action)}
-                                className="px-3 py-1.5 rounded-lg bg-red-600/20 hover:bg-red-600/40 border border-red-600/30 text-xs text-red-200 transition"
-                                disabled={applyingBlockerActionId === `${item.product_id}-${action.type}`}
-                                title={action.reason || action.label}
-                              >
-                                {action.label}
-                              </button>
-                            ) : (
-                              <span key={action.type} className="px-3 py-1.5 rounded-lg bg-gray-800 text-xs text-gray-500 border border-gray-700" title={action.reason || action.label}>
-                                {action.label}
-                              </span>
-                            )
-                          )) : (
-                            <span className="text-xs text-gray-600">Aucune action auto.</span>
-                          )}
+                        <p className="text-white font-semibold mt-1">{item.title || 'Produit'}</p>
+                        <div className="flex flex-wrap gap-3 mt-2 text-xs text-gray-400">
+                          <span>🛒 {item.orders} cmd{item.orders !== 1 ? 's' : ''}</span>
+                          <span>💰 {formatCurrency(item.revenue, blockersData?.currency || analyticsData?.currency || 'EUR')}</span>
+                          {item.views > 0 && <span>👁️ {item.views} vues</span>}
+                          {item.add_to_cart > 0 && <span>🛒 {item.add_to_cart} ajouts panier</span>}
+                          {item.view_to_cart_rate != null && <span className={item.view_to_cart_rate < 0.03 ? 'text-red-400' : 'text-green-400'}>Vue→Panier: {(item.view_to_cart_rate * 100).toFixed(1)}%</span>}
+                          {item.cart_to_order_rate != null && <span className={item.cart_to_order_rate < 0.2 ? 'text-red-400' : 'text-green-400'}>Panier→Achat: {(item.cart_to_order_rate * 100).toFixed(1)}%</span>}
                         </div>
+                        {item.friction_reasons?.length > 0 && (
+                          <div className="mt-2 space-y-1">
+                            {item.friction_reasons.map((r, i) => (
+                              <div key={i} className="text-xs text-red-300/80">• {r}</div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))

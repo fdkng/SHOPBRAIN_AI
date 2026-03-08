@@ -935,7 +935,7 @@ async def health():
     """Health check endpoint for Render - MUST ALWAYS WORK"""
     return {
         "status": "ok",
-        "version": "1.9-split-analysis",
+        "version": "2.0-clean-tabs",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
                 "openai": "configured" if OPENAI_API_KEY else "not_configured",
@@ -4061,6 +4061,115 @@ def _fetch_shopify_event_counts(user_id: str, shop_domain: str, days: int) -> di
     return counts
 
 
+# ---------------------------------------------------------------------------
+# SHOPIFY PIXEL STATUS — vérifie si le pixel est installé et actif
+# ---------------------------------------------------------------------------
+@app.get("/api/shopify/pixel-status")
+async def get_shopify_pixel_status(request: Request):
+    """Vérifie si le Shopify Pixel (custom pixel ou script tag) est installé et actif."""
+    user_id = _require_user_id(request)
+    shop_domain, access_token = _get_shopify_connection(user_id)
+    headers = {
+        "X-Shopify-Access-Token": access_token,
+        "Content-Type": "application/json",
+    }
+
+    pixel_installed = False
+    pixel_active = False
+    pixel_type = None
+    pixel_details = []
+    has_events = False
+
+    # 1. Check ScriptTag API for any pixel scripts
+    try:
+        st_url = f"https://{shop_domain}/admin/api/2024-10/script_tags.json"
+        st_resp = requests.get(st_url, headers=headers, timeout=15)
+        if st_resp.status_code == 200:
+            script_tags = (st_resp.json() or {}).get("script_tags", [])
+            for tag in script_tags:
+                src = (tag.get("src") or "").lower()
+                event = tag.get("event", "")
+                if "pixel" in src or "shopbrain" in src or "tracking" in src or "analytics" in src:
+                    pixel_installed = True
+                    pixel_type = "script_tag"
+                    pixel_details.append({
+                        "id": tag.get("id"),
+                        "src": tag.get("src"),
+                        "event": event,
+                        "display_scope": tag.get("display_scope", "all"),
+                        "created_at": tag.get("created_at"),
+                    })
+    except Exception as e:
+        logger.warning(f"Pixel check - ScriptTag API error: {e}")
+
+    # 2. Check Web Pixel API (Shopify custom pixels - newer method)
+    try:
+        wp_url = f"https://{shop_domain}/admin/api/2024-10/web_pixels.json"
+        wp_resp = requests.get(wp_url, headers=headers, timeout=15)
+        if wp_resp.status_code == 200:
+            web_pixels = (wp_resp.json() or {}).get("web_pixels", [])
+            for wp in web_pixels:
+                pixel_installed = True
+                pixel_type = pixel_type or "web_pixel"
+                pixel_details.append({
+                    "id": wp.get("id"),
+                    "name": wp.get("name"),
+                    "status": wp.get("status"),
+                })
+                if wp.get("status") == "active":
+                    pixel_active = True
+        elif wp_resp.status_code == 404:
+            # Web Pixel API not available on this plan/version — not an error
+            pass
+    except Exception as e:
+        logger.warning(f"Pixel check - Web Pixel API error: {e}")
+
+    # 3. Check if we have received any pixel events in Supabase (last 30 days)
+    try:
+        if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+            sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+            cutoff = (datetime.utcnow() - timedelta(days=30)).isoformat()
+            result = sb.table("shopify_events") \
+                .select("id", count="exact") \
+                .eq("user_id", user_id) \
+                .eq("shop_domain", shop_domain) \
+                .gte("created_at", cutoff) \
+                .limit(1) \
+                .execute()
+            event_count = result.count if hasattr(result, 'count') and result.count else len(result.data or [])
+            has_events = event_count > 0
+            if has_events:
+                pixel_active = True
+                if not pixel_installed:
+                    pixel_installed = True
+                    pixel_type = pixel_type or "events_detected"
+    except Exception as e:
+        logger.warning(f"Pixel check - Supabase events error: {e}")
+
+    # Determine overall status
+    if pixel_installed and pixel_active:
+        status = "active"
+        status_label = "✅ Pixel installé et actif"
+    elif pixel_installed and not pixel_active:
+        status = "installed_inactive"
+        status_label = "⚠️ Pixel installé mais inactif"
+    else:
+        status = "not_installed"
+        status_label = "❌ Pixel non détecté"
+
+    return {
+        "success": True,
+        "shop": shop_domain,
+        "pixel_installed": pixel_installed,
+        "pixel_active": pixel_active,
+        "pixel_type": pixel_type,
+        "status": status,
+        "status_label": status_label,
+        "has_recent_events": has_events,
+        "details": pixel_details,
+    }
+
+
 def _infer_image_category(title: str) -> str:
     t = (title or "").lower()
     patterns = [
@@ -5097,54 +5206,6 @@ async def get_underperforming_products(request: Request, range: str = "30d", lim
         else:
             category = "👁️ À surveiller"
 
-        # ---- Actions recommandées ----
-        actions = []
-        if orders_count == 0 and inventory > 20:
-            actions.append({
-                "type": "price",
-                "label": f"Créer une promo (-15%)",
-                "reason": "Stock dormant sans ventes",
-                "can_apply": True,
-                "suggested_price": round(price_current * 0.85, 2) if price_current else None,
-            })
-        if description_len < 100:
-            actions.append({
-                "type": "description",
-                "label": "Réécrire la description",
-                "reason": f"Contenu trop court ({description_len} car.)",
-                "can_apply": True,
-            })
-        if len(product.get("title", "")) < 20 or len(product.get("title", "")) > 70:
-            actions.append({
-                "type": "title",
-                "label": "Optimiser le titre",
-                "reason": f"Titre non optimal ({len(product.get('title', ''))} car.)",
-                "can_apply": True,
-            })
-        if images_count < 2:
-            actions.append({
-                "type": "image",
-                "label": "Ajouter des images",
-                "reason": "Moins de 2 images produit",
-                "can_apply": False,
-            })
-        if avg_revenue > 0 and revenue < avg_revenue * 0.3 and price_current > 0:
-            suggested = round(price_current * 0.9, 2)
-            actions.append({
-                "type": "price",
-                "label": f"Baisser le prix à {suggested}",
-                "reason": "Revenu très en dessous de la moyenne",
-                "can_apply": True,
-                "suggested_price": suggested,
-            })
-        if orders_count > 0 and refund_rate > 0.15:
-            actions.append({
-                "type": "review",
-                "label": "Vérifier qualité produit",
-                "reason": f"Taux de retour {refund_rate:.0%}",
-                "can_apply": False,
-            })
-
         underperformers.append({
             "product_id": pid,
             "title": title,
@@ -5161,7 +5222,6 @@ async def get_underperforming_products(request: Request, range: str = "30d", lim
             "refund_count": refund_count,
             "refund_rate": round(refund_rate, 3),
             "reasons": reasons,
-            "actions": actions,
         })
 
     underperformers.sort(key=lambda x: x["score"], reverse=True)
@@ -5345,41 +5405,35 @@ async def get_shopify_blockers(request: Request, range: str = "30d", limit: int 
             if score < 2:
                 continue
 
-            actions = []
-            if len(title) < 20 or len(title) > 70:
-                actions.append({
-                    "type": "title",
-                    "label": "Optimiser le titre",
-                    "reason": f"Titre {len(title)} caractères",
-                    "can_apply": True,
-                })
+            # Build friction reasons for fallback path
+            fallback_friction_reasons = []
             if description_len < 120:
-                actions.append({
-                    "type": "description",
-                    "label": "Réécrire la description",
-                    "reason": f"Description courte ({description_len} caractères)",
-                    "can_apply": True,
-                })
+                fallback_friction_reasons.append(f"Description courte ({description_len} caractères)")
+            if len(title) < 20 or len(title) > 70:
+                fallback_friction_reasons.append(f"Titre non optimal ({len(title)} caractères)")
             if images_count < 2:
-                actions.append({
-                    "type": "image",
-                    "label": "Ajouter des images",
-                    "reason": "Moins de 2 images",
-                    "can_apply": False,
-                })
+                fallback_friction_reasons.append(f"Pas assez d'images ({images_count})")
             if avg_price and price_current > avg_price * 1.3:
-                suggested_price = round(price_current * 0.9, 2)
-                actions.append({
-                    "type": "price",
-                    "label": f"Baisser le prix à {suggested_price}",
-                    "reason": "Prix élevé vs moyenne boutique",
-                    "can_apply": True,
-                    "suggested_price": suggested_price,
-                })
+                fallback_friction_reasons.append(f"Prix élevé ({price_current:.2f}) vs moyenne boutique ({avg_price:.2f})")
+            if inventory_total > 20:
+                fallback_friction_reasons.append(f"Stock élevé ({inventory_total} unités) sans ventes")
+
+            # Categorize friction
+            has_content = description_len < 120 or images_count < 2
+            has_price = avg_price and price_current > avg_price * 1.3
+            if has_content and has_price:
+                fallback_category = "📝💰 Fiche faible + prix élevé"
+            elif has_price:
+                fallback_category = "💰 Prix dissuasif"
+            elif has_content:
+                fallback_category = "📝 Fiche produit faible"
+            else:
+                fallback_category = "⚠️ Frein détecté"
 
             blockers.append({
                 "product_id": product_id,
                 "title": title or f"Produit {product_id}",
+                "category": fallback_category,
                 "orders": 0,
                 "quantity": 0,
                 "revenue": 0.0,
@@ -5391,7 +5445,7 @@ async def get_shopify_blockers(request: Request, range: str = "30d", limit: int 
                 "view_to_cart_rate": round(view_to_cart, 4) if view_to_cart is not None else None,
                 "cart_to_order_rate": None,
                 "score": score,
-                "actions": actions,
+                "friction_reasons": fallback_friction_reasons,
             })
 
         blockers.sort(key=lambda item: item["score"], reverse=True)
@@ -5530,59 +5584,6 @@ async def get_shopify_blockers(request: Request, range: str = "30d", limit: int 
         if score < 2:
             continue
 
-        actions = []
-        if views >= max(10, avg_views) and view_to_cart is not None and view_to_cart < 0.03:
-            actions.append({
-                "type": "title",
-                "label": "Optimiser le titre",
-                "reason": f"Vue→panier faible ({view_to_cart:.1%})",
-                "can_apply": True,
-            })
-            actions.append({
-                "type": "description",
-                "label": "Renforcer la description",
-                "reason": "Conversion panier faible",
-                "can_apply": True,
-            })
-        if add_to_cart >= max(5, avg_add_to_cart) and cart_to_order is not None and cart_to_order < 0.2:
-            actions.append({
-                "type": "price",
-                "label": "Tester un prix inférieur",
-                "reason": f"Panier→achat faible ({cart_to_order:.1%})",
-                "can_apply": True,
-                "suggested_price": round(price_current * 0.9, 2) if price_current else None,
-            })
-        if description_len < 120:
-            actions.append({
-                "type": "description",
-                "label": "Réécrire la description",
-                "reason": f"Description courte ({description_len} caractères)",
-                "can_apply": True,
-            })
-        if len(title) < 20 or len(title) > 70:
-            actions.append({
-                "type": "title",
-                "label": "Optimiser le titre",
-                "reason": f"Titre {len(title)} caractères",
-                "can_apply": True,
-            })
-        if avg_price and price_current > avg_price * 1.3 and orders_count < avg_orders:
-            suggested_price = round(price_current * 0.9, 2)
-            actions.append({
-                "type": "price",
-                "label": f"Baisser le prix à {suggested_price}",
-                "reason": "Prix élevé vs moyenne boutique",
-                "can_apply": True,
-                "suggested_price": suggested_price,
-            })
-        if images_count < 2:
-            actions.append({
-                "type": "image",
-                "label": "Ajouter des images",
-                "reason": "Moins de 2 images",
-                "can_apply": False,
-            })
-
         # ---- Categorize the friction type ----
         friction_reasons = []
         friction_category = "⚠️ À analyser"
@@ -5635,7 +5636,6 @@ async def get_shopify_blockers(request: Request, range: str = "30d", limit: int 
             "cart_to_order_rate": round(cart_to_order, 4) if cart_to_order is not None else None,
             "score": score,
             "friction_reasons": friction_reasons,
-            "actions": actions,
         })
 
     blockers.sort(key=lambda item: (item["score"], -item["revenue"]), reverse=True)
