@@ -163,6 +163,8 @@ export default function Dashboard() {
   const [underperformingLoading, setUnderperformingLoading] = useState(false)
   const [pixelStatus, setPixelStatus] = useState(null)
   const [pixelLoading, setPixelLoading] = useState(false)
+  const [showPixelGuide, setShowPixelGuide] = useState(false)
+  const [pixelCodeCopied, setPixelCodeCopied] = useState(false)
   const [customers, setCustomers] = useState([])
   const [customersLoading, setCustomersLoading] = useState(false)
   const [invoiceCustomerId, setInvoiceCustomerId] = useState('')
@@ -3724,29 +3726,198 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* Shopify Pixel Status */}
-              <div className="mt-4 p-3 rounded-lg border border-gray-700 bg-gray-900/50">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-gray-300">Shopify Pixel :</span>
-                  {pixelLoading ? (
-                    <span className="text-xs text-gray-500">⏳ Vérification...</span>
-                  ) : pixelStatus ? (
-                    <span className={`text-xs font-medium ${
-                      pixelStatus.status === 'active' ? 'text-green-400' :
-                      pixelStatus.status === 'installed_inactive' ? 'text-yellow-400' :
-                      'text-red-400'
-                    }`}>
-                      {pixelStatus.status_label}
-                    </span>
-                  ) : (
-                    <span className="text-xs text-gray-500">—</span>
-                  )}
+              {/* Shopify Pixel Status + Guide */}
+              <div className="mt-4 rounded-lg border border-gray-700 bg-gray-900/50">
+                <div className="p-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-gray-300">Shopify Pixel :</span>
+                    {pixelLoading ? (
+                      <span className="text-xs text-gray-500">⏳ Vérification...</span>
+                    ) : pixelStatus ? (
+                      <span className={`text-xs font-medium ${
+                        pixelStatus.status === 'active' ? 'text-green-400' :
+                        pixelStatus.status === 'installed_inactive' ? 'text-yellow-400' :
+                        'text-red-400'
+                      }`}>
+                        {pixelStatus.status_label}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-gray-500">—</span>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => setShowPixelGuide(!showPixelGuide)}
+                    className="flex items-center gap-1 px-2 py-1 rounded-md bg-gray-800 hover:bg-gray-700 border border-gray-600 text-xs text-gray-300 hover:text-white transition"
+                  >
+                    <span>{showPixelGuide ? '−' : '+'}</span>
+                    <span>Comment connecter le Shopify Pixel</span>
+                  </button>
                 </div>
-                {pixelStatus && !pixelStatus.pixel_installed && (
-                  <p className="text-xs text-gray-500 mt-1">Sans le Pixel, les données de vues et d'ajouts panier ne sont pas disponibles. L'analyse se base sur les commandes et la qualité des fiches produits.</p>
-                )}
+
                 {pixelStatus?.has_recent_events && (
-                  <p className="text-xs text-green-400/70 mt-1">✅ Des événements Pixel ont été reçus au cours des 30 derniers jours.</p>
+                  <div className="px-3 pb-2">
+                    <p className="text-xs text-green-400/70">✅ Des événements Pixel ont été reçus au cours des 30 derniers jours.</p>
+                  </div>
+                )}
+                {pixelStatus && !pixelStatus.pixel_installed && !showPixelGuide && (
+                  <div className="px-3 pb-3">
+                    <p className="text-xs text-gray-500">Sans le Pixel, les données de vues et d'ajouts panier ne sont pas disponibles.</p>
+                  </div>
+                )}
+
+                {/* Guide d'installation du Pixel */}
+                {showPixelGuide && (
+                  <div className="border-t border-gray-700 p-4 space-y-4">
+                    <h4 className="text-white font-bold text-sm">📋 Guide d'installation du Shopify Pixel</h4>
+
+                    <div className="space-y-3">
+                      <div className="flex gap-3">
+                        <span className="flex-shrink-0 w-6 h-6 rounded-full bg-red-600/30 text-red-300 flex items-center justify-center text-xs font-bold">1</span>
+                        <div>
+                          <p className="text-sm text-white font-medium">Ouvre ton admin Shopify</p>
+                          <p className="text-xs text-gray-400">Va dans <span className="text-white font-mono bg-gray-800 px-1 rounded">Settings</span> (Paramètres) en bas à gauche.</p>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-3">
+                        <span className="flex-shrink-0 w-6 h-6 rounded-full bg-red-600/30 text-red-300 flex items-center justify-center text-xs font-bold">2</span>
+                        <div>
+                          <p className="text-sm text-white font-medium">Clique sur « Customer events »</p>
+                          <p className="text-xs text-gray-400">En français, ça peut s'appeler <span className="text-white font-mono bg-gray-800 px-1 rounded">Événements clients</span>.</p>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-3">
+                        <span className="flex-shrink-0 w-6 h-6 rounded-full bg-red-600/30 text-red-300 flex items-center justify-center text-xs font-bold">3</span>
+                        <div>
+                          <p className="text-sm text-white font-medium">Clique « Add custom pixel »</p>
+                          <p className="text-xs text-gray-400">En français : <span className="text-white font-mono bg-gray-800 px-1 rounded">Ajouter un pixel personnalisé</span>.</p>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-3">
+                        <span className="flex-shrink-0 w-6 h-6 rounded-full bg-red-600/30 text-red-300 flex items-center justify-center text-xs font-bold">4</span>
+                        <div>
+                          <p className="text-sm text-white font-medium">Nomme le pixel</p>
+                          <p className="text-xs text-gray-400">Écris <span className="text-white font-mono bg-gray-800 px-1 rounded">ShopBrain Pixel</span> comme nom.</p>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-3">
+                        <span className="flex-shrink-0 w-6 h-6 rounded-full bg-red-600/30 text-red-300 flex items-center justify-center text-xs font-bold">5</span>
+                        <div>
+                          <p className="text-sm text-white font-medium">Paramètres de confidentialité</p>
+                          <p className="text-xs text-gray-400"><b>Permission :</b> « Not required » · <b>Data sale :</b> « Data collected does not qualify as data sale ».</p>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-3">
+                        <span className="flex-shrink-0 w-6 h-6 rounded-full bg-red-600/30 text-red-300 flex items-center justify-center text-xs font-bold">6</span>
+                        <div>
+                          <p className="text-sm text-white font-medium">Colle le code ci-dessous</p>
+                          <p className="text-xs text-gray-400">Supprime tout le contenu par défaut dans la zone de code et colle uniquement ce script :</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Code Block */}
+                    <div className="relative">
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(`const BACKEND = "https://shopbrain-backend.onrender.com/api/shopify/pixel-event";
+const SHOP_DOMAIN = (typeof Shopify !== "undefined" && Shopify.shop) ? Shopify.shop : null;
+const SESSION_ID = (window.__sb_session_id = window.__sb_session_id || Math.random().toString(36).slice(2));
+
+function sendEvent(eventType, productId) {
+  try {
+    fetch(BACKEND, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        shop_domain: SHOP_DOMAIN,
+        event_type: eventType,
+        product_id: productId ? String(productId) : null,
+        session_id: SESSION_ID,
+        user_agent: navigator.userAgent
+      })
+    }).catch(() => {});
+  } catch (e) {}
+}
+
+analytics.subscribe("product_viewed", (event) => {
+  const productId = event?.data?.product?.id;
+  sendEvent("view_item", productId);
+});
+
+analytics.subscribe("product_added_to_cart", (event) => {
+  const productId =
+    event?.data?.cartLine?.merchandise?.product?.id ||
+    event?.data?.product?.id;
+  sendEvent("add_to_cart", productId);
+});`);
+                          setPixelCodeCopied(true);
+                          setTimeout(() => setPixelCodeCopied(false), 3000);
+                        }}
+                        className="absolute top-2 right-2 px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-gray-300 hover:text-white transition z-10"
+                      >
+                        {pixelCodeCopied ? '✅ Copié !' : '📋 Copier le code'}
+                      </button>
+                      <pre className="bg-gray-950 border border-gray-700 rounded-lg p-3 text-xs text-green-400 overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed">{`const BACKEND = "https://shopbrain-backend.onrender.com/api/shopify/pixel-event";
+const SHOP_DOMAIN = (typeof Shopify !== "undefined" && Shopify.shop) ? Shopify.shop : null;
+const SESSION_ID = (window.__sb_session_id = window.__sb_session_id || Math.random().toString(36).slice(2));
+
+function sendEvent(eventType, productId) {
+  try {
+    fetch(BACKEND, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        shop_domain: SHOP_DOMAIN,
+        event_type: eventType,
+        product_id: productId ? String(productId) : null,
+        session_id: SESSION_ID,
+        user_agent: navigator.userAgent
+      })
+    }).catch(() => {});
+  } catch (e) {}
+}
+
+analytics.subscribe("product_viewed", (event) => {
+  const productId = event?.data?.product?.id;
+  sendEvent("view_item", productId);
+});
+
+analytics.subscribe("product_added_to_cart", (event) => {
+  const productId =
+    event?.data?.cartLine?.merchandise?.product?.id ||
+    event?.data?.product?.id;
+  sendEvent("add_to_cart", productId);
+});`}</pre>
+                    </div>
+
+                    <div className="flex gap-3">
+                      <span className="flex-shrink-0 w-6 h-6 rounded-full bg-red-600/30 text-red-300 flex items-center justify-center text-xs font-bold">7</span>
+                      <div>
+                        <p className="text-sm text-white font-medium">Clique « Save » puis « Connect »</p>
+                        <p className="text-xs text-gray-400">Assure-toi que le pixel est bien <span className="text-green-400 font-semibold">connecté</span> (bouton vert). Reviens ici et recharge la page pour vérifier le statut.</p>
+                      </div>
+                    </div>
+
+                    {/* Ask AI button */}
+                    <div className="pt-2 border-t border-gray-700">
+                      <button
+                        onClick={() => {
+                          setShowChatPanel(true);
+                          setTimeout(() => {
+                            sendChatMessage('Comment installer le Shopify Pixel pour ShopBrain ? Guide-moi étape par étape.');
+                          }, 500);
+                        }}
+                        className="flex items-center gap-2 px-3 py-2 rounded-lg bg-yellow-600/20 hover:bg-yellow-600/30 border border-yellow-600/30 text-xs text-yellow-200 hover:text-yellow-100 transition"
+                      >
+                        🤖 Tu as des questions ? Demande à l'IA
+                      </button>
+                    </div>
+                  </div>
                 )}
               </div>
 

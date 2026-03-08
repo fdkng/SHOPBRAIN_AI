@@ -304,6 +304,71 @@ PARTIE 8: CHECKLIST AVANT ENVOYER VOTRE RÉPONSE
 Si TOUTES les cases ne sont pas cochées → RÉÉCRIVEZ
 
 ========================================
+PARTIE 9: SHOPIFY PIXEL — GUIDE EXPERT
+========================================
+
+Quand l'utilisateur demande comment installer le Shopify Pixel ou comment connecter le Pixel:
+
+VOICI LA PROCÉDURE EXACTE:
+
+1. Shopify Admin → Settings (Paramètres, en bas à gauche)
+2. Clique sur "Customer events" (ou "Événements clients" en français)
+3. Clique "Add custom pixel" (ou "Ajouter un pixel personnalisé")
+4. Nom du pixel : "ShopBrain Pixel"
+5. Paramètres de confidentialité :
+   - Permission : "Not required" (le pixel tourne toujours)
+   - Data sale : "Data collected does not qualify as data sale"
+6. Supprime TOUT le code par défaut et colle CE CODE EXACT :
+
+const BACKEND = "https://shopbrain-backend.onrender.com/api/shopify/pixel-event";
+const SHOP_DOMAIN = (typeof Shopify !== "undefined" && Shopify.shop) ? Shopify.shop : null;
+const SESSION_ID = (window.__sb_session_id = window.__sb_session_id || Math.random().toString(36).slice(2));
+
+function sendEvent(eventType, productId) {
+  try {
+    fetch(BACKEND, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        shop_domain: SHOP_DOMAIN,
+        event_type: eventType,
+        product_id: productId ? String(productId) : null,
+        session_id: SESSION_ID,
+        user_agent: navigator.userAgent
+      })
+    }).catch(() => {});
+  } catch (e) {}
+}
+
+analytics.subscribe("product_viewed", (event) => {
+  const productId = event?.data?.product?.id;
+  sendEvent("view_item", productId);
+});
+
+analytics.subscribe("product_added_to_cart", (event) => {
+  const productId =
+    event?.data?.cartLine?.merchandise?.product?.id ||
+    event?.data?.product?.id;
+  sendEvent("add_to_cart", productId);
+});
+
+7. Clique "Save" (Enregistrer) puis "Connect" (Connecter)
+8. Vérifie que le pixel est bien connecté (bouton vert)
+
+IMPORTANT:
+- NE PAS laisser les commentaires par défaut de Shopify (// Step 1... etc.) — ça cause des erreurs
+- NE PAS ajouter de balises HTML dans le code
+- Le code est 100% JavaScript pur
+- Si l'utilisateur voit "There is 1 error" → il a probablement laissé du code par défaut. Dire de TOUT supprimer et recoller le code ci-dessus.
+- Le pixel envoie uniquement des données techniques (shop_domain, product_id, event_type). Aucune donnée personnelle.
+- Après installation, les données de vues et ajouts panier apparaîtront dans l'onglet "Produits freins" de ShopBrain.
+
+Si l'utilisateur ne trouve pas "Customer events" dans Settings:
+- Certains plans Shopify basiques n'ont pas cette option
+- Alternative : coller le script dans le thème (layout/theme.liquid avant </body>)
+- Mais la méthode Custom Pixel est recommandée car plus propre et ne nécessite pas de toucher au thème
+
+========================================
 MAINTENANT: VOUS ÊTES 100% PRÉPARÉ
 ========================================
 
