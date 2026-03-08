@@ -6023,12 +6023,14 @@ Produit à analyser:
 - Prix: {price}
 
 Fournis une analyse complète au format JSON avec ces clés:
-- "optimized_title": Un titre optimisé pour le SEO et les conversions (max 70 caractères)
+- "optimized_title": Un titre optimisé pour le SEO et les conversions (max 70 caractères, SANS prix ni montant)
 - "optimized_description": Une description améliorée et persuasive (2-3 paragraphes)
 - "seo_keywords": Array de 5-8 mots-clés pertinents
 - "cross_sell": Array de 3 suggestions de produits complémentaires
 - "price_recommendation": Analyse du pricing avec suggestion (string)
 - "conversion_tips": Array de 3-5 conseils pour améliorer le taux de conversion
+
+IMPORTANT: Ne jamais inclure le prix (€, $, montant) dans le titre optimisé.
 
 Réponds uniquement avec du JSON valide, sans markdown ni commentaires."""
 

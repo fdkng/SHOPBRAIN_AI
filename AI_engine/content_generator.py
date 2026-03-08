@@ -60,6 +60,8 @@ class ContentGenerator:
     - 1 seul titre final
     - Clair, précis, orienté bénéfice
     - N'invente pas de caractéristiques non présentes dans le contexte
+    - NE JAMAIS inclure le prix dans le titre (pas de €, pas de $, pas de montant)
+    - NE JAMAIS inclure "à XX€" ou "à XX$" ou tout montant monétaire
 
     Nouveau titre:"""
 
