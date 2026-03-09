@@ -2451,6 +2451,8 @@ export default function Dashboard() {
         }
         return
       } else if (actionKey === 'action-rewrite') {
+        clearStatus(actionKey)
+        setStatus(actionKey, 'info', 'Analyse de réécriture en cours... (peut prendre 15-30 secondes)')
         const { data: { session } } = await supabase.auth.getSession()
         if (!session) {
           setStatus(actionKey, 'error', 'Session expirée, reconnectez-vous')
@@ -2461,7 +2463,7 @@ export default function Dashboard() {
           return
         }
         const rewriteController = new AbortController()
-        const rewriteTimeout = setTimeout(() => rewriteController.abort(), 90000)
+        const rewriteTimeout = setTimeout(() => rewriteController.abort(), 120000)
         const response = await fetch(`${API_URL}/api/shopify/rewrite?product_id=${encodeURIComponent(options.productId)}`, {
           method: 'GET',
           headers: {
@@ -2598,7 +2600,9 @@ export default function Dashboard() {
     }
 
     try {
+      clearStatus(statusKey)
       setApplyingBlockerActionId(`${productId}-${action.type}`)
+      setStatus(statusKey, 'info', `Application ${action.type === 'title' ? 'du titre' : 'de la description'} en cours...`)
       const { data: { session } } = await supabase.auth.getSession()
 
       if (!session) {
@@ -2630,11 +2634,17 @@ export default function Dashboard() {
         throw new Error(errorData.detail || `HTTP ${response.status}`)
       }
 
-      setStatus(statusKey, 'success', 'Succès: modification appliquée sur Shopify')
+      setStatus(statusKey, 'success', '✅ Modification appliquée avec succès sur Shopify !')
+      setTimeout(() => clearStatus(statusKey), 8000)
       loadBlockers()
     } catch (err) {
       console.error('Error applying blocker action:', err)
-      setStatus(statusKey, 'error', formatUserFacingError(err, 'Erreur application'))
+      const errMsg = err?.name === 'AbortError'
+        ? 'La requête a pris trop de temps. Réessaie.'
+        : (err?.message && err.message !== 'Failed to fetch')
+          ? err.message
+          : 'Erreur lors de l\'application. Vérifie ta connexion et réessaie.'
+      setStatus(statusKey, 'error', errMsg)
     } finally {
       setApplyingBlockerActionId(null)
     }
