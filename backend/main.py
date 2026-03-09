@@ -3868,9 +3868,87 @@ async def get_shopify_rewrite(request: Request, product_id: str):
         raise HTTPException(status_code=404, detail="Produit Shopify introuvable")
 
     ensure_feature_allowed(tier, "content_generation")
-    engine = get_ai_engine()
-    suggested_title = engine.content_gen.generate_title(product, tier)
-    suggested_description = engine.content_gen.generate_description(product, tier)
+
+    # Generate title and description using OpenAI directly (no AI_engine dependency)
+    current_title = product.get("title") or ""
+    current_desc = _strip_html(product.get("body_html") or "")
+    product_type = product.get("product_type") or ""
+    vendor = product.get("vendor") or ""
+    tags = product.get("tags") or ""
+
+    suggested_title = current_title
+    suggested_description = current_desc
+
+    if OPENAI_API_KEY:
+        try:
+            client = OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY)
+
+            # Generate title
+            title_resp = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "Tu es un expert en copywriting e-commerce et SEO."},
+                    {"role": "user", "content": f"""Réécris ce titre de produit e-commerce en français, de manière ultra-optimisé avec storytelling et émotions.
+
+Contexte produit:
+- Titre actuel: {current_title}
+- Type: {product_type}
+- Marque: {vendor}
+- Tags: {tags}
+
+Contraintes strictes:
+- 60 à 70 caractères maximum
+- Sans emojis
+- 1 seul titre final
+- Clair, précis, orienté bénéfice
+- NE JAMAIS inclure le prix dans le titre (pas de €, pas de $, pas de montant)
+- N'invente pas de caractéristiques non présentes dans le contexte
+
+Nouveau titre:"""}
+                ],
+                temperature=0.65,
+                max_tokens=120
+            )
+            suggested_title = title_resp.choices[0].message.content.strip() or current_title
+        except Exception as e:
+            print(f"⚠️ Rewrite title error: {e}")
+
+        try:
+            # Generate description
+            desc_resp = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "Tu es un copywriter e-commerce expert. Tu retournes UNIQUEMENT du HTML brut, jamais de markdown, jamais de ```html."},
+                    {"role": "user", "content": f"""Crée une description de produit en français, professionnelle.
+
+Contexte produit:
+- Titre: {current_title}
+- Type: {product_type}
+- Marque: {vendor}
+- Tags: {tags}
+- Description actuelle: {current_desc[:500]}
+
+Exigences:
+- N'invente pas de caractéristiques non présentes
+- Ton: storytelling captivant avec émotions
+- Sans emojis, sans markdown
+- Longueur: 300-500 mots
+
+Structure HTML simple:
+1) <p><strong>Accroche</strong> ...</p>
+2) <p>Résumé valeur</p>
+3) <h3>Bénéfices clés</h3><ul><li>...</li></ul>
+4) <h3>Caractéristiques</h3><ul><li>...</li></ul>
+5) <p><strong>Appel à l'action</strong></p>
+
+Retourne uniquement le HTML brut:"""}
+                ],
+                temperature=0.75,
+                max_tokens=800
+            )
+            suggested_description = desc_resp.choices[0].message.content.strip() or current_desc
+        except Exception as e:
+            print(f"⚠️ Rewrite description error: {e}")
 
     # Strip markdown code block wrappers if present
     if suggested_description and suggested_description.strip().startswith("```"):
@@ -3886,8 +3964,8 @@ async def get_shopify_rewrite(request: Request, product_id: str):
         "shop": shop_domain,
         "product_id": product_id,
         "title": product.get("title") or "Produit",
-        "current_title": product.get("title") or "",
-        "current_description": _strip_html(product.get("body_html") or ""),
+        "current_title": current_title,
+        "current_description": current_desc,
         "suggested_title": suggested_title,
         "suggested_description": suggested_description,
         "reasons": ["Réécriture demandée"],
