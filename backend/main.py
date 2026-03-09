@@ -937,7 +937,7 @@ async def health():
     """Health check endpoint for Render - MUST ALWAYS WORK"""
     return {
         "status": "ok",
-        "version": "2.2-rewrite-timeout-fix",
+        "version": "2.3-apply-fix",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
                 "openai": "configured" if OPENAI_API_KEY else "not_configured",
@@ -3872,6 +3872,15 @@ async def get_shopify_rewrite(request: Request, product_id: str):
     suggested_title = engine.content_gen.generate_title(product, tier)
     suggested_description = engine.content_gen.generate_description(product, tier)
 
+    # Strip markdown code block wrappers if present
+    if suggested_description and suggested_description.strip().startswith("```"):
+        lines = suggested_description.strip().split("\n")
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        suggested_description = "\n".join(lines).strip()
+
     return {
         "success": True,
         "shop": shop_domain,
@@ -5660,16 +5669,13 @@ async def apply_blocker_action(req: BlockerApplyRequest, request: Request):
     }
 
     product_resp = requests.get(
-        f"https://{shop_domain}/admin/api/2024-01/products/{req.product_id}.json",
+        f"https://{shop_domain}/admin/api/2024-10/products/{req.product_id}.json",
         headers=headers,
         timeout=30,
     )
     if product_resp.status_code != 200:
         raise HTTPException(status_code=product_resp.status_code, detail=f"Erreur Shopify: {product_resp.text[:300]}")
     product = product_resp.json().get("product", {})
-
-    from AI_engine.action_engine import ActionEngine
-    action_engine = ActionEngine(shop_domain, access_token)
 
     action_type = (req.action_type or "").lower()
     if action_type == "price":
@@ -5680,9 +5686,15 @@ async def apply_blocker_action(req: BlockerApplyRequest, request: Request):
         if current_price <= 0:
             raise HTTPException(status_code=400, detail="Prix actuel invalide")
         new_price = req.suggested_price if req.suggested_price else round(current_price * 0.9, 2)
-        result = action_engine.apply_price_change(req.product_id, new_price)
-        if not result.get("success"):
-            raise HTTPException(status_code=400, detail=result.get("error", "Échec modification prix"))
+        variant = variants[0]
+        update_resp = requests.put(
+            f"https://{shop_domain}/admin/api/2024-10/variants/{variant['id']}.json",
+            headers=headers,
+            json={"variant": {"id": variant["id"], "price": str(new_price)}},
+            timeout=30,
+        )
+        if update_resp.status_code not in (200, 201):
+            raise HTTPException(status_code=400, detail=f"Échec modification prix: {update_resp.text[:300]}")
         _log_blocker_action(user_id, shop_domain, req.product_id, action_type)
         return {"success": True, "action": "price", "new_price": new_price}
 
@@ -5692,9 +5704,14 @@ async def apply_blocker_action(req: BlockerApplyRequest, request: Request):
         else:
             engine = get_ai_engine()
             new_title = engine.content_gen.generate_title(product, tier)
-        result = action_engine.update_product_content(req.product_id, title=new_title)
-        if not result.get("success"):
-            raise HTTPException(status_code=400, detail=result.get("error", "Échec modification titre"))
+        update_resp = requests.put(
+            f"https://{shop_domain}/admin/api/2024-10/products/{req.product_id}.json",
+            headers=headers,
+            json={"product": {"title": new_title}},
+            timeout=30,
+        )
+        if update_resp.status_code not in (200, 201):
+            raise HTTPException(status_code=400, detail=f"Échec modification titre: {update_resp.text[:300]}")
         _log_blocker_action(user_id, shop_domain, req.product_id, action_type)
         return {"success": True, "action": "title", "new_title": new_title}
 
@@ -5704,9 +5721,23 @@ async def apply_blocker_action(req: BlockerApplyRequest, request: Request):
         else:
             engine = get_ai_engine()
             new_description = engine.content_gen.generate_description(product, tier)
-        result = action_engine.update_product_content(req.product_id, description=new_description)
-        if not result.get("success"):
-            raise HTTPException(status_code=400, detail=result.get("error", "Échec modification description"))
+        # Clean markdown wrappers if present (e.g. ```html ... ```)
+        new_description = new_description.strip()
+        if new_description.startswith("```"):
+            lines = new_description.split("\n")
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            new_description = "\n".join(lines).strip()
+        update_resp = requests.put(
+            f"https://{shop_domain}/admin/api/2024-10/products/{req.product_id}.json",
+            headers=headers,
+            json={"product": {"body_html": new_description}},
+            timeout=30,
+        )
+        if update_resp.status_code not in (200, 201):
+            raise HTTPException(status_code=400, detail=f"Échec modification description: {update_resp.text[:300]}")
         _log_blocker_action(user_id, shop_domain, req.product_id, action_type)
         return {"success": True, "action": "description"}
 

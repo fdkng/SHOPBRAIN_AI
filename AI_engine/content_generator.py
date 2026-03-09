@@ -144,13 +144,13 @@ class ContentGenerator:
     7) <h3>FAQ</h3><ul><li><strong>Q:</strong> ... <strong>R:</strong> ...</li></ul>
     8) <p><strong>Appel à l'action</strong> ...</p>
 
-    Retourne uniquement le HTML."""
+    Retourne uniquement le HTML brut, sans balises ```html ni aucun wrapper markdown."""
 
         try:
             response = self.client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "Tu es un copywriter e-commerce expert qui booste les conversions."},
+                    {"role": "system", "content": "Tu es un copywriter e-commerce expert qui booste les conversions. Tu retournes UNIQUEMENT du HTML brut, jamais de markdown, jamais de ```html."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.75,
