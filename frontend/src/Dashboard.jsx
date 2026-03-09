@@ -2619,6 +2619,12 @@ export default function Dashboard() {
       if (action.type === 'price' && typeof action.suggested_price !== 'undefined') {
         payload.suggested_price = action.suggested_price
       }
+      if (action.type === 'title' && action.suggested_title) {
+        payload.suggested_title = action.suggested_title
+      }
+      if (action.type === 'description' && action.suggested_description) {
+        payload.suggested_description = action.suggested_description
+      }
 
       const response = await fetch(`${API_URL}/api/shopify/apply-action`, {
         method: 'POST',

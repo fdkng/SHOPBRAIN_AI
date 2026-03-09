@@ -937,7 +937,7 @@ async def health():
     """Health check endpoint for Render - MUST ALWAYS WORK"""
     return {
         "status": "ok",
-        "version": "2.5-apply-route-fix",
+        "version": "2.6-apply-500-fix",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
                 "openai": "configured" if OPENAI_API_KEY else "not_configured",
@@ -5720,6 +5720,16 @@ class BlockerApplyRequest(BaseModel):
 @app.post("/api/shopify/apply-action")
 async def apply_blocker_action(req: BlockerApplyRequest, request: Request):
     """⚡ Applique une action sur un produit frein (Pro/Premium)."""
+    try:
+        return await _apply_blocker_action_inner(req, request)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Erreur serveur: {str(exc)[:200]}")
+
+async def _apply_blocker_action_inner(req: BlockerApplyRequest, request: Request):
     user_id = get_user_id(request)
     tier = get_user_tier(user_id)
     if tier not in {"pro", "premium"}:
