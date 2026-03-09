@@ -937,7 +937,7 @@ async def health():
     """Health check endpoint for Render - MUST ALWAYS WORK"""
     return {
         "status": "ok",
-        "version": "2.6-apply-500-fix",
+        "version": "2.7-table-fix",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
                 "openai": "configured" if OPENAI_API_KEY else "not_configured",
@@ -5736,20 +5736,24 @@ async def _apply_blocker_action_inner(req: BlockerApplyRequest, request: Request
         raise HTTPException(status_code=403, detail="Fonctionnalité réservée aux plans Pro/Premium")
 
     if tier == "pro":
-        if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
-            raise HTTPException(status_code=500, detail="Supabase not configured")
-        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-        month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
-        usage = (
-            supabase.table("shopify_blocker_actions")
-            .select("id", count="exact")
-            .eq("user_id", user_id)
-            .gte("created_at", month_start)
-            .execute()
-        )
-        used = usage.count or 0
-        if used >= 50:
-            raise HTTPException(status_code=403, detail="Limite mensuelle atteinte (50 actions Pro)")
+        try:
+            if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+                supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+                month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+                usage = (
+                    supabase.table("shopify_blocker_actions")
+                    .select("id", count="exact")
+                    .eq("user_id", user_id)
+                    .gte("created_at", month_start)
+                    .execute()
+                )
+                used = usage.count or 0
+                if used >= 50:
+                    raise HTTPException(status_code=403, detail="Limite mensuelle atteinte (50 actions Pro)")
+        except HTTPException:
+            raise
+        except Exception as e:
+            print(f"⚠️ Pro usage check skipped (table may not exist): {e}")
 
     shop_domain, access_token = _get_shopify_connection(user_id)
     headers = {
@@ -5834,16 +5838,19 @@ async def _apply_blocker_action_inner(req: BlockerApplyRequest, request: Request
 
 
 def _log_blocker_action(user_id: str, shop_domain: str, product_id: str, action_type: str) -> None:
-    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
-        return
-    supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-    payload = {
-        "user_id": user_id,
-        "shop_domain": shop_domain,
-        "product_id": str(product_id),
-        "action_type": action_type,
-    }
-    supabase.table("shopify_blocker_actions").insert(payload).execute()
+    try:
+        if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+            return
+        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        payload = {
+            "user_id": user_id,
+            "shop_domain": shop_domain,
+            "product_id": str(product_id),
+            "action_type": action_type,
+        }
+        supabase.table("shopify_blocker_actions").insert(payload).execute()
+    except Exception as e:
+        print(f"⚠️ Action logging skipped (table may not exist): {e}")
 
 
 def _generate_invoice_pdf(order: dict, invoice_number: str, language: str, shop_domain: str) -> bytes:
