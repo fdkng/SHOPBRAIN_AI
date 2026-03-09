@@ -2612,19 +2612,21 @@ export default function Dashboard() {
 
       const applyController = new AbortController()
       const applyTimeout = setTimeout(() => applyController.abort(), 60000)
+      const payload = {
+        product_id: productId,
+        action_type: action.type,
+      }
+      if (action.type === 'price' && typeof action.suggested_price !== 'undefined') {
+        payload.suggested_price = action.suggested_price
+      }
+
       const response = await fetch(`${API_URL}/api/shopify/apply-action`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          product_id: productId,
-          action_type: action.type,
-          suggested_price: action.suggested_price,
-          suggested_title: action.suggested_title,
-          suggested_description: action.suggested_description
-        }),
+        body: JSON.stringify(payload),
         signal: applyController.signal
       })
       clearTimeout(applyTimeout)
