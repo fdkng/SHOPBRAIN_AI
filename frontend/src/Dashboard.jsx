@@ -2612,7 +2612,7 @@ export default function Dashboard() {
 
       const applyController = new AbortController()
       const applyTimeout = setTimeout(() => applyController.abort(), 60000)
-      const response = await fetch(`${API_URL}/api/shopify/blockers/apply`, {
+      const response = await fetch(`${API_URL}/api/shopify/apply-action`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
