@@ -810,6 +810,7 @@ export default function Dashboard() {
 
   const initializeUser = async () => {
     try {
+      const initStart = performance.now()
       const { data: { session } } = await supabase.auth.getSession()
       
       if (!session) {
@@ -837,86 +838,104 @@ export default function Dashboard() {
         'Content-Type': 'application/json'
       }
 
-      const profilePromise = fetch(`${API_URL}/api/auth/profile`, { headers: authHeaders })
-      const prefsPromise = fetch(`${API_URL}/api/settings/interface`, { headers: authHeaders })
-      const notifPromise = fetch(`${API_URL}/api/settings/notifications`, { headers: authHeaders })
-      const shopPromise = fetch(`${API_URL}/api/shopify/connection`, { headers: authHeaders })
-      const subPromise = fetch(`${API_URL}/api/subscription/status`, {
-        method: 'POST',
-        headers: authHeaders,
-        body: JSON.stringify({ user_id: session.user.id })
-      })
+      // ⚡ FAST INIT — single API call replaces 5 separate calls
+      const initResp = await fetch(`${API_URL}/api/init`, { headers: authHeaders })
 
-      const [profileResp, prefsResp, notifResp, shopResp, subResp] = await Promise.all([
-        profilePromise,
-        prefsPromise,
-        notifPromise,
-        shopPromise,
-        subPromise
-      ])
+      if (initResp.ok) {
+        const initData = await initResp.json()
+        console.log(`⚡ /api/init loaded in ${initData.elapsed_ms || '?'}ms (cached: ${initData.cached || false})`)
 
-      if (profileResp.ok) {
-        const profileData = await profileResp.json()
-        setProfile(profileData)
-        setProfileFirstName(profileData.first_name || '')
-        setProfileLastName(profileData.last_name || '')
-        setTwoFAEnabled(Boolean(profileData.two_factor_enabled))
-      }
+        // Mark backend as alive so warmupBackend skips redundant pings
+        setBackendHealth({ status: 'ok' })
+        setBackendHealthTs(Date.now())
 
-      if (prefsResp.ok) {
-        const prefsData = await prefsResp.json()
-        if (prefsData.success && prefsData.preferences) {
-          if (prefsData.preferences.language) {
-            setLanguage(prefsData.preferences.language)
+        // Profile
+        if (initData.profile) {
+          setProfile(initData.profile)
+          setProfileFirstName(initData.profile.first_name || '')
+          setProfileLastName(initData.profile.last_name || '')
+          setTwoFAEnabled(Boolean(initData.profile.two_factor_enabled))
+        }
+
+        // Interface preferences
+        if (initData.interface) {
+          if (initData.interface.language) {
+            setLanguage(initData.interface.language)
           }
         }
-      }
 
-      if (notifResp.ok) {
-        const notifData = await notifResp.json()
-        if (notifData.success && notifData.preferences) {
+        // Notifications
+        if (initData.notifications) {
           setNotifications({
-            email_notifications: Boolean(notifData.preferences.email_notifications),
-            analysis_complete: Boolean(notifData.preferences.analysis_complete),
-            weekly_reports: Boolean(notifData.preferences.weekly_reports),
-            billing_updates: Boolean(notifData.preferences.billing_updates)
+            email_notifications: Boolean(initData.notifications.email_notifications),
+            analysis_complete: Boolean(initData.notifications.analysis_complete),
+            weekly_reports: Boolean(initData.notifications.weekly_reports),
+            billing_updates: Boolean(initData.notifications.billing_updates)
           })
         }
-      }
 
-      if (shopResp.ok) {
-        const shopData = await shopResp.json()
-        if (shopData.success && shopData.connection?.shop_domain) {
-          setShopifyUrl(shopData.connection.shop_domain)
+        // Shopify connection
+        if (initData.shopify?.connection?.shop_domain) {
+          setShopifyUrl(initData.shopify.connection.shop_domain)
           setShopifyConnected(true)
         }
-      }
 
-      setLoading(false)
+        setLoading(false)
 
-      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-      let data = subResp.ok ? await subResp.json() : null
-      let attempts = 0
-
-      while ((!data || !data.success || !data.has_subscription) && attempts < 3) {
-        await sleep(1000)
-        const retryResp = await fetch(`${API_URL}/api/subscription/status`, {
+        // Subscription — no retry loop, trust the DB
+        const subData = initData.subscription
+        if (subData && subData.has_subscription) {
+          setSubscription({ success: true, ...subData })
+          console.log(`⚡ Subscription: ${subData.plan} — loading products + analytics in parallel...`)
+          // Load products and analytics IN PARALLEL
+          Promise.all([
+            loadProducts(),
+            loadAnalytics(analyticsRange)
+          ])
+        } else {
+          setSubscriptionMissing(true)
+        }
+      } else {
+        // Fallback to old method if /api/init fails
+        console.warn('⚡ /api/init failed, falling back to individual calls...')
+        const profilePromise = fetch(`${API_URL}/api/auth/profile`, { headers: authHeaders })
+        const shopPromise = fetch(`${API_URL}/api/shopify/connection`, { headers: authHeaders })
+        const subPromise = fetch(`${API_URL}/api/subscription/status`, {
           method: 'POST',
           headers: authHeaders,
           body: JSON.stringify({ user_id: session.user.id })
         })
-        data = retryResp.ok ? await retryResp.json() : null
-        attempts += 1
-      }
 
-      if (data && data.success && data.has_subscription) {
-        setSubscription(data)
-        console.log('Subscription active, loading Shopify products...')
-        loadProducts()
-        loadAnalytics(analyticsRange)
-      } else {
-        setSubscriptionMissing(true)
+        const [profileResp, shopResp, subResp] = await Promise.all([
+          profilePromise, shopPromise, subPromise
+        ])
+
+        if (profileResp.ok) {
+          const profileData = await profileResp.json()
+          setProfile(profileData)
+          setProfileFirstName(profileData.first_name || '')
+          setProfileLastName(profileData.last_name || '')
+        }
+
+        if (shopResp.ok) {
+          const shopData = await shopResp.json()
+          if (shopData.success && shopData.connection?.shop_domain) {
+            setShopifyUrl(shopData.connection.shop_domain)
+            setShopifyConnected(true)
+          }
+        }
+
+        setLoading(false)
+
+        const data = subResp.ok ? await subResp.json() : null
+        if (data && data.success && data.has_subscription) {
+          setSubscription(data)
+          Promise.all([loadProducts(), loadAnalytics(analyticsRange)])
+        } else {
+          setSubscriptionMissing(true)
+        }
       }
+      console.log(`⚡ Total init time: ${Math.round(performance.now() - initStart)}ms`)
     } catch (err) {
       console.error('Error:', err)
       setError('Erreur d\'authentification')
@@ -1936,9 +1955,13 @@ export default function Dashboard() {
   }
 
   const warmupBackend = async (accessToken) => {
+    // ⚡ If backend was already confirmed alive by /api/init (within 5 min), skip warmup entirely
+    if (backendHealth && backendHealthTs && Date.now() - backendHealthTs < 5 * 60 * 1000) {
+      return // Backend already warm, no need to ping again
+    }
     const warmupUrl = `${API_URL}/api/shopify/keep-alive`
     try {
-      await waitForBackendReady({ retries: 8, retryDelayMs: 2000, timeoutMs: 22000 })
+      await waitForBackendReady({ retries: 4, retryDelayMs: 2000, timeoutMs: 15000 })
 
       await fetchJsonWithRetry(warmupUrl, {
         method: 'GET',
@@ -1947,9 +1970,9 @@ export default function Dashboard() {
           'Content-Type': 'application/json'
         }
       }, {
-        retries: 6,
+        retries: 2,
         retryDelayMs: 2000,
-        timeoutMs: 60000,
+        timeoutMs: 20000,
         retryStatuses: [429, 500, 502, 503, 504]
       })
     } catch (err) {
@@ -2204,7 +2227,7 @@ export default function Dashboard() {
     const intervalId = setInterval(() => {
       if (cancelled) return
       probe()
-    }, 60_000)
+    }, 300_000)  // ⚡ Every 5 min instead of 60s — backend already confirmed alive by /api/init
 
     return () => {
       cancelled = true
@@ -2854,7 +2877,11 @@ export default function Dashboard() {
   }
 
   useEffect(() => {
-    if (activeTab === 'overview') {
+    // Skip overview loadAnalytics if we JUST loaded (initializeUser already called it)
+    if (activeTab === 'overview' && analyticsData) {
+      // Already loaded by initializeUser, only reload on range change
+      if (analyticsRange !== '30d') loadAnalytics(analyticsRange)
+    } else if (activeTab === 'overview') {
       loadAnalytics(analyticsRange)
     }
     if (activeTab === 'underperforming') {
@@ -2912,7 +2939,7 @@ export default function Dashboard() {
     }
 
     checkShopifyConnection()
-    intervalId = window.setInterval(checkShopifyConnection, 5 * 60 * 1000)
+    intervalId = window.setInterval(checkShopifyConnection, 10 * 60 * 1000)  // ⚡ Every 10 min instead of 5
 
     return () => {
       if (intervalId) window.clearInterval(intervalId)

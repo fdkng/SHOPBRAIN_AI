@@ -932,12 +932,174 @@ async def get_products(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============ FAST INIT ENDPOINT — replaces 5 parallel calls with 1 ============
+# In-memory caches with TTL
+_init_cache = {}  # key: user_id, value: (timestamp, data)
+_INIT_CACHE_TTL = 120  # 2 minutes
+
+@app.get("/api/init")
+async def fast_init(request: Request):
+    """⚡ Combined init endpoint — returns profile + settings + notifications + shopify + subscription in ONE call.
+    Replaces 5 separate API calls on page load."""
+    user_id = get_user_id(request)
+
+    # Check cache first
+    cached = _init_cache.get(user_id)
+    if cached:
+        cache_ts, cache_data = cached
+        if time.time() - cache_ts < _INIT_CACHE_TTL:
+            print(f"⚡ /api/init cache HIT for {user_id}")
+            return {**cache_data, "cached": True}
+
+    print(f"⚡ /api/init called for {user_id} — fetching all data...")
+    start_time = time.time()
+
+    try:
+        supabase_client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+        # — 1. Profile —
+        profile_data = None
+        try:
+            result = supabase_client.table("user_profiles").select("*").eq("id", user_id).execute()
+            if result.data:
+                p = result.data[0]
+                profile_data = {
+                    "id": p["id"],
+                    "email": p.get("email"),
+                    "first_name": p.get("first_name", ""),
+                    "last_name": p.get("last_name", ""),
+                    "username": p.get("username", ""),
+                    "full_name": f"{p.get('first_name', '')} {p.get('last_name', '')}",
+                    "subscription_plan": p.get("subscription_plan"),
+                    "subscription_status": p.get("subscription_status"),
+                    "created_at": p.get("created_at"),
+                    "avatar_url": p.get("avatar_url"),
+                    "two_factor_enabled": p.get("two_factor_enabled", False),
+                }
+        except Exception as e:
+            print(f"  ⚠️ Profile fetch error: {e}")
+
+        # — 2. Preferences (interface + notifications) — single query to user_preferences
+        interface_prefs = {"dark_mode": True, "language": "fr"}
+        notif_prefs = {
+            "email_notifications": True,
+            "analysis_complete": True,
+            "weekly_reports": True,
+            "billing_updates": True
+        }
+        try:
+            result = supabase_client.table("user_preferences").select("*").eq("user_id", user_id).execute()
+            if result.data:
+                row = result.data[0]
+                interface_prefs = {
+                    "dark_mode": row.get("dark_mode", True),
+                    "language": row.get("language", "fr")
+                }
+                notif_prefs = {
+                    "email_notifications": row.get("email_notifications", True),
+                    "analysis_complete": row.get("analysis_complete", True),
+                    "weekly_reports": row.get("weekly_reports", True),
+                    "billing_updates": row.get("billing_updates", True)
+                }
+        except Exception as e:
+            print(f"  ⚠️ Preferences fetch error: {e}")
+
+        # — 3. Shopify connection —
+        shopify_connection = None
+        try:
+            result = supabase_client.table("shopify_connections").select("shop_domain,created_at,updated_at").eq("user_id", user_id).execute()
+            if result.data:
+                shopify_connection = result.data[0]
+        except Exception as e:
+            print(f"  ⚠️ Shopify connection fetch error: {e}")
+
+        # — 4. Subscription (fast path — DB only, no Stripe calls) —
+        subscription_data = {"has_subscription": False, "plan": "free"}
+        try:
+            filter_str = f'user_id=eq.{user_id}&status=in.(active,trialing,past_due,incomplete,incomplete_expired)'
+            headers = {
+                'Authorization': f'Bearer {SUPABASE_SERVICE_KEY}',
+                'apikey': SUPABASE_SERVICE_KEY,
+                'Content-Type': 'application/json',
+                'Range': '0-0',
+                'Range-Unit': 'items'
+            }
+            resp = requests.get(
+                f'{SUPABASE_URL}/rest/v1/subscriptions?{filter_str}&order=created_at.desc',
+                headers=headers,
+                timeout=5
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                if isinstance(data, list) and len(data) > 0:
+                    sub = data[0]
+                    raw_tier = sub.get('plan_tier') or 'standard'
+                    tier_map = {
+                        '99': 'standard', '199': 'pro', '299': 'premium',
+                        'standard': 'standard', 'pro': 'pro', 'premium': 'premium'
+                    }
+                    plan = tier_map.get(str(raw_tier).lower(), 'standard')
+                    capabilities = {
+                        'standard': {'product_limit': 50, 'features': ['product_analysis', 'title_optimization', 'price_suggestions']},
+                        'pro': {'product_limit': 500, 'features': ['product_analysis', 'content_generation', 'cross_sell', 'reports', 'automated_actions', 'invoicing']},
+                        'premium': {'product_limit': None, 'features': ['product_analysis', 'content_generation', 'cross_sell', 'automated_actions', 'reports', 'predictions', 'invoicing']}
+                    }
+                    subscription_data = {
+                        'has_subscription': True,
+                        'plan': plan,
+                        'status': sub.get('status', 'active'),
+                        'started_at': sub.get('created_at'),
+                        'capabilities': capabilities.get(plan, {})
+                    }
+            # Fallback to user_profiles if no subscription row
+            if not subscription_data.get('has_subscription'):
+                if profile_data and profile_data.get('subscription_plan'):
+                    plan = profile_data['subscription_plan']
+                    if plan and plan != 'free':
+                        capabilities = {
+                            'standard': {'product_limit': 50, 'features': ['product_analysis', 'title_optimization', 'price_suggestions']},
+                            'pro': {'product_limit': 500, 'features': ['product_analysis', 'content_generation', 'cross_sell', 'reports']},
+                            'premium': {'product_limit': None, 'features': ['product_analysis', 'content_generation', 'cross_sell', 'automated_actions', 'reports', 'predictions']}
+                        }
+                        subscription_data = {
+                            'has_subscription': True,
+                            'plan': plan,
+                            'status': profile_data.get('subscription_status', 'active'),
+                            'started_at': profile_data.get('created_at'),
+                            'capabilities': capabilities.get(plan, {})
+                        }
+        except Exception as e:
+            print(f"  ⚠️ Subscription fetch error: {e}")
+
+        elapsed = round((time.time() - start_time) * 1000)
+        print(f"⚡ /api/init completed in {elapsed}ms")
+
+        result = {
+            "success": True,
+            "profile": profile_data,
+            "interface": interface_prefs,
+            "notifications": notif_prefs,
+            "shopify": {"connection": shopify_connection} if shopify_connection else {"connection": None},
+            "subscription": subscription_data,
+            "elapsed_ms": elapsed,
+        }
+
+        # Cache the result
+        _init_cache[user_id] = (time.time(), result)
+
+        return result
+
+    except Exception as e:
+        print(f"❌ /api/init error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/health")
 async def health():
     """Health check endpoint for Render - MUST ALWAYS WORK"""
     return {
         "status": "ok",
-        "version": "2.7-table-fix",
+        "version": "3.0-fast-init",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
                 "openai": "configured" if OPENAI_API_KEY else "not_configured",
