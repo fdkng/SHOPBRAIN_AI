@@ -61,8 +61,14 @@ export default function Dashboard() {
       const stored = localStorage.getItem('chatMessages')
       if (!stored) return []
       const parsed = JSON.parse(stored)
-      return Array.isArray(parsed) ? parsed : []
+      if (!Array.isArray(parsed)) return []
+      // Sanitize: ensure every message has text as a string (never object/undefined)
+      return parsed.map(m => ({
+        ...m,
+        text: typeof m.text === 'string' ? m.text : (m.text ? String(m.text) : '')
+      }))
     } catch {
+      localStorage.removeItem('chatMessages')
       return []
     }
   })
@@ -103,8 +109,21 @@ export default function Dashboard() {
     if (typeof window === 'undefined') return []
     try {
       const stored = localStorage.getItem('chatConversations')
-      return stored ? JSON.parse(stored) : []
-    } catch { return [] }
+      if (!stored) return []
+      const parsed = JSON.parse(stored)
+      if (!Array.isArray(parsed)) return []
+      // Sanitize all conversation messages
+      return parsed.map(c => ({
+        ...c,
+        messages: Array.isArray(c.messages) ? c.messages.map(m => ({
+          ...m,
+          text: typeof m.text === 'string' ? m.text : (m.text ? String(m.text) : '')
+        })) : []
+      }))
+    } catch {
+      localStorage.removeItem('chatConversations')
+      return []
+    }
   })
   const [activeConversationId, setActiveConversationId] = useState(() => {
     if (typeof window === 'undefined') return null
@@ -5784,14 +5803,14 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               ? 'bg-yellow-600 text-black rounded-br-md'
                               : 'bg-[#1a1d27] text-gray-200 rounded-bl-md border border-gray-700/40'
                           }`}>
-                            {msg.images && msg.images.length > 0 && (
+                            {msg.images && Array.isArray(msg.images) && msg.images.length > 0 && (
                               <div className="flex flex-wrap gap-2 mb-2">
                                 {msg.images.map((img, imgIdx) => (
-                                  <img key={imgIdx} src={img} alt="" className="max-w-[200px] max-h-[200px] rounded-lg object-cover border border-gray-600/30" />
+                                  <img key={imgIdx} src={typeof img === 'string' ? img : ''} alt="" className="max-w-[200px] max-h-[200px] rounded-lg object-cover border border-gray-600/30" />
                                 ))}
                               </div>
                             )}
-                            {msg.text}
+                            {typeof msg.text === 'string' ? msg.text : String(msg.text || '')}
                           </div>
                         </div>
                       ))}
