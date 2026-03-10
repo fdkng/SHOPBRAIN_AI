@@ -1248,13 +1248,23 @@ export default function Dashboard() {
   // ============ CHAT SEND ============
   const sendChatMessage = async (directMessage) => {
     const messageToSend = directMessage || chatInput.trim()
-    if (!messageToSend) return
+    if (!messageToSend && chatAttachments.length === 0) return
     
     try {
       setChatLoading(true)
       
-      const userMessage = messageToSend
-      setChatMessages(prev => [...prev, { role: 'user', text: userMessage }])
+      const userMessage = messageToSend || ''
+      // Capture current attachments and clear them immediately
+      const currentAttachments = [...chatAttachments]
+      setChatAttachments([])
+      
+      // Build user message object with optional image previews for display
+      const userMsgObj = { role: 'user', text: userMessage }
+      if (currentAttachments.length > 0) {
+        userMsgObj.images = currentAttachments.filter(a => a.preview).map(a => a.preview)
+        userMsgObj.attachmentNames = currentAttachments.map(a => a.name)
+      }
+      setChatMessages(prev => [...prev, userMsgObj])
       setChatInput('')
       // Shrink textarea back to default
       setChatTextareaFocused(false)
@@ -1263,11 +1273,11 @@ export default function Dashboard() {
       // Auto-create conversation on first message
       if (!activeConversationId) {
         const newId = Date.now().toString()
-        const title = userMessage.slice(0, 40) + (userMessage.length > 40 ? '...' : '')
+        const title = (userMessage || 'Image').slice(0, 40) + ((userMessage || '').length > 40 ? '...' : '')
         const newConv = {
           id: newId,
           title,
-          messages: [{ role: 'user', text: userMessage }],
+          messages: [userMsgObj],
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         }
@@ -1278,13 +1288,21 @@ export default function Dashboard() {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) throw new Error('Session expirée')
 
+      // Build payload with images if attached
+      const chatPayload = { message: userMessage || 'Analyse cette image.' }
+      if (currentAttachments.length > 0) {
+        chatPayload.images = currentAttachments
+          .filter(a => a.preview && a.type?.startsWith('image/'))
+          .map(a => a.preview)
+      }
+
       const resp = await fetch(`${API_URL}/api/ai/chat`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ message: userMessage })
+        body: JSON.stringify(chatPayload)
       })
       const data = await resp.json()
 
@@ -5739,6 +5757,13 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               ? 'bg-yellow-600 text-black rounded-br-md'
                               : 'bg-[#1a1d27] text-gray-200 rounded-bl-md border border-gray-700/40'
                           }`}>
+                            {msg.images && msg.images.length > 0 && (
+                              <div className="flex flex-wrap gap-2 mb-2">
+                                {msg.images.map((img, imgIdx) => (
+                                  <img key={imgIdx} src={img} alt="" className="max-w-[200px] max-h-[200px] rounded-lg object-cover border border-gray-600/30" />
+                                ))}
+                              </div>
+                            )}
                             {msg.text}
                           </div>
                         </div>

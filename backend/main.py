@@ -6214,6 +6214,7 @@ Réponds uniquement avec du JSON valide, sans markdown ni commentaires."""
 class ChatRequest(BaseModel):
     message: str
     context: str = None  # Optionnel: contexte (ex: product_id, store info)
+    images: list[str] = []  # Optional: base64 data URIs of images
 
 
 @app.post("/api/ai/chat")
@@ -6247,6 +6248,20 @@ async def chat_with_ai(req: ChatRequest, request: Request):
         if context:
             full_message = f"Contexte: {context}\n\nQuestion: {message}"
         
+        # Build user content: text only or text + images (vision)
+        images = req.images or []
+        if images:
+            user_content = []
+            user_content.append({"type": "text", "text": full_message})
+            for img_data_uri in images[:5]:  # Max 5 images
+                if img_data_uri.startswith("data:"):
+                    user_content.append({
+                        "type": "image_url",
+                        "image_url": {"url": img_data_uri, "detail": "low"}
+                    })
+        else:
+            user_content = full_message
+        
         # OpenAI 1.0+ API - utiliser le client
         print(f"🔍 Creating OpenAI client with API key starting with: {OPENAI_API_KEY[:10]}...")
         client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
@@ -6256,7 +6271,7 @@ async def chat_with_ai(req: ChatRequest, request: Request):
                 model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": full_message}
+                    {"role": "user", "content": user_content}
                 ],
                 max_tokens=4000,
                 temperature=0.7
