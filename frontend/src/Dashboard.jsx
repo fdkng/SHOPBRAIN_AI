@@ -1293,7 +1293,9 @@ export default function Dashboard() {
 
   // ============ CHAT SEND ============
   const sendChatMessage = async (directMessage) => {
-    const messageToSend = directMessage || chatInput.trim()
+    // Guard: if directMessage is a React event or non-string, ignore it
+    const rawMessage = (typeof directMessage === 'string') ? directMessage : ''
+    const messageToSend = rawMessage || chatInput.trim()
     if (!messageToSend && chatAttachments.length === 0) return
     
     try {
@@ -5985,7 +5987,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     ) : chatInput.trim() ? (
                       /* Send button */
                       <button
-                        onClick={sendChatMessage}
+                        onClick={() => sendChatMessage()}
                         disabled={chatLoading}
                         className="p-1.5 text-yellow-500 hover:text-yellow-400 disabled:text-gray-600 transition-colors shrink-0"
                         title="Envoyer"
