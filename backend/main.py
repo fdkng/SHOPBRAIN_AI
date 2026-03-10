@@ -6250,25 +6250,46 @@ async def chat_with_ai(req: ChatRequest, request: Request):
         
         # Build user content: text only or text + images (vision)
         images = req.images or []
+        print(f"📷 Images received: {len(images)} image(s)")
         if images:
+            # Add vision capability instruction to system prompt
+            vision_instruction = (
+                "\n\n========================================\n"
+                "CAPACITÉ VISION / IMAGES\n"
+                "========================================\n"
+                "Tu as la capacité de VOIR et ANALYSER les images envoyées par l'utilisateur.\n"
+                "Quand une image est jointe, tu DOIS:\n"
+                "1. Décrire ce que tu vois dans l'image en détail\n"
+                "2. Identifier les objets, textes, couleurs, produits visibles\n"
+                "3. Si c'est un produit e-commerce: analyser la qualité de la photo, le staging, et donner des conseils\n"
+                "4. Si l'utilisateur pose une question sur l'image, répondre spécifiquement à ce qu'il demande\n"
+                "5. NE JAMAIS dire que tu ne peux pas voir les images — tu PEUX les voir et les analyser\n"
+            )
+            system_prompt = system_prompt + vision_instruction
+            
             user_content = []
             user_content.append({"type": "text", "text": full_message})
+            valid_images = 0
             for img_data_uri in images[:5]:  # Max 5 images
                 if img_data_uri.startswith("data:"):
                     user_content.append({
                         "type": "image_url",
-                        "image_url": {"url": img_data_uri, "detail": "low"}
+                        "image_url": {"url": img_data_uri, "detail": "auto"}
                     })
+                    valid_images += 1
+            print(f"📷 Valid base64 images added to content: {valid_images}")
         else:
             user_content = full_message
         
         # OpenAI 1.0+ API - utiliser le client
-        print(f"🔍 Creating OpenAI client with API key starting with: {OPENAI_API_KEY[:10]}...")
+        # Use gpt-4o for vision (better image analysis), gpt-4o-mini for text-only
+        chat_model = "gpt-4o" if images else "gpt-4o-mini"
+        print(f"🔍 Creating OpenAI client (model={chat_model}, has_images={bool(images)}) with API key starting with: {OPENAI_API_KEY[:10]}...")
         client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
         print(f"✅ OpenAI client created")
         try:
             response = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=chat_model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_content}
@@ -6276,16 +6297,16 @@ async def chat_with_ai(req: ChatRequest, request: Request):
                 max_tokens=4000,
                 temperature=0.7
             )
-            print(f"✅ OpenAI response received")
+            print(f"✅ OpenAI response received (model={chat_model})")
             assistant_message = response.choices[0].message.content.strip()
         except Exception as ce:
             print(f"⚠️ OpenAI client call failed: {type(ce).__name__}: {str(ce)}. Trying direct HTTP fallback...")
             try:
                 payload = {
-                    "model": "gpt-4o-mini",
+                    "model": chat_model,
                     "messages": [
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": full_message}
+                        {"role": "user", "content": user_content}
                     ],
                     "max_tokens": 4000,
                     "temperature": 0.7
