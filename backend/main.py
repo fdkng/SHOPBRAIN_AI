@@ -3835,7 +3835,7 @@ async def get_shopify_market_status(request: Request):
 
 
 @app.get("/api/shopify/rewrite")
-async def get_shopify_rewrite(request: Request, product_id: str):
+async def get_shopify_rewrite(request: Request, product_id: str, instructions: str | None = None):
     """Réécriture intelligente d'un produit spécifique."""
     user_id = get_user_id(request)
     tier = get_user_tier(user_id)
@@ -3884,6 +3884,7 @@ async def get_shopify_rewrite(request: Request, product_id: str):
             client = OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY)
 
             # Generate title
+            custom_instructions_block = f"\n\nInstructions spéciales du client:\n{instructions}" if instructions else ""
             title_resp = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
@@ -3902,7 +3903,7 @@ Contraintes strictes:
 - 1 seul titre final
 - Clair, précis, orienté bénéfice
 - NE JAMAIS inclure le prix dans le titre (pas de €, pas de $, pas de montant)
-- N'invente pas de caractéristiques non présentes dans le contexte
+- N'invente pas de caractéristiques non présentes dans le contexte{custom_instructions_block}
 
 Nouveau titre:"""}
                 ],
@@ -3932,7 +3933,7 @@ Exigences:
 - N'invente pas de caractéristiques non présentes
 - Ton: storytelling captivant avec émotions
 - Sans emojis, sans markdown
-- Longueur: 300-500 mots
+- Longueur: 300-500 mots{custom_instructions_block}
 
 Structure HTML simple:
 1) <p><strong>Accroche</strong> ...</p>

@@ -157,6 +157,7 @@ export default function Dashboard() {
     return localStorage.getItem('shopCurrencyCache') || ''
   })
   const [rewriteProductId, setRewriteProductId] = useState('')
+  const [rewriteInstructions, setRewriteInstructions] = useState('')
   const [blockersData, setBlockersData] = useState(null)
   const [blockersLoading, setBlockersLoading] = useState(false)
   const [underperformingData, setUnderperformingData] = useState(null)
@@ -2464,7 +2465,8 @@ export default function Dashboard() {
         }
         const rewriteController = new AbortController()
         const rewriteTimeout = setTimeout(() => rewriteController.abort(), 120000)
-        const response = await fetch(`${API_URL}/api/shopify/rewrite?product_id=${encodeURIComponent(options.productId)}`, {
+        const instructionsParam = options.instructions ? `&instructions=${encodeURIComponent(options.instructions)}` : ''
+        const response = await fetch(`${API_URL}/api/shopify/rewrite?product_id=${encodeURIComponent(options.productId)}${instructionsParam}`, {
           method: 'GET',
           headers: {
             'Authorization': `Bearer ${session.access_token}`,
@@ -4001,13 +4003,24 @@ analytics.subscribe("product_added_to_cart", (event) => {
                   ))}
                 </select>
                 <button
-                  onClick={() => runActionAnalysis('action-rewrite', { productId: rewriteProductId })}
+                  onClick={() => runActionAnalysis('action-rewrite', { productId: rewriteProductId, instructions: rewriteInstructions })}
                   disabled={insightsLoading || !rewriteProductId}
                   className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
                 >
                   {insightsLoading ? 'Analyse en cours...' : 'Lancer l\'analyse de réécriture'}
                 </button>
               </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-400 mb-1">📝 Instructions personnalisées (optionnel)</label>
+              <textarea
+                value={rewriteInstructions}
+                onChange={(e) => setRewriteInstructions(e.target.value)}
+                placeholder="Ex: Ton humoristique, mentionne la livraison gratuite, cibler les jeunes mamans, utiliser un vocabulaire luxe..."
+                className="w-full bg-gray-900 border border-gray-700 text-white text-sm rounded-lg px-3 py-2 min-h-[80px] resize-y placeholder-gray-600 focus:border-green-500 focus:ring-1 focus:ring-green-500 outline-none"
+                rows={3}
+              />
+              <p className="text-xs text-gray-600 mt-1">L'IA prendra ces instructions en compte pour générer le titre et la description.</p>
             </div>
             {renderStatus('action-rewrite')}
             {insightsData?.rewrite_ai?.notes?.length ? (
