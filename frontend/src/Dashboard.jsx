@@ -693,13 +693,40 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      localStorage.setItem('chatMessages', JSON.stringify(chatMessages.slice(-50)))
+      try {
+        // Strip base64 images before persisting to avoid localStorage quota crash
+        const messagesForStorage = chatMessages.slice(-50).map(m => {
+          if (m.images) {
+            const { images, ...rest } = m
+            return { ...rest, hadImages: true }
+          }
+          return m
+        })
+        localStorage.setItem('chatMessages', JSON.stringify(messagesForStorage))
+      } catch (e) {
+        console.warn('Could not save chat messages to localStorage:', e)
+      }
     }
   }, [chatMessages])
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      localStorage.setItem('chatConversations', JSON.stringify(chatConversations))
+      try {
+        // Strip base64 images from conversation messages before persisting
+        const convsForStorage = chatConversations.map(c => ({
+          ...c,
+          messages: (c.messages || []).map(m => {
+            if (m.images) {
+              const { images, ...rest } = m
+              return { ...rest, hadImages: true }
+            }
+            return m
+          })
+        }))
+        localStorage.setItem('chatConversations', JSON.stringify(convsForStorage))
+      } catch (e) {
+        console.warn('Could not save chat conversations to localStorage:', e)
+      }
     }
   }, [chatConversations])
 
