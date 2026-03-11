@@ -826,6 +826,23 @@ export default function Dashboard() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [chatMessages, chatLoading])
 
+  // ⚡ Scroll to bottom when chat panel OPENS (or conversation changes)
+  useEffect(() => {
+    if (showChatPanel && chatMessages.length > 0) {
+      // Use multiple delays to ensure DOM is fully rendered before scrolling
+      const t1 = setTimeout(() => {
+        chatEndRef.current?.scrollIntoView({ behavior: 'auto' })
+      }, 50)
+      const t2 = setTimeout(() => {
+        chatEndRef.current?.scrollIntoView({ behavior: 'auto' })
+      }, 200)
+      const t3 = setTimeout(() => {
+        chatEndRef.current?.scrollIntoView({ behavior: 'auto' })
+      }, 500)
+      return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3) }
+    }
+  }, [showChatPanel, activeConversationId])
+
   const initializeUser = async () => {
     try {
       const initStart = performance.now()
