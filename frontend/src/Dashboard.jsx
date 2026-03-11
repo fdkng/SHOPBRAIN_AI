@@ -3553,23 +3553,7 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
-                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-4">Pipeline IA</h4>
-                <div className="space-y-3 text-sm">
-                  {[
-                    { label: 'Titres', value: '—', status: 'Actif' },
-                    { label: 'Descriptions', value: '—', status: 'Programmé' },
-                    { label: 'Prix', value: '—', status: 'En cours' },
-                    { label: 'Images', value: '—', status: 'Bloqué' }
-                  ].map((row) => (
-                    <div key={row.label} className="flex items-center justify-between text-gray-300">
-                      <span>{row.label}</span>
-                      <span className="text-gray-500">{row.value} • {row.status}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
                 <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-4">Alertes critiques</h4>
                 <ul className="space-y-3 text-sm text-gray-300">
@@ -3586,35 +3570,6 @@ export default function Dashboard() {
                     <span className="text-yellow-300">11</span>
                   </li>
                 </ul>
-              </div>
-              <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
-                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-4">Health Score</h4>
-                <p className="text-3xl font-bold text-white">92</p>
-                <p className="text-xs text-gray-500 mt-1">Global shop score</p>
-                <div className="mt-4 space-y-2 text-sm text-gray-300">
-                  <div className="flex items-center justify-between"><span>Ventes</span><span className="text-gray-500">A</span></div>
-                  <div className="flex items-center justify-between"><span>Catalogue</span><span className="text-gray-500">A-</span></div>
-                  <div className="flex items-center justify-between"><span>Contenu</span><span className="text-gray-500">B+</span></div>
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-4">Répartition revenus</h4>
-                <div className="space-y-3 text-sm text-gray-300">
-                  <div className="flex items-center justify-between"><span>Top 10 produits</span><span className="text-gray-500">62%</span></div>
-                  <div className="flex items-center justify-between"><span>Collections long tail</span><span className="text-gray-500">28%</span></div>
-                  <div className="flex items-center justify-between"><span>Nouvelle saison</span><span className="text-gray-500">10%</span></div>
-                </div>
-              </div>
-              <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-4">Segmentation clients</h4>
-                <div className="space-y-3 text-sm text-gray-300">
-                  <div className="flex items-center justify-between"><span>Nouveaux</span><span className="text-gray-500">46%</span></div>
-                  <div className="flex items-center justify-between"><span>Récurrents</span><span className="text-gray-500">38%</span></div>
-                  <div className="flex items-center justify-between"><span>VIP</span><span className="text-gray-500">16%</span></div>
-                </div>
               </div>
             </div>
             </div>
@@ -3639,40 +3594,7 @@ export default function Dashboard() {
                   </div>
                 </div>
               </div>
-              <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700">
-                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-3">AI Radar</h4>
-                <div className="space-y-3 text-sm text-gray-300">
-                  <div className="flex items-center justify-between">
-                    <span>Opportunités prix</span>
-                    <span className="text-gray-500">—</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>Descriptions à revoir</span>
-                    <span className="text-gray-500">—</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>Images critiques</span>
-                    <span className="text-gray-500">—</span>
-                  </div>
-                </div>
-              </div>
-              <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700">
-                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-3">Next Moves</h4>
-                <ul className="space-y-3 text-sm text-gray-300">
-                  <li className="flex items-center justify-between">
-                    <span>Relancer les prix</span>
-                    <span className="text-gray-500">À planifier</span>
-                  </li>
-                  <li className="flex items-center justify-between">
-                    <span>Optimiser les titres</span>
-                    <span className="text-gray-500">À planifier</span>
-                  </li>
-                  <li className="flex items-center justify-between">
-                    <span>Créer rapport hebdo</span>
-                    <span className="text-gray-500">Automatique</span>
-                  </li>
-                </ul>
-              </div>
+
             </div>
           </div>
         )}
