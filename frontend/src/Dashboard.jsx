@@ -58,6 +58,24 @@ export default function Dashboard() {
   const [chatMessages, setChatMessages] = useState(() => {
     if (typeof window === 'undefined') return []
     try {
+      // First try to load from active conversation (most reliable)
+      const activeId = localStorage.getItem('activeConversationId')
+      if (activeId) {
+        const convStored = localStorage.getItem('chatConversations')
+        if (convStored) {
+          const convs = JSON.parse(convStored)
+          if (Array.isArray(convs)) {
+            const activeConv = convs.find(c => c.id === activeId)
+            if (activeConv && Array.isArray(activeConv.messages) && activeConv.messages.length > 0) {
+              return activeConv.messages.map(m => ({
+                ...m,
+                text: typeof m.text === 'string' ? m.text : (m.text ? String(m.text) : '')
+              }))
+            }
+          }
+        }
+      }
+      // Fallback to flat chatMessages
       const stored = localStorage.getItem('chatMessages')
       if (!stored) return []
       const parsed = JSON.parse(stored)
@@ -1045,9 +1063,18 @@ export default function Dashboard() {
         c.id === activeConversationId ? { ...c, messages: chatMessages, updatedAt: new Date().toISOString() } : c
       ))
     }
-    setChatMessages(conv.messages || [])
+    // Sanitize messages before loading
+    const sanitizedMessages = (conv.messages || []).map(m => ({
+      ...m,
+      text: typeof m.text === 'string' ? m.text : (m.text ? String(m.text) : '')
+    }))
+    setChatMessages(sanitizedMessages)
     setActiveConversationId(conv.id)
     setShowConversationMenu(false)
+    // Scroll to bottom after messages render
+    setTimeout(() => {
+      if (chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: 'smooth' })
+    }, 50)
   }
 
   const renameConversation = (convId, newTitle) => {
@@ -5627,7 +5654,13 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
           {/* ====== FAB Bouton Assistant IA ====== */}
           <button
-            onClick={() => setShowChatPanel(true)}
+            onClick={() => {
+              setShowChatPanel(true)
+              // Scroll to bottom if conversation has messages
+              setTimeout(() => {
+                if (chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: 'auto' })
+              }, 100)
+            }}
             className="fixed bottom-6 right-6 z-40 group"
             title="Assistant IA"
           >
