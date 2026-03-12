@@ -6428,12 +6428,15 @@ async def chat_with_ai(req: ChatRequest, request: Request):
                 "CAPACITÉ VISION / IMAGES\n"
                 "========================================\n"
                 "Tu as la capacité de VOIR et ANALYSER les images envoyées par l'utilisateur.\n"
-                "Quand une image est jointe, tu DOIS:\n"
-                "1. Décrire ce que tu vois dans l'image en détail\n"
-                "2. Identifier les objets, textes, couleurs, produits visibles\n"
-                "3. Si c'est un produit e-commerce: analyser la qualité de la photo, le staging, et donner des conseils\n"
-                "4. Si l'utilisateur pose une question sur l'image, répondre spécifiquement à ce qu'il demande\n"
-                "5. NE JAMAIS dire que tu ne peux pas voir les images — tu PEUX les voir et les analyser\n"
+                "RÈGLES IMPORTANTES pour les images :\n"
+                "1. NE DÉCRIS PAS l'image systématiquement. L'utilisateur sait ce qu'il a envoyé.\n"
+                "2. RÉPONDS DIRECTEMENT à la question de l'utilisateur en utilisant l'image comme contexte.\n"
+                "3. Si l'utilisateur demande un prix, analyse le produit dans l'image et suggère un prix basé sur le marché.\n"
+                "4. Si l'utilisateur demande des conseils, donne des conseils concrets basés sur ce que tu vois.\n"
+                "5. Analyse le produit visible : estime sa catégorie, sa qualité, sa marque potentielle, et compare avec le marché.\n"
+                "6. NE JAMAIS dire que tu ne peux pas voir les images — tu PEUX les voir et les analyser.\n"
+                "7. Si l'utilisateur envoie JUSTE une image sans question précise, donne une brève analyse e-commerce \n"
+                "   (estimation de prix, positionnement marché, conseils de vente) SANS décrire l'image en détail.\n"
             )
             system_prompt = system_prompt + vision_instruction
             
