@@ -161,7 +161,7 @@ export default function Dashboard() {
   const [voiceDictationMode, setVoiceDictationMode] = useState(false)
   const [voiceDictationTranscript, setVoiceDictationTranscript] = useState('')
   const voiceWaveIntervalRef = useRef(null)
-  const [voiceWaveBars, setVoiceWaveBars] = useState(Array(5).fill(4))
+  const [voiceWaveBars, setVoiceWaveBars] = useState(Array(48).fill(2))
   const audioContextRef = useRef(null)
   const analyserRef = useRef(null)
   const mediaStreamRef = useRef(null)
@@ -1170,7 +1170,8 @@ export default function Dashboard() {
     setChatAttachments(prev => prev.filter((_, i) => i !== idx))
   }
 
-  // Start waveform animation (ChatGPT-style: 5 large bars, center tallest, voice-reactive)
+  // Start waveform animation (ChatGPT-style: dense bars across full width, voice-reactive)
+  const NUM_WAVE_BARS = 48
   const startWaveAnimation = async () => {
     stopWaveAnimation()
     try {
@@ -1181,30 +1182,28 @@ export default function Dashboard() {
       const source = audioCtx.createMediaStreamSource(stream)
       const analyser = audioCtx.createAnalyser()
       analyser.fftSize = 256
-      analyser.smoothingTimeConstant = 0.75
+      analyser.smoothingTimeConstant = 0.7
       source.connect(analyser)
       analyserRef.current = analyser
       const dataArray = new Uint8Array(analyser.frequencyBinCount)
-      // Weight multipliers: edge bars shorter, center bar tallest (ChatGPT style)
-      const barWeights = [0.6, 0.85, 1.0, 0.85, 0.6]
-      const smoothBars = [4, 4, 4, 4, 4]
+      const smoothBars = new Array(NUM_WAVE_BARS).fill(2)
+      // Pre-compute a bell-curve weight: center bars taller, edges shorter
+      const bellWeights = Array.from({ length: NUM_WAVE_BARS }, (_, i) => {
+        const x = (i - NUM_WAVE_BARS / 2) / (NUM_WAVE_BARS / 2)
+        return 0.3 + 0.7 * Math.exp(-2.5 * x * x)
+      })
       const updateBars = () => {
         analyser.getByteFrequencyData(dataArray)
-        // Compute RMS volume from frequency data
-        let sum = 0
-        for (let i = 0; i < dataArray.length; i++) sum += dataArray[i]
-        const avg = sum / dataArray.length // 0-255
-        const normalized = avg / 255 // 0-1
-        // Map to bar heights: idle = 4px, max = 60px
-        const maxH = 60
-        const minH = 4
-        for (let i = 0; i < 5; i++) {
-          const target = minH + (normalized * (maxH - minH) * barWeights[i])
-          // Add slight random variation per bar for organic feel
-          const jitter = (Math.random() - 0.5) * 6 * normalized
-          const targetWithJitter = Math.max(minH, Math.min(maxH, target + jitter))
-          // Smooth interpolation (spring-like)
-          smoothBars[i] = smoothBars[i] + (targetWithJitter - smoothBars[i]) * 0.35
+        const binSize = Math.floor(dataArray.length / NUM_WAVE_BARS)
+        for (let i = 0; i < NUM_WAVE_BARS; i++) {
+          // Average a slice of the frequency spectrum for this bar
+          let sum = 0
+          const start = i * binSize
+          for (let j = start; j < start + binSize && j < dataArray.length; j++) sum += dataArray[j]
+          const avg = sum / binSize / 255 // 0-1
+          const target = 2 + avg * 28 * bellWeights[i] // 2px idle, ~30px max
+          const jitter = (Math.random() - 0.5) * 3 * avg
+          smoothBars[i] = smoothBars[i] + (Math.max(2, Math.min(30, target + jitter)) - smoothBars[i]) * 0.4
         }
         setVoiceWaveBars([...smoothBars])
         waveAnimFrameRef.current = requestAnimationFrame(updateBars)
@@ -1213,7 +1212,12 @@ export default function Dashboard() {
     } catch (err) {
       console.warn('AudioContext waveform not available, falling back to random:', err)
       voiceWaveIntervalRef.current = setInterval(() => {
-        setVoiceWaveBars([0.6, 0.85, 1.0, 0.85, 0.6].map(w => 4 + Math.random() * 40 * w))
+        const bars = Array.from({ length: NUM_WAVE_BARS }, (_, i) => {
+          const x = (i - NUM_WAVE_BARS / 2) / (NUM_WAVE_BARS / 2)
+          const bell = 0.3 + 0.7 * Math.exp(-2.5 * x * x)
+          return 2 + Math.random() * 20 * bell
+        })
+        setVoiceWaveBars(bars)
       }, 100)
     }
   }
@@ -1223,7 +1227,7 @@ export default function Dashboard() {
     if (analyserRef.current) { analyserRef.current = null }
     if (audioContextRef.current) { try { audioContextRef.current.close() } catch {}; audioContextRef.current = null }
     if (mediaStreamRef.current) { mediaStreamRef.current.getTracks().forEach(t => t.stop()); mediaStreamRef.current = null }
-    setVoiceWaveBars(Array(5).fill(4))
+    setVoiceWaveBars(Array(NUM_WAVE_BARS).fill(2))
   }
 
   // ── OpenAI Whisper transcription helper ──
@@ -5874,16 +5878,16 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                     {/* Waveform OR Textarea */}
                     {voiceDictationMode ? (
-                      /* ChatGPT-style animated waveform — 5 large bars */
-                      <div className="flex-1 flex items-center justify-center gap-[6px] h-11 px-4">
+                      /* ChatGPT-style dense waveform across full width */
+                      <div className="flex-1 flex items-center justify-center gap-[2px] h-11 px-1 overflow-hidden">
                         {voiceWaveBars.map((h, i) => (
                           <div
                             key={i}
-                            className="w-[4px] rounded-full transition-[height] duration-[80ms] ease-out"
+                            className="w-[2px] min-w-[2px] rounded-full"
                             style={{
                               height: `${Math.round(h)}px`,
-                              background: '#9ca3af',
-                              opacity: 0.7 + (h / 60) * 0.3
+                              background: '#d1d5db',
+                              transition: 'height 60ms ease-out'
                             }}
                           />
                         ))}
@@ -5926,23 +5930,14 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                     {/* Right buttons */}
                     {voiceDictationMode ? (
-                      /* ✕ Cancel + ✓ Confirm */
-                      <div className="flex items-center gap-1 shrink-0">
-                        <button
-                          onClick={cancelDictation}
-                          className="p-1.5 text-gray-500 hover:text-gray-300 transition-colors"
-                          title="Annuler"
-                        >
-                          <svg width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-                        </button>
-                        <button
-                          onClick={confirmDictation}
-                          className="p-1.5 text-yellow-500 hover:text-yellow-400 transition-colors"
-                          title="Confirmer"
-                        >
-                          <svg width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M3 8L6.5 11.5L13 4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                        </button>
-                      </div>
+                      /* Single stop button (ChatGPT-style) — auto-confirms */
+                      <button
+                        onClick={confirmDictation}
+                        className="shrink-0 w-8 h-8 flex items-center justify-center bg-gray-600 hover:bg-gray-500 rounded-full transition-colors"
+                        title="Arrêter"
+                      >
+                        <div className="w-3 h-3 bg-white rounded-sm" />
+                      </button>
                     ) : chatInput.trim() ? (
                       /* Send button */
                       <button
