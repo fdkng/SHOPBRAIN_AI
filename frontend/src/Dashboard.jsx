@@ -1231,27 +1231,84 @@ export default function Dashboard() {
     setVoiceWaveBars(Array(NUM_WAVE_BARS).fill(2))
   }
 
+  // ── Downsample audio blob to mono 16kHz WAV for fast Whisper upload ──
+  const downsampleToWav = async (audioBlob) => {
+    try {
+      const arrayBuf = await audioBlob.arrayBuffer()
+      const offlineCtx = new OfflineAudioContext(1, 1, 16000) // temp, replaced below
+      const decoded = await offlineCtx.decodeAudioData !== undefined
+        ? await new AudioContext().decodeAudioData(arrayBuf)
+        : null
+      if (!decoded) return audioBlob // fallback
+      const duration = decoded.duration
+      const targetSR = 16000
+      const offCtx = new OfflineAudioContext(1, Math.ceil(duration * targetSR), targetSR)
+      const source = offCtx.createBufferSource()
+      source.buffer = decoded
+      source.connect(offCtx.destination)
+      source.start(0)
+      const rendered = await offCtx.startRendering()
+      const pcm = rendered.getChannelData(0)
+      // Build WAV
+      const wavBuf = new ArrayBuffer(44 + pcm.length * 2)
+      const view = new DataView(wavBuf)
+      const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)) }
+      writeStr(0, 'RIFF')
+      view.setUint32(4, 36 + pcm.length * 2, true)
+      writeStr(8, 'WAVE')
+      writeStr(12, 'fmt ')
+      view.setUint32(16, 16, true)
+      view.setUint16(20, 1, true)
+      view.setUint16(22, 1, true)
+      view.setUint32(24, targetSR, true)
+      view.setUint32(28, targetSR * 2, true)
+      view.setUint16(32, 2, true)
+      view.setUint16(34, 16, true)
+      writeStr(36, 'data')
+      view.setUint32(40, pcm.length * 2, true)
+      for (let i = 0; i < pcm.length; i++) {
+        const s = Math.max(-1, Math.min(1, pcm[i]))
+        view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true)
+      }
+      const wavBlob = new Blob([wavBuf], { type: 'audio/wav' })
+      console.log(`STT: downsampled ${audioBlob.size} bytes webm → ${wavBlob.size} bytes wav (16kHz mono)`)
+      return wavBlob
+    } catch (e) {
+      console.warn('STT: downsample failed, using original blob', e)
+      return audioBlob
+    }
+  }
+
   // ── OpenAI Whisper transcription helper ──
-  const transcribeWithWhisper = async (audioBlob) => {
+  const transcribeWithWhisper = async (audioBlob, accessToken) => {
     try {
       console.log('STT: transcribeWithWhisper called, blob size=', audioBlob ? audioBlob.size : null)
       const sttStart = Date.now()
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) return null
+      // Downsample to small mono 16kHz WAV
+      const smallBlob = await downsampleToWav(audioBlob)
+      console.log(`STT: downsample took ${Date.now() - sttStart}ms`)
+      // Use pre-fetched token or fetch now
+      let token = accessToken
+      if (!token) {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session) return null
+        token = session.access_token
+      }
       const formData = new FormData()
-      formData.append('audio', audioBlob, 'recording.webm')
+      const ext = smallBlob.type.includes('wav') ? 'wav' : 'webm'
+      formData.append('audio', smallBlob, `recording.${ext}`)
       const uploadStart = Date.now()
       const response = await fetch(`${API_URL}/api/ai/stt`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${session.access_token}` },
+        headers: { 'Authorization': `Bearer ${token}` },
         body: formData
       })
       const uploadEnd = Date.now()
-      console.log(`STT: upload time ${(uploadEnd - uploadStart)}ms`)
+      console.log(`STT: upload+server time ${(uploadEnd - uploadStart)}ms`)
       if (!response.ok) throw new Error(`STT API error: ${response.status}`)
       const data = await response.json()
       const sttEnd = Date.now()
-      console.log(`STT: total time ${(sttEnd - sttStart)}ms (includes server processing)`)
+      console.log(`STT: total time ${(sttEnd - sttStart)}ms`)
       return data.success ? data.text : null
     } catch (err) {
       console.warn('Whisper STT failed:', err)
@@ -1290,7 +1347,7 @@ export default function Dashboard() {
         recorder.onstop = finish
         try { recorder.requestData() } catch {}
         try { recorder.stop() } catch { finish() }
-        setTimeout(finish, 1500)
+        setTimeout(finish, 500)
       } else {
         mediaRecorderRef.current = null
         resolve()
@@ -1324,19 +1381,23 @@ export default function Dashboard() {
     dictationActiveRef.current = false
     if (voiceRecognitionRef.current) try { voiceRecognitionRef.current.stop() } catch {}
     setVoiceTranscribing(true)
+    // Pre-fetch auth token IN PARALLEL with stopping the recorder (saves ~200ms)
+    const sessionPromise = supabase.auth.getSession()
     // Wait for MediaRecorder to finalize all chunks
     await stopMediaRecorder()
     // Get the audio blob BEFORE killing the stream
-    let audioBlob = getRecordedBlob()
-    if (!audioBlob || audioBlob.size < 1000) {
-      await new Promise(resolve => setTimeout(resolve, 150))
-      audioBlob = getRecordedBlob()
-    }
+    const audioBlob = getRecordedBlob()
     // Stop waveform while we transcribe
     stopWaveAnimation()
+    // Get pre-fetched token
+    let accessToken = null
+    try {
+      const { data: { session } } = await sessionPromise
+      accessToken = session?.access_token || null
+    } catch {}
     // Transcribe with Whisper
-    if (audioBlob && audioBlob.size > 1000) {
-      const text = await transcribeWithWhisper(audioBlob)
+    if (audioBlob && audioBlob.size > 500) {
+      const text = await transcribeWithWhisper(audioBlob, accessToken)
       if (text) setChatInput(prev => (prev ? prev + ' ' : '') + text)
     } else {
       console.warn('STT skipped: empty or too small audio blob')
