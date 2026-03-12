@@ -155,3 +155,25 @@ h1, h2, h3, h4, h5, h6 {
     linear-gradient(to right, rgba(255, 255, 255, 0.1) 1px, transparent 1px),
     linear-gradient(to bottom, rgba(255, 255, 255, 0.1) 1px, transparent 1px);
 }
+
+/* Fix auth modal inputs: dark theme overrides make text-gray-900 near-white,
+   but browser default input bg is white → invisible text. Force dark input bg. */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="url"],
+input[type="tel"],
+textarea,
+select {
+  background-color: #1a2232 !important;
+  color: #f4f7fb !important;
+  border-color: #2a3446 !important;
+}
+input::placeholder,
+textarea::placeholder {
+  color: #8b98ae !important;
+}
+/* Auth modal bg-gray-100 toggle bar */
+.bg-gray-100 {
+  background-color: #141b27;
+}

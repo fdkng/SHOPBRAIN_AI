@@ -45,6 +45,7 @@ export default function Dashboard() {
   const [isProcessingPayment, setIsProcessingPayment] = useState(false)
   const [showPlanMenu, setShowPlanMenu] = useState(false)
   const [showProfileMenu, setShowProfileMenu] = useState(false)
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
   const [showSettingsModal, setShowSettingsModal] = useState(false)
   const [settingsTab, setSettingsTab] = useState(() => {
     if (typeof window === 'undefined') return 'profile'
@@ -3248,8 +3249,28 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-gray-900">
+      {/* Mobile header with hamburger */}
+      <div className="md:hidden flex items-center justify-between bg-gray-800 border-b border-gray-700 px-4 py-3 sticky top-0 z-40">
+        <button onClick={() => setMobileSidebarOpen(true)} className="text-white p-1">
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
+        </button>
+        <span className="text-white font-semibold text-sm">ShopBrain AI</span>
+        <div className="w-6" />{/* spacer */}
+      </div>
+
+      {/* Mobile sidebar overlay */}
+      {mobileSidebarOpen && (
+        <div className="fixed inset-0 bg-black/60 z-50 md:hidden" onClick={() => setMobileSidebarOpen(false)} />
+      )}
+
       <div className="flex min-h-screen">
-        <aside className="w-64 bg-gray-800 border-r border-gray-700 p-4 flex flex-col gap-4">
+        <aside className={`${
+          mobileSidebarOpen ? 'fixed inset-y-0 left-0 z-50' : 'hidden'
+        } md:relative md:flex w-64 bg-gray-800 border-r border-gray-700 p-4 flex flex-col gap-4 overflow-y-auto`}>
+          {/* Mobile close button */}
+          <button onClick={() => setMobileSidebarOpen(false)} className="md:hidden self-end text-gray-400 hover:text-white mb-2">
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
           <div className="flex items-center gap-3 relative">
             <button
               onClick={() => setShowProfileMenu((v) => !v)}
@@ -3324,7 +3345,7 @@ export default function Dashboard() {
             ].map((item) => (
               <button
                 key={item.key}
-                onClick={() => setActiveTab(item.key)}
+                onClick={() => { setActiveTab(item.key); setMobileSidebarOpen(false) }}
                 className={`text-left px-3 py-2 rounded-lg text-sm font-semibold transition ${
                   activeTab === item.key
                     ? 'bg-gray-700 text-white'
@@ -3416,7 +3437,7 @@ export default function Dashboard() {
           </div>
         )}
 
-        <div className="max-w-7xl mx-auto p-6">
+        <div className="max-w-7xl mx-auto p-3 md:p-6">
 
         {error && (
           <div className="bg-gray-800 border border-yellow-700 text-yellow-200 p-4 rounded-lg mb-6">
@@ -5298,10 +5319,10 @@ analytics.subscribe("product_added_to_cart", (event) => {
               </button>
             </div>
 
-            <div className="flex h-[calc(90vh-120px)]">
-              {/* Sidebar */}
-              <div className="w-64 bg-gray-800 border-r border-gray-700 p-4">
-                <nav className="space-y-1">
+            <div className="flex flex-col md:flex-row h-[calc(90vh-120px)]">
+              {/* Sidebar - horizontal on mobile, vertical on desktop */}
+              <div className="md:w-64 bg-gray-800 md:border-r border-b md:border-b-0 border-gray-700 p-2 md:p-4 overflow-x-auto md:overflow-x-visible">
+                <nav className="flex md:flex-col md:space-y-1 gap-1 md:gap-0 min-w-max md:min-w-0">
                   {['profile', 'security', 'interface', 'notifications', 'shopify', 'billing', 'api'].map(tab => (
                     <button
                       key={tab}
