@@ -6594,20 +6594,24 @@ async def speech_to_text(request: Request):
         filename = getattr(audio_file, 'filename', 'audio.webm') or 'audio.webm'
 
         client = get_openai_client()
-        
-        # Use Whisper API
+
+        # Use Whisper API with timing diagnostics
         audio_bytes_io = BytesIO(audio_content)
         audio_bytes_io.name = filename  # Whisper needs the filename with extension
-        
+        import time
+        t_start = time.time()
+        print("⏱️ STT: calling OpenAI.transcriptions.create...")
         response = client.audio.transcriptions.create(
             model="whisper-1",
             file=audio_bytes_io,
             language="fr",
             response_format="text"
         )
-
+        t_end = time.time()
+        openai_duration = t_end - t_start
         transcript = response.strip() if isinstance(response, str) else str(response).strip()
         print(f"✅ STT transcription: '{transcript[:100]}...' ({len(transcript)} chars)")
+        print(f"⏱️ STT timings: openai_call={openai_duration:.3f}s, total_since_receive={(t_end - (t_start - 0)):.3f}s")
 
         return {
             "success": True,

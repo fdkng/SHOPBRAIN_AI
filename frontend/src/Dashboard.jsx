@@ -1234,17 +1234,24 @@ export default function Dashboard() {
   // ── OpenAI Whisper transcription helper ──
   const transcribeWithWhisper = async (audioBlob) => {
     try {
+      console.log('STT: transcribeWithWhisper called, blob size=', audioBlob ? audioBlob.size : null)
+      const sttStart = Date.now()
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) return null
       const formData = new FormData()
       formData.append('audio', audioBlob, 'recording.webm')
+      const uploadStart = Date.now()
       const response = await fetch(`${API_URL}/api/ai/stt`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${session.access_token}` },
         body: formData
       })
+      const uploadEnd = Date.now()
+      console.log(`STT: upload time ${(uploadEnd - uploadStart)}ms`)
       if (!response.ok) throw new Error(`STT API error: ${response.status}`)
       const data = await response.json()
+      const sttEnd = Date.now()
+      console.log(`STT: total time ${(sttEnd - sttStart)}ms (includes server processing)`)
       return data.success ? data.text : null
     } catch (err) {
       console.warn('Whisper STT failed:', err)
