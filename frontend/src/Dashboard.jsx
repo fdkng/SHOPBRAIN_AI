@@ -1269,10 +1269,18 @@ export default function Dashboard() {
   }
 
   const stopMediaRecorder = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      try { mediaRecorderRef.current.stop() } catch {}
-    }
-    mediaRecorderRef.current = null
+    return new Promise((resolve) => {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.onstop = () => {
+          mediaRecorderRef.current = null
+          resolve()
+        }
+        try { mediaRecorderRef.current.stop() } catch { mediaRecorderRef.current = null; resolve() }
+      } else {
+        mediaRecorderRef.current = null
+        resolve()
+      }
+    })
   }
 
   const getRecordedBlob = () => {
@@ -1299,23 +1307,25 @@ export default function Dashboard() {
   const confirmDictation = async () => {
     dictationActiveRef.current = false
     if (voiceRecognitionRef.current) try { voiceRecognitionRef.current.stop() } catch {}
-    stopMediaRecorder()
-    // Stop UI immediately for snappy feel
+    // Wait for MediaRecorder to finalize all chunks
+    await stopMediaRecorder()
+    // Get the audio blob BEFORE killing the stream
+    const audioBlob = getRecordedBlob()
+    // Now stop UI
     setVoiceDictationMode(false)
     setVoiceDictationTranscript('')
     setVoiceListening(false)
     stopWaveAnimation()
-    // Transcribe with Whisper in background
-    const audioBlob = getRecordedBlob()
+    // Transcribe with Whisper
     if (audioBlob && audioBlob.size > 1000) {
       const text = await transcribeWithWhisper(audioBlob)
       if (text) setChatInput(prev => (prev ? prev + ' ' : '') + text)
     }
   }
 
-  const cancelDictation = () => {
+  const cancelDictation = async () => {
     dictationActiveRef.current = false
-    stopMediaRecorder()
+    await stopMediaRecorder()
     setVoiceDictationMode(false)
     setVoiceDictationTranscript('')
     setVoiceListening(false)
