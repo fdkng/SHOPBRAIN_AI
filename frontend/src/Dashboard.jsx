@@ -160,6 +160,7 @@ export default function Dashboard() {
   const voiceRecognitionRef = useRef(null)
   const [voiceDictationMode, setVoiceDictationMode] = useState(false)
   const [voiceDictationTranscript, setVoiceDictationTranscript] = useState('')
+  const [voiceTranscribing, setVoiceTranscribing] = useState(false)
   const voiceWaveIntervalRef = useRef(null)
   const [voiceWaveBars, setVoiceWaveBars] = useState(Array(48).fill(2))
   const audioContextRef = useRef(null)
@@ -1304,6 +1305,7 @@ export default function Dashboard() {
     dictationTranscriptRef.current = ''
     setVoiceDictationMode(true)
     setVoiceDictationTranscript('')
+    setVoiceTranscribing(false)
     // Start waveform first (requests mic permission)
     await startWaveAnimation()
     // Start MediaRecorder for Whisper transcription
@@ -1314,6 +1316,7 @@ export default function Dashboard() {
   const confirmDictation = async () => {
     dictationActiveRef.current = false
     if (voiceRecognitionRef.current) try { voiceRecognitionRef.current.stop() } catch {}
+    setVoiceTranscribing(true)
     // Wait for MediaRecorder to finalize all chunks
     await stopMediaRecorder()
     // Get the audio blob BEFORE killing the stream
@@ -1322,10 +1325,7 @@ export default function Dashboard() {
       await new Promise(resolve => setTimeout(resolve, 150))
       audioBlob = getRecordedBlob()
     }
-    // Now stop UI
-    setVoiceDictationMode(false)
-    setVoiceDictationTranscript('')
-    setVoiceListening(false)
+    // Stop waveform while we transcribe
     stopWaveAnimation()
     // Transcribe with Whisper
     if (audioBlob && audioBlob.size > 1000) {
@@ -1334,11 +1334,16 @@ export default function Dashboard() {
     } else {
       console.warn('STT skipped: empty or too small audio blob')
     }
+    setVoiceTranscribing(false)
+    setVoiceDictationMode(false)
+    setVoiceDictationTranscript('')
+    setVoiceListening(false)
   }
 
   const cancelDictation = async () => {
     dictationActiveRef.current = false
     await stopMediaRecorder()
+    setVoiceTranscribing(false)
     setVoiceDictationMode(false)
     setVoiceDictationTranscript('')
     setVoiceListening(false)
@@ -5901,20 +5906,26 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                     {/* Waveform OR Textarea */}
                     {voiceDictationMode ? (
-                      /* ChatGPT-style dense waveform across full width */
-                      <div className="flex-1 flex items-center justify-center gap-[2px] h-11 px-1 overflow-hidden">
-                        {voiceWaveBars.map((h, i) => (
-                          <div
-                            key={i}
-                            className="w-[2px] min-w-[2px] rounded-full"
-                            style={{
-                              height: `${Math.round(h)}px`,
-                              background: '#d1d5db',
-                              transition: 'height 60ms ease-out'
-                            }}
-                          />
-                        ))}
-                      </div>
+                      voiceTranscribing ? (
+                        <div className="flex-1 flex items-center justify-center h-11 px-1">
+                          <span className="text-sm text-gray-300">Retranscription en cours…</span>
+                        </div>
+                      ) : (
+                        /* ChatGPT-style dense waveform across full width */
+                        <div className="flex-1 flex items-center justify-center gap-[2px] h-11 px-1 overflow-hidden">
+                          {voiceWaveBars.map((h, i) => (
+                            <div
+                              key={i}
+                              className="w-[2px] min-w-[2px] rounded-full"
+                              style={{
+                                height: `${Math.round(h)}px`,
+                                background: '#d1d5db',
+                                transition: 'height 60ms ease-out'
+                              }}
+                            />
+                          ))}
+                        </div>
+                      )
                     ) : (
                       <textarea
                         ref={chatTextareaRef}
@@ -5953,14 +5964,24 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                     {/* Right buttons */}
                     {voiceDictationMode ? (
-                      /* Bracket-style stop button — auto-confirms */
-                      <button
-                        onClick={confirmDictation}
-                        className="shrink-0 h-8 px-3 flex items-center justify-center text-white bg-gray-700/60 hover:bg-gray-600/70 rounded-lg transition-colors"
-                        title="Arrêter"
-                      >
-                        <span className="text-base font-semibold tracking-tight">[ ]</span>
-                      </button>
+                      voiceTranscribing ? null : (
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            onClick={cancelDictation}
+                            className="w-8 h-8 flex items-center justify-center text-gray-300 hover:text-white bg-gray-700/50 hover:bg-gray-600/70 rounded-full transition-colors"
+                            title="Annuler"
+                          >
+                            <span className="text-base font-semibold">✕</span>
+                          </button>
+                          <button
+                            onClick={confirmDictation}
+                            className="w-8 h-8 flex items-center justify-center text-white bg-green-600/80 hover:bg-green-500 rounded-full transition-colors"
+                            title="Valider"
+                          >
+                            <span className="text-base font-semibold">✓</span>
+                          </button>
+                        </div>
+                      )
                     ) : chatInput.trim() ? (
                       /* Send button */
                       <button
