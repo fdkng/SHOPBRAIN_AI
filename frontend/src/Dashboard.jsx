@@ -5953,13 +5953,13 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                     {/* Right buttons */}
                     {voiceDictationMode ? (
-                      /* Single stop button (ChatGPT-style) — auto-confirms */
+                      /* Bracket-style stop button — auto-confirms */
                       <button
                         onClick={confirmDictation}
-                        className="shrink-0 w-8 h-8 flex items-center justify-center bg-gray-600 hover:bg-gray-500 rounded-full transition-colors"
+                        className="shrink-0 h-8 px-3 flex items-center justify-center text-white bg-gray-700/60 hover:bg-gray-600/70 rounded-lg transition-colors"
                         title="Arrêter"
                       >
-                        <div className="w-3 h-3 bg-white rounded-sm" />
+                        <span className="text-base font-semibold tracking-tight">[ ]</span>
                       </button>
                     ) : chatInput.trim() ? (
                       /* Send button */
