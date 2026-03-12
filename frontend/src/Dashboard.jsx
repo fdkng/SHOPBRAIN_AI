@@ -1260,7 +1260,7 @@ export default function Dashboard() {
         : MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm'
         : MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4'
         : 'audio/wav'
-      const recorder = new MediaRecorder(stream, { mimeType })
+      const recorder = new MediaRecorder(stream, { mimeType, audioBitsPerSecond: 16000 })
       recorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data) }
       recorder.start(250) // collect chunks every 250ms
       mediaRecorderRef.current = recorder

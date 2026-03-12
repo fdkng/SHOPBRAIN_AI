@@ -39,6 +39,14 @@ try:
 except Exception:
     OpenAI = None
 
+# Global OpenAI client (reused across all requests)
+_oai_client = None
+def get_openai_client():
+    global _oai_client
+    if _oai_client is None:
+        _oai_client = OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY)
+    return _oai_client
+
 try:
     from AI_engine.shopbrain_ai import ShopBrainAI
 except Exception:
@@ -6585,7 +6593,7 @@ async def speech_to_text(request: Request):
         # Determine file extension
         filename = getattr(audio_file, 'filename', 'audio.webm') or 'audio.webm'
 
-        client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
+        client = get_openai_client()
         
         # Use Whisper API
         audio_bytes_io = BytesIO(audio_content)
