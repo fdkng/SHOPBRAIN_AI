@@ -1270,12 +1270,19 @@ export default function Dashboard() {
 
   const stopMediaRecorder = () => {
     return new Promise((resolve) => {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.onstop = () => {
+      const recorder = mediaRecorderRef.current
+      if (recorder && recorder.state !== 'inactive') {
+        let settled = false
+        const finish = () => {
+          if (settled) return
+          settled = true
           mediaRecorderRef.current = null
           resolve()
         }
-        try { mediaRecorderRef.current.stop() } catch { mediaRecorderRef.current = null; resolve() }
+        recorder.onstop = finish
+        try { recorder.requestData() } catch {}
+        try { recorder.stop() } catch { finish() }
+        setTimeout(finish, 1500)
       } else {
         mediaRecorderRef.current = null
         resolve()
@@ -1310,7 +1317,11 @@ export default function Dashboard() {
     // Wait for MediaRecorder to finalize all chunks
     await stopMediaRecorder()
     // Get the audio blob BEFORE killing the stream
-    const audioBlob = getRecordedBlob()
+    let audioBlob = getRecordedBlob()
+    if (!audioBlob || audioBlob.size < 1000) {
+      await new Promise(resolve => setTimeout(resolve, 150))
+      audioBlob = getRecordedBlob()
+    }
     // Now stop UI
     setVoiceDictationMode(false)
     setVoiceDictationTranscript('')
@@ -1320,6 +1331,8 @@ export default function Dashboard() {
     if (audioBlob && audioBlob.size > 1000) {
       const text = await transcribeWithWhisper(audioBlob)
       if (text) setChatInput(prev => (prev ? prev + ' ' : '') + text)
+    } else {
+      console.warn('STT skipped: empty or too small audio blob')
     }
   }
 
