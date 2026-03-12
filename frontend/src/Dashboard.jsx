@@ -1287,40 +1287,8 @@ export default function Dashboard() {
     setVoiceDictationTranscript('')
     // Start waveform first (requests mic permission)
     await startWaveAnimation()
-    // Also start MediaRecorder for Whisper transcription
+    // Start MediaRecorder for Whisper transcription
     if (mediaStreamRef.current) startMediaRecorder(mediaStreamRef.current)
-    // Use browser SpeechRecognition for real-time preview
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (SpeechRecognition) {
-      const recognition = new SpeechRecognition()
-      recognition.lang = 'fr-FR'
-      recognition.interimResults = true
-      recognition.continuous = true
-      voiceRecognitionRef.current = recognition
-      recognition.onresult = (event) => {
-        let final = ''
-        let interim = ''
-        for (let i = 0; i < event.results.length; i++) {
-          if (event.results[i].isFinal) {
-            final += (final ? ' ' : '') + event.results[i][0].transcript
-          } else { interim += event.results[i][0].transcript }
-        }
-        dictationTranscriptRef.current = final
-        setVoiceDictationTranscript(final + (interim ? ' ' + interim : ''))
-      }
-      recognition.onerror = (e) => {
-        console.warn('Dictation recognition error:', e.error)
-        if (e.error !== 'aborted' && dictationActiveRef.current) {
-          try { recognition.start() } catch {}
-        }
-      }
-      recognition.onend = () => {
-        if (dictationActiveRef.current) {
-          try { recognition.start() } catch {}
-        }
-      }
-      recognition.start()
-    }
     setVoiceListening(true)
   }
 
@@ -1328,24 +1296,21 @@ export default function Dashboard() {
     dictationActiveRef.current = false
     if (voiceRecognitionRef.current) try { voiceRecognitionRef.current.stop() } catch {}
     stopMediaRecorder()
-    // Try Whisper transcription first (more accurate), fallback to browser STT
-    const audioBlob = getRecordedBlob()
-    let text = null
-    if (audioBlob && audioBlob.size > 1000) {
-      setVoiceDictationTranscript('Transcription en cours...')
-      text = await transcribeWithWhisper(audioBlob)
-    }
-    if (!text) text = (dictationTranscriptRef.current || voiceDictationTranscript || '').trim()
-    if (text && text !== 'Transcription en cours...') setChatInput(prev => (prev ? prev + ' ' : '') + text)
+    // Stop UI immediately for snappy feel
     setVoiceDictationMode(false)
     setVoiceDictationTranscript('')
     setVoiceListening(false)
     stopWaveAnimation()
+    // Transcribe with Whisper in background
+    const audioBlob = getRecordedBlob()
+    if (audioBlob && audioBlob.size > 1000) {
+      const text = await transcribeWithWhisper(audioBlob)
+      if (text) setChatInput(prev => (prev ? prev + ' ' : '') + text)
+    }
   }
 
   const cancelDictation = () => {
     dictationActiveRef.current = false
-    if (voiceRecognitionRef.current) try { voiceRecognitionRef.current.stop() } catch {}
     stopMediaRecorder()
     setVoiceDictationMode(false)
     setVoiceDictationTranscript('')
@@ -5860,13 +5825,8 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     </div>
                   )}
 
-                  {/* Dictation transcript preview */}
-                  {voiceDictationMode && voiceDictationTranscript && (
-                    <p className="text-gray-200 text-base font-medium text-center mb-3 px-2">{voiceDictationTranscript}</p>
-                  )}
-
                   <div className={`flex items-end gap-2 bg-[#1a1d27] border border-gray-700/50 rounded-xl px-3 py-2 transition-colors ${
-                    voiceDictationMode ? 'border-purple-500/60 shadow-[0_0_12px_rgba(139,92,246,0.15)]' : 'focus-within:border-yellow-500/40'
+                    voiceDictationMode ? 'border-gray-700/50' : 'focus-within:border-yellow-500/40'
                   }`}>
                     {/* Left buttons: + (always visible) */}
                     <div className="relative shrink-0" ref={attachMenuRef}>
@@ -5922,8 +5882,8 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             className="w-[4px] rounded-full transition-[height] duration-[80ms] ease-out"
                             style={{
                               height: `${Math.round(h)}px`,
-                              background: 'linear-gradient(180deg, #a78bfa 0%, #7c3aed 100%)',
-                              opacity: 0.85 + (h / 60) * 0.15
+                              background: '#9ca3af',
+                              opacity: 0.7 + (h / 60) * 0.3
                             }}
                           />
                         ))}
