@@ -1465,7 +1465,7 @@ export default function Dashboard() {
       if (!session) throw new Error('Session expirée')
 
       // Build payload with images if attached
-      const chatPayload = { message: userMessage || 'Voici un produit. Donne-moi ton analyse e-commerce : estimation de prix, positionnement marché et conseils de vente.' }
+      const chatPayload = { message: userMessage || 'Identifie précisément ce produit (marque et modèle), donne-moi une fourchette de prix de revente basée sur le marché actuel, et tes conseils de vente.' }
       if (currentAttachments.length > 0) {
         chatPayload.images = currentAttachments
           .filter(a => a.preview && a.type?.startsWith('image/'))

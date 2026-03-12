@@ -6427,16 +6427,26 @@ async def chat_with_ai(req: ChatRequest, request: Request):
                 "\n\n========================================\n"
                 "CAPACITÉ VISION / IMAGES\n"
                 "========================================\n"
-                "Tu as la capacité de VOIR et ANALYSER les images envoyées par l'utilisateur.\n"
-                "RÈGLES IMPORTANTES pour les images :\n"
-                "1. NE DÉCRIS PAS l'image systématiquement. L'utilisateur sait ce qu'il a envoyé.\n"
-                "2. RÉPONDS DIRECTEMENT à la question de l'utilisateur en utilisant l'image comme contexte.\n"
-                "3. Si l'utilisateur demande un prix, analyse le produit dans l'image et suggère un prix basé sur le marché.\n"
-                "4. Si l'utilisateur demande des conseils, donne des conseils concrets basés sur ce que tu vois.\n"
-                "5. Analyse le produit visible : estime sa catégorie, sa qualité, sa marque potentielle, et compare avec le marché.\n"
-                "6. NE JAMAIS dire que tu ne peux pas voir les images — tu PEUX les voir et les analyser.\n"
-                "7. Si l'utilisateur envoie JUSTE une image sans question précise, donne une brève analyse e-commerce \n"
-                "   (estimation de prix, positionnement marché, conseils de vente) SANS décrire l'image en détail.\n"
+                "Tu as la capacité de VOIR et ANALYSER les images envoyées par l'utilisateur.\n\n"
+                "RÈGLES OBLIGATOIRES :\n\n"
+                "1. IDENTIFICATION PRÉCISE : Tu DOIS identifier la MARQUE EXACTE et le MODÈLE EXACT du produit visible.\n"
+                "   - Chaussures : identifie la marque (Nike, Adidas, New Balance…) ET le modèle (Air Jordan 1, Yeezy 350…).\n"
+                "   - Voitures : identifie la marque (Porsche, BMW, Ferrari…) ET le modèle (GT3 RS, M4, 488 Pista…).\n"
+                "   - Montres : identifie la marque (Rolex, Omega, Casio…) ET le modèle (Submariner, Speedmaster…).\n"
+                "   - Vêtements, sacs, électronique : même chose — marque + modèle + édition si possible.\n"
+                "   - NE DIS JAMAIS 'je ne peux pas identifier la marque/le modèle'. Tu PEUX et tu DOIS le faire.\n"
+                "   - Si tu n'es pas sûr à 100%, donne ton meilleur guess avec un niveau de confiance.\n\n"
+                "2. PRIX BASÉ SUR LE MARCHÉ RÉEL :\n"
+                "   - Quand l'utilisateur demande un prix, donne une FOURCHETTE DE PRIX PRÉCISE basée sur le marché réel.\n"
+                "   - Cite des plateformes de référence (StockX, Chrono24, AutoTrader, eBay, etc.) selon le type de produit.\n"
+                "   - Tiens compte de l'état visible (neuf, usagé, modifié) pour ajuster le prix.\n"
+                "   - Donne un prix minimum, un prix recommandé, et un prix maximum.\n\n"
+                "3. NE DÉCRIS PAS l'image en détail. L'utilisateur sait ce qu'il a envoyé.\n"
+                "   - Va DROIT AU BUT : identification → prix → conseils de vente.\n\n"
+                "4. ANALYSE E-COMMERCE :\n"
+                "   - Si l'utilisateur envoie une image sans question, donne : marque/modèle identifié, fourchette de prix,\n"
+                "     positionnement marché, et 2-3 conseils de vente concrets.\n\n"
+                "5. NE JAMAIS dire que tu ne peux pas voir ou analyser les images — tu PEUX les voir en haute résolution.\n"
             )
             system_prompt = system_prompt + vision_instruction
             
@@ -6447,7 +6457,7 @@ async def chat_with_ai(req: ChatRequest, request: Request):
                 if img_data_uri.startswith("data:"):
                     user_content.append({
                         "type": "image_url",
-                        "image_url": {"url": img_data_uri, "detail": "auto"}
+                        "image_url": {"url": img_data_uri, "detail": "high"}
                     })
                     valid_images += 1
             print(f"📷 Valid base64 images added to content: {valid_images}")
