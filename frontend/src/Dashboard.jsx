@@ -3449,19 +3449,19 @@ export default function Dashboard() {
         {activeTab === 'overview' && (
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
             <div className="xl:col-span-2 space-y-6">
-            <div className="bg-gradient-to-br from-gray-800 via-gray-900 to-black border border-yellow-700/40 rounded-2xl p-6">
+            <div className="bg-gradient-to-br from-gray-800 via-gray-900 to-black border border-yellow-700/40 rounded-2xl p-4 md:p-6">
               <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                 <div>
                   <p className="text-xs uppercase tracking-[0.3em] text-yellow-300/70">Performance</p>
                   <h3 className="text-2xl font-bold text-white mt-2">Revenus & commandes en temps réel</h3>
                   <p className="text-sm text-gray-400 mt-2">Source Shopify · {analyticsData?.range || analyticsRange} · {getRangeLabel(analyticsData?.range || analyticsRange)}</p>
                 </div>
-                <div className="flex items-center gap-2 bg-gray-800/70 border border-gray-700 rounded-full px-2 py-1">
+                <div className="flex items-center gap-1 md:gap-2 bg-gray-800/70 border border-gray-700 rounded-full px-1.5 md:px-2 py-1">
                   {['7d', '30d', '90d', '365d'].map((range) => (
                     <button
                       key={range}
                       onClick={() => setAnalyticsRange(range)}
-                      className={`px-3 py-1 rounded-full text-xs font-semibold transition ${analyticsRange === range ? 'bg-yellow-600 text-black' : 'text-gray-300 hover:text-white'}`}
+                      className={`px-3 md:px-3 py-1.5 md:py-1 rounded-full text-xs font-semibold transition ${analyticsRange === range ? 'bg-yellow-600 text-black' : 'text-gray-300 hover:text-white'}`}
                     >
                       {range}
                     </button>
@@ -3472,19 +3472,19 @@ export default function Dashboard() {
               <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
                   <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Revenus</p>
-                  <p className="text-2xl font-bold text-white mt-2">
+                  <p className="text-xl md:text-2xl font-bold text-white mt-2">
                     {analyticsLoading ? 'Chargement...' : formatCurrency(analyticsData?.totals?.revenue, analyticsData?.currency || 'EUR')}
                   </p>
                 </div>
                 <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
                   <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Commandes</p>
-                  <p className="text-2xl font-bold text-white mt-2">
+                  <p className="text-xl md:text-2xl font-bold text-white mt-2">
                     {analyticsLoading ? '...' : formatCompactNumber(analyticsData?.totals?.orders || 0)}
                   </p>
                 </div>
                 <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
                   <p className="text-xs uppercase tracking-[0.2em] text-gray-500">AOV</p>
-                  <p className="text-2xl font-bold text-white mt-2">
+                  <p className="text-xl md:text-2xl font-bold text-white mt-2">
                     {analyticsLoading ? '...' : formatCurrency(analyticsData?.totals?.aov, analyticsData?.currency || 'EUR')}
                   </p>
                 </div>
@@ -3555,7 +3555,7 @@ export default function Dashboard() {
             </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="hidden md:grid grid-cols-1 md:grid-cols-4 gap-4">
               {[
                 {
                   label: 'Revenus',
@@ -3586,7 +3586,7 @@ export default function Dashboard() {
               ))}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="hidden md:grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
                 <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-3">Ops Center</h4>
                 <p className="text-white text-lg font-semibold mb-2">Flux Shopify unifié</p>
@@ -3604,7 +3604,7 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="hidden md:grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
                 <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-4">Activité récente</h4>
                 <ul className="space-y-3 text-sm text-gray-300">
@@ -3639,7 +3639,7 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="hidden md:grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
                 <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-4">Alertes critiques</h4>
                 <ul className="space-y-3 text-sm text-gray-300">

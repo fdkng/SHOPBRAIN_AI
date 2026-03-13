@@ -511,10 +511,10 @@ export default function App() {
       <nav className={`fixed top-0 w-full z-50 transition-all duration-300 ${
         scrolled ? 'bg-gray-900/80 backdrop-blur-md shadow-sm border-b border-gray-700' : 'bg-gray-900 border-b border-gray-700'
       }`}>
-        <div className="max-w-7xl mx-auto px-6 sm:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-3">
-              <span className="text-lg sm:text-xl font-semibold text-white">ShopBrain AI</span>
+        <div className="max-w-7xl mx-auto px-4 md:px-8">
+          <div className="flex items-center justify-between h-14 md:h-16">
+            <div className="flex items-center gap-2">
+              <span className="text-base md:text-xl font-semibold text-white">ShopBrain AI</span>
             </div>
             
             <div className="hidden md:flex items-center gap-8">
@@ -530,8 +530,8 @@ export default function App() {
             </div>
 
             {user ? (
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-green-900/30 text-green-300 rounded-full text-sm border border-green-700/40">
+              <div className="flex items-center gap-2 md:gap-3">
+                <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-green-900/30 text-green-300 rounded-full text-sm border border-green-700/40">
                   <span className="w-2 h-2 bg-green-400 rounded-full"></span>
                   <span className="font-medium">{user.user_metadata?.first_name || 'Connecté'}</span>
                 </div>
@@ -547,7 +547,7 @@ export default function App() {
                       window.location.hash = '#pricing'
                     }
                   }}
-                  className={`px-4 py-2 rounded-full text-sm font-medium transition ${
+                  className={`px-3 md:px-4 py-2 rounded-full text-xs md:text-sm font-medium transition ${
                     hasSubscription ? 'bg-yellow-600 text-black hover:bg-yellow-500' : 'bg-gray-700 text-gray-400 cursor-not-allowed'
                   }`}
                 >
@@ -560,7 +560,7 @@ export default function App() {
                     setUser(null)
                     setCurrentView('landing')
                   }}
-                  className="px-4 py-2 text-gray-400 hover:text-white text-sm font-medium transition"
+                  className="px-2 md:px-4 py-2 text-gray-400 hover:text-white text-xs md:text-sm font-medium transition"
                 >
                   Déconnexion
                 </button>
@@ -568,7 +568,7 @@ export default function App() {
             ) : (
               <button
                 onClick={() => setShowAuthModal(true)}
-                className="px-4 py-2 bg-yellow-600 text-black text-sm font-medium rounded-full hover:bg-yellow-500 transition-all hover:scale-105 shadow-md"
+                className="px-3 md:px-4 py-2 bg-yellow-600 text-black text-xs md:text-sm font-medium rounded-full hover:bg-yellow-500 transition-all hover:scale-105 shadow-md"
               >
                 Se connecter
               </button>
@@ -610,8 +610,8 @@ export default function App() {
 
       {/* Auth Modal - Inscription/Connexion */}
       {showAuthModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-6 animate-fadeIn" onClick={() => setShowAuthModal(false)}>
-          <div className="bg-white rounded-3xl max-w-md w-full p-8 shadow-2xl animate-scaleIn max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-3 md:p-6 animate-fadeIn" onClick={() => setShowAuthModal(false)}>
+          <div className="bg-white rounded-2xl md:rounded-3xl max-w-md w-full p-5 md:p-8 shadow-2xl animate-scaleIn max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-2xl font-semibold text-gray-900">
                 {authMode === 'signup' ? 'Créer un compte' : 'Se connecter'}
@@ -786,35 +786,35 @@ export default function App() {
       )}
 
       {/* Hero Section - Apple Style avec visuels */}
-      <section className="pt-28 pb-20 px-6 bg-gradient-to-b from-gray-900 via-gray-900 to-gray-800">
+      <section className="pt-20 md:pt-28 pb-12 md:pb-20 px-4 md:px-6 bg-gradient-to-b from-gray-900 via-gray-900 to-gray-800">
         <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-12 animate-fadeIn">
-            <div className="inline-block mb-6">
-              <span className="px-4 py-2 bg-blue-900/60 text-blue-300 border border-blue-700/50 rounded-full text-xs font-semibold uppercase tracking-[0.2em]">
+          <div className="text-center mb-8 md:mb-12 animate-fadeIn">
+            <div className="inline-block mb-4 md:mb-6">
+              <span className="px-3 md:px-4 py-1.5 md:py-2 bg-blue-900/60 text-blue-300 border border-blue-700/50 rounded-full text-[10px] md:text-xs font-semibold uppercase tracking-[0.2em]">
                 Nouveau — IA Générative Shopify
               </span>
             </div>
-            <h1 className="text-5xl md:text-6xl lg:text-7xl font-bold text-white tracking-tight leading-[1.05] mb-4">
+            <h1 className="text-3xl md:text-6xl lg:text-7xl font-bold text-white tracking-tight leading-[1.1] md:leading-[1.05] mb-3 md:mb-4">
               L'IA qui transforme vos ventes Shopify
             </h1>
-            <p className="text-base md:text-lg text-gray-400 mb-12 max-w-3xl mx-auto leading-relaxed">
+            <p className="text-sm md:text-lg text-gray-400 mb-8 md:mb-12 max-w-3xl mx-auto leading-relaxed">
               Pilotez votre croissance avec une IA d'élite, claire et actionnable.
             </p>
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-8">
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 md:gap-4 mb-6 md:mb-8">
               <button
                 onClick={() => window.location.hash = '#stripe-pricing'}
-                className="px-10 py-5 bg-yellow-600 text-black text-lg font-semibold rounded-full hover:bg-yellow-500 transition-all hover:scale-105 shadow-2xl hover:shadow-yellow-500/30"
+                className="w-full sm:w-auto px-8 md:px-10 py-4 md:py-5 bg-yellow-600 text-black text-base md:text-lg font-semibold rounded-full hover:bg-yellow-500 transition-all hover:scale-105 shadow-2xl hover:shadow-yellow-500/30"
               >
                 Voir tous les plans
               </button>
               <button
                 onClick={() => setShowAuthModal(true)}
-                className="px-10 py-5 text-white text-lg font-semibold border-2 border-gray-600 rounded-full hover:bg-gray-800 hover:text-white transition-all hover:scale-105"
+                className="w-full sm:w-auto px-8 md:px-10 py-4 md:py-5 text-white text-base md:text-lg font-semibold border-2 border-gray-600 rounded-full hover:bg-gray-800 hover:text-white transition-all hover:scale-105"
               >
                 Se connecter
               </button>
             </div>
-            <p className="text-sm text-gray-400">
+            <p className="text-xs md:text-sm text-gray-400">
               • Sans engagement • Essai 14 jours • Résultats garantis
             </p>
           </div>
@@ -900,12 +900,12 @@ export default function App() {
       </section>
 
       {/* Ecosystem Section */}
-      <section className="py-24 px-6 bg-gray-900">
+      <section className="py-14 md:py-24 px-4 md:px-6 bg-gray-900">
         <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-16">
-            <p className="text-xs uppercase tracking-[0.3em] text-gray-400 mb-4">Écosystème</p>
-            <h2 className="text-4xl md:text-5xl font-bold text-white mb-4">Un cockpit complet, pensé pour la performance</h2>
-            <p className="text-lg text-gray-400 max-w-3xl mx-auto">Centralisez l’IA, la stratégie et l’exécution dans un hub unique, avec un rendu premium et une lisibilité irréprochable.</p>
+          <div className="text-center mb-10 md:mb-16">
+            <p className="text-xs uppercase tracking-[0.3em] text-gray-400 mb-3 md:mb-4">Écosystème</p>
+            <h2 className="text-2xl md:text-5xl font-bold text-white mb-3 md:mb-4">Un cockpit complet, pensé pour la performance</h2>
+            <p className="text-sm md:text-lg text-gray-400 max-w-3xl mx-auto">Centralisez l’IA, la stratégie et l’exécution dans un hub unique, avec un rendu premium et une lisibilité irréprochable.</p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {[
@@ -932,12 +932,12 @@ export default function App() {
       </section>
 
       {/* Command Center Section */}
-      <section className="py-24 px-6 bg-gray-900">
-        <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-10 items-center">
+      <section className="py-14 md:py-24 px-4 md:px-6 bg-gray-900">
+        <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-10 items-center">
           <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-gray-400 mb-4">Command Center</p>
-            <h2 className="text-4xl md:text-5xl font-bold text-white mb-4">Tout comprendre en un coup d’œil</h2>
-            <p className="text-lg text-gray-400 mb-6">Le tableau de bord explique clairement quoi améliorer, pourquoi, et comment agir.</p>
+            <p className="text-xs uppercase tracking-[0.3em] text-gray-400 mb-3 md:mb-4">Command Center</p>
+            <h2 className="text-2xl md:text-5xl font-bold text-white mb-3 md:mb-4">Tout comprendre en un coup d’œil</h2>
+            <p className="text-sm md:text-lg text-gray-400 mb-4 md:mb-6">Le tableau de bord explique clairement quoi améliorer, pourquoi, et comment agir.</p>
             <div className="space-y-3">
               <div className="flex items-center justify-between bg-gray-800 border border-gray-700 rounded-2xl px-4 py-3">
                 <span className="text-gray-300 text-sm">Actions recommandées</span>
@@ -973,12 +973,12 @@ export default function App() {
       </section>
 
       {/* Before / After */}
-      <section className="py-24 px-6 bg-gray-900">
+      <section className="py-14 md:py-24 px-4 md:px-6 bg-gray-900">
         <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-14">
-            <p className="text-xs uppercase tracking-[0.3em] text-gray-400 mb-4">Avant / Après</p>
-            <h2 className="text-4xl md:text-5xl font-bold text-white mb-4">Passez d’un Shopify dispersé à un cockpit maîtrisé</h2>
-            <p className="text-lg text-gray-400 max-w-3xl mx-auto">Une gouvernance claire, une IA pilotable et des actions traçables à l’échelle.</p>
+          <div className="text-center mb-8 md:mb-14">
+            <p className="text-xs uppercase tracking-[0.3em] text-gray-400 mb-3 md:mb-4">Avant / Après</p>
+            <h2 className="text-2xl md:text-5xl font-bold text-white mb-3 md:mb-4">Passez d’un Shopify dispersé à un cockpit maîtrisé</h2>
+            <p className="text-sm md:text-lg text-gray-400 max-w-3xl mx-auto">Une gouvernance claire, une IA pilotable et des actions traçables à l’échelle.</p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="bg-gray-800 border border-gray-700 rounded-3xl p-6">
@@ -1004,12 +1004,12 @@ export default function App() {
       </section>
 
       {/* Benefits */}
-      <section className="py-24 px-6 bg-gray-900">
+      <section className="py-14 md:py-24 px-4 md:px-6 bg-gray-900">
         <div className="max-w-7xl mx-auto">
-          <div className="text-center mb-16">
-            <p className="text-xs uppercase tracking-[0.3em] text-gray-400 mb-4">Bénéfices</p>
-            <h2 className="text-4xl md:text-5xl font-bold text-white mb-4">Des bénéfices concrets et visibles</h2>
-            <p className="text-lg text-gray-400 max-w-3xl mx-auto">Moins de flou, plus d’actions claires et de ventes mesurables.</p>
+          <div className="text-center mb-10 md:mb-16">
+            <p className="text-xs uppercase tracking-[0.3em] text-gray-400 mb-3 md:mb-4">Bénéfices</p>
+            <h2 className="text-2xl md:text-5xl font-bold text-white mb-3 md:mb-4">Des bénéfices concrets et visibles</h2>
+            <p className="text-sm md:text-lg text-gray-400 max-w-3xl mx-auto">Moins de flou, plus d’actions claires et de ventes mesurables.</p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             {[
@@ -1028,7 +1028,7 @@ export default function App() {
       </section>
 
       {/* Social Proof */}
-      <section className="py-12 px-6 bg-gray-900 border-y border-gray-700">
+      <section className="py-8 md:py-12 px-4 md:px-6 bg-gray-900 border-y border-gray-700">
         <div className="max-w-6xl mx-auto">
           <p className="text-center text-xs text-gray-400 mb-6 uppercase tracking-[0.3em]">Ils nous font confiance</p>
           <div className="flex flex-wrap justify-center items-center gap-6">
@@ -1045,13 +1045,13 @@ export default function App() {
       </section>
 
       {/* Features Section - Apple Style amélioré */}
-      <section id="features" className="py-24 px-6 bg-gray-900">
+      <section id="features" className="py-14 md:py-24 px-4 md:px-6 bg-gray-900">
         <div className="max-w-7xl mx-auto">
-          <div className="text-center mb-20">
-            <h2 className="text-5xl md:text-6xl font-bold text-white mb-4">
+          <div className="text-center mb-12 md:mb-20">
+            <h2 className="text-3xl md:text-6xl font-bold text-white mb-3 md:mb-4">
               Fonctionnalités<br />surpuissantes.
             </h2>
-            <p className="text-xl text-gray-400">
+            <p className="text-base md:text-xl text-gray-400">
               Tout ce dont vous avez besoin pour dominer votre marché.
             </p>
           </div>
@@ -1088,7 +1088,7 @@ export default function App() {
                 stat: 'Sync en <1 seconde'
               }
             ].map((feature, idx) => (
-              <div key={idx} className="group relative p-8 bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700 rounded-3xl hover:shadow-2xl hover:scale-[1.02] transition-all duration-300 overflow-hidden">
+              <div key={idx} className="group relative p-5 md:p-8 bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700 rounded-2xl md:rounded-3xl hover:shadow-2xl hover:scale-[1.02] transition-all duration-300 overflow-hidden">
                 <div className={`absolute top-0 right-0 w-32 h-32 bg-gradient-to-br ${feature.gradient} opacity-10 rounded-full blur-3xl group-hover:opacity-20 transition-opacity`}></div>
                 <div className="relative">
                   <div className={`inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br ${feature.gradient} rounded-2xl text-xs uppercase tracking-[0.2em] text-white mb-6 shadow-lg`}>
@@ -1108,9 +1108,9 @@ export default function App() {
       </section>
 
       {/* How It Works Section */}
-      <section id="how-it-works" className="py-24 px-6 bg-gray-900">
+      <section id="how-it-works" className="py-14 md:py-24 px-4 md:px-6 bg-gray-900">
         <div className="max-w-6xl mx-auto">
-          <h2 className="text-4xl md:text-5xl font-bold text-white text-center mb-16">Fonctionnement</h2>
+          <h2 className="text-2xl md:text-5xl font-bold text-white text-center mb-10 md:mb-16">Fonctionnement</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             {[
               {
@@ -1148,17 +1148,17 @@ export default function App() {
       </section>
 
       {/* Pricing Section - Apple Style Premium */}
-      <section id="pricing" className="py-32 px-6 bg-gray-900 relative overflow-hidden">
+      <section id="pricing" className="py-16 md:py-32 px-4 md:px-6 bg-gray-900 relative overflow-hidden">
         <div className="absolute inset-0 bg-grid-pattern opacity-5"></div>
         <div className="max-w-7xl mx-auto relative">
-          <div className="text-center mb-20">
-            <h2 className="text-5xl md:text-6xl font-bold text-white mb-6">
+          <div className="text-center mb-10 md:mb-20">
+            <h2 className="text-3xl md:text-6xl font-bold text-white mb-4 md:mb-6">
               Choisissez votre<br />
               <span className="text-yellow-400">
                 formule gagnante
               </span>
             </h2>
-            <p className="text-xl text-gray-300 mb-2">
+            <p className="text-base md:text-xl text-gray-300 mb-2">
               Tous les plans incluent 14 jours d'essai gratuit. Sans engagement.
             </p>
             <p className="text-sm text-yellow-400 font-semibold">Le plan Pro offre le meilleur rapport qualité-prix</p>
@@ -1179,7 +1179,7 @@ export default function App() {
               <div
                 key={idx}
                 className={`relative group ${
-                  plan.highlight ? 'md:scale-110 z-10' : ''
+                  plan.highlight ? 'md:scale-105 z-10' : ''
                 }`}
               >
                 {plan.highlight && (
@@ -1257,12 +1257,12 @@ export default function App() {
       </section>
 
       {/* CTA Section */}
-      <section className="py-24 px-6 bg-gray-900">
+      <section className="py-14 md:py-24 px-4 md:px-6 bg-gray-900">
         <div className="max-w-4xl mx-auto text-center">
-          <h2 className="text-4xl md:text-5xl font-bold text-white mb-6">
+          <h2 className="text-2xl md:text-5xl font-bold text-white mb-4 md:mb-6">
             Prêt à transformer votre Shopify?
           </h2>
-          <p className="text-lg text-gray-400 mb-10">
+          <p className="text-sm md:text-lg text-gray-400 mb-6 md:mb-10">
             Rejoignez des centaines de sellers qui utilisent ShopBrain AI
           </p>
           <button
@@ -1275,7 +1275,7 @@ export default function App() {
       </section>
 
       {/* Footer */}
-      <footer className="border-t border-gray-700 py-12 px-6 bg-gray-900">
+      <footer className="border-t border-gray-700 py-8 md:py-12 px-4 md:px-6 bg-gray-900">
         <div className="max-w-6xl mx-auto">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-8">
             <div>
