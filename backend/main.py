@@ -384,6 +384,126 @@ def _parse_price_value(raw: str) -> float | None:
         return None
 
 
+# ============================================================================
+# 🌐 WEB SEARCH FOR CHAT — Real-time internet access via SerpAPI
+# ============================================================================
+
+_WEB_SEARCH_KEYWORDS = [
+    # Trends & social media
+    "tendance", "trending", "trend", "viral", "tiktok", "instagram", "reels",
+    "facebook", "pinterest", "youtube", "snapchat", "twitter", "x.com",
+    "réseau social", "réseaux sociaux", "social media", "influenceur", "influencer",
+    "hashtag", "buzz", "hype", "populaire",
+    # Market & news
+    "aujourd'hui", "cette semaine", "ce mois", "en ce moment", "actuellement",
+    "dernièrement", "récemment", "2025", "2026", "2027", "nouveau", "nouveauté",
+    "actualité", "news", "derniers", "dernières", "marché actuel",
+    # Competitors & prices
+    "concurrent", "compétiteur", "comparaison", "compare", "versus", "vs",
+    "meilleur", "top", "classement", "ranking",
+    # Specific queries
+    "cherche", "recherche", "trouve", "google", "internet", "en ligne",
+    "site web", "statistique", "stats", "données", "chiffres",
+    # E-commerce trends
+    "niche", "dropshipping", "winning product", "produit gagnant",
+    "best seller", "meilleure vente", "amazon", "aliexpress", "ebay",
+    "shopify app", "application",
+]
+
+def _needs_web_search(message: str) -> bool:
+    """Detect if a chat message needs real-time web data."""
+    msg_lower = message.lower()
+    match_count = sum(1 for kw in _WEB_SEARCH_KEYWORDS if kw in msg_lower)
+    # Need at least 1 keyword match
+    return match_count >= 1
+
+
+def _build_search_query(message: str) -> str:
+    """Build a smart Google search query from the user message."""
+    msg_lower = message.lower()
+    # If about TikTok/social trends, optimize the query
+    if any(kw in msg_lower for kw in ["tiktok", "instagram", "réseaux sociaux", "social media", "viral"]):
+        # Extract the core topic
+        base = message.strip()
+        if len(base) > 120:
+            base = base[:120]
+        return f"{base} e-commerce Shopify 2025 2026"
+    # General case: use message + e-commerce context
+    base = message.strip()
+    if len(base) > 120:
+        base = base[:120]
+    return f"{base} e-commerce"
+
+
+def _web_search_for_chat(message: str, num_results: int = 8) -> str:
+    """Perform a Google web search via SerpAPI and return formatted context.
+    Returns empty string if no API key or no results."""
+    if not SERPAPI_KEY:
+        print("⚠️ Web search skipped: no SERPAPI_KEY")
+        return ""
+    
+    search_query = _build_search_query(message)
+    print(f"🌐 Web search for chat: '{search_query}'")
+    
+    try:
+        params = {
+            "engine": "google",
+            "q": search_query,
+            "gl": "ca",
+            "hl": "fr",
+            "api_key": SERPAPI_KEY,
+            "num": num_results,
+        }
+        resp = requests.get("https://serpapi.com/search.json", params=params, timeout=12)
+        if resp.status_code != 200:
+            print(f"⚠️ Web search HTTP error: {resp.status_code}")
+            return ""
+        
+        data = resp.json()
+        results = []
+        
+        # Extract organic results
+        for item in (data.get("organic_results") or [])[:num_results]:
+            title = item.get("title", "")
+            snippet = item.get("snippet", "")
+            link = item.get("link", "")
+            date = item.get("date", "")
+            if title and snippet:
+                entry = f"• {title}"
+                if date:
+                    entry += f" ({date})"
+                entry += f"\n  {snippet}"
+                entry += f"\n  Source: {link}"
+                results.append(entry)
+        
+        # Extract knowledge graph if present
+        kg = data.get("knowledge_graph")
+        if kg:
+            kg_title = kg.get("title", "")
+            kg_desc = kg.get("description", "")
+            if kg_title and kg_desc:
+                results.insert(0, f"📌 {kg_title}: {kg_desc}")
+        
+        # Extract "People also ask" for extra context
+        for paa in (data.get("related_questions") or [])[:3]:
+            q = paa.get("question", "")
+            a = paa.get("snippet", "")
+            if q and a:
+                results.append(f"❓ {q}\n  {a}")
+        
+        if not results:
+            print("⚠️ Web search returned no usable results")
+            return ""
+        
+        formatted = "\n\n".join(results)
+        print(f"✅ Web search returned {len(results)} results")
+        return formatted
+        
+    except Exception as e:
+        print(f"⚠️ Web search error: {e}")
+        return ""
+
+
 def _serpapi_price_snapshot(query: str, gl: str = "ca", hl: str = "fr", currency_code: str | None = None) -> dict:
     """Fetch competitor prices via SerpApi (Google Shopping engine).
 
@@ -6674,10 +6794,37 @@ async def chat_with_ai(req: ChatRequest, request: Request):
         else:
             user_content = full_message
         
+        # 🌐 WEB SEARCH — If message needs real-time data, search the web first
+        web_search_context = ""
+        if _needs_web_search(message):
+            try:
+                web_search_context = _web_search_for_chat(message)
+            except Exception as ws_err:
+                print(f"⚠️ Web search failed (non-blocking): {ws_err}")
+        
+        if web_search_context:
+            web_search_instruction = (
+                "\n\n========================================\n"
+                "🌐 RÉSULTATS DE RECHERCHE INTERNET (DONNÉES EN TEMPS RÉEL)\n"
+                "========================================\n"
+                "Tu as accès à Internet. Voici les résultats de recherche les plus récents :\n\n"
+                f"{web_search_context}\n\n"
+                "INSTRUCTIONS :\n"
+                "- Utilise ces données RÉELLES et RÉCENTES pour répondre à l'utilisateur.\n"
+                "- Cite les sources quand c'est pertinent (nom du site, pas l'URL complète).\n"
+                "- Si les résultats parlent de tendances TikTok, Instagram, etc., résume les tendances clés.\n"
+                "- Donne des recommandations CONCRÈTES et ACTIONNABLES basées sur ces données.\n"
+                "- Ne dis JAMAIS que tu n'as pas accès à Internet ou aux données en temps réel — TU AS CET ACCÈS.\n"
+                "- Présente les infos de façon structurée avec des émojis et du formatage clair.\n"
+            )
+            system_prompt = system_prompt + web_search_instruction
+            print(f"🌐 Web search context injected ({len(web_search_context)} chars)")
+        
         # OpenAI 1.0+ API - utiliser le client
         # Use gpt-4o for vision (better image analysis), gpt-4o-mini for text-only
-        chat_model = "gpt-4o" if images else "gpt-4o-mini"
-        print(f"🔍 Creating OpenAI client (model={chat_model}, has_images={bool(images)}) with API key starting with: {OPENAI_API_KEY[:10]}...")
+        # Use gpt-4o when web search is active (better at synthesizing real-time data)
+        chat_model = "gpt-4o" if (images or web_search_context) else "gpt-4o-mini"
+        print(f"🔍 Creating OpenAI client (model={chat_model}, has_images={bool(images)}, web_search={bool(web_search_context)}) with API key starting with: {OPENAI_API_KEY[:10]}...")
         client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
         print(f"✅ OpenAI client created")
         try:
