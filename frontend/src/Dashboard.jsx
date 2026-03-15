@@ -157,6 +157,10 @@ export default function Dashboard() {
   const attachMenuRef = useRef(null)
   const fileInputRef = useRef(null)
   const [chatAttachments, setChatAttachments] = useState([])
+  const [showProductPicker, setShowProductPicker] = useState(false)
+  const [mentionedProduct, setMentionedProduct] = useState(null)
+  const [productPickerSearch, setProductPickerSearch] = useState('')
+  const productPickerRef = useRef(null)
   const [voiceListening, setVoiceListening] = useState(false)
   const voiceRecognitionRef = useRef(null)
   const [voiceDictationMode, setVoiceDictationMode] = useState(false)
@@ -1158,6 +1162,19 @@ export default function Dashboard() {
     return () => document.removeEventListener('mousedown', handleClick)
   }, [showAttachMenu])
 
+  // Close product picker on outside click
+  useEffect(() => {
+    if (!showProductPicker) return
+    const handleClick = (e) => {
+      if (productPickerRef.current && !productPickerRef.current.contains(e.target)) {
+        setShowProductPicker(false)
+        setProductPickerSearch('')
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [showProductPicker])
+
   const handleFileAttach = (e) => {
     const files = Array.from(e.target.files || [])
     if (!files.length) return
@@ -1475,6 +1492,26 @@ export default function Dashboard() {
         chatPayload.images = currentAttachments
           .filter(a => a.preview && a.type?.startsWith('image/'))
           .map(a => a.preview)
+      }
+      // Inject mentioned product context
+      if (mentionedProduct) {
+        const p = mentionedProduct
+        const variant = p.variants?.[0] || {}
+        const imgUrl = p.image?.src || p.images?.[0]?.src || ''
+        chatPayload.context = [
+          `PRODUIT MENTIONNÉ PAR L'UTILISATEUR (de sa boutique Shopify):`,
+          `Titre: ${p.title}`,
+          `Prix: ${variant.price || 'N/A'} ${variant.currency || 'CAD'}`,
+          `Description: ${(p.body_html || '').replace(/<[^>]*>/g, '').slice(0, 800)}`,
+          `Tags: ${p.tags || 'aucun'}`,
+          `Type: ${p.product_type || 'non spécifié'}`,
+          `Vendor: ${p.vendor || 'non spécifié'}`,
+          `Image principale: ${imgUrl}`,
+          `Variantes: ${(p.variants || []).map(v => `${v.title} - ${v.price}`).join(', ')}`,
+          `Stock: ${(p.variants || []).map(v => `${v.title}: ${v.inventory_quantity ?? 'N/A'}`).join(', ')}`,
+          `Statut: ${p.status || 'actif'}`,
+        ].join('\n')
+        setMentionedProduct(null)
       }
 
       const resp = await fetch(`${API_URL}/api/ai/chat`, {
@@ -5976,6 +6013,93 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                 {/* ── Input area ── */}
                 <div className="border-t border-gray-700/50 px-4 py-3">
+                  {/* Product Picker Modal */}
+                  {showProductPicker && (
+                    <div className="mb-3 bg-[#1a1d27] border border-yellow-600/30 rounded-xl overflow-hidden" ref={productPickerRef}>
+                      <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-700/50">
+                        <span className="text-sm font-semibold text-yellow-300">🛍️ Mentionner un produit</span>
+                        <button onClick={() => { setShowProductPicker(false); setProductPickerSearch('') }} className="text-gray-400 hover:text-white text-lg">✕</button>
+                      </div>
+                      <div className="px-3 py-2">
+                        <input
+                          type="text"
+                          value={productPickerSearch}
+                          onChange={(e) => setProductPickerSearch(e.target.value)}
+                          placeholder="Rechercher un produit..."
+                          className="w-full bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-700 text-sm placeholder:text-gray-500 outline-none focus:border-yellow-500/40"
+                          autoFocus
+                        />
+                      </div>
+                      <div className="max-h-48 overflow-y-auto px-1 pb-2">
+                        {(!products || products.length === 0) ? (
+                          <p className="text-center text-gray-500 text-xs py-4">Connecte Shopify pour voir tes produits.</p>
+                        ) : (
+                          (products || []).filter(p =>
+                            !productPickerSearch || p.title?.toLowerCase().includes(productPickerSearch.toLowerCase())
+                          ).map((product) => (
+                            <button
+                              key={product.id}
+                              onClick={() => {
+                                setMentionedProduct(product)
+                                setShowProductPicker(false)
+                                setProductPickerSearch('')
+                                chatTextareaRef.current?.focus()
+                              }}
+                              className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-yellow-600/10 rounded-lg transition-colors"
+                            >
+                              {product.image?.src ? (
+                                <img src={product.image.src} alt="" className="w-9 h-9 rounded-lg object-cover border border-gray-700" />
+                              ) : (
+                                <div className="w-9 h-9 rounded-lg bg-gray-700 flex items-center justify-center text-gray-500 text-xs">📦</div>
+                              )}
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm text-white truncate">{product.title}</p>
+                                <p className="text-xs text-gray-500">{product.variants?.[0]?.price || '—'} {product.variants?.[0]?.currency || 'CAD'}</p>
+                              </div>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Mentioned product chip + suggested questions */}
+                  {mentionedProduct && (
+                    <div className="mb-3 space-y-2">
+                      <div className="flex items-center gap-2 bg-yellow-900/20 border border-yellow-600/30 rounded-xl px-3 py-2">
+                        {mentionedProduct.image?.src ? (
+                          <img src={mentionedProduct.image.src} alt="" className="w-8 h-8 rounded-lg object-cover" />
+                        ) : (
+                          <span className="text-lg">📦</span>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-yellow-200 font-medium truncate">{mentionedProduct.title}</p>
+                          <p className="text-[11px] text-gray-400">{mentionedProduct.variants?.[0]?.price || ''} {mentionedProduct.variants?.[0]?.currency || 'CAD'}</p>
+                        </div>
+                        <button onClick={() => setMentionedProduct(null)} className="text-gray-400 hover:text-white shrink-0">
+                          <svg width="14" height="14" viewBox="0 0 12 12" fill="none"><path d="M3 3L9 9M9 3L3 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {[
+                          'Ma description est-elle bonne ?',
+                          'Mes photos sont-elles attrayantes ?',
+                          'Comment améliorer mon titre SEO ?',
+                          'Quel prix recommandes-tu ?',
+                          'Quels sont les points forts et faibles ?',
+                        ].map((q) => (
+                          <button
+                            key={q}
+                            onClick={() => { setChatInput(q); chatTextareaRef.current?.focus() }}
+                            className="px-2.5 py-1 bg-gray-800 hover:bg-yellow-600/20 border border-gray-700 hover:border-yellow-600/40 rounded-full text-xs text-gray-300 hover:text-yellow-200 transition-colors"
+                          >
+                            {q}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Attachment previews */}
                   {chatAttachments.length > 0 && (
                     <div className="flex flex-wrap gap-2 mb-2">
@@ -6035,6 +6159,11 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               <button onClick={() => { setChatInput(prev => prev + '/'); setShowAttachMenu(false) }} className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700/40 transition-colors">
                                 <span className="flex items-center gap-3"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-gray-400"><path d="M13 3L7 17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>Compétences</span>
                                 <span className="text-xs text-gray-600 bg-gray-800 px-1.5 py-0.5 rounded">/</span>
+                              </button>
+                              <div className="border-t border-gray-700/40 my-1"></div>
+                              <button onClick={() => { setShowProductPicker(true); setShowAttachMenu(false); if (!products || products.length === 0) loadProducts() }} className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-yellow-300 hover:bg-yellow-600/10 transition-colors">
+                                <span className="flex items-center gap-3"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-yellow-400"><path d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17M17 17a2 2 0 100-4 2 2 0 000 4zM7 17a2 2 0 100-4 2 2 0 000 4z" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>Mentionner un produit</span>
+                                <span className="text-xs text-yellow-600/70 bg-yellow-900/30 px-1.5 py-0.5 rounded">🛍️</span>
                               </button>
                             </div>
                           )}

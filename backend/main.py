@@ -6560,7 +6560,23 @@ async def chat_with_ai(req: ChatRequest, request: Request):
         # Construire le prompt avec contexte si fourni
         full_message = message
         if context:
-            full_message = f"Contexte: {context}\n\nQuestion: {message}"
+            # Inject product context as a system-level instruction so the AI truly "knows" the product
+            product_context_instruction = (
+                "\n\n========================================\n"
+                "PRODUIT DE LA BOUTIQUE DU MARCHAND\n"
+                "========================================\n"
+                f"{context}\n\n"
+                "INSTRUCTIONS IMPORTANTES :\n"
+                "- Ce produit EXISTE dans la boutique Shopify du marchand. Tu as accès à toutes ses données ci-dessus.\n"
+                "- Analyse ce produit spécifique quand le marchand pose une question.\n"
+                "- Tu peux évaluer le titre, la description, le prix, les tags, les variantes, le stock.\n"
+                "- Si le marchand demande si sa description/titre/photos sont bons, donne une analyse honnête\n"
+                "  avec points forts ✅ et points faibles ❌ et des suggestions concrètes d'amélioration.\n"
+                "- Si le marchand demande un prix, compare avec le marché et donne ton avis.\n"
+                "- Sois direct, actionnable et expert.\n"
+            )
+            system_prompt = system_prompt + product_context_instruction
+            full_message = message  # Don't duplicate context in user message
         
         # Build user content: text only or text + images (vision)
         images = req.images or []
