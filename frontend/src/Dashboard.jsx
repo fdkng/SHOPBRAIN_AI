@@ -215,6 +215,10 @@ export default function Dashboard() {
   const [invoiceNote, setInvoiceNote] = useState('')
   const [invoiceSubmitting, setInvoiceSubmitting] = useState(false)
   const [invoiceResult, setInvoiceResult] = useState(null)
+  // New: orders list for invoices tab
+  const [ordersList, setOrdersList] = useState([])
+  const [ordersListLoading, setOrdersListLoading] = useState(false)
+  const [sendingInvoiceFor, setSendingInvoiceFor] = useState(null) // order row index being sent
 
   const formatDate = (value) => {
     if (!value) return '—'
@@ -2894,6 +2898,78 @@ export default function Dashboard() {
     }
   }
 
+  const loadOrdersList = async () => {
+    try {
+      setOrdersListLoading(true)
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        setStatus('invoice', 'error', 'Session expirée, reconnectez-vous')
+        return
+      }
+      const response = await fetch(`${API_URL}/api/shopify/orders-list?limit=100`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        }
+      })
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.detail || `HTTP ${response.status}`)
+      }
+      const data = await response.json()
+      if (data.success && data.orders) {
+        setOrdersList(data.orders)
+      }
+    } catch (err) {
+      console.error('Error loading orders list:', err)
+      setStatus('invoice', 'error', formatUserFacingError(err, 'Erreur chargement commandes'))
+    } finally {
+      setOrdersListLoading(false)
+    }
+  }
+
+  const sendInvoiceEmailForRow = async (row, index) => {
+    try {
+      setSendingInvoiceFor(index)
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        setStatus('invoice', 'error', 'Session expirée, reconnectez-vous')
+        return
+      }
+      const response = await fetch(`${API_URL}/api/shopify/send-invoice-email`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          to_email: row.email,
+          product_title: row.product_title,
+          quantity: row.quantity,
+          price: row.price,
+          currency: row.currency || 'CAD',
+          order_name: row.order_name || ''
+        })
+      })
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.detail || `HTTP ${response.status}`)
+      }
+      const data = await response.json()
+      if (data.success) {
+        setStatus('invoice', 'success', `Facture envoyée à ${row.email}`)
+      } else {
+        setStatus('invoice', 'error', 'Échec envoi facture')
+      }
+    } catch (err) {
+      console.error('Error sending invoice:', err)
+      setStatus('invoice', 'error', formatUserFacingError(err, 'Erreur envoi facture'))
+    } finally {
+      setSendingInvoiceFor(null)
+    }
+  }
+
   const addInvoiceItem = () => {
     if (!invoiceProductId) {
       setStatus('invoice', 'warning', 'Sélectionne un produit')
@@ -3010,6 +3086,9 @@ export default function Dashboard() {
     }
     if (activeTab === 'invoices' && (!products || products.length === 0)) {
       loadProducts()
+    }
+    if (activeTab === 'invoices' && ordersList.length === 0) {
+      loadOrdersList()
     }
     if (activeTab === 'action-rewrite' && (!products || products.length === 0)) {
       loadProducts()
@@ -3688,139 +3767,109 @@ export default function Dashboard() {
         {/* Invoices Tab */}
         {activeTab === 'invoices' && (
           <div className="space-y-6">
-            <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700">
-              <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+            {/* Header */}
+            <div className="bg-gray-800 rounded-2xl p-4 md:p-6 border border-gray-700">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.3em] text-gray-400">Facturation</p>
-                  <h2 className="text-white text-2xl font-bold mt-2">Créer une facture Shopify</h2>
-                  <p className="text-sm text-gray-400 mt-2">Facturation manuelle: génère un Draft Order et envoie la facture au client.</p>
+                  <p className="text-xs uppercase tracking-[0.3em] text-yellow-400">Facturation</p>
+                  <h2 className="text-white text-xl md:text-2xl font-bold mt-2">Commandes clients</h2>
+                  <p className="text-sm text-gray-400 mt-1">Liste des achats de vos clients. Envoyez une facture par email en un clic.</p>
                 </div>
                 <button
-                  onClick={loadCustomers}
+                  onClick={loadOrdersList}
                   className="px-4 py-2 rounded-lg bg-gray-700 text-white hover:bg-gray-600 text-sm"
                 >
-                  {customersLoading ? 'Chargement...' : 'Rafraîchir clients'}
+                  {ordersListLoading ? 'Chargement...' : 'Rafraîchir'}
                 </button>
-              </div>
-
-              <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <div className="bg-gray-900 border border-gray-700 rounded-xl p-4">
-                  <label className="block text-gray-400 text-xs uppercase tracking-[0.2em] mb-2">Client</label>
-                  <select
-                    value={invoiceCustomerId}
-                    onChange={(e) => setInvoiceCustomerId(e.target.value)}
-                    className="w-full bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-700"
-                  >
-                    <option value="">Sélectionner un client</option>
-                    {customers.map((customer) => (
-                      <option key={customer.id} value={customer.id}>
-                        {(customer.first_name || customer.last_name)
-                          ? `${customer.first_name || ''} ${customer.last_name || ''}`.trim()
-                          : (customer.email || `Client ${customer.id}`)}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-xs text-gray-500 mt-2">Ou saisir un email ci-dessous</p>
-                  <input
-                    type="email"
-                    value={invoiceCustomerEmail}
-                    onChange={(e) => setInvoiceCustomerEmail(e.target.value)}
-                    placeholder="client@exemple.com"
-                    className="mt-2 w-full bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-700"
-                  />
-                </div>
-
-                <div className="bg-gray-900 border border-gray-700 rounded-xl p-4">
-                  <label className="block text-gray-400 text-xs uppercase tracking-[0.2em] mb-2">Produit</label>
-                  <select
-                    value={invoiceProductId}
-                    onChange={(e) => setInvoiceProductId(e.target.value)}
-                    className="w-full bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-700"
-                  >
-                    <option value="">Sélectionner un produit</option>
-                    {(products || []).map((product) => (
-                      <option key={product.id} value={product.id}>
-                        {product.title}
-                      </option>
-                    ))}
-                  </select>
-                  <div className="mt-3 flex items-center gap-3">
-                    <input
-                      type="number"
-                      min="1"
-                      value={invoiceQuantity}
-                      onChange={(e) => setInvoiceQuantity(e.target.value)}
-                      className="w-24 bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-700"
-                    />
-                    <button
-                      onClick={addInvoiceItem}
-                      className="flex-1 bg-yellow-600 hover:bg-yellow-500 text-black font-semibold py-2 rounded-lg"
-                    >
-                      Ajouter
-                    </button>
-                  </div>
-                </div>
-
-                <div className="bg-gray-900 border border-gray-700 rounded-xl p-4">
-                  <label className="block text-gray-400 text-xs uppercase tracking-[0.2em] mb-2">Note</label>
-                  <textarea
-                    value={invoiceNote}
-                    onChange={(e) => setInvoiceNote(e.target.value)}
-                    placeholder="Message ou conditions"
-                    className="w-full h-28 bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-700"
-                  />
-                </div>
               </div>
               {renderStatus('invoice')}
             </div>
 
-            <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700">
-              <h3 className="text-white text-lg font-semibold mb-4">Lignes de facture</h3>
-              {invoiceItems.length === 0 ? (
-                <p className="text-sm text-gray-500">Ajoute des produits pour générer une facture.</p>
+            {/* Orders List */}
+            <div className="bg-gray-800 rounded-2xl p-4 md:p-6 border border-gray-700">
+              <h3 className="text-white text-lg font-semibold mb-4">
+                {ordersList.length > 0 ? `${ordersList.length} achat(s)` : 'Achats clients'}
+              </h3>
+
+              {ordersListLoading ? (
+                <div className="text-center py-8 text-gray-500 text-sm">⏳ Chargement des commandes Shopify...</div>
+              ) : ordersList.length === 0 ? (
+                <div className="text-center py-8">
+                  <p className="text-gray-500 text-sm">Aucune commande trouvée.</p>
+                  <p className="text-gray-600 text-xs mt-1">Connecte ta boutique Shopify et les achats apparaîtront automatiquement.</p>
+                </div>
               ) : (
                 <div className="space-y-3">
-                  {invoiceItems.map((item, index) => (
-                    <div key={`${item.variant_id}-${index}`} className="flex items-center justify-between bg-gray-900 border border-gray-700 rounded-xl px-4 py-3">
-                      <div>
-                        <p className="text-white text-sm font-semibold">{item.title}</p>
-                        <p className="text-xs text-gray-500">Qté: {item.quantity}</p>
+                  {/* Desktop header row */}
+                  <div className="hidden md:grid grid-cols-12 gap-3 px-4 py-2 text-xs uppercase tracking-[0.15em] text-gray-500 border-b border-gray-700">
+                    <div className="col-span-3">Email client</div>
+                    <div className="col-span-3">Produit</div>
+                    <div className="col-span-1 text-center">Qté</div>
+                    <div className="col-span-2 text-right">Prix</div>
+                    <div className="col-span-3 text-right">Action</div>
+                  </div>
+
+                  {ordersList.map((row, index) => (
+                    <div key={`${row.order_id}-${index}`} className="bg-gray-900 border border-gray-700 rounded-xl px-4 py-3">
+                      {/* Mobile layout */}
+                      <div className="md:hidden space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-white text-sm font-medium truncate max-w-[200px]">{row.email || 'Pas d\'email'}</span>
+                          <span className="text-xs text-gray-500">{row.order_name}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-300 text-sm truncate max-w-[180px]">{row.product_title}</span>
+                          <span className="text-gray-300 text-sm font-semibold">{Number(row.price).toFixed(2)} {row.currency}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-gray-500">Qté: {row.quantity}</span>
+                          <button
+                            onClick={() => sendInvoiceEmailForRow(row, index)}
+                            disabled={!row.email || sendingInvoiceFor === index}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                              !row.email
+                                ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                                : sendingInvoiceFor === index
+                                ? 'bg-gray-600 text-gray-300'
+                                : 'bg-yellow-600 hover:bg-yellow-500 text-black'
+                            }`}
+                          >
+                            {sendingInvoiceFor === index ? 'Envoi...' : '📧 Facture'}
+                          </button>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-4">
-                        <p className="text-sm text-gray-300">{formatCurrency(item.price, analyticsData?.currency || 'EUR')}</p>
-                        <button
-                          onClick={() => removeInvoiceItem(index)}
-                          className="text-xs text-gray-400 hover:text-white"
-                        >
-                          Retirer
-                        </button>
+
+                      {/* Desktop layout */}
+                      <div className="hidden md:grid grid-cols-12 gap-3 items-center">
+                        <div className="col-span-3 text-white text-sm truncate" title={row.email}>
+                          {row.email || <span className="text-gray-500 italic">Pas d'email</span>}
+                        </div>
+                        <div className="col-span-3 text-gray-300 text-sm truncate" title={row.product_title}>
+                          {row.product_title}
+                          {row.variant_title && <span className="text-gray-500 text-xs ml-1">({row.variant_title})</span>}
+                        </div>
+                        <div className="col-span-1 text-center text-gray-400 text-sm">{row.quantity}</div>
+                        <div className="col-span-2 text-right text-gray-300 text-sm font-medium">
+                          {Number(row.price).toFixed(2)} {row.currency}
+                        </div>
+                        <div className="col-span-3 text-right">
+                          <button
+                            onClick={() => sendInvoiceEmailForRow(row, index)}
+                            disabled={!row.email || sendingInvoiceFor === index}
+                            className={`px-4 py-2 rounded-lg text-xs font-semibold transition ${
+                              !row.email
+                                ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                                : sendingInvoiceFor === index
+                                ? 'bg-gray-600 text-gray-300'
+                                : 'bg-yellow-600 hover:bg-yellow-500 text-black'
+                            }`}
+                          >
+                            {sendingInvoiceFor === index ? 'Envoi en cours...' : '📧 Créer la facture'}
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}
-                </div>
-              )}
-
-              <div className="mt-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                <div className="text-sm text-gray-400">
-                  {invoiceItems.length > 0 && (
-                    <span>{invoiceItems.length} ligne(s) · Total {formatCurrency(invoiceItems.reduce((acc, item) => acc + item.price * item.quantity, 0), analyticsData?.currency || 'EUR')}</span>
-                  )}
-                </div>
-                <button
-                  onClick={submitInvoice}
-                  className="bg-yellow-600 hover:bg-yellow-500 text-black font-semibold px-6 py-3 rounded-lg"
-                >
-                  {invoiceSubmitting ? 'Création...' : 'Créer la facture'}
-                </button>
-              </div>
-              {invoiceResult?.draft_order?.invoice_url && (
-                <div className="mt-4 text-sm text-gray-300 space-y-1">
-                  <div>
-                    Facture créée: <a className="text-yellow-400 hover:underline" href={invoiceResult.draft_order.invoice_url} target="_blank" rel="noreferrer">Voir la facture</a>
-                  </div>
-                  <div>
-                    Total: {formatCurrency(invoiceResult.draft_order.total_price, analyticsData?.currency || 'EUR')}
-                  </div>
                 </div>
               )}
             </div>

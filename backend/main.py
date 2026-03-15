@@ -2660,6 +2660,150 @@ async def get_shopify_customers(request: Request, limit: int = 100):
     }
 
 
+@app.get("/api/shopify/orders-list")
+async def get_shopify_orders_list(request: Request, limit: int = 50):
+    """📦 Récupère la liste des commandes récentes avec email client, produits et prix.
+    Retourne une liste aplatie: une ligne par produit acheté.
+    """
+    user_id = get_user_id(request)
+    shop_domain, access_token = _get_shopify_connection(user_id)
+
+    orders_url = (
+        f"https://{shop_domain}/admin/api/2024-10/orders.json"
+        f"?status=any&limit={min(limit, 250)}"
+        f"&fields=id,name,order_number,created_at,email,total_price,currency,financial_status,line_items,customer"
+    )
+    headers = {
+        "X-Shopify-Access-Token": access_token,
+        "Content-Type": "application/json"
+    }
+
+    response = requests.get(orders_url, headers=headers, timeout=30)
+    if response.status_code == 401:
+        raise HTTPException(status_code=401, detail="Token Shopify expiré ou invalide. Reconnectez-vous.")
+    if response.status_code == 404:
+        raise HTTPException(status_code=404, detail=f"Boutique Shopify non trouvée: {shop_domain}")
+    if response.status_code != 200:
+        raise HTTPException(status_code=response.status_code, detail=f"Erreur Shopify: {response.text[:300]}")
+
+    raw_orders = response.json().get("orders", [])
+
+    # Flatten: one row per line_item
+    order_rows = []
+    for order in raw_orders:
+        email = order.get("email") or ""
+        order_name = order.get("name") or f"#{order.get('order_number', '')}"
+        order_id = order.get("id")
+        created_at = order.get("created_at", "")
+        currency = order.get("currency", "USD")
+        total_price = order.get("total_price", "0")
+        financial_status = order.get("financial_status", "")
+
+        for item in order.get("line_items", []):
+            order_rows.append({
+                "order_id": order_id,
+                "order_name": order_name,
+                "email": email,
+                "product_title": item.get("title") or "Produit",
+                "variant_title": item.get("variant_title") or "",
+                "quantity": item.get("quantity") or 1,
+                "price": str(item.get("price") or "0"),
+                "currency": currency,
+                "total_order_price": total_price,
+                "financial_status": financial_status,
+                "created_at": created_at,
+            })
+
+    return {
+        "success": True,
+        "shop": shop_domain,
+        "count": len(order_rows),
+        "orders": order_rows
+    }
+
+
+class InvoiceEmailRequest(BaseModel):
+    to_email: str
+    product_title: str
+    quantity: int = 1
+    price: str = "0"
+    currency: str = "CAD"
+    order_name: str = ""
+
+
+@app.post("/api/shopify/send-invoice-email")
+async def send_invoice_email_endpoint(request: Request, payload: InvoiceEmailRequest):
+    """📧 Envoie un email de facture au client (via Gmail API, même système que les alertes stock)."""
+    user_id = get_user_id(request)
+    shop_domain, _ = _get_shopify_connection(user_id)
+
+    if not payload.to_email:
+        raise HTTPException(status_code=400, detail="Email du client manquant")
+
+    if not all([GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN, GMAIL_SENDER_EMAIL]):
+        raise HTTPException(status_code=500, detail="Configuration email (Gmail) manquante sur le serveur")
+
+    import email.message
+
+    unit_price = float(payload.price or 0)
+    total = unit_price * payload.quantity
+    invoice_date = datetime.utcnow().strftime("%d/%m/%Y")
+    currency = payload.currency or "CAD"
+
+    subject = f"🧾 Facture – {payload.product_title} | {shop_domain}"
+    text_body = (
+        f"Bonjour,\n\n"
+        f"Voici votre facture pour votre achat récent.\n\n"
+        f"═══════════════════════════════════\n"
+        f"  FACTURE\n"
+        f"═══════════════════════════════════\n"
+        f"  Boutique : {shop_domain}\n"
+        f"  Date : {invoice_date}\n"
+        f"  Commande : {payload.order_name}\n"
+        f"───────────────────────────────────\n"
+        f"  Produit : {payload.product_title}\n"
+        f"  Quantité : {payload.quantity}\n"
+        f"  Prix unitaire : {unit_price:.2f} {currency}\n"
+        f"  Total : {total:.2f} {currency}\n"
+        f"═══════════════════════════════════\n\n"
+        f"Merci pour votre achat !\n\n"
+        f"Cordialement,\n"
+        f"{shop_domain}\n"
+        f"Facture générée par ShopBrain AI"
+    )
+
+    try:
+        access_token = _get_gmail_access_token()
+
+        msg = email.message.EmailMessage()
+        msg["From"] = f"ShopBrain AI <{GMAIL_SENDER_EMAIL}>"
+        msg["Reply-To"] = GMAIL_SENDER_EMAIL
+        msg["To"] = payload.to_email
+        msg["Subject"] = subject
+        msg.set_content(text_body)
+
+        raw_msg = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
+
+        resp = requests.post(
+            "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+            headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+            json={"raw": raw_msg},
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            msg_id = resp.json().get("id", "")
+            print(f"✅ [INVOICE EMAIL] Facture envoyée à {payload.to_email} (id={msg_id})")
+            return {"success": True, "message": f"Facture envoyée à {payload.to_email}", "gmail_id": msg_id}
+        else:
+            print(f"❌ [INVOICE EMAIL] Erreur {resp.status_code}: {resp.text[:300]}")
+            raise HTTPException(status_code=500, detail=f"Erreur envoi email: {resp.status_code}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ [INVOICE EMAIL] Exception: {e}")
+        raise HTTPException(status_code=500, detail=f"Erreur envoi facture: {str(e)}")
+
+
 @app.get("/api/shopify/analytics")
 async def get_shopify_analytics(request: Request, range: str = "30d"):
     """📈 Récupère les KPIs Shopify (revenus, commandes, AOV, série temporelle)"""
