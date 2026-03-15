@@ -6738,6 +6738,83 @@ async def chat_with_ai(req: ChatRequest, request: Request):
 
 
 # ============================================================================
+# ⚡ CHAT CONVERSATIONS — Persistent storage in Supabase
+# ============================================================================
+
+class ConversationSaveRequest(BaseModel):
+    conversations: list  # Array of conversation objects
+
+
+@app.get("/api/conversations")
+async def get_conversations(request: Request):
+    """📚 Load all chat conversations for the current user from Supabase."""
+    user_id = get_user_id(request)
+    try:
+        sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        result = sb.table("chat_conversations").select("*").eq("user_id", user_id).order("updated_at", desc=True).execute()
+        conversations = []
+        for row in (result.data or []):
+            conversations.append({
+                "id": row["conversation_id"],
+                "title": row.get("title", ""),
+                "messages": row.get("messages", []),
+                "createdAt": row.get("created_at", ""),
+                "updatedAt": row.get("updated_at", ""),
+            })
+        return {"success": True, "conversations": conversations, "count": len(conversations)}
+    except Exception as e:
+        print(f"❌ Error loading conversations: {e}")
+        return {"success": False, "conversations": [], "error": str(e)}
+
+
+@app.post("/api/conversations/save")
+async def save_conversations(req: ConversationSaveRequest, request: Request):
+    """💾 Sync all conversations to Supabase (upsert)."""
+    user_id = get_user_id(request)
+    try:
+        sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        saved = 0
+        for conv in req.conversations:
+            conv_id = conv.get("id", "")
+            if not conv_id:
+                continue
+            # Strip base64 images from messages to save DB space
+            messages = []
+            for m in (conv.get("messages") or []):
+                msg = {k: v for k, v in m.items() if k != "images"}
+                if m.get("images"):
+                    msg["hadImages"] = True
+                messages.append(msg)
+            row = {
+                "user_id": user_id,
+                "conversation_id": conv_id,
+                "title": conv.get("title", "")[:200],
+                "messages": messages,
+                "updated_at": conv.get("updatedAt") or conv.get("createdAt") or datetime.utcnow().isoformat(),
+                "created_at": conv.get("createdAt") or datetime.utcnow().isoformat(),
+            }
+            sb.table("chat_conversations").upsert(row, on_conflict="user_id,conversation_id").execute()
+            saved += 1
+        return {"success": True, "saved": saved}
+    except Exception as e:
+        print(f"❌ Error saving conversations: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/conversations/{conversation_id}")
+async def delete_conversation(conversation_id: str, request: Request):
+    """🗑️ Delete a specific conversation."""
+    user_id = get_user_id(request)
+    try:
+        sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        sb.table("chat_conversations").delete().eq("user_id", user_id).eq("conversation_id", conversation_id).execute()
+        return {"success": True}
+    except Exception as e:
+        print(f"❌ Error deleting conversation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
 class TTSRequest(BaseModel):
     text: str
     voice: str = "nova"  # nova, alloy, echo, fable, onyx, shimmer
@@ -8403,13 +8480,57 @@ print(f"========== BACKEND READY ==========\n")
 
 @app.on_event("startup")
 async def startup_event():
-    """Log when the app starts + launch background stock monitor."""
+    """Log when the app starts + launch background stock monitor + ensure tables exist."""
     startup_time = datetime.utcnow().isoformat()
     print(f"\n🟢 APP STARTUP at {startup_time}")
     print(f"STRIPE_SECRET_KEY={'present' if STRIPE_SECRET_KEY else 'MISSING'}")
     print(f"SUPABASE_URL={'present' if SUPABASE_URL else 'MISSING'}")
     sys.stdout.flush()
     sys.stderr.flush()
+
+    # ⚡ Auto-create chat_conversations table if it doesn't exist
+    if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+        try:
+            sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+            # Try a simple query — if table doesn't exist, we'll create it via REST
+            try:
+                sb.table("chat_conversations").select("id").limit(1).execute()
+                print("✅ chat_conversations table exists")
+            except Exception:
+                print("⚠️ chat_conversations table not found — creating via Supabase REST...")
+                # Use Supabase SQL via postgrest RPC or direct REST
+                import requests as req2
+                sql = """
+                CREATE TABLE IF NOT EXISTS chat_conversations (
+                  id BIGSERIAL PRIMARY KEY,
+                  user_id UUID NOT NULL,
+                  conversation_id TEXT NOT NULL,
+                  title TEXT DEFAULT '',
+                  messages JSONB DEFAULT '[]'::jsonb,
+                  created_at TIMESTAMPTZ DEFAULT NOW(),
+                  updated_at TIMESTAMPTZ DEFAULT NOW(),
+                  UNIQUE(user_id, conversation_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_chat_conversations_user_id ON chat_conversations(user_id);
+                CREATE INDEX IF NOT EXISTS idx_chat_conversations_updated ON chat_conversations(user_id, updated_at DESC);
+                """
+                resp = req2.post(
+                    f"{SUPABASE_URL}/rest/v1/rpc/exec_sql",
+                    headers={
+                        "apikey": SUPABASE_SERVICE_KEY,
+                        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+                        "Content-Type": "application/json"
+                    },
+                    json={"query": sql},
+                    timeout=10
+                )
+                if resp.status_code < 300:
+                    print("✅ chat_conversations table created successfully")
+                else:
+                    print(f"⚠️ Could not auto-create table (status={resp.status_code}). Run the SQL manually: backend/supabase_chat_conversations.sql")
+        except Exception as e:
+            print(f"⚠️ Table check failed: {e}. Conversations will use localStorage only until table exists.")
+
     # Lancer le thread de surveillance stock 24/7
     threading.Thread(target=_stock_monitor_loop, daemon=True).start()
     print("📦 Stock monitor démarré (toutes les 5 minutes)")

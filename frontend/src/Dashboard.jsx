@@ -768,20 +768,91 @@ export default function Dashboard() {
     }
   }, [settingsTab])
 
+  // ⚡ Debounced sync timer ref
+  const syncConvTimerRef = useRef(null)
+
+  // Strip images helper
+  const stripImagesFromMessages = (messages) => (messages || []).map(m => {
+    if (m.images) {
+      const { images, ...rest } = m
+      return { ...rest, hadImages: true }
+    }
+    return m
+  })
+
+  // ⚡ Sync conversations to Supabase (debounced)
+  const syncConversationsToServer = useCallback(async (convs) => {
+    try {
+      const session = await getCachedSession()
+      if (!session) return
+      const convsToSync = convs.filter(c => c.messages && c.messages.length > 0)
+      if (convsToSync.length === 0) return
+      await fetch(`${API_URL}/api/conversations/save`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ conversations: convsToSync.map(c => ({
+          ...c,
+          messages: stripImagesFromMessages(c.messages)
+        })) })
+      })
+    } catch (e) {
+      console.warn('Sync conversations to server failed:', e)
+    }
+  }, [])
+
+  // ⚡ Load conversations from Supabase on init
+  const loadConversationsFromServer = useCallback(async () => {
+    try {
+      const session = await getCachedSession()
+      if (!session) return
+      const resp = await fetch(`${API_URL}/api/conversations`, {
+        headers: { 'Authorization': `Bearer ${session.access_token}` }
+      })
+      const data = await resp.json()
+      if (data.success && data.conversations && data.conversations.length > 0) {
+        // Merge server conversations with local ones (server wins on conflict)
+        setChatConversations(prev => {
+          const serverIds = new Set(data.conversations.map(c => c.id))
+          const localOnly = prev.filter(c => !serverIds.has(c.id))
+          const merged = [...data.conversations, ...localOnly]
+            .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
+          // If we have an active conversation, reload its messages
+          const activeId = localStorage.getItem('activeConversationId')
+          if (activeId) {
+            const activeConv = merged.find(c => c.id === activeId)
+            if (activeConv && activeConv.messages && activeConv.messages.length > 0) {
+              setChatMessages(activeConv.messages.map(m => ({
+                ...m,
+                text: typeof m.text === 'string' ? m.text : (m.text ? String(m.text) : '')
+              })))
+            }
+          }
+          return merged
+        })
+        console.log(`📚 Loaded ${data.conversations.length} conversations from server`)
+      }
+    } catch (e) {
+      console.warn('Load conversations from server failed:', e)
+    }
+  }, [])
+
   useEffect(() => {
     if (typeof window !== 'undefined') {
       try {
-        // Strip base64 images before persisting to avoid localStorage quota crash
-        const messagesForStorage = chatMessages.slice(-50).map(m => {
-          if (m.images) {
-            const { images, ...rest } = m
-            return { ...rest, hadImages: true }
-          }
-          return m
-        })
+        // ⚡ Save ALL messages (no more slice(-50) limit)
+        const messagesForStorage = stripImagesFromMessages(chatMessages)
         localStorage.setItem('chatMessages', JSON.stringify(messagesForStorage))
       } catch (e) {
-        console.warn('Could not save chat messages to localStorage:', e)
+        // If localStorage is full, trim old messages
+        try {
+          const trimmed = stripImagesFromMessages(chatMessages.slice(-200))
+          localStorage.setItem('chatMessages', JSON.stringify(trimmed))
+        } catch (_) {
+          console.warn('Could not save chat messages to localStorage')
+        }
       }
     }
   }, [chatMessages])
@@ -789,21 +860,20 @@ export default function Dashboard() {
   useEffect(() => {
     if (typeof window !== 'undefined') {
       try {
-        // Strip base64 images from conversation messages before persisting
+        // Save to localStorage (fast cache)
         const convsForStorage = chatConversations.map(c => ({
           ...c,
-          messages: (c.messages || []).map(m => {
-            if (m.images) {
-              const { images, ...rest } = m
-              return { ...rest, hadImages: true }
-            }
-            return m
-          })
+          messages: stripImagesFromMessages(c.messages)
         }))
         localStorage.setItem('chatConversations', JSON.stringify(convsForStorage))
       } catch (e) {
         console.warn('Could not save chat conversations to localStorage:', e)
       }
+      // ⚡ Debounced sync to Supabase (3 seconds after last change)
+      if (syncConvTimerRef.current) clearTimeout(syncConvTimerRef.current)
+      syncConvTimerRef.current = setTimeout(() => {
+        syncConversationsToServer(chatConversations)
+      }, 3000)
     }
   }, [chatConversations])
 
@@ -956,6 +1026,9 @@ export default function Dashboard() {
         }
 
         setLoading(false)
+
+        // ⚡ Load conversation history from Supabase in background
+        loadConversationsFromServer()
 
         // Subscription — no retry loop, trust the DB
         const subData = initData.subscription
@@ -1142,12 +1215,22 @@ export default function Dashboard() {
     setRenamingValue('')
   }
 
-  const deleteConversation = (convId) => {
+  const deleteConversation = async (convId) => {
     setChatConversations(prev => prev.filter(c => c.id !== convId))
     if (activeConversationId === convId) {
       setChatMessages([])
       setActiveConversationId(null)
     }
+    // ⚡ Also delete from Supabase
+    try {
+      const session = await getCachedSession()
+      if (session) {
+        fetch(`${API_URL}/api/conversations/${convId}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${session.access_token}` }
+        })
+      }
+    } catch (_) {}
   }
 
   const getGreeting = () => {
