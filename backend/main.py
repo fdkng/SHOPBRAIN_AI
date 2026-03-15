@@ -6741,6 +6741,61 @@ async def chat_with_ai(req: ChatRequest, request: Request):
 # ⚡ CHAT CONVERSATIONS — Persistent storage in Supabase
 # ============================================================================
 
+class GenerateTitleRequest(BaseModel):
+    messages: list  # [{role, text}]
+
+@app.post("/api/conversations/generate-title")
+async def generate_conversation_title(req: GenerateTitleRequest, request: Request):
+    """🏷️ Generate a short descriptive title for a conversation using GPT-4o-mini."""
+    user_id = get_user_id(request)
+    if not OPENAI_API_KEY:
+        return {"success": False, "title": ""}
+    try:
+        # Take only first 6 messages to keep it cheap & fast
+        msgs_for_title = req.messages[:6]
+        conversation_text = "\n".join(
+            f"{m.get('role','user')}: {(m.get('text','') or '')[:300]}"
+            for m in msgs_for_title if m.get('text')
+        )
+        if not conversation_text.strip():
+            return {"success": False, "title": ""}
+
+        payload = {
+            "model": "gpt-4o-mini",
+            "messages": [
+                {"role": "system", "content": (
+                    "Tu génères un TITRE COURT (3-7 mots maximum) qui résume le sujet principal de cette conversation e-commerce. "
+                    "Le titre doit être en français, concis, descriptif et utile pour retrouver la conversation plus tard. "
+                    "Exemples de bons titres: 'Produits tendance été 2025', 'Optimiser prix sneakers', 'Analyse photo montre Rolex', "
+                    "'Stratégie publicité Facebook', 'Description produit sac Chanel', 'Problème stock t-shirts'. "
+                    "Réponds UNIQUEMENT avec le titre, sans guillemets, sans ponctuation finale, sans explication."
+                )},
+                {"role": "user", "content": f"Voici la conversation:\n{conversation_text}"}
+            ],
+            "max_tokens": 30,
+            "temperature": 0.3
+        }
+        r = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+            data=json.dumps(payload),
+            timeout=8
+        )
+        if r.status_code == 200:
+            title = r.json()["choices"][0]["message"]["content"].strip().strip('"').strip("'").strip('.')
+            # Cap at 60 chars
+            if len(title) > 60:
+                title = title[:57] + '...'
+            print(f"🏷️ Generated title: '{title}' for user {user_id}")
+            return {"success": True, "title": title}
+        else:
+            print(f"❌ Title generation failed: {r.status_code}")
+            return {"success": False, "title": ""}
+    except Exception as e:
+        print(f"❌ Title generation error: {e}")
+        return {"success": False, "title": ""}
+
+
 class ConversationSaveRequest(BaseModel):
     conversations: list  # Array of conversation objects
 

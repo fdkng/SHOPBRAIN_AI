@@ -1171,15 +1171,32 @@ export default function Dashboard() {
       ))
     } else if (chatMessages.length > 0 && !activeConversationId) {
       const firstUserMsg = chatMessages.find(m => m.role === 'user')
-      const title = firstUserMsg ? firstUserMsg.text.slice(0, 40) + (firstUserMsg.text.length > 40 ? '...' : '') : 'Nouvelle conversation'
+      const tempTitle = firstUserMsg ? firstUserMsg.text.slice(0, 40) + (firstUserMsg.text.length > 40 ? '...' : '') : 'Nouvelle conversation'
+      const newConvId = Date.now().toString()
       const newConv = {
-        id: Date.now().toString(),
-        title,
+        id: newConvId,
+        title: tempTitle,
         messages: chatMessages,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       }
       setChatConversations(prev => [newConv, ...prev])
+      // 🏷️ Generate smart title in background
+      ;(async () => {
+        try {
+          const s = await getCachedSession()
+          if (!s) return
+          const resp = await fetch(`${API_URL}/api/conversations/generate-title`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${s.access_token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ messages: chatMessages.slice(0, 6).map(m => ({ role: m.role, text: m.text })) })
+          })
+          const d = await resp.json()
+          if (d.success && d.title) {
+            setChatConversations(prev => prev.map(c => c.id === newConvId ? { ...c, title: d.title } : c))
+          }
+        } catch (e) { console.log('Title gen skipped:', e.message) }
+      })()
     }
     setChatMessages([])
     setActiveConversationId(null)
@@ -1591,18 +1608,21 @@ export default function Dashboard() {
       if (chatTextareaRef.current) chatTextareaRef.current.style.height = '44px'
       
       // Auto-create conversation on first message
+      let isNewConversation = false
+      let newConvId = activeConversationId
       if (!activeConversationId) {
-        const newId = Date.now().toString()
-        const title = (userMessage || 'Image').slice(0, 40) + ((userMessage || '').length > 40 ? '...' : '')
+        isNewConversation = true
+        newConvId = Date.now().toString()
+        const tempTitle = (userMessage || 'Image').slice(0, 40) + ((userMessage || '').length > 40 ? '...' : '')
         const newConv = {
-          id: newId,
-          title,
+          id: newConvId,
+          title: tempTitle,
           messages: [userMsgObj],
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         }
         setChatConversations(prev => [newConv, ...prev])
-        setActiveConversationId(newId)
+        setActiveConversationId(newConvId)
       }
       
       const session = await getCachedSession()
@@ -1647,16 +1667,37 @@ export default function Dashboard() {
       const data = await resp.json()
 
       if (data.success) {
+        const aiMsg = { role: 'assistant', text: data.message }
         setChatMessages(prev => {
-          const updated = [...prev, { role: 'assistant', text: data.message }]
+          const updated = [...prev, aiMsg]
           // Persist to conversation
-          if (activeConversationId) {
+          const convIdToUpdate = newConvId || activeConversationId
+          if (convIdToUpdate) {
             setChatConversations(prev2 => prev2.map(c =>
-              c.id === activeConversationId ? { ...c, messages: updated, updatedAt: new Date().toISOString() } : c
+              c.id === convIdToUpdate ? { ...c, messages: updated, updatedAt: new Date().toISOString() } : c
             ))
           }
           return updated
         })
+        // 🏷️ Auto-generate smart title for NEW conversations (after first AI response)
+        if (isNewConversation && newConvId) {
+          try {
+            const titleSession = await getCachedSession()
+            if (titleSession) {
+              const titleResp = await fetch(`${API_URL}/api/conversations/generate-title`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${titleSession.access_token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ messages: [userMsgObj, aiMsg] })
+              })
+              const titleData = await titleResp.json()
+              if (titleData.success && titleData.title) {
+                setChatConversations(prev => prev.map(c =>
+                  c.id === newConvId ? { ...c, title: titleData.title } : c
+                ))
+              }
+            }
+          } catch (e) { console.log('Title generation skipped:', e.message) }
+        }
       } else {
         setChatMessages(prev => [...prev, { 
           role: 'assistant', 
