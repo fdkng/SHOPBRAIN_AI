@@ -436,6 +436,53 @@ export default function Dashboard() {
     return message || fallback
   }
 
+  // 🔗 Format chat text: Markdown links [text](url), **bold**, raw URLs → clickable React elements
+  const formatChatText = (text) => {
+    if (!text || typeof text !== 'string') return text || ''
+    // Split by markdown links [text](url), **bold**, and raw URLs
+    // Order matters: markdown links first, then bold, then raw URLs
+    const parts = []
+    // Regex to match: [text](url) | **bold** | raw URLs
+    const combinedRegex = /\[([^\]]+)\]\((https?:\/\/[^)]+)\)|\*\*([^*]+)\*\*|(https?:\/\/[^\s)<>]+)/g
+    let lastIndex = 0
+    let match
+    while ((match = combinedRegex.exec(text)) !== null) {
+      // Add text before this match
+      if (match.index > lastIndex) {
+        parts.push(text.slice(lastIndex, match.index))
+      }
+      if (match[1] && match[2]) {
+        // Markdown link [text](url)
+        parts.push(
+          <a key={`link-${match.index}`} href={match[2]} target="_blank" rel="noopener noreferrer"
+            className="text-yellow-400 hover:text-yellow-300 underline underline-offset-2 decoration-yellow-400/40 hover:decoration-yellow-300 transition-colors"
+          >{match[1]}</a>
+        )
+      } else if (match[3]) {
+        // **bold**
+        parts.push(<strong key={`bold-${match.index}`} className="font-semibold">{match[3]}</strong>)
+      } else if (match[4]) {
+        // Raw URL
+        const url = match[4].replace(/[.,;:!?)]+$/, '') // Trim trailing punctuation
+        const trimmed = match[4].length - url.length
+        let displayUrl = url.replace(/^https?:\/\/(www\.)?/, '').slice(0, 45)
+        if (displayUrl.length >= 45) displayUrl += '…'
+        parts.push(
+          <a key={`url-${match.index}`} href={url} target="_blank" rel="noopener noreferrer"
+            className="text-yellow-400 hover:text-yellow-300 underline underline-offset-2 decoration-yellow-400/40 hover:decoration-yellow-300 transition-colors"
+          >🔗 {displayUrl}</a>
+        )
+        if (trimmed > 0) parts.push(match[4].slice(-trimmed))
+      }
+      lastIndex = match.index + match[0].length
+    }
+    // Add remaining text
+    if (lastIndex < text.length) {
+      parts.push(text.slice(lastIndex))
+    }
+    return parts.length > 0 ? parts : text
+  }
+
   const renderStatus = (key) => {
     const status = statusByKey[key]
     if (!status?.message) return null
@@ -6157,7 +6204,10 @@ analytics.subscribe("product_added_to_cart", (event) => {
                                 ))}
                               </div>
                             )}
-                            {typeof msg.text === 'string' ? msg.text : String(msg.text || '')}
+                            {msg.role === 'assistant'
+                              ? formatChatText(typeof msg.text === 'string' ? msg.text : String(msg.text || ''))
+                              : (typeof msg.text === 'string' ? msg.text : String(msg.text || ''))
+                            }
                           </div>
                         </div>
                       ))}

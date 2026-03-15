@@ -436,7 +436,7 @@ def _build_search_query(message: str) -> str:
 
 
 def _web_search_for_chat(message: str, num_results: int = 8) -> str:
-    """Perform a Google web search via SerpAPI and return formatted context.
+    """Perform a Google web search via SerpAPI and return formatted context with links.
     Returns empty string if no API key or no results."""
     if not SERPAPI_KEY:
         print("⚠️ Web search skipped: no SERPAPI_KEY")
@@ -462,7 +462,19 @@ def _web_search_for_chat(message: str, num_results: int = 8) -> str:
         data = resp.json()
         results = []
         
-        # Extract organic results
+        # Extract knowledge graph if present
+        kg = data.get("knowledge_graph")
+        if kg:
+            kg_title = kg.get("title", "")
+            kg_desc = kg.get("description", "")
+            kg_link = kg.get("website", "") or kg.get("source", {}).get("link", "")
+            if kg_title and kg_desc:
+                entry = f"📌 {kg_title}: {kg_desc}"
+                if kg_link:
+                    entry += f"\n  🔗 {kg_link}"
+                results.append(entry)
+        
+        # Extract organic results with full URLs
         for item in (data.get("organic_results") or [])[:num_results]:
             title = item.get("title", "")
             snippet = item.get("snippet", "")
@@ -473,23 +485,48 @@ def _web_search_for_chat(message: str, num_results: int = 8) -> str:
                 if date:
                     entry += f" ({date})"
                 entry += f"\n  {snippet}"
-                entry += f"\n  Source: {link}"
+                if link:
+                    entry += f"\n  🔗 {link}"
+                # Include sitelinks if present (sub-pages)
+                sitelinks = item.get("sitelinks", {}).get("inline", []) or item.get("sitelinks", {}).get("expanded", [])
+                for sl in sitelinks[:3]:
+                    sl_title = sl.get("title", "")
+                    sl_link = sl.get("link", "")
+                    if sl_title and sl_link:
+                        entry += f"\n    → {sl_title}: {sl_link}"
                 results.append(entry)
         
-        # Extract knowledge graph if present
-        kg = data.get("knowledge_graph")
-        if kg:
-            kg_title = kg.get("title", "")
-            kg_desc = kg.get("description", "")
-            if kg_title and kg_desc:
-                results.insert(0, f"📌 {kg_title}: {kg_desc}")
+        # Extract inline shopping results (product links with prices)
+        shopping_results = data.get("shopping_results") or data.get("inline_shopping_results") or []
+        if shopping_results:
+            shop_entries = []
+            for item in shopping_results[:6]:
+                s_title = item.get("title", "")
+                s_price = item.get("price", item.get("extracted_price", ""))
+                s_link = item.get("link", "")
+                s_source = item.get("source", "")
+                if s_title:
+                    entry = f"  🛒 {s_title}"
+                    if s_price:
+                        entry += f" — {s_price}"
+                    if s_source:
+                        entry += f" ({s_source})"
+                    if s_link:
+                        entry += f"\n     🔗 {s_link}"
+                    shop_entries.append(entry)
+            if shop_entries:
+                results.append("\n🛍️ PRODUITS TROUVÉS EN LIGNE :\n" + "\n".join(shop_entries))
         
         # Extract "People also ask" for extra context
         for paa in (data.get("related_questions") or [])[:3]:
             q = paa.get("question", "")
             a = paa.get("snippet", "")
+            a_link = paa.get("link", "")
             if q and a:
-                results.append(f"❓ {q}\n  {a}")
+                entry = f"❓ {q}\n  {a}"
+                if a_link:
+                    entry += f"\n  🔗 {a_link}"
+                results.append(entry)
         
         if not results:
             print("⚠️ Web search returned no usable results")
@@ -6809,10 +6846,18 @@ async def chat_with_ai(req: ChatRequest, request: Request):
                 "========================================\n"
                 "Tu as accès à Internet. Voici les résultats de recherche les plus récents :\n\n"
                 f"{web_search_context}\n\n"
-                "INSTRUCTIONS :\n"
+                "INSTRUCTIONS IMPORTANTES :\n"
                 "- Utilise ces données RÉELLES et RÉCENTES pour répondre à l'utilisateur.\n"
-                "- Cite les sources quand c'est pertinent (nom du site, pas l'URL complète).\n"
-                "- Si les résultats parlent de tendances TikTok, Instagram, etc., résume les tendances clés.\n"
+                "- INCLUS LES LIENS (URLs) dans ta réponse ! Quand tu mentionnes un produit, un site, un article ou une ressource, \n"
+                "  donne le lien COMPLET pour que l'utilisateur puisse cliquer dessus.\n"
+                "- Format des liens dans ta réponse : [Nom du site ou du produit](URL_COMPLÈTE)\n"
+                "- Exemples :\n"
+                "  • 🔗 [Voir sur Amazon](https://www.amazon.ca/dp/...)\n"
+                "  • 🔗 [Article complet sur Shopify Blog](https://www.shopify.com/blog/...)\n"
+                "  • 🛒 [Nike Air Force 1 — 129.99$](https://www.nike.com/...)\n"
+                "- Si les résultats contiennent des liens 🔗, tu DOIS les inclure dans ta réponse.\n"
+                "- Si les résultats contiennent des produits 🛒 avec prix et liens, présente-les dans un format clair.\n"
+                "- Si les résultats parlent de tendances TikTok, Instagram, etc., résume les tendances clés avec les sources.\n"
                 "- Donne des recommandations CONCRÈTES et ACTIONNABLES basées sur ces données.\n"
                 "- Ne dis JAMAIS que tu n'as pas accès à Internet ou aux données en temps réel — TU AS CET ACCÈS.\n"
                 "- Présente les infos de façon structurée avec des émojis et du formatage clair.\n"
