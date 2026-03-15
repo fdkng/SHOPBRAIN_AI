@@ -1,4 +1,5 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Playfair+Display:wght@500;600;700&family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
+/* ⚡ Load only DM Sans from HTML preload. Other fonts loaded on-demand via CSS */
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -7,6 +8,9 @@
 html, body, #root { 
   height: 100%; 
   scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 body,
@@ -19,6 +23,30 @@ body,
   background-image:
     radial-gradient(1000px 500px at 50% -20%, rgba(255, 255, 255, 0.08), transparent 60%),
     radial-gradient(600px 400px at 15% 80%, rgba(79, 129, 255, 0.18), transparent 60%);
+}
+
+/* ⚡ GPU-accelerated tab transitions */
+.tab-content {
+  will-change: opacity, transform;
+  transform: translateZ(0);
+}
+
+/* ⚡ Instant-feeling interactions */
+button, a, [role="button"] {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* ⚡ Smooth scrolling for lists */
+.scroll-smooth {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ⚡ Hardware-accelerated sidebar */
+aside, nav, .sidebar {
+  will-change: transform;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 h1, h2, h3, h4, h5, h6 {

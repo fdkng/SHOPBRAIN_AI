@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { createClient } from '@supabase/supabase-js'
 
 const supabase = createClient(
@@ -7,6 +7,36 @@ const supabase = createClient(
 )
 
 const API_URL = 'https://shopbrain-backend.onrender.com'
+
+// ⚡ Session cache — avoid redundant Supabase getSession() calls (each takes ~50ms)
+let _cachedSession = null
+let _cachedSessionTs = 0
+const SESSION_CACHE_TTL = 30_000 // 30 seconds
+const getCachedSession = async () => {
+  if (_cachedSession && (Date.now() - _cachedSessionTs < SESSION_CACHE_TTL)) {
+    return _cachedSession
+  }
+  const { data: { session } } = await supabase.auth.getSession()
+  if (session) {
+    _cachedSession = session
+    _cachedSessionTs = Date.now()
+  }
+  return session
+}
+
+// ⚡ API response cache — avoid re-fetching same data on tab switches
+const _apiCache = new Map()
+const cachedFetch = async (url, options = {}, ttlMs = 60_000) => {
+  const cacheKey = url + (options.body || '')
+  const cached = _apiCache.get(cacheKey)
+  if (cached && (Date.now() - cached.ts < ttlMs)) {
+    return cached.data
+  }
+  const resp = await fetch(url, options)
+  const data = await resp.json()
+  _apiCache.set(cacheKey, { data, ts: Date.now() })
+  return data
+}
 
 export default function Dashboard() {
   const [user, setUser] = useState(null)
@@ -253,7 +283,7 @@ export default function Dashboard() {
 
   const loadShopCurrency = async () => {
     try {
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       if (!session) return
       const resp = await fetch(`${API_URL}/api/shopify/shop`, {
         headers: {
@@ -542,7 +572,7 @@ export default function Dashboard() {
 
   const verifyPaymentSession = async (sessionId) => {
     try {
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       if (!session) {
         initializeUser()
         return
@@ -622,7 +652,7 @@ export default function Dashboard() {
   const loadApiKeys = async () => {
     try {
       setApiLoading(true)
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       if (!session) return
 
       const response = await fetch(`${API_URL}/api/settings/api-keys`, {
@@ -644,7 +674,7 @@ export default function Dashboard() {
   const handleGenerateApiKey = async () => {
     try {
       setApiLoading(true)
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       if (!session) return
 
       const response = await fetch(`${API_URL}/api/settings/api-keys`, {
@@ -680,7 +710,7 @@ export default function Dashboard() {
 
     try {
       setApiLoading(true)
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       if (!session) return
 
       const response = await fetch(`${API_URL}/api/settings/api-keys/revoke`, {
@@ -856,7 +886,7 @@ export default function Dashboard() {
   const initializeUser = async () => {
     try {
       const initStart = performance.now()
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       
       if (!session) {
         window.location.hash = '#/'
@@ -1002,7 +1032,7 @@ export default function Dashboard() {
         return
       }
 
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       if (!session) {
         setStatus('upgrade', 'error', 'Session expirée, reconnecte-toi.')
         return
@@ -1032,7 +1062,7 @@ export default function Dashboard() {
   const handleChangePlan = async (targetPlan) => {
     try {
       if (!targetPlan || targetPlan === subscription?.plan) return
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       if (!session) {
         setStatus('change-plan', 'error', 'Session expirée, reconnecte-toi.')
         return
@@ -1312,7 +1342,7 @@ export default function Dashboard() {
       // Use pre-fetched token or fetch now
       let token = accessToken
       if (!token) {
-        const { data: { session } } = await supabase.auth.getSession()
+        const session = await getCachedSession()
         if (!session) return null
         token = session.access_token
       }
@@ -1492,7 +1522,7 @@ export default function Dashboard() {
         setActiveConversationId(newId)
       }
       
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       if (!session) throw new Error('Session expirée')
 
       // Build payload with images if attached
@@ -1580,7 +1610,7 @@ export default function Dashboard() {
 
     try {
       setAvatarUploading(true)
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       if (!session) {
         setStatus('profile', 'error', 'Session expirée, reconnecte-toi.')
         return
@@ -1616,7 +1646,7 @@ export default function Dashboard() {
   const handleSaveProfile = async () => {
     try {
       setSaveLoading(true)
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       const response = await fetch(`${API_URL}/api/auth/profile`, {
         method: 'PUT',
         headers: {
@@ -1657,7 +1687,7 @@ export default function Dashboard() {
     }
     try {
       setSaveLoading(true)
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       const response = await fetch(`${API_URL}/api/settings/password`, {
         method: 'POST',
         headers: {
@@ -1688,7 +1718,7 @@ export default function Dashboard() {
   const handleToggle2FA = async () => {
     try {
       setSaveLoading(true)
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       const endpoint = twoFAEnabled ? '/api/settings/2fa/disable' : '/api/settings/2fa/enable'
       const response = await fetch(`${API_URL}${endpoint}`, {
         method: 'POST',
@@ -1714,7 +1744,7 @@ export default function Dashboard() {
   const handleSaveInterface = async () => {
     try {
       setSaveLoading(true)
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       const response = await fetch(`${API_URL}/api/settings/interface`, {
         method: 'POST',
         headers: {
@@ -1743,7 +1773,7 @@ export default function Dashboard() {
   const handleSaveNotifications = async () => {
     try {
       setSaveLoading(true)
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       const response = await fetch(`${API_URL}/api/settings/notifications`, {
         method: 'POST',
         headers: {
@@ -1774,7 +1804,7 @@ export default function Dashboard() {
     setPendingCancelSubscription(false)
     try {
       setSaveLoading(true)
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       const response = await fetch(`${API_URL}/api/subscription/cancel`, {
         method: 'POST',
         headers: {
@@ -1799,7 +1829,7 @@ export default function Dashboard() {
   const handleUpdatePaymentMethod = async () => {
     try {
       setSaveLoading(true)
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       const response = await fetch(`${API_URL}/api/subscription/update-payment-method`, {
         method: 'POST',
         headers: {
@@ -1840,7 +1870,7 @@ export default function Dashboard() {
       setLoading(true)
       setError('')
       
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       
       if (!session) {
         setStatus('shopify', 'error', 'Session expirée, reconnectez-vous')
@@ -1924,7 +1954,7 @@ export default function Dashboard() {
       setLoading(true)
       setError('')
       
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       
       if (!session) {
         setError('Session expirée, reconnectez-vous')
@@ -1976,7 +2006,7 @@ export default function Dashboard() {
       const rangeValue = rangeOverride || analyticsRange
       setAnalyticsLoading(true)
       setAnalyticsError('')
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
 
       if (!session) {
         setAnalyticsError('Session expirée, reconnectez-vous')
@@ -2145,7 +2175,7 @@ export default function Dashboard() {
       const rangeValue = rangeOverride || analyticsRange
       if (!config?.silent) setInsightsLoading(true)
       if (!config?.silent) setInsightsError('')
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
 
       if (!session) {
         throw new Error('Session expirée, reconnectez-vous')
@@ -2207,7 +2237,7 @@ export default function Dashboard() {
   const loadStockProducts = async () => {
     try {
       setStockProductsLoading(true)
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       if (!session) return
       const resp = await fetch(`${API_URL}/api/stock-alerts/products-with-thresholds`, {
         headers: { 'Authorization': `Bearer ${session.access_token}` }
@@ -2226,7 +2256,7 @@ export default function Dashboard() {
   // Auto-save seuil pour un produit (appelé à chaque modification du champ)
   const autoSaveThreshold = async (productId, productTitle, threshold) => {
     try {
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       if (!session) return
       await fetch(`${API_URL}/api/stock-alerts/save-threshold`, {
         method: 'POST',
@@ -2244,7 +2274,7 @@ export default function Dashboard() {
       setInsightsLoading(true)
       setInsightsError('')
       setBundlesJobStatus('starting')
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       if (!session) throw new Error('Session expirée, reconnectez-vous')
       await waitForBackendReady({ retries: 8, retryDelayMs: 2000, timeoutMs: 22000 })
       await warmupBackend(session.access_token)
@@ -2341,7 +2371,7 @@ export default function Dashboard() {
       setInsightsError('')
       setBundlesHistoryOpen(true)
       clearStatus('action-bundles')
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       if (!session) throw new Error('Session expirée, reconnectez-vous')
       await waitForBackendReady({ retries: 8, retryDelayMs: 2000, timeoutMs: 22000 })
       await warmupBackend(session.access_token)
@@ -2400,7 +2430,7 @@ export default function Dashboard() {
     try {
       const rangeValue = rangeOverride || analyticsRange
       setBlockersLoading(true)
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
 
       if (!session) {
         setStatus('blockers', 'error', 'Session expirée, reconnectez-vous')
@@ -2452,7 +2482,7 @@ export default function Dashboard() {
     try {
       const rangeValue = rangeOverride || analyticsRange
       setUnderperformingLoading(true)
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       if (!session) {
         setStatus('underperforming', 'error', 'Session expirée, reconnectez-vous')
         return
@@ -2493,7 +2523,7 @@ export default function Dashboard() {
   const loadPixelStatus = async () => {
     try {
       setPixelLoading(true)
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       if (!session) return
       await waitForBackendReady({ retries: 4, retryDelayMs: 2000, timeoutMs: 12000 })
       const resp = await fetch(`${API_URL}/api/shopify/pixel-status`, {
@@ -2528,7 +2558,7 @@ export default function Dashboard() {
 
       const loadAiPriceInsights = async () => {
         try {
-          const { data: { session } } = await supabase.auth.getSession()
+          const session = await getCachedSession()
           if (!session) return []
 
           // Reduce cold-start failures before calling an authenticated endpoint.
@@ -2654,7 +2684,7 @@ export default function Dashboard() {
       } else if (actionKey === 'action-images') {
         setInsightsLoading(true)
         try {
-          const { data: { session } } = await supabase.auth.getSession()
+          const session = await getCachedSession()
           if (!session) {
             setStatus(actionKey, 'error', 'Session expirée, reconnectez-vous')
             return
@@ -2703,7 +2733,7 @@ export default function Dashboard() {
       } else if (actionKey === 'action-rewrite') {
         clearStatus(actionKey)
         setStatus(actionKey, 'info', 'Analyse de réécriture en cours... (peut prendre 15-30 secondes)')
-        const { data: { session } } = await supabase.auth.getSession()
+        const session = await getCachedSession()
         if (!session) {
           setStatus(actionKey, 'error', 'Session expirée, reconnectez-vous')
           return
@@ -2854,7 +2884,7 @@ export default function Dashboard() {
       clearStatus(statusKey)
       setApplyingBlockerActionId(`${productId}-${action.type}`)
       setStatus(statusKey, 'info', `Application ${action.type === 'title' ? 'du titre' : 'de la description'} en cours...`)
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
 
       if (!session) {
         setStatus(statusKey, 'error', 'Session expirée, reconnectez-vous')
@@ -2912,7 +2942,7 @@ export default function Dashboard() {
   const loadCustomers = async () => {
     try {
       setCustomersLoading(true)
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
 
       if (!session) {
         setStatus('invoice', 'error', 'Session expirée, reconnectez-vous')
@@ -2947,7 +2977,7 @@ export default function Dashboard() {
   const loadOrdersList = async () => {
     try {
       setOrdersListLoading(true)
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       if (!session) {
         setStatus('invoice', 'error', 'Session expirée, reconnectez-vous')
         return
@@ -2978,7 +3008,7 @@ export default function Dashboard() {
   const sendInvoiceEmailForRow = async (row, index) => {
     try {
       setSendingInvoiceFor(index)
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       if (!session) {
         setStatus('invoice', 'error', 'Session expirée, reconnectez-vous')
         return
@@ -3058,7 +3088,7 @@ export default function Dashboard() {
 
     try {
       setInvoiceSubmitting(true)
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       if (!session) {
         setStatus('invoice', 'error', 'Session expirée, reconnectez-vous')
         return
@@ -3109,20 +3139,18 @@ export default function Dashboard() {
   }
 
   useEffect(() => {
-    // Skip overview loadAnalytics if we JUST loaded (initializeUser already called it)
-    if (activeTab === 'overview' && analyticsData) {
-      // Already loaded by initializeUser, only reload on range change
-      if (analyticsRange !== '30d') loadAnalytics(analyticsRange)
-    } else if (activeTab === 'overview') {
-      loadAnalytics(analyticsRange)
+    // ⚡ Skip re-fetch if data is already loaded (instant tab switches)
+    if (activeTab === 'overview') {
+      if (!analyticsData) loadAnalytics(analyticsRange)
+      else if (analyticsRange !== '30d') loadAnalytics(analyticsRange)
     }
     if (activeTab === 'underperforming') {
-      loadAnalytics(analyticsRange)
-      loadUnderperforming(analyticsRange)
+      if (!analyticsData) loadAnalytics(analyticsRange)
+      if (!underperformingData) loadUnderperforming(analyticsRange)
     }
     if (activeTab === 'action-blockers') {
-      loadBlockers(analyticsRange)
-      loadPixelStatus()
+      if (!blockersData) loadBlockers(analyticsRange)
+      if (!pixelStatus) loadPixelStatus()
     }
   }, [activeTab, analyticsRange])
 
@@ -3147,7 +3175,7 @@ export default function Dashboard() {
 
     const checkShopifyConnection = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession()
+        const session = await getCachedSession()
         if (!session) return
 
         const response = await fetch(`${API_URL}/api/shopify/keep-alive`, {
@@ -3190,7 +3218,7 @@ export default function Dashboard() {
     try {
       setLoading(true)
       console.log('🔍 Lancement de l\'analyse IA...')
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       
       const response = await fetch(`${API_URL}/api/ai/analyze-store`, {
         method: 'POST',
@@ -3267,7 +3295,7 @@ export default function Dashboard() {
   const handleApplyActions = async () => {
     try {
       setApplyingActions(true)
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       
       const response = await fetch(`${API_URL}/api/ai/execute-actions`, {
         method: 'POST',
@@ -3307,7 +3335,7 @@ export default function Dashboard() {
 
     try {
       setApplyingRecommendationId(`${productId}-${recommendationType}`)
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getCachedSession()
       const response = await fetch(`${API_URL}/api/ai/apply-recommendation`, {
         method: 'POST',
         headers: {

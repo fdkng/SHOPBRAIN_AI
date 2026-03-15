@@ -1,7 +1,19 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, lazy, Suspense } from 'react'
 import { createClient } from '@supabase/supabase-js'
-import Dashboard from './Dashboard'
-import StripePricingTable from './PricingTable'
+
+// ⚡ Lazy load heavy components — Dashboard and PricingTable are only loaded when needed
+const Dashboard = lazy(() => import('./Dashboard'))
+const StripePricingTable = lazy(() => import('./PricingTable'))
+
+// ⚡ Loading fallback for lazy components
+const LazyFallback = () => (
+  <div className="min-h-screen bg-[#0b0d12] flex items-center justify-center">
+    <div className="flex flex-col items-center gap-4">
+      <div className="w-10 h-10 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin" />
+      <p className="text-gray-400 text-sm">Chargement...</p>
+    </div>
+  </div>
+)
 
 const supabase = createClient(
   'https://jgmsfadayzbgykzajvmw.supabase.co',
@@ -82,6 +94,14 @@ export default function App() {
   const [currentView, setCurrentView] = useState('landing')
   const [user, setUser] = useState(null)
   const [hasSubscription, setHasSubscription] = useState(false)
+
+  // ⚡ Prefetch Dashboard chunk in background after landing page loads
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      import('./Dashboard') // Triggers chunk download in background
+    }, 2000) // Start after 2s to not compete with critical resources
+    return () => clearTimeout(timer)
+  }, [])
   const [paymentSuccess, setPaymentSuccess] = useState(false)
   const [paymentProcessingState, setPaymentProcessingState] = useState('idle') // 'idle' | 'verifying' | 'verified' | 'failed'
   const [paymentProcessingMessage, setPaymentProcessingMessage] = useState('')
@@ -496,12 +516,12 @@ export default function App() {
 
   // If user is logged in and on dashboard view, show Dashboard component
   if (currentView === 'dashboard' && user) {
-    return <Dashboard />
+    return <Suspense fallback={<LazyFallback />}><Dashboard /></Suspense>
   }
 
   // If viewing Stripe Pricing Table
   if (currentView === 'stripe-pricing') {
-    return <StripePricingTable userEmail={user?.email} userId={user?.id} />
+    return <Suspense fallback={<LazyFallback />}><StripePricingTable userEmail={user?.email} userId={user?.id} /></Suspense>
   }
 
   // Otherwise show landing page
