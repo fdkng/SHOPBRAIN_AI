@@ -1462,6 +1462,15 @@ export default function Dashboard() {
         userMsgObj.images = currentAttachments.filter(a => a.preview).map(a => a.preview)
         userMsgObj.attachmentNames = currentAttachments.map(a => a.name)
       }
+      // Attach mentioned product info for display in the message bubble
+      if (mentionedProduct) {
+        userMsgObj.mentionedProduct = {
+          title: mentionedProduct.title,
+          price: mentionedProduct.variants?.[0]?.price || '',
+          currency: mentionedProduct.variants?.[0]?.currency || 'CAD',
+          image: mentionedProduct.image?.src || mentionedProduct.images?.[0]?.src || '',
+        }
+      }
       setChatMessages(prev => [...prev, userMsgObj])
       setChatInput('')
       // Shrink textarea back to default
@@ -5976,6 +5985,19 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               ? 'bg-yellow-600 text-black rounded-br-md'
                               : 'bg-[#1a1d27] text-gray-200 rounded-bl-md border border-gray-700/40'
                           }`}>
+                            {/* Product mention badge */}
+                            {msg.mentionedProduct && (
+                              <div className="flex items-center gap-1.5 mb-1.5 -mt-0.5">
+                                <span className="inline-flex items-center gap-1.5 bg-black/20 backdrop-blur-sm border border-black/20 rounded-full pl-1 pr-2.5 py-0.5">
+                                  {msg.mentionedProduct.image ? (
+                                    <img src={msg.mentionedProduct.image} alt="" className="w-4 h-4 rounded-full object-cover" />
+                                  ) : (
+                                    <span className="text-[11px]">📦</span>
+                                  )}
+                                  <span className="text-[11px] font-semibold">@{msg.mentionedProduct.title}</span>
+                                </span>
+                              </div>
+                            )}
                             {msg.images && Array.isArray(msg.images) && msg.images.length > 0 && (
                               <div className="flex flex-wrap gap-2 mb-2">
                                 {msg.images.map((img, imgIdx) => (
