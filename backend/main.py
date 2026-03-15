@@ -4198,12 +4198,19 @@ async def get_shopify_rewrite(request: Request, product_id: str, instructions: s
             client = OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY)
 
             # Generate title
-            custom_instructions_block = f"\n\nInstructions spéciales du client:\n{instructions}" if instructions else ""
+            custom_instructions_block = f"\n\nInstructions spéciales du marchand:\n{instructions}" if instructions else ""
             title_resp = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "Tu es un expert en copywriting e-commerce et SEO."},
-                    {"role": "user", "content": f"""Réécris ce titre de produit e-commerce en français, de manière ultra-optimisé avec storytelling et émotions.
+                    {"role": "system", "content": """Tu es le meilleur copywriter e-commerce au monde. Tu as 20 ans d'expérience en vente en ligne et tu maîtrises parfaitement ces techniques:
+- AIDA (Attention, Intérêt, Désir, Action)
+- Les power words qui déclenchent l'achat
+- Le SEO e-commerce (mots-clés à forte intention d'achat)
+- La psychologie du consommateur en ligne
+- Les formules de titre qui convertissent le mieux (chiffres, bénéfices, urgence)
+
+Ton objectif: créer des titres qui STOPPENT le scroll et donnent immédiatement envie de cliquer."""},
+                    {"role": "user", "content": f"""Réécris ce titre de produit pour MAXIMISER les clics et les ventes.
 
 Contexte produit:
 - Titre actuel: {current_title}
@@ -4211,17 +4218,23 @@ Contexte produit:
 - Marque: {vendor}
 - Tags: {tags}
 
-Contraintes strictes:
+TECHNIQUES À APPLIQUER:
+1. Commence par le BÉNÉFICE principal (ce que le client OBTIENT, pas ce que le produit EST)
+2. Inclus un mot déclencheur émotionnel (ex: Ultime, Premium, Essentiel, Irrésistible)
+3. Mentionne la catégorie ou le mot-clé principal pour le SEO
+4. Si pertinent: ajoute un élément de preuve sociale ou de qualité (ex: "Qualité Pro", "Best-Seller")
+
+CONTRAINTES STRICTES:
 - 60 à 70 caractères maximum
 - Sans emojis
-- 1 seul titre final
-- Clair, précis, orienté bénéfice
-- NE JAMAIS inclure le prix dans le titre (pas de €, pas de $, pas de montant)
-- N'invente pas de caractéristiques non présentes dans le contexte{custom_instructions_block}
+- 1 seul titre final, rien d'autre
+- NE JAMAIS inclure le prix (pas de €, $, montant)
+- N'invente AUCUNE caractéristique absente du contexte
+- Le titre doit sonner naturel et professionnel, pas clickbait cheap{custom_instructions_block}
 
 Nouveau titre:"""}
                 ],
-                temperature=0.65,
+                temperature=0.7,
                 max_tokens=120
             )
             suggested_title = title_resp.choices[0].message.content.strip() or current_title
@@ -4233,33 +4246,70 @@ Nouveau titre:"""}
             desc_resp = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "Tu es un copywriter e-commerce expert. Tu retournes UNIQUEMENT du HTML brut, jamais de markdown, jamais de ```html."},
-                    {"role": "user", "content": f"""Crée une description de produit en français, professionnelle.
+                    {"role": "system", "content": """Tu es le meilleur vendeur e-commerce au monde — un copywriter d'élite qui génère des millions en ventes en ligne. Tu maîtrises:
+
+🎯 TECHNIQUES DE PERSUASION:
+- AIDA: Attention → Intérêt → Désir → Action
+- PAS: Problem → Agitate → Solve
+- Preuve sociale et autorité
+- Urgence et rareté implicites
+- Storytelling sensoriel (faire VOIR, SENTIR, TOUCHER le produit)
+- Les biais cognitifs (ancrage, réciprocité, engagement)
+
+🧠 PSYCHOLOGIE DE VENTE:
+- Parler des BÉNÉFICES, pas des caractéristiques
+- Transformer chaque feature en avantage concret pour le client
+- Créer une connexion émotionnelle avec le lecteur
+- Utiliser le "vous/tu" pour impliquer directement le client
+- Lever les objections AVANT qu'elles n'arrivent
+
+✍️ COPYWRITING E-COMMERCE:
+- Phrases courtes et percutantes
+- Paragraphes aérés, faciles à scanner
+- Power words: exclusif, garanti, transformez, découvrez, enfin
+- Appels à l'action irrésistibles
+- SEO naturel intégré dans le texte
+
+RÈGLE D'OR: Chaque phrase doit rapprocher le lecteur de l'achat.
+Tu retournes UNIQUEMENT du HTML brut. Jamais de markdown. Jamais de ```html."""},
+                    {"role": "user", "content": f"""Réécris cette description de produit comme si tu étais le meilleur vendeur du monde et que ta commission dépendait de chaque vente.
 
 Contexte produit:
 - Titre: {current_title}
 - Type: {product_type}
 - Marque: {vendor}
 - Tags: {tags}
-- Description actuelle: {current_desc[:500]}
+- Description actuelle: {current_desc[:800]}
 
-Exigences:
-- N'invente pas de caractéristiques non présentes
-- Ton: storytelling captivant avec émotions
+OBJECTIF: Écrire une description qui VEND. Pas juste décrire — CONVAINCRE.
+
+STRATÉGIE D'ÉCRITURE:
+1. ACCROCHE CHOC (1-2 phrases): Identifie le PROBLÈME ou le DÉSIR du client. Fais-lui ressentir pourquoi il a BESOIN de ce produit maintenant.
+2. PROMESSE DE VALEUR: Explique comment ce produit va TRANSFORMER son quotidien. Sois spécifique et concret.
+3. BÉNÉFICES CLÉS (pas juste des features): Chaque point doit répondre à "Et alors, qu'est-ce que ça change pour MOI?"
+4. PREUVE ET CONFIANCE: Mentionne la qualité, les matériaux, le savoir-faire — tout ce qui rassure.
+5. APPEL À L'ACTION PUISSANT: Donne une raison d'acheter MAINTENANT, pas demain.
+
+CONTRAINTES:
+- N'invente AUCUNE caractéristique absente de la description actuelle
+- Ton: professionnel mais chaleureux, jamais agressif
 - Sans emojis, sans markdown
-- Longueur: 300-500 mots{custom_instructions_block}
+- Longueur: 300-500 mots
+- Français impeccable, phrases fluides{custom_instructions_block}
 
-Structure HTML simple:
-1) <p><strong>Accroche</strong> ...</p>
-2) <p>Résumé valeur</p>
-3) <h3>Bénéfices clés</h3><ul><li>...</li></ul>
-4) <h3>Caractéristiques</h3><ul><li>...</li></ul>
-5) <p><strong>Appel à l'action</strong></p>
+STRUCTURE HTML:
+<p><strong>[Accroche percutante qui capte l'attention]</strong></p>
+<p>[Promesse de valeur — pourquoi ce produit change tout]</p>
+<h3>✦ Ce que vous allez adorer</h3>
+<ul><li><strong>[Bénéfice 1]</strong> — [explication concrète]</li><li><strong>[Bénéfice 2]</strong> — [explication concrète]</li><li><strong>[Bénéfice 3]</strong> — [explication concrète]</li></ul>
+<h3>✦ Qualité & Détails</h3>
+<ul><li>[Caractéristique → avantage]</li><li>[Caractéristique → avantage]</li></ul>
+<p><strong>[Appel à l'action irrésistible]</strong></p>
 
 Retourne uniquement le HTML brut:"""}
                 ],
-                temperature=0.75,
-                max_tokens=800
+                temperature=0.78,
+                max_tokens=1200
             )
             suggested_description = desc_resp.choices[0].message.content.strip() or current_desc
         except Exception as e:

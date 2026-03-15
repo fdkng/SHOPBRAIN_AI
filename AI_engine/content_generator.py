@@ -38,13 +38,7 @@ class ContentGenerator:
         compare_max = max(compare_prices) if compare_prices else 0
         option_summary = ", ".join([o.get('name', '') for o in options if o.get('name')])
         
-        complexity = {
-            'standard': "simple et clair",
-            'pro': "optimisé SEO avec mots-clés",
-            'premium': "ultra-optimisé avec storytelling et émotions"
-        }
-        
-        prompt = f"""Réécris ce titre de produit e-commerce en français, de manière {complexity.get(tier, 'simple')}.
+        prompt = f"""Réécris ce titre de produit pour MAXIMISER les clics et les ventes.
 
     Contexte produit:
     - Titre actuel: {current_title}
@@ -54,14 +48,19 @@ class ContentGenerator:
     - Options: {option_summary}
     - Prix: {price_min:.2f} à {price_max:.2f} (comparé max: {compare_max:.2f} si dispo)
 
-    Contraintes strictes:
+    TECHNIQUES À APPLIQUER:
+    1. Commence par le BÉNÉFICE principal (ce que le client OBTIENT, pas ce que le produit EST)
+    2. Inclus un mot déclencheur émotionnel (ex: Ultime, Premium, Essentiel, Irrésistible)
+    3. Mentionne la catégorie ou le mot-clé principal pour le SEO
+    4. Si pertinent: ajoute un élément de preuve sociale ou de qualité
+
+    CONTRAINTES STRICTES:
     - 60 à 70 caractères maximum
     - Sans emojis
-    - 1 seul titre final
-    - Clair, précis, orienté bénéfice
-    - N'invente pas de caractéristiques non présentes dans le contexte
-    - NE JAMAIS inclure le prix dans le titre (pas de €, pas de $, pas de montant)
-    - NE JAMAIS inclure "à XX€" ou "à XX$" ou tout montant monétaire
+    - 1 seul titre final, rien d'autre
+    - NE JAMAIS inclure le prix (pas de €, $, montant)
+    - N'invente AUCUNE caractéristique absente du contexte
+    - Le titre doit sonner naturel et professionnel, pas clickbait cheap
 
     Nouveau titre:"""
 
@@ -69,10 +68,10 @@ class ContentGenerator:
             response = self.client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "Tu es un expert en copywriting e-commerce et SEO."},
+                    {"role": "system", "content": "Tu es le meilleur copywriter e-commerce au monde. Tu maîtrises AIDA, les power words, le SEO e-commerce et la psychologie du consommateur. Ton objectif: créer des titres qui STOPPENT le scroll et donnent immédiatement envie de cliquer."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.65,
+                temperature=0.7,
                 max_tokens=120
             )
             
@@ -111,12 +110,7 @@ class ContentGenerator:
         compare_max = max(compare_prices) if compare_prices else 0
         option_summary = ", ".join([o.get('name', '') for o in options if o.get('name')])
         
-        style = {
-            'pro': "persuasive avec bénéfices clairs",
-            'premium': "storytelling captivant avec urgence et émotions"
-        }
-        
-        prompt = f"""Crée une description de produit en français, très détaillée et professionnelle.
+        prompt = f"""Réécris cette description de produit comme si tu étais le meilleur vendeur du monde et que ta commission dépendait de chaque vente.
 
     Contexte produit:
     - Titre: {title}
@@ -125,24 +119,33 @@ class ContentGenerator:
     - Tags: {tags}
     - Options: {option_summary}
     - Prix: {price_min:.2f} à {price_max:.2f} (comparé max: {compare_max:.2f} si dispo)
-    - Extrait description actuelle: {current_desc[:300]}...
+    - Description actuelle: {current_desc[:800]}
 
-    Exigences:
-    - N'invente pas de caractéristiques non présentes dans le contexte.
-    - Si une info manque, utilise une formulation prudente (ex: « conçu pour », « idéal pour »).
-    - Ton: {style.get(tier, 'basique')}.
-    - Sans emojis.
-    - Longueur: {'450-700 mots' if tier == 'premium' else '300-500 mots'}.
+    OBJECTIF: Écrire une description qui VEND. Pas juste décrire — CONVAINCRE.
 
-    Structure attendue (HTML simple):
-    1) <p><strong>Accroche</strong> ...</p>
-    2) <p>Résumé valeur (2-3 phrases)</p>
-    3) <h3>Bénéfices clés</h3><ul><li>...</li></ul>
-    4) <h3>Caractéristiques</h3><ul><li>...</li></ul>
-    5) <h3>Pour qui / usages</h3><p>...</p>
-    6) <h3>Pourquoi ce produit</h3><p>...</p>
-    7) <h3>FAQ</h3><ul><li><strong>Q:</strong> ... <strong>R:</strong> ...</li></ul>
-    8) <p><strong>Appel à l'action</strong> ...</p>
+    STRATÉGIE D'ÉCRITURE:
+    1. ACCROCHE CHOC (1-2 phrases): Identifie le PROBLÈME ou le DÉSIR du client. Fais-lui ressentir pourquoi il a BESOIN de ce produit.
+    2. PROMESSE DE VALEUR: Explique comment ce produit va TRANSFORMER son quotidien. Sois spécifique.
+    3. BÉNÉFICES CLÉS (pas juste des features): Chaque point doit répondre à "Qu'est-ce que ça change pour MOI?"
+    4. PREUVE ET CONFIANCE: Mentionne la qualité, les matériaux, le savoir-faire.
+    5. APPEL À L'ACTION PUISSANT: Donne une raison d'acheter MAINTENANT.
+
+    CONTRAINTES:
+    - N'invente AUCUNE caractéristique absente du contexte
+    - Si une info manque, utilise une formulation prudente (« conçu pour », « idéal pour »)
+    - Ton: professionnel mais chaleureux, jamais agressif
+    - Sans emojis, sans markdown
+    - Longueur: {'450-700 mots' if tier == 'premium' else '300-500 mots'}
+
+    STRUCTURE HTML:
+    <p><strong>[Accroche percutante]</strong></p>
+    <p>[Promesse de valeur — pourquoi ce produit change tout]</p>
+    <h3>✦ Ce que vous allez adorer</h3>
+    <ul><li><strong>[Bénéfice]</strong> — [explication concrète]</li></ul>
+    <h3>✦ Qualité & Détails</h3>
+    <ul><li>[Caractéristique → avantage]</li></ul>
+    <h3>✦ Pour qui?</h3><p>[cible idéale]</p>
+    <p><strong>[Appel à l'action irrésistible]</strong></p>
 
     Retourne uniquement le HTML brut, sans balises ```html ni aucun wrapper markdown."""
 
@@ -150,11 +153,19 @@ class ContentGenerator:
             response = self.client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "Tu es un copywriter e-commerce expert qui booste les conversions. Tu retournes UNIQUEMENT du HTML brut, jamais de markdown, jamais de ```html."},
+                    {"role": "system", "content": """Tu es le meilleur vendeur e-commerce au monde — un copywriter d'élite. Tu maîtrises:
+- AIDA (Attention → Intérêt → Désir → Action)
+- PAS (Problem → Agitate → Solve)
+- Storytelling sensoriel (faire VOIR, SENTIR, TOUCHER le produit)
+- Les power words qui déclenchent l'achat
+- La psychologie du consommateur: parler des BÉNÉFICES, pas des features
+- Lever les objections AVANT qu'elles n'arrivent
+RÈGLE D'OR: Chaque phrase doit rapprocher le lecteur de l'achat.
+Tu retournes UNIQUEMENT du HTML brut. Jamais de markdown. Jamais de ```html."""},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.75,
-                max_tokens=900 if tier == "premium" else 600
+                temperature=0.78,
+                max_tokens=1200 if tier == "premium" else 800
             )
             
             description = response.choices[0].message.content.strip()
