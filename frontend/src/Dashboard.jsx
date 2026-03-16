@@ -1805,27 +1805,35 @@ export default function Dashboard() {
   const handleSaveInterface = async () => {
     try {
       setSaveLoading(true)
-      const session = await getCachedSession()
-      const response = await fetch(`${API_URL}/api/settings/interface`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          dark_mode: darkMode,
-          language: language
+      // Always save locally first (works immediately)
+      localStorage.setItem('language', language)
+      localStorage.setItem('darkMode', JSON.stringify(darkMode))
+
+      // Try backend save (best-effort — table may not exist yet)
+      try {
+        const session = await getCachedSession()
+        const response = await fetch(`${API_URL}/api/settings/interface`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            dark_mode: darkMode,
+            language: language
+          })
         })
-      })
-      const data = await response.json()
-      if (data.success) {
-        setStatus('interface', 'success', 'Paramètres mis à jour')
-        localStorage.setItem('language', language)
-      } else {
-        setStatus('interface', 'error', 'Erreur: ' + (data.detail || 'Erreur'))
+        const data = await response.json()
+        if (!data.success) {
+          console.warn('Backend interface save failed (using localStorage):', data.detail)
+        }
+      } catch (backendErr) {
+        console.warn('Backend interface save unavailable (using localStorage):', backendErr.message)
       }
+
+      setStatus('interface', 'success', t('settingsSaved'))
     } catch (err) {
-      setStatus('interface', 'error', formatUserFacingError(err, 'Erreur paramètres'))
+      setStatus('interface', 'error', formatUserFacingError(err, t('errorSettings')))
     } finally {
       setSaveLoading(false)
     }
@@ -1834,23 +1842,31 @@ export default function Dashboard() {
   const handleSaveNotifications = async () => {
     try {
       setSaveLoading(true)
-      const session = await getCachedSession()
-      const response = await fetch(`${API_URL}/api/settings/notifications`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(notifications)
-      })
-      const data = await response.json()
-      if (data.success) {
-        setStatus('notifications', 'success', 'Préférences mises à jour')
-      } else {
-        setStatus('notifications', 'error', 'Erreur: ' + (data.detail || 'Erreur'))
+      // Save locally first
+      localStorage.setItem('notifications', JSON.stringify(notifications))
+
+      // Try backend save (best-effort)
+      try {
+        const session = await getCachedSession()
+        const response = await fetch(`${API_URL}/api/settings/notifications`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(notifications)
+        })
+        const data = await response.json()
+        if (!data.success) {
+          console.warn('Backend notification save failed (using localStorage):', data.detail)
+        }
+      } catch (backendErr) {
+        console.warn('Backend notification save unavailable (using localStorage):', backendErr.message)
       }
+
+      setStatus('notifications', 'success', t('notifSaved'))
     } catch (err) {
-      setStatus('notifications', 'error', formatUserFacingError(err, 'Erreur notifications'))
+      setStatus('notifications', 'error', formatUserFacingError(err, t('errorNotif')))
     } finally {
       setSaveLoading(false)
     }
