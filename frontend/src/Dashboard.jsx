@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { createClient } from '@supabase/supabase-js'
+import { useTranslation } from './LanguageContext'
+import { LANGUAGES } from './translations'
 
 const supabase = createClient(
   'https://jgmsfadayzbgykzajvmw.supabase.co',
@@ -39,6 +41,7 @@ const cachedFetch = async (url, options = {}, ttlMs = 60_000) => {
 }
 
 export default function Dashboard() {
+  const { t, language, setLanguage } = useTranslation()
   const [user, setUser] = useState(null)
   const [profile, setProfile] = useState(() => {
     if (typeof window === 'undefined') return null
@@ -133,7 +136,7 @@ export default function Dashboard() {
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [darkMode] = useState(true)
-  const [language, setLanguage] = useState(() => localStorage.getItem('language') || 'fr')
+  // language comes from LanguageContext (useTranslation hook)
   const [notifications, setNotifications] = useState({
     email_notifications: true,
     analysis_complete: true,
@@ -339,10 +342,10 @@ export default function Dashboard() {
 
   const renderInsightItems = (items, formatter) => {
     if (insightsLoading) {
-      return <p className="text-xs text-gray-500 mt-2">Chargement...</p>
+      return <p className="text-xs text-gray-500 mt-2">{t('loading')}</p>
     }
     if (!Array.isArray(items) || items.length === 0) {
-      return <p className="text-xs text-gray-500 mt-2">Aucun signal détecté.</p>
+      return <p className="text-xs text-gray-500 mt-2">{t('noSignalDetected')}</p>
     }
     return (
       <ul className="mt-2 space-y-1 text-xs text-gray-400">
@@ -502,120 +505,7 @@ export default function Dashboard() {
     )
   }
 
-  const translations = {
-    fr: {
-      accountSettings: 'Paramètres du compte',
-      tabProfile: 'Profil',
-      tabSecurity: 'Sécurité',
-      tabInterface: 'Interface',
-      tabNotifications: 'Notifications',
-      tabBilling: 'Facturation',
-      tabApiKeys: 'Clés API',
-      tabShopify: 'Shopify',
-      profileInformation: 'Informations du profil',
-      uploadPhoto: 'Importer une photo',
-      firstName: 'Prénom',
-      lastName: 'Nom',
-      username: 'Nom d’utilisateur',
-      usernameCannotChange: 'Le nom d’utilisateur ne peut pas être modifié',
-      email: 'Email',
-      saveChanges: 'Enregistrer',
-      saving: 'Enregistrement...',
-      securitySettings: 'Paramètres de sécurité',
-      changePassword: 'Changer le mot de passe',
-      currentPassword: 'Mot de passe actuel',
-      newPassword: 'Nouveau mot de passe',
-      confirmNewPassword: 'Confirmer le nouveau mot de passe',
-      updatePassword: 'Mettre à jour',
-      updating: 'Mise à jour...',
-      twoFactorAuth: 'Authentification à deux facteurs',
-      twoFactorDesc: 'Ajoute une couche de sécurité supplémentaire',
-      enable2FA: 'Activer 2FA',
-      disable2FA: 'Désactiver 2FA',
-      twoFAEnabled: '2FA est activée',
-      interfacePreferences: 'Préférences d’interface',
-      darkMode: 'Mode sombre',
-      enabled: 'Activé',
-      disabled: 'Désactivé',
-      language: 'Langue',
-      saveInterface: 'Enregistrer l’interface',
-      notificationPreferences: 'Préférences de notifications',
-      emailNotifications: 'Notifications email',
-      analysisComplete: 'Analyse produit terminée',
-      weeklyReports: 'Rapports hebdomadaires',
-      billingUpdates: 'Mises à jour de facturation',
-      saveNotifications: 'Enregistrer les notifications',
-      billingAndSubscription: 'Facturation et abonnement',
-      activeSince: 'Actif depuis',
-      changePlan: 'Changer de plan',
-      cancelSubscription: 'Annuler l’abonnement',
-      paymentMethod: 'Moyen de paiement',
-      updatePaymentMethod: 'Mettre à jour le paiement',
-      apiKeys: 'Clés API',
-      apiWarning: 'Garde tes clés API en sécurité. Ne les partage pas.',
-      productionApiKey: 'Clé API de production',
-      createdOn: 'Créée le',
-      revoke: 'Révoquer',
-      generateKey: '+ Générer une nouvelle clé'
-    },
-    en: {
-      accountSettings: 'Account Settings',
-      tabProfile: 'Profile',
-      tabSecurity: 'Security',
-      tabInterface: 'Interface',
-      tabNotifications: 'Notifications',
-      tabBilling: 'Billing',
-      tabApiKeys: 'API Keys',
-      tabShopify: 'Shopify',
-      profileInformation: 'Profile Information',
-      uploadPhoto: 'Upload Photo',
-      firstName: 'First Name',
-      lastName: 'Last Name',
-      username: 'Username',
-      usernameCannotChange: 'Username cannot be changed',
-      email: 'Email',
-      saveChanges: 'Save Changes',
-      saving: 'Saving...',
-      securitySettings: 'Security Settings',
-      changePassword: 'Change Password',
-      currentPassword: 'Current Password',
-      newPassword: 'New Password',
-      confirmNewPassword: 'Confirm New Password',
-      updatePassword: 'Update Password',
-      updating: 'Updating...',
-      twoFactorAuth: 'Two-Factor Authentication',
-      twoFactorDesc: 'Add an extra layer of security to your account',
-      enable2FA: 'Enable 2FA',
-      disable2FA: 'Disable 2FA',
-      twoFAEnabled: '2FA is enabled',
-      interfacePreferences: 'Interface Preferences',
-      darkMode: 'Dark Mode',
-      enabled: 'Enabled',
-      disabled: 'Disabled',
-      language: 'Language',
-      saveInterface: 'Save Interface Settings',
-      notificationPreferences: 'Notification Preferences',
-      emailNotifications: 'Email notifications',
-      analysisComplete: 'Product analysis complete',
-      weeklyReports: 'Weekly reports',
-      billingUpdates: 'Billing updates',
-      saveNotifications: 'Save Notification Settings',
-      billingAndSubscription: 'Billing & Subscription',
-      activeSince: 'Active since',
-      changePlan: 'Change Plan',
-      cancelSubscription: 'Cancel Subscription',
-      paymentMethod: 'Payment Method',
-      updatePaymentMethod: 'Update Payment Method',
-      apiKeys: 'API Keys',
-      apiWarning: 'Keep your API keys secure. Do not share them publicly.',
-      productionApiKey: 'Production API Key',
-      createdOn: 'Created on',
-      revoke: 'Revoke',
-      generateKey: '+ Generate New Key'
-    }
-  }
-
-  const t = (key) => translations[language]?.[key] || translations.fr[key] || key
+  // translations and t() now come from LanguageContext (useTranslation hook)
 
   const verifyPaymentSession = async (sessionId) => {
     try {
@@ -1148,13 +1038,13 @@ export default function Dashboard() {
       const currentPlan = subscription?.plan
       const nextPlan = currentPlan === 'standard' ? 'pro' : currentPlan === 'pro' ? 'premium' : null
       if (!nextPlan) {
-        setStatus('upgrade', 'warning', 'Tu es déjà au plan PREMIUM avec toutes les fonctionnalités.')
+        setStatus('upgrade', 'warning', t('alreadyPremium'))
         return
       }
 
       const session = await getCachedSession()
       if (!session) {
-        setStatus('upgrade', 'error', 'Session expirée, reconnecte-toi.')
+        setStatus('upgrade', 'error', t('sessionExpired'))
         return
       }
 
@@ -1171,11 +1061,11 @@ export default function Dashboard() {
       if (data?.success && data?.url) {
         window.location.href = data.url
       } else {
-        setStatus('upgrade', 'error', 'Erreur lors de la création de la session d\'upgrade')
+        setStatus('upgrade', 'error', t('upgradeError'))
       }
     } catch (e) {
       console.error('Upgrade error:', e)
-      setStatus('upgrade', 'error', 'Une erreur est survenue pour l\'upgrade')
+      setStatus('upgrade', 'error', t('upgradeError'))
     }
   }
 
@@ -1218,7 +1108,7 @@ export default function Dashboard() {
       ))
     } else if (chatMessages.length > 0 && !activeConversationId) {
       const firstUserMsg = chatMessages.find(m => m.role === 'user')
-      const tempTitle = firstUserMsg ? firstUserMsg.text.slice(0, 40) + (firstUserMsg.text.length > 40 ? '...' : '') : 'Nouvelle conversation'
+      const tempTitle = firstUserMsg ? firstUserMsg.text.slice(0, 40) + (firstUserMsg.text.length > 40 ? '...' : '') : t('newConversation')
       const newConvId = Date.now().toString()
       const newConv = {
         id: newConvId,
@@ -1309,7 +1199,7 @@ export default function Dashboard() {
     const today = new Date()
     const yesterday = new Date(today)
     yesterday.setDate(yesterday.getDate() - 1)
-    if (date.toDateString() === today.toDateString()) return "Aujourd'hui"
+    if (date.toDateString() === today.toDateString()) return t("today")
     if (date.toDateString() === yesterday.toDateString()) return 'Hier'
     return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })
   }
@@ -1327,7 +1217,7 @@ export default function Dashboard() {
 
   const activeConversationTitle = activeConversationId
     ? (chatConversations.find(c => c.id === activeConversationId)?.title || 'Conversation')
-    : 'Nouvelle conversation'
+    : t('newConversation')
 
   // ============ ATTACHMENTS & VOICE ============
   useEffect(() => {
@@ -3537,7 +3427,7 @@ export default function Dashboard() {
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <div className="w-10 h-10 border-2 border-gray-600 border-t-yellow-500 rounded-full animate-spin"></div>
-          <p className="text-gray-400 text-sm">Chargement...</p>
+          <p className="text-gray-400 text-sm">{t('loading')}</p>
         </div>
       </div>
     )
@@ -3548,7 +3438,7 @@ export default function Dashboard() {
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
         <div className="text-center text-white">
           <div className="w-12 h-12 border-2 border-gray-600 border-t-yellow-500 rounded-full animate-spin mx-auto mb-6"></div>
-          <h2 className="text-2xl font-bold mb-3">Paiement en cours de traitement...</h2>
+          <h2 className="text-2xl font-bold mb-3">{t('paymentProcessing')}</h2>
           <p className="text-gray-400 mb-6">Merci! Nous enregistrons ton abonnement.</p>
           <p className="text-xs text-gray-500">Tu seras redirigé automatiquement...</p>
         </div>
@@ -3633,14 +3523,14 @@ export default function Dashboard() {
                     onClick={() => { setShowProfileMenu(false); setShowPlanMenu(true) }}
                     className="w-full text-left px-3 py-2 rounded hover:bg-gray-700 flex items-center gap-2 text-sm text-white"
                   >
-                    Subscription & Billing
+                    {t('subscriptionAndBilling')}
                   </button>
                   <div className="border-t border-gray-700 my-2"></div>
                   <button
                     onClick={() => { setShowProfileMenu(false); handleLogout() }}
                     className="w-full text-left px-3 py-2 rounded hover:bg-gray-700 text-sm text-gray-300 hover:text-white"
                   >
-                    Sign Out
+                    {t('signOut')}
                   </button>
                 </div>
               </div>
@@ -3648,24 +3538,24 @@ export default function Dashboard() {
           </div>
 
           <div className="bg-gray-700 rounded-lg p-3">
-            <div className="text-xs text-gray-400 mb-1">Current Plan</div>
+            <div className="text-xs text-gray-400 mb-1">{t('currentPlan')}</div>
             <div className="font-bold text-yellow-400 text-lg">{formatPlan(subscription?.plan)}</div>
           </div>
 
           <nav className="flex flex-col gap-1">
             {[
-              { key: 'overview', label: 'Vue d\'ensemble' },
-              { key: 'underperforming', label: 'Produits sous-performants' },
-              { key: 'action-blockers', label: 'Produits freins' },
-              { key: 'action-rewrite', label: 'Réécriture intelligente' },
-              { key: 'action-price', label: 'Optimisation prix' },
-              { key: 'action-images', label: 'Assistance images' },
-              { key: 'action-bundles', label: 'Bundles & cross-sell' },
-              { key: 'action-stock', label: 'Prévision ruptures' },
-              { key: 'action-returns', label: 'Anti-retours / chargebacks' },
-              { key: 'invoices', label: 'Facturation' },
-              { key: 'ai', label: 'Analyse IA' },
-              { key: 'analysis', label: 'Résultats' }
+              { key: 'overview', label: t('tabOverview') },
+              { key: 'underperforming', label: t('tabUnderperforming') },
+              { key: 'action-blockers', label: t('tabBlockers') },
+              { key: 'action-rewrite', label: t('tabRewrite') },
+              { key: 'action-price', label: t('tabPrice') },
+              { key: 'action-images', label: t('tabImages') },
+              { key: 'action-bundles', label: t('tabBundles') },
+              { key: 'action-stock', label: t('tabStock') },
+              { key: 'action-returns', label: t('tabReturns') },
+              { key: 'invoices', label: t('tabInvoices') },
+              { key: 'ai', label: t('tabAI') },
+              { key: 'analysis', label: t('tabResults') }
             ].map((item) => (
               <button
                 key={item.key}
@@ -3689,7 +3579,7 @@ export default function Dashboard() {
       {showPlanMenu && (
         <div className="fixed inset-0 bg-black/50 z-40 flex items-center justify-center" onClick={() => setShowPlanMenu(false)}>
           <div className="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 border border-gray-700" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-xl font-bold text-white mb-4">Change Your Plan</h3>
+            <h3 className="text-xl font-bold text-white mb-4">{t('changeYourPlan')}</h3>
             <div className="space-y-2">
               {subscription?.plan === 'standard' && (
                 <>
@@ -3698,14 +3588,14 @@ export default function Dashboard() {
                     className="w-full text-left px-4 py-3 rounded-lg bg-gray-700 hover:bg-gray-600 text-white"
                   >
                     <div className="font-semibold">PRO - $199/mois</div>
-                    <div className="text-sm text-gray-400">500 produits/mois + rapports</div>
+                    <div className="text-sm text-gray-400">500 {t('productsPerMonth')} {t('reportsIncluded')}</div>
                   </button>
                   <button
                     onClick={() => handleChangePlan('premium')}
                     className="w-full text-left px-4 py-3 rounded-lg bg-gray-700 hover:bg-gray-600 text-white"
                   >
                     <div className="font-semibold">PREMIUM - $299/mois</div>
-                    <div className="text-sm text-gray-400">Illimité + actions auto</div>
+                    <div className="text-sm text-gray-400">{t('unlimitedAutoActions')}</div>
                   </button>
                 </>
               )}
@@ -3776,8 +3666,8 @@ export default function Dashboard() {
             <div className="bg-gradient-to-br from-gray-800 via-gray-900 to-black border border-yellow-700/40 rounded-2xl p-4 md:p-6">
               <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.3em] text-yellow-300/70">Performance</p>
-                  <h3 className="text-2xl font-bold text-white mt-2">Revenus & commandes en temps réel</h3>
+                  <p className="text-xs uppercase tracking-[0.3em] text-yellow-300/70">{t('performance')}</p>
+                  <h3 className="text-2xl font-bold text-white mt-2">{t('revenueAndOrders')}</h3>
                   <p className="text-sm text-gray-400 mt-2">Source Shopify · {analyticsData?.range || analyticsRange} · {getRangeLabel(analyticsData?.range || analyticsRange)}</p>
                 </div>
                 <div className="flex items-center gap-1 md:gap-2 bg-gray-800/70 border border-gray-700 rounded-full px-1.5 md:px-2 py-1">
@@ -3795,19 +3685,19 @@ export default function Dashboard() {
 
               <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Revenus</p>
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">{t('revenue')}</p>
                   <p className="text-xl md:text-2xl font-bold text-white mt-2">
-                    {analyticsLoading ? 'Chargement...' : formatCurrency(analyticsData?.totals?.revenue, analyticsData?.currency || 'EUR')}
+                    {analyticsLoading ? t('loading') : formatCurrency(analyticsData?.totals?.revenue, analyticsData?.currency || 'EUR')}
                   </p>
                 </div>
                 <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Commandes</p>
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">{t('orders')}</p>
                   <p className="text-xl md:text-2xl font-bold text-white mt-2">
                     {analyticsLoading ? '...' : formatCompactNumber(analyticsData?.totals?.orders || 0)}
                   </p>
                 </div>
                 <div className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">AOV</p>
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">{t('aov')}</p>
                   <p className="text-xl md:text-2xl font-bold text-white mt-2">
                     {analyticsLoading ? '...' : formatCurrency(analyticsData?.totals?.aov, analyticsData?.currency || 'EUR')}
                   </p>
@@ -3816,12 +3706,12 @@ export default function Dashboard() {
 
               <div className="mt-6 bg-gray-900/60 border border-gray-800 rounded-2xl p-4">
                 <div className="flex items-center justify-between">
-                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Ventes dans le temps</p>
+                  <p className="text-xs uppercase tracking-[0.2em] text-gray-500">{t('salesOverTime')}</p>
                   {analyticsError && <p className="text-xs text-yellow-400">{analyticsError}</p>}
                 </div>
                 <div className="mt-3">
                   {analyticsLoading ? (
-                    <div className="text-sm text-gray-500 py-6">Chargement des ventes...</div>
+                    <div className="text-sm text-gray-500 py-6">{t('loadingSales')}</div>
                   ) : analyticsData?.series?.length ? (
                     <svg viewBox="0 0 520 140" className="w-full h-32">
                       <polyline
@@ -3832,16 +3722,16 @@ export default function Dashboard() {
                       />
                     </svg>
                   ) : shopifyUrl ? (
-                    <div className="text-sm text-gray-500 py-6">Aucune vente sur la période sélectionnée.</div>
+                    <div className="text-sm text-gray-500 py-6">{t('noSalesPeriod')}</div>
                   ) : (
-                    <div className="text-sm text-gray-500 py-6">Connecte Shopify pour afficher les ventes.</div>
+                    <div className="text-sm text-gray-500 py-6">{t('connectShopifySales')}</div>
                   )}
                 </div>
               </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
-              <h3 className="text-gray-400 text-sm uppercase mb-2">Plan Actif</h3>
+              <h3 className="text-gray-400 text-sm uppercase mb-2">{t('activePlan')}</h3>
               <div className="flex items-center justify-between">
                 <p className="text-white text-2xl font-bold">{formatPlan(subscription?.plan)}</p>
                 {subscription?.plan !== 'premium' && (
@@ -3849,28 +3739,28 @@ export default function Dashboard() {
                     onClick={handleUpgrade}
                     className="ml-4 bg-yellow-600 hover:bg-yellow-500 text-black text-sm font-bold px-3 py-1 rounded-lg"
                   >
-                    Upgrade
+                    {t('upgrade')}
                   </button>
                 )}
               </div>
-              <p className="text-gray-400 text-sm mt-2">Depuis: {formatDate(subscription?.started_at)}</p>
+              <p className="text-gray-400 text-sm mt-2">{t('since')} {formatDate(subscription?.started_at)}</p>
               {subscription?.plan === 'standard' && (
-                <p className="text-gray-400 text-xs mt-1">Fonctionnalités limitées — Upgrade vers PRO pour plus.</p>
+                <p className="text-gray-400 text-xs mt-1">{t('standardLimited')}</p>
               )}
               {subscription?.plan === 'pro' && (
-                <p className="text-gray-400 text-xs mt-1">Bon choix — Upgrade vers PREMIUM pour tout débloquer.</p>
+                <p className="text-gray-400 text-xs mt-1">{t('proUpgrade')}</p>
               )}
               {renderStatus('upgrade')}
             </div>
             
             <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
-              <h3 className="text-gray-400 text-sm uppercase mb-2">Produits</h3>
+              <h3 className="text-gray-400 text-sm uppercase mb-2">{t('productsLabel')}</h3>
               <p className="text-white text-2xl font-bold">{subscription?.capabilities?.product_limit === null ? '∞' : subscription?.capabilities?.product_limit || 50}</p>
-              <p className="text-gray-400 text-sm mt-2">Limite mensuelle</p>
+              <p className="text-gray-400 text-sm mt-2">{t('monthlyLimit')}</p>
             </div>
             
             <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
-              <h3 className="text-gray-400 text-sm uppercase mb-2">Fonctionnalités</h3>
+              <h3 className="text-gray-400 text-sm uppercase mb-2">{t('featuresLabel')}</h3>
               <ul className="text-sm space-y-1">
                 {getPlanFeatures(subscription?.plan).map((feature, i) => (
                   <li key={i} className="text-gray-300">• {feature}</li>
@@ -3882,24 +3772,24 @@ export default function Dashboard() {
             <div className="hidden md:grid grid-cols-1 md:grid-cols-4 gap-4">
               {[
                 {
-                  label: 'Revenus',
+                  label: t('revenue'),
                   value: analyticsLoading ? '...' : formatCurrency(analyticsData?.totals?.revenue, analyticsData?.currency || 'EUR'),
                   hint: analyticsRange
                 },
                 {
-                  label: 'Commandes',
+                  label: t('orders'),
                   value: analyticsLoading ? '...' : formatCompactNumber(analyticsData?.totals?.orders || 0),
-                  hint: 'volume'
+                  hint: t('volume')
                 },
                 {
-                  label: 'AOV',
+                  label: t('aov'),
                   value: analyticsLoading ? '...' : formatCurrency(analyticsData?.totals?.aov, analyticsData?.currency || 'EUR'),
-                  hint: 'panier moyen'
+                  hint: t('avgCart')
                 },
                 {
-                  label: 'Produits actifs',
+                  label: t('activeProducts'),
                   value: `${products?.length || 0}`,
-                  hint: 'catalogue'
+                  hint: t('catalogue')
                 }
               ].map((item) => (
                 <div key={item.label} className="bg-gray-800 rounded-xl p-4 border border-gray-700">
@@ -3912,47 +3802,47 @@ export default function Dashboard() {
 
             <div className="hidden md:grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
-                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-3">Ops Center</h4>
-                <p className="text-white text-lg font-semibold mb-2">Flux Shopify unifié</p>
-                <p className="text-gray-400 text-sm">Suivi des produits, erreurs et actions en temps réel depuis un seul hub.</p>
+                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-3">{t('opsCenter')}</h4>
+                <p className="text-white text-lg font-semibold mb-2">{t('unifiedShopify')}</p>
+                <p className="text-gray-400 text-sm">{t('opsCenterDesc')}</p>
               </div>
               <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
-                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-3">Insights</h4>
-                <p className="text-white text-lg font-semibold mb-2">Priorités IA quotidiennes</p>
-                <p className="text-gray-400 text-sm">Optimisations classées par impact, effort et urgence business.</p>
+                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-3">{t('insights')}</h4>
+                <p className="text-white text-lg font-semibold mb-2">{t('dailyAIPriorities')}</p>
+                <p className="text-gray-400 text-sm">{t('insightsDesc')}</p>
               </div>
               <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
-                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-3">Automation</h4>
-                <p className="text-white text-lg font-semibold mb-2">Scénarios premium</p>
-                <p className="text-gray-400 text-sm">Automatisations planifiées sur prix, contenu et collections.</p>
+                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-3">{t('automation')}</h4>
+                <p className="text-white text-lg font-semibold mb-2">{t('premiumScenarios')}</p>
+                <p className="text-gray-400 text-sm">{t('automationDesc')}</p>
               </div>
             </div>
 
             <div className="hidden md:grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
-                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-4">Activité récente</h4>
+                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-4">{t('recentActivity')}</h4>
                 <ul className="space-y-3 text-sm text-gray-300">
                   <li className="flex items-center justify-between">
-                    <span>Optimisation prix</span>
-                    <span className="text-gray-500">Aujourd’hui</span>
+                    <span>{t('priceOptimization')}</span>
+                    <span className="text-gray-500">{t('today')}</span>
                   </li>
                   <li className="flex items-center justify-between">
-                    <span>Descriptions IA</span>
-                    <span className="text-gray-500">Hier</span>
+                    <span>{t('aiDescriptions')}</span>
+                    <span className="text-gray-500">{t('yesterday')}</span>
                   </li>
                   <li className="flex items-center justify-between">
-                    <span>Analyse catalogue complet</span>
-                    <span className="text-gray-500">Il y a 2 jours</span>
+                    <span>{t('fullCatalogAnalysis')}</span>
+                    <span className="text-gray-500">{t('twoDaysAgo')}</span>
                   </li>
                 </ul>
               </div>
               <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
-                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-4">File d’exécution</h4>
+                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-4">{t('executionQueue')}</h4>
                 <div className="space-y-3">
                   {[
-                    { label: 'Optimisation titres', status: 'En cours' },
-                    { label: 'Audit prix', status: 'Programmé' },
-                    { label: 'Rapport hebdo', status: 'Programmé' }
+                    { label: t('titleOptimization'), status: t('inProgress') },
+                    { label: t('priceAudit'), status: t('scheduled') },
+                    { label: t('weeklyReport'), status: t('scheduled') }
                   ].map((row) => (
                     <div key={row.label} className="flex items-center justify-between text-sm text-gray-300">
                       <span>{row.label}</span>
@@ -3965,18 +3855,18 @@ export default function Dashboard() {
 
             <div className="hidden md:grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
-                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-4">Alertes critiques</h4>
+                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-4">{t('criticalAlerts')}</h4>
                 <ul className="space-y-3 text-sm text-gray-300">
                   <li className="flex items-center justify-between">
-                    <span>Produits à prix zéro</span>
+                    <span>{t('zeroPriceProducts')}</span>
                     <span className="text-red-300">2</span>
                   </li>
                   <li className="flex items-center justify-between">
-                    <span>Stock en rupture</span>
+                    <span>{t('outOfStock')}</span>
                     <span className="text-yellow-300">4</span>
                   </li>
                   <li className="flex items-center justify-between">
-                    <span>SEO faible</span>
+                    <span>{t('weakSEO')}</span>
                     <span className="text-yellow-300">11</span>
                   </li>
                 </ul>
@@ -3986,21 +3876,21 @@ export default function Dashboard() {
 
             <div className="space-y-6">
               <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700">
-                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-3">Executive Summary</h4>
-                <p className="text-white text-xl font-semibold mb-2">État global du compte</p>
-                <p className="text-gray-300 text-sm">Stabilité excellente, 2 alertes à corriger pour maximiser le ROI.</p>
+                <h4 className="text-gray-400 text-xs uppercase tracking-[0.2em] mb-3">{t('executiveSummary')}</h4>
+                <p className="text-white text-xl font-semibold mb-2">{t('accountStatus')}</p>
+                <p className="text-gray-300 text-sm">{t('accountStatusDesc')}</p>
                 <div className="mt-4 space-y-2 text-sm text-gray-300">
                   <div className="flex items-center justify-between">
-                    <span>Plan</span>
+                    <span>{t('plan')}</span>
                     <span className="text-gray-400">{formatPlan(subscription?.plan)}</span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span>Boutique</span>
-                    <span className="text-gray-400">{shopifyUrl || 'Non connectée'}</span>
+                    <span>{t('shop')}</span>
+                    <span className="text-gray-400">{shopifyUrl || t('notConnected')}</span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span>Dernière synchro</span>
-                    <span className="text-gray-400">Aujourd’hui</span>
+                    <span>{t('lastSync')}</span>
+                    <span className="text-gray-400">{t('today')}</span>
                   </div>
                 </div>
               </div>
@@ -4016,15 +3906,15 @@ export default function Dashboard() {
             <div className="bg-gray-800 rounded-2xl p-4 md:p-6 border border-gray-700">
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.3em] text-yellow-400">Facturation</p>
-                  <h2 className="text-white text-xl md:text-2xl font-bold mt-2">Commandes clients</h2>
-                  <p className="text-sm text-gray-400 mt-1">Liste des achats de vos clients. Envoyez une facture par email en un clic.</p>
+                  <p className="text-xs uppercase tracking-[0.3em] text-yellow-400">{t('billing')}</p>
+                  <h2 className="text-white text-xl md:text-2xl font-bold mt-2">{t('customerOrders')}</h2>
+                  <p className="text-sm text-gray-400 mt-1">{t('invoicesDesc')}</p>
                 </div>
                 <button
                   onClick={loadOrdersList}
                   className="px-4 py-2 rounded-lg bg-gray-700 text-white hover:bg-gray-600 text-sm"
                 >
-                  {ordersListLoading ? 'Chargement...' : 'Rafraîchir'}
+                  {ordersListLoading ? t('loading') : t('refresh')}
                 </button>
               </div>
               {renderStatus('invoice')}
@@ -4033,25 +3923,25 @@ export default function Dashboard() {
             {/* Orders List */}
             <div className="bg-gray-800 rounded-2xl p-4 md:p-6 border border-gray-700">
               <h3 className="text-white text-lg font-semibold mb-4">
-                {ordersList.length > 0 ? `${ordersList.length} achat(s)` : 'Achats clients'}
+                {ordersList.length > 0 ? `${ordersList.length} achat(s)` : t('customerPurchases')}
               </h3>
 
               {ordersListLoading ? (
-                <div className="text-center py-8 text-gray-500 text-sm">⏳ Chargement des commandes Shopify...</div>
+                <div className="text-center py-8 text-gray-500 text-sm">⏳ {t('loadingOrders')}</div>
               ) : ordersList.length === 0 ? (
                 <div className="text-center py-8">
-                  <p className="text-gray-500 text-sm">Aucune commande trouvée.</p>
-                  <p className="text-gray-600 text-xs mt-1">Connecte ta boutique Shopify et les achats apparaîtront automatiquement.</p>
+                  <p className="text-gray-500 text-sm">{t('noOrdersFound')}</p>
+                  <p className="text-gray-600 text-xs mt-1">{t('connectShopifyOrders')}</p>
                 </div>
               ) : (
                 <div className="space-y-3">
                   {/* Desktop header row */}
                   <div className="hidden md:grid grid-cols-12 gap-3 px-4 py-2 text-xs uppercase tracking-[0.15em] text-gray-500 border-b border-gray-700">
-                    <div className="col-span-3">Email client</div>
-                    <div className="col-span-3">Produit</div>
-                    <div className="col-span-1 text-center">Qté</div>
-                    <div className="col-span-2 text-right">Prix</div>
-                    <div className="col-span-3 text-right">Action</div>
+                    <div className="col-span-3">{t('clientEmail')}</div>
+                    <div className="col-span-3">{t('product')}</div>
+                    <div className="col-span-1 text-center">{t('qty')}</div>
+                    <div className="col-span-2 text-right">{t('price')}</div>
+                    <div className="col-span-3 text-right">{t('action')}</div>
                   </div>
 
                   {ordersList.map((row, index) => (
@@ -4059,7 +3949,7 @@ export default function Dashboard() {
                       {/* Mobile layout */}
                       <div className="md:hidden space-y-2">
                         <div className="flex items-center justify-between">
-                          <span className="text-white text-sm font-medium truncate max-w-[200px]">{row.email || 'Pas d\'email'}</span>
+                          <span className="text-white text-sm font-medium truncate max-w-[200px]">{row.email || t('noEmail')}</span>
                           <span className="text-xs text-gray-500">{row.order_name}</span>
                         </div>
                         <div className="flex items-center justify-between">
@@ -4079,7 +3969,7 @@ export default function Dashboard() {
                                 : 'bg-yellow-600 hover:bg-yellow-500 text-black'
                             }`}
                           >
-                            {sendingInvoiceFor === index ? 'Envoi...' : '📧 Facture'}
+                            {sendingInvoiceFor === index ? t('sending') : t('invoice')}
                           </button>
                         </div>
                       </div>
@@ -4087,7 +3977,7 @@ export default function Dashboard() {
                       {/* Desktop layout */}
                       <div className="hidden md:grid grid-cols-12 gap-3 items-center">
                         <div className="col-span-3 text-white text-sm truncate" title={row.email}>
-                          {row.email || <span className="text-gray-500 italic">Pas d'email</span>}
+                          {row.email || <span className="text-gray-500 italic">{t('noEmail')}</span>}
                         </div>
                         <div className="col-span-3 text-gray-300 text-sm truncate" title={row.product_title}>
                           {row.product_title}
@@ -4109,7 +3999,7 @@ export default function Dashboard() {
                                 : 'bg-yellow-600 hover:bg-yellow-500 text-black'
                             }`}
                           >
-                            {sendingInvoiceFor === index ? 'Envoi en cours...' : '📧 Créer la facture'}
+                            {sendingInvoiceFor === index ? t('sendingInvoice') : t('createInvoice')}
                           </button>
                         </div>
                       </div>
@@ -4127,9 +4017,9 @@ export default function Dashboard() {
             <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700">
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.3em] text-amber-400">📉 Performance commerciale</p>
-                  <h3 className="text-white text-2xl font-bold mt-2">Produits sous-performants</h3>
-                  <p className="text-sm text-gray-400 mt-1">Produits avec peu de ventes, faible CA ou stock dormant.</p>
+                  <p className="text-xs uppercase tracking-[0.3em] text-amber-400">📉 {t('commercialPerformance')}</p>
+                  <h3 className="text-white text-2xl font-bold mt-2">{t('tabUnderperforming')}</h3>
+                  <p className="text-sm text-gray-400 mt-1">{t('underperformingDesc')}</p>
                 </div>
                 <div className="text-right">
                   <div className="text-xs text-gray-500">{underperformingData?.underperforming_count ?? '—'} / {underperformingData?.total_products ?? '—'} produits</div>
@@ -4141,9 +4031,9 @@ export default function Dashboard() {
 
               <div className="mt-5 space-y-3">
                 {underperformingLoading ? (
-                  <div className="px-4 py-8 text-sm text-gray-500 text-center">⏳ Analyse des ventes en cours...</div>
+                  <div className="px-4 py-8 text-sm text-gray-500 text-center">⏳ {t('analyzingSales')}</div>
                 ) : (!underperformingData?.underperformers || underperformingData.underperformers.length === 0) ? (
-                  <div className="px-4 py-8 text-sm text-gray-500 text-center">✅ Tous vos produits performent correctement.</div>
+                  <div className="px-4 py-8 text-sm text-gray-500 text-center">✅ {t('allProductsOk')}</div>
                 ) : (
                   underperformingData.underperformers.slice(0, 10).map((item) => (
                     <div key={item.product_id || item.title} className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
@@ -4184,9 +4074,9 @@ export default function Dashboard() {
             <div className="bg-gray-800 rounded-2xl p-6 border border-gray-700">
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.3em] text-red-400">🚫 Analyse conversion</p>
-                  <h3 className="text-white text-2xl font-bold mt-2">Produits freins</h3>
-                  <p className="text-sm text-gray-400 mt-1">Produits qui cassent la conversion : vus mais pas ajoutés au panier, ou ajoutés mais pas achetés.</p>
+                  <p className="text-xs uppercase tracking-[0.3em] text-red-400">🚫 {t('conversionAnalysis')}</p>
+                  <h3 className="text-white text-2xl font-bold mt-2">{t('tabBlockers')}</h3>
+                  <p className="text-sm text-gray-400 mt-1">{t('blockersDesc')}</p>
                 </div>
                 <div className="text-right">
                   <div className="text-xs text-gray-500">{blockersData?.blockers?.length ?? '—'} produit{(blockersData?.blockers?.length ?? 0) > 1 ? 's' : ''} frein{(blockersData?.blockers?.length ?? 0) > 1 ? 's' : ''}</div>
@@ -4197,9 +4087,9 @@ export default function Dashboard() {
               <div className="mt-4 rounded-lg border border-gray-700 bg-gray-900/50">
                 <div className="p-3 flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-gray-300">Shopify Pixel :</span>
+                    <span className="text-sm font-medium text-gray-300">{t('shopifyPixelLabel')}</span>
                     {pixelLoading ? (
-                      <span className="text-xs text-gray-500">⏳ Vérification...</span>
+                      <span className="text-xs text-gray-500">⏳ {t('checking')}</span>
                     ) : pixelStatus ? (
                       <span className={`text-xs font-medium ${
                         pixelStatus.status === 'active' ? 'text-green-400' :
@@ -4217,39 +4107,39 @@ export default function Dashboard() {
                     className="flex items-center gap-1 px-2 py-1 rounded-md bg-gray-800 hover:bg-gray-700 border border-gray-600 text-xs text-gray-300 hover:text-white transition"
                   >
                     <span>{showPixelGuide ? '−' : '+'}</span>
-                    <span>Comment connecter le Shopify Pixel</span>
+                    <span>{t('howToConnectPixel')}</span>
                   </button>
                 </div>
 
                 {pixelStatus?.has_recent_events && (
                   <div className="px-3 pb-2">
-                    <p className="text-xs text-green-400/70">✅ Des événements Pixel ont été reçus au cours des 30 derniers jours.</p>
+                    <p className="text-xs text-green-400/70">✅ {t('pixelEventsReceived')}</p>
                   </div>
                 )}
                 {pixelStatus && !pixelStatus.pixel_installed && !showPixelGuide && (
                   <div className="px-3 pb-3">
-                    <p className="text-xs text-gray-500">Sans le Pixel, les données de vues et d'ajouts panier ne sont pas disponibles.</p>
+                    <p className="text-xs text-gray-500">{t('noPixelWarning')}</p>
                   </div>
                 )}
 
                 {/* Guide d'installation du Pixel */}
                 {showPixelGuide && (
                   <div className="border-t border-gray-700 p-4 space-y-4">
-                    <h4 className="text-white font-bold text-sm">📋 Guide d'installation du Shopify Pixel</h4>
+                    <h4 className="text-white font-bold text-sm">📋 {t('pixelGuideTitle')}</h4>
 
                     <div className="space-y-3">
                       <div className="flex gap-3">
                         <span className="flex-shrink-0 w-6 h-6 rounded-full bg-red-600/30 text-red-300 flex items-center justify-center text-xs font-bold">1</span>
                         <div>
-                          <p className="text-sm text-white font-medium">Ouvre ton admin Shopify</p>
-                          <p className="text-xs text-gray-400">Va dans <span className="text-white font-mono bg-gray-800 px-1 rounded">Settings</span> (Paramètres) en bas à gauche.</p>
+                          <p className="text-sm text-white font-medium">{t('pixelStep1Title')}</p>
+                          <p className="text-xs text-gray-400">Va dans <span className="text-white font-mono bg-gray-800 px-1 rounded">Settings</span> {t('pixelStep1Desc')}</p>
                         </div>
                       </div>
 
                       <div className="flex gap-3">
                         <span className="flex-shrink-0 w-6 h-6 rounded-full bg-red-600/30 text-red-300 flex items-center justify-center text-xs font-bold">2</span>
                         <div>
-                          <p className="text-sm text-white font-medium">Clique sur « Customer events »</p>
+                          <p className="text-sm text-white font-medium">{t('pixelStep2Title')}</p>
                           <p className="text-xs text-gray-400">En français, ça peut s'appeler <span className="text-white font-mono bg-gray-800 px-1 rounded">Événements clients</span>.</p>
                         </div>
                       </div>
@@ -4257,7 +4147,7 @@ export default function Dashboard() {
                       <div className="flex gap-3">
                         <span className="flex-shrink-0 w-6 h-6 rounded-full bg-red-600/30 text-red-300 flex items-center justify-center text-xs font-bold">3</span>
                         <div>
-                          <p className="text-sm text-white font-medium">Clique « Add custom pixel »</p>
+                          <p className="text-sm text-white font-medium">{t('pixelStep3Title')}</p>
                           <p className="text-xs text-gray-400">En français : <span className="text-white font-mono bg-gray-800 px-1 rounded">Ajouter un pixel personnalisé</span>.</p>
                         </div>
                       </div>
@@ -4265,7 +4155,7 @@ export default function Dashboard() {
                       <div className="flex gap-3">
                         <span className="flex-shrink-0 w-6 h-6 rounded-full bg-red-600/30 text-red-300 flex items-center justify-center text-xs font-bold">4</span>
                         <div>
-                          <p className="text-sm text-white font-medium">Nomme le pixel</p>
+                          <p className="text-sm text-white font-medium">{t('pixelStep4Title')}</p>
                           <p className="text-xs text-gray-400">Écris <span className="text-white font-mono bg-gray-800 px-1 rounded">ShopBrain Pixel</span> comme nom.</p>
                         </div>
                       </div>
@@ -4273,7 +4163,7 @@ export default function Dashboard() {
                       <div className="flex gap-3">
                         <span className="flex-shrink-0 w-6 h-6 rounded-full bg-red-600/30 text-red-300 flex items-center justify-center text-xs font-bold">5</span>
                         <div>
-                          <p className="text-sm text-white font-medium">Paramètres de confidentialité</p>
+                          <p className="text-sm text-white font-medium">{t('pixelStep5Title')}</p>
                           <p className="text-xs text-gray-400"><b>Permission :</b> « Not required » · <b>Data sale :</b> « Data collected does not qualify as data sale ».</p>
                         </div>
                       </div>
@@ -4281,8 +4171,8 @@ export default function Dashboard() {
                       <div className="flex gap-3">
                         <span className="flex-shrink-0 w-6 h-6 rounded-full bg-red-600/30 text-red-300 flex items-center justify-center text-xs font-bold">6</span>
                         <div>
-                          <p className="text-sm text-white font-medium">Colle le code ci-dessous</p>
-                          <p className="text-xs text-gray-400">Supprime tout le contenu par défaut dans la zone de code et colle uniquement ce script :</p>
+                          <p className="text-sm text-white font-medium">{t('pixelStep6Title')}</p>
+                          <p className="text-xs text-gray-400">{t('pixelStep6Desc')}</p>
                         </div>
                       </div>
                     </div>
@@ -4365,7 +4255,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     <div className="flex gap-3">
                       <span className="flex-shrink-0 w-6 h-6 rounded-full bg-red-600/30 text-red-300 flex items-center justify-center text-xs font-bold">7</span>
                       <div>
-                        <p className="text-sm text-white font-medium">Clique « Save » puis « Connect »</p>
+                        <p className="text-sm text-white font-medium">{t('pixelStep7Title')}</p>
                         <p className="text-xs text-gray-400">Assure-toi que le pixel est bien <span className="text-green-400 font-semibold">connecté</span> (bouton vert). Reviens ici et recharge la page pour vérifier le statut.</p>
                       </div>
                     </div>
@@ -4376,12 +4266,12 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         onClick={() => {
                           setShowChatPanel(true);
                           setTimeout(() => {
-                            sendChatMessage('Comment installer le Shopify Pixel pour ShopBrain ? Guide-moi étape par étape.');
+                            sendChatMessage(t('pixelInstallQuestion'));
                           }, 500);
                         }}
                         className="flex items-center gap-2 px-3 py-2 rounded-lg bg-yellow-600/20 hover:bg-yellow-600/30 border border-yellow-600/30 text-xs text-yellow-200 hover:text-yellow-100 transition"
                       >
-                        🤖 Tu as des questions ? Demande à l'IA
+                        🤖 {t('askAIQuestions')}
                       </button>
                     </div>
                   </div>
@@ -4392,9 +4282,9 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
               <div className="mt-5 space-y-3">
                 {blockersLoading ? (
-                  <div className="px-4 py-8 text-sm text-gray-500 text-center">⏳ Analyse des produits freins en cours...</div>
+                  <div className="px-4 py-8 text-sm text-gray-500 text-center">⏳ {t('analyzingBlockers')}</div>
                 ) : (!blockersData?.blockers || blockersData.blockers.length === 0) ? (
-                  <div className="px-4 py-8 text-sm text-gray-500 text-center">✅ Aucun produit frein détecté. Bonne conversion !</div>
+                  <div className="px-4 py-8 text-sm text-gray-500 text-center">✅ {t('noBlockers')}</div>
                 ) : (
                   blockersData.blockers.slice(0, 10).map((item) => (
                     <div key={item.product_id || item.title} className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
@@ -4423,18 +4313,18 @@ analytics.subscribe("product_added_to_cart", (event) => {
         {activeTab === 'action-rewrite' && (
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 space-y-6">
             <div>
-              <h2 className="text-white text-xl font-bold mb-2">Réécriture intelligente</h2>
-              <p className="text-gray-400">Réécrit titres et descriptions selon la performance réelle.</p>
+              <h2 className="text-white text-xl font-bold mb-2">{t('tabRewrite')}</h2>
+              <p className="text-gray-400">{t('rewriteDesc')}</p>
             </div>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <p className="text-sm text-gray-400">{getInsightCount(insightsData?.rewrite_opportunities)} produits analysés</p>
+              <p className="text-sm text-gray-400">{getInsightCount(insightsData?.rewrite_opportunities)} {t('productsAnalyzed')}</p>
               <div className="flex flex-col sm:flex-row gap-3">
                 <select
                   value={rewriteProductId}
                   onChange={(event) => setRewriteProductId(event.target.value)}
                   className="bg-gray-900 border border-gray-700 text-sm text-white rounded-lg px-3 py-2 min-w-[240px]"
                 >
-                  <option value="">Sélectionner un produit</option>
+                  <option value="">{t('selectProduct')}</option>
                   {(products || []).map((product) => (
                     <option key={product.id} value={product.id}>
                       {product.title || product.name || `Produit ${product.id}`}
@@ -4446,12 +4336,12 @@ analytics.subscribe("product_added_to_cart", (event) => {
                   disabled={insightsLoading || !rewriteProductId}
                   className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
                 >
-                  {insightsLoading ? 'Analyse en cours...' : 'Lancer l\'analyse de réécriture'}
+                  {insightsLoading ? t('analysisInProgress') : t('launchRewriteAnalysis')}
                 </button>
               </div>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1">📝 Instructions personnalisées (optionnel)</label>
+              <label className="block text-sm font-medium text-gray-400 mb-1">📝 {t('customInstructions')}</label>
               <textarea
                 value={rewriteInstructions}
                 onChange={(e) => setRewriteInstructions(e.target.value)}
@@ -4459,7 +4349,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 className="w-full bg-gray-900 border border-gray-700 text-white text-sm rounded-lg px-3 py-2 min-h-[80px] resize-y placeholder-gray-600 focus:border-green-500 focus:ring-1 focus:ring-green-500 outline-none"
                 rows={3}
               />
-              <p className="text-xs text-gray-600 mt-1">L'IA prendra ces instructions en compte pour générer le titre et la description.</p>
+              <p className="text-xs text-gray-600 mt-1">{t('aiWillUseInstructions')}</p>
             </div>
             {renderStatus('action-rewrite')}
             {insightsData?.rewrite_ai?.notes?.length ? (
@@ -4469,9 +4359,9 @@ analytics.subscribe("product_added_to_cart", (event) => {
             ) : null}
             <div className="space-y-3">
               {!rewriteProductId ? (
-                <p className="text-sm text-gray-500">Sélectionne un produit pour lancer l'analyse.</p>
+                <p className="text-sm text-gray-500">{t('selectProductToAnalyze')}</p>
               ) : !insightsLoading && (!insightsData?.rewrite_opportunities || insightsData.rewrite_opportunities.length === 0) ? (
-                <p className="text-sm text-gray-500">Aucune suggestion disponible pour l'instant.</p>
+                <p className="text-sm text-gray-500">{t('noSuggestionsYet')}</p>
               ) : (
                 insightsData?.rewrite_opportunities?.slice(0, 1).map((item, index) => (
                   <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-6 space-y-4">
@@ -4491,7 +4381,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             }`}
                             disabled={applyingBlockerActionId === `${item.product_id}-title`}
                           >
-                            Appliquer titre
+                            {t('applyTitle')}
                           </button>
                         )}
                         {(item.recommendations || []).includes('description') && (
@@ -4504,7 +4394,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             }`}
                             disabled={applyingBlockerActionId === `${item.product_id}-description`}
                           >
-                            Appliquer description
+                            {t('applyDescription')}
                           </button>
                         )}
                       </div>
@@ -4512,19 +4402,19 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                     <div className="grid md:grid-cols-2 gap-4">
                       <div className="bg-gray-950/60 border border-gray-800 rounded-lg p-4">
-                        <p className="text-sm font-semibold text-gray-300 mb-2">Contenu actuel</p>
+                        <p className="text-sm font-semibold text-gray-300 mb-2">{t('currentContent')}</p>
                         <div className="text-sm text-gray-400 space-y-2">
-                          <p><span className="text-gray-500">Titre:</span> {item.current_title || '—'}</p>
+                          <p><span className="text-gray-500">{t('titleLabel')}</span> {item.current_title || '—'}</p>
                           <div className="max-h-56 overflow-y-auto pr-2 text-base text-gray-300 whitespace-pre-wrap">
                             {item.current_description || '—'}
                           </div>
                         </div>
                       </div>
                       <div className="bg-gray-950/60 border border-gray-800 rounded-lg p-4">
-                        <p className="text-sm font-semibold text-gray-300 mb-2">Suggestions IA</p>
+                        <p className="text-sm font-semibold text-gray-300 mb-2">{t('aiSuggestions')}</p>
                         <div className="text-sm text-gray-300 space-y-3">
                           {item.suggested_title ? (
-                            <p className="text-base"><span className="text-gray-500">Titre suggéré:</span> {item.suggested_title}</p>
+                            <p className="text-base"><span className="text-gray-500">{t('suggestedTitle')}</span> {item.suggested_title}</p>
                           ) : null}
                           <div className="max-h-72 overflow-y-auto pr-2 text-base text-gray-200 whitespace-pre-wrap">
                             {item.suggested_description || '—'}
@@ -4558,24 +4448,24 @@ analytics.subscribe("product_added_to_cart", (event) => {
               return (
                 <>
             <div>
-              <h2 className="text-white text-xl font-bold mb-2">Optimisation dynamique des prix</h2>
-              <p className="text-gray-400">Analyse réelle de la performance prix puis recommandations actionnables.</p>
+              <h2 className="text-white text-xl font-bold mb-2">{t('dynamicPriceOptimization')}</h2>
+              <p className="text-gray-400">{t('priceDesc')}</p>
             </div>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <div className="space-y-1">
-                <p className="text-sm text-gray-400">{getInsightCount(priceItems)} opportunités</p>
+                <p className="text-sm text-gray-400">{getInsightCount(priceItems)} {t('opportunities')}</p>
                 <p className={`text-xs ${marketStatus?.enabled ? 'text-green-400' : 'text-gray-400'}`}>
-                  Comparaison marché externe: {marketStatus?.enabled ? 'Activée' : 'Non configurée'}
+                  {t('externalMarketComparison')}: {marketStatus?.enabled ? t('enabled') : t('notConfigured')}
                   {marketStatus?.provider
                     ? marketStatus.provider === 'openai'
-                      ? ' (IA — estimation)'
+                      ? ` (IA — ${t('estimate')})`
                       : marketStatus.provider === 'serpapi'
                         ? ' (SERP API)'
                         : ` (${marketStatus.provider})`
                     : ''}
                 </p>
                 {!marketStatus?.enabled ? (
-                  <p className="text-xs text-gray-500">Analyse prix active via Shopify (commandes, stock, prix, conversion), même sans API marché externe.</p>
+                  <p className="text-xs text-gray-500">{t('priceAnalysisActive')}</p>
                 ) : null}
               </div>
               <button
@@ -4583,43 +4473,43 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 disabled={insightsLoading}
                 className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
               >
-                {insightsLoading ? 'Analyse en cours...' : 'Lancer l\'analyse IA'}
+                {insightsLoading ? t('analysisInProgress') : t('launchAIAnalysis')}
               </button>
             </div>
             {renderStatus('action-price')}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
-                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Produits analysés</p>
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">{t('productsAnalyzedLabel')}</p>
                 <p className="text-2xl text-white font-bold mt-2">{formatCompactNumber(insightsData?.products_analyzed ?? (products?.length || 0))}</p>
               </div>
               <div className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
-                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Opportunités prix</p>
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">{t('priceOpportunities')}</p>
                 <p className="text-2xl text-white font-bold mt-2">{formatCompactNumber(priceItems.length)}</p>
               </div>
               <div className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
-                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Ajustement moyen</p>
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">{t('avgAdjustment')}</p>
                 <p className="text-2xl text-white font-bold mt-2">{avgDelta === null ? '—' : `${avgDelta > 0 ? '+' : ''}${avgDelta.toFixed(1)}%`}</p>
               </div>
             </div>
             <div className="space-y-3">
               {!insightsLoading && priceItems.length === 0 ? (
-                <p className="text-sm text-gray-500">Aucune opportunité détectée.</p>
+                <p className="text-sm text-gray-500">{t('noOpportunityDetected')}</p>
               ) : (
                 priceItems.slice(0, 8).map((item, index) => (
                   <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
                     <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
                       <div className="space-y-1">
                         <p className="text-white font-semibold">{item.title || item.product_id}</p>
-                        <p className="text-xs text-gray-500">{item.suggestion || 'Ajuster le prix'}</p>
+                        <p className="text-xs text-gray-500">{item.suggestion || t('adjustPrice')}</p>
                         {(item.current_price !== undefined && item.current_price !== null) ? (
                           <p className="text-xs text-gray-400 mt-1">
-                            Prix actuel: {formatCurrency(item.current_price, item.currency_code)}
-                            {item.suggested_price !== undefined && item.suggested_price !== null ? ` • Prix suggéré: ${formatCurrency(item.suggested_price, item.currency_code)}` : ''}
+                            {t('currentPrice')}: {formatCurrency(item.current_price, item.currency_code)}
+                            {item.suggested_price !== undefined && item.suggested_price !== null ? ` • {t('suggestedPrice')}: ${formatCurrency(item.suggested_price, item.currency_code)}` : ''}
                           </p>
                         ) : null}
                         {Number.isFinite(Number(item.target_delta_pct)) ? (
                           <p className={`text-xs font-semibold ${Number(item.target_delta_pct) > 0 ? 'text-green-400' : 'text-yellow-300'}`}>
-                            Variation cible: {Number(item.target_delta_pct) > 0 ? '+' : ''}{Number(item.target_delta_pct).toFixed(1)}%
+                            {t('targetVariation')}: {Number(item.target_delta_pct) > 0 ? '+' : ''}{Number(item.target_delta_pct).toFixed(1)}%
                           </p>
                         ) : null}
                         {item.reason ? <p className="text-xs text-gray-500 mt-1">{item.reason}</p> : null}
@@ -4630,7 +4520,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           disabled={!item.product_id || applyingRecommendationId === `${item.product_id}-Prix`}
                           className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold px-3 py-2 rounded"
                         >
-                          {applyingRecommendationId === `${item.product_id}-Prix` ? 'Application...' : 'Appliquer prix'}
+                          {applyingRecommendationId === `${item.product_id}-Prix` ? t('applying') : t('applyPrice')}
                         </button>
                         {renderStatus(`rec-${item.product_id}-Prix`)}
                       </div>
@@ -4648,17 +4538,17 @@ analytics.subscribe("product_added_to_cart", (event) => {
         {activeTab === 'action-images' && (
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 space-y-6">
             <div>
-              <h2 className="text-white text-2xl font-bold mb-2">Assistance images</h2>
-              <p className="text-gray-300 text-base">Plan d’action ultra précis: combien d’images, quelles images produire, avec quel fond/ton/couleurs, et prompts prêts à utiliser.</p>
+              <h2 className="text-white text-2xl font-bold mb-2">{t('tabImages')}</h2>
+              <p className="text-gray-300 text-base">{t('imagesDesc')}</p>
             </div>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <p className="text-base text-gray-300">{getInsightCount(insightsData?.image_risks)} produits analysés</p>
+              <p className="text-base text-gray-300">{getInsightCount(insightsData?.image_risks)} {t('productsAnalyzed')}</p>
               <button
                 onClick={() => runActionAnalysis('action-images')}
                 disabled={insightsLoading}
                 className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
               >
-                {insightsLoading ? 'Analyse en cours...' : 'Lancer l\'analyse IA'}
+                {insightsLoading ? t('analysisInProgress') : t('launchAIAnalysis')}
               </button>
             </div>
             {renderStatus('action-images')}
@@ -4672,51 +4562,51 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
             <div className="space-y-3">
               {!insightsLoading && (!insightsData?.image_risks || insightsData.image_risks.length === 0) ? (
-                <p className="text-sm text-gray-500">Aucun signal détecté.</p>
+                <p className="text-sm text-gray-500">{t('noSignalDetected')}</p>
               ) : (
                 insightsData?.image_risks?.slice(0, 8).map((item, index) => (
                   <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
                     <p className="text-white font-semibold text-lg">{item.title || `Produit #${item.product_id}`}</p>
                     <p className="text-sm text-gray-400">
-                      {item.images_count} images{item.missing_alt ? ' • alt manquant' : ''}
+                      {item.images_count} images{item.missing_alt ? ` • alt ${t('missing')}` : ''}
                       {item.view_to_cart_rate !== null && item.view_to_cart_rate !== undefined ? ` • v→panier ${Math.round(item.view_to_cart_rate * 100)}%` : ''}
                     </p>
 
                     {item?.recommendations ? (
                       <div className="mt-4 space-y-4">
                         <div className="text-base text-gray-200">
-                          Cible: <span className="text-white font-semibold">{item.recommendations.target_total_images}</span> images
+                          {t('target')}: <span className="text-white font-semibold">{item.recommendations.target_total_images}</span> {t('imagesLabel')}
                           {Number.isFinite(Number(item.recommendations.recommended_new_images)) && item.recommendations.recommended_new_images > 0
                             ? <span className="text-gray-400"> • à produire: {item.recommendations.recommended_new_images}</span>
-                            : <span className="text-gray-400"> • OK sur la quantité</span>
+                            : <span className="text-gray-400"> • {t('quantityOk')}</span>
                           }
                         </div>
 
                         {item.recommendations?.source === 'ai' && item.recommendations?.ai ? (
                           <div className="text-sm text-gray-300 space-y-1">
-                            <div className="text-white font-semibold">Direction artistique (spécifique produit)</div>
-                            {item.recommendations.ai.tone ? <div>• Ton: <span className="text-white">{item.recommendations.ai.tone}</span></div> : null}
-                            {item.recommendations.ai.background ? <div>• Fond / background: <span className="text-white">{item.recommendations.ai.background}</span></div> : null}
+                            <div className="text-white font-semibold">{t('artisticDirection')}</div>
+                            {item.recommendations.ai.tone ? <div>• {t('toneLabel')}: <span className="text-white">{item.recommendations.ai.tone}</span></div> : null}
+                            {item.recommendations.ai.background ? <div>• {t('backgroundLabel')}: <span className="text-white">{item.recommendations.ai.background}</span></div> : null}
                             {Array.isArray(item.recommendations.ai.color_palette) && item.recommendations.ai.color_palette.length > 0 ? (
-                              <div>• Palette: <span className="text-white">{item.recommendations.ai.color_palette.slice(0, 6).join(', ')}</span></div>
+                              <div>• {t('paletteLabel')}: <span className="text-white">{item.recommendations.ai.color_palette.slice(0, 6).join(', ')}</span></div>
                             ) : null}
                             {Array.isArray(item.recommendations.ai.product_facts_used) && item.recommendations.ai.product_facts_used.length > 0 ? (
                               <div className="text-gray-400">
-                                • Détails pris en compte: <span className="text-white">{item.recommendations.ai.product_facts_used.slice(0, 6).join(' · ')}</span>
+                                • {t('detailsConsidered')}: <span className="text-white">{item.recommendations.ai.product_facts_used.slice(0, 6).join(' · ')}</span>
                               </div>
                             ) : null}
                             {Array.isArray(item.recommendations.ai.notes) && item.recommendations.ai.notes.length > 0 ? (
-                              <div className="text-gray-400">• Note: {item.recommendations.ai.notes[0]}</div>
+                              <div className="text-gray-400">• {t('noteLabel')}: {item.recommendations.ai.notes[0]}</div>
                             ) : null}
                           </div>
                         ) : null}
 
                         {item.recommendations?.source === 'ai' && item.recommendations?.ai?.audit ? (
                           <div className="text-sm text-gray-300 space-y-2">
-                            <div className="text-white font-semibold">Audit images existantes</div>
+                            <div className="text-white font-semibold">{t('existingImagesAudit')}</div>
                             {Array.isArray(item.recommendations.ai.audit.issues) && item.recommendations.ai.audit.issues.length > 0 ? (
                               <div className="space-y-1">
-                                <div className="text-gray-400">Problèmes détectés</div>
+                                <div className="text-gray-400">{t('issuesDetected')}</div>
                                 {item.recommendations.ai.audit.issues.slice(0, 5).map((line, idx) => (
                                   <div key={idx}>• {line}</div>
                                 ))}
@@ -4724,7 +4614,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             ) : null}
                             {Array.isArray(item.recommendations.ai.audit.quick_fixes) && item.recommendations.ai.audit.quick_fixes.length > 0 ? (
                               <div className="space-y-1">
-                                <div className="text-gray-400">Fix rapides (aujourd’hui)</div>
+                                <div className="text-gray-400">{t('quickFixes')}</div>
                                 {item.recommendations.ai.audit.quick_fixes.slice(0, 5).map((line, idx) => (
                                   <div key={idx}>• {line}</div>
                                 ))}
@@ -4744,7 +4634,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                         {Array.isArray(item.recommendations.action_plan) && item.recommendations.action_plan.length > 0 ? (
                           <div className="bg-gray-800/60 border border-gray-700 rounded-lg p-4 space-y-2">
-                            <div className="text-white font-semibold text-base">Plan d’action (quoi faire, dans l’ordre)</div>
+                            <div className="text-white font-semibold text-base">{t('actionPlanInOrder')}</div>
                             <div className="space-y-2">
                               {item.recommendations.action_plan.slice(0, 7).map((stepObj, idx) => (
                                 <div key={idx} className="text-sm text-gray-300">
@@ -4764,7 +4654,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                         {Array.isArray(item.recommendations.images_to_create) && item.recommendations.images_to_create.length > 0 ? (
                           <div className="bg-gray-800/60 border border-gray-700 rounded-lg p-4 space-y-2">
-                            <div className="text-white font-semibold text-base">À créer (exactement)</div>
+                            <div className="text-white font-semibold text-base">{t('toCreateExactly')}</div>
                             <div className="space-y-3">
                               {item.recommendations.images_to_create.slice(0, 8).map((img, idx) => (
                                 <div key={idx} className="text-sm text-gray-300">
@@ -4774,7 +4664,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                                     <div className="text-gray-400 mt-2">Pourquoi c’est adapté: <span className="text-white">{img.uses_facts.slice(0, 3).join(' · ')}</span></div>
                                   ) : null}
                                   <div className="text-gray-400 mt-1">
-                                    Fond: {img.background} • Ton: {img.color_tone} • Props: {img.props}
+                                    Fond: {img.background} • {t('toneLabel')}: {img.color_tone} • Props: {img.props}
                                   </div>
                                   <div className="text-gray-400">Caméra: {img.camera} • Lumière: {img.lighting}</div>
                                   {img.editing_notes ? <div className="text-gray-500">Retouche: {img.editing_notes}</div> : null}
@@ -4786,7 +4676,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                         {Array.isArray(item.recommendations.recommended_order) && item.recommendations.recommended_order.length > 0 ? (
                           <div className="text-sm text-gray-300 space-y-1">
-                            <div className="text-white font-semibold">Ordre recommandé des images</div>
+                            <div className="text-white font-semibold">{t('recommendedImageOrder')}</div>
                             {item.recommendations.recommended_order.slice(0, 8).map((o, idx) => (
                               <div key={idx}>#{o.position} — <span className="text-white">{o.shot}</span> <span className="text-gray-400">({o.goal})</span></div>
                             ))}
@@ -4795,7 +4685,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                         {Array.isArray(item.recommendations.style_guidelines) && item.recommendations.style_guidelines.length > 0 ? (
                           <div className="text-sm text-gray-400 space-y-1">
-                            <div className="text-white font-semibold">Style (fond, ton, background)</div>
+                            <div className="text-white font-semibold">{t('styleGuidelines')}</div>
                             {item.recommendations.style_guidelines.slice(0, 4).map((line, idx) => (
                               <div key={idx}>• {line}</div>
                             ))}
@@ -4804,11 +4694,11 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                         {Array.isArray(item.recommendations.prompt_blocks) && item.recommendations.prompt_blocks.length > 0 ? (
                           <div className="space-y-2">
-                            <div className="text-white font-semibold">Prompts (génération d’images)</div>
+                            <div className="text-white font-semibold">{t('imagePrompts')}</div>
                             {item.recommendations.prompt_blocks.slice(0, 3).map((pb, idx) => (
                               <div key={idx} className="bg-black/20 border border-gray-700 rounded-lg p-3 space-y-2">
                                 <div className="text-sm text-gray-200 font-semibold">{pb.shot}</div>
-                                {pb.outcome ? <div className="text-xs text-gray-400">Ce que tu obtiens: {pb.outcome}</div> : null}
+                                {pb.outcome ? <div className="text-xs text-gray-400">{t('whatYouGet')}: {pb.outcome}</div> : null}
                                 {Array.isArray(pb.prompts) ? pb.prompts.slice(0, 2).map((pr, prIdx) => (
                                   <div key={prIdx} className="space-y-1">
                                     <div className="text-xs text-gray-400">{pr.label}{pr.when_to_use ? ` — ${pr.when_to_use}` : ''}</div>
@@ -4833,35 +4723,35 @@ analytics.subscribe("product_added_to_cart", (event) => {
         {activeTab === 'action-bundles' && (
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 space-y-6">
             <div>
-              <h2 className="text-white text-xl font-bold mb-2">Bundles & cross-sell</h2>
-              <p className="text-gray-400">Packs basés sur les commandes passées pour booster l’AOV.</p>
+              <h2 className="text-white text-xl font-bold mb-2">{t('tabBundles')}</h2>
+              <p className="text-gray-400">{t('bundlesDesc')}</p>
             </div>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <p className="text-sm text-gray-400">{getInsightCount(insightsData?.bundle_suggestions)} suggestions</p>
+              <p className="text-sm text-gray-400">{getInsightCount(insightsData?.bundle_suggestions)} {t('suggestions')}</p>
               <button
                 onClick={loadBundlesAsync}
                 disabled={insightsLoading}
                 className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
               >
-                {insightsLoading ? 'Analyse en cours...' : 'Analyser'}
+                {insightsLoading ? t('analysisInProgress') : t('analyze')}
               </button>
               <button
                 onClick={loadBundlesHistory}
                 disabled={bundlesHistoryLoading}
                 className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
               >
-                {bundlesHistoryLoading ? 'Chargement historique...' : 'Historique'}
+                {bundlesHistoryLoading ? t('loadingHistory') : t('history')}
               </button>
             </div>
             {bundlesJobStatus !== 'idle' && (
-              <p className="text-xs text-gray-400">État job: {bundlesJobStatus}</p>
+              <p className="text-xs text-gray-400">{t('jobStatus')}: {bundlesJobStatus}</p>
             )}
             {renderStatus('action-bundles')}
             {bundlesDiagnostics && (
               <div className="bg-gray-900/60 border border-gray-700 rounded-lg p-4 text-sm">
-                <div className="text-white font-semibold mb-1">Diagnostic analyse</div>
+                <div className="text-white font-semibold mb-1">{t('analysisDiagnostic')}</div>
                 <div className="text-gray-300">
-                  {bundlesDiagnostics.orders_scanned || 0} commandes scannées • {bundlesDiagnostics.orders_with_2plus_items || 0} commandes avec 2+ articles • {bundlesDiagnostics.pairs_found || 0} paires trouvées
+                  {bundlesDiagnostics.orders_scanned || 0} {t('ordersScanned')} • {bundlesDiagnostics.orders_with_2plus_items || 0} {t('ordersWith2PlusItems')} • {bundlesDiagnostics.pairs_found || 0} {t('pairsFound')}
                 </div>
                 {bundlesDiagnostics.no_result_reason ? (
                   <div className="text-yellow-300 mt-2">{bundlesDiagnostics.no_result_reason}</div>
@@ -4873,7 +4763,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
             )}
             <div className="space-y-3">
               {!insightsLoading && (!insightsData?.bundle_suggestions || insightsData.bundle_suggestions.length === 0) ? (
-                <p className="text-sm text-gray-500">Aucune suggestion détectée.</p>
+                <p className="text-sm text-gray-500">{t('noSuggestionDetected')}</p>
               ) : (
                 insightsData?.bundle_suggestions?.slice(0, 8).map((item, index) => (
                   <div key={index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
@@ -4883,7 +4773,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           {item.titles?.[0] || `#${item.pair?.[0] || 'A'}`} + {item.titles?.[1] || `#${item.pair?.[1] || 'B'}`}
                         </p>
                         <p className="text-xs text-gray-500">
-                          {item.count || 0} commandes
+                          {item.count || 0} {t('ordersLabel')}
                           {item.confidence ? ` • confiance ${item.confidence}` : ''}
                           {Array.isArray(item.discount_range_pct) && item.discount_range_pct.length >= 2 ? ` • remise ${item.discount_range_pct[0]}–${item.discount_range_pct[1]}%` : ''}
                         </p>
@@ -4891,14 +4781,14 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                       {item.offer?.message ? (
                         <div className="text-sm text-gray-300">
-                          <div className="text-white font-semibold">Offre</div>
+                          <div className="text-white font-semibold">{t('offer')}</div>
                           <div className="text-gray-300">{item.offer.message}</div>
                         </div>
                       ) : null}
 
                       {Array.isArray(item.placements) && item.placements.length > 0 ? (
                         <div className="text-sm text-gray-300">
-                          <div className="text-white font-semibold">Où l’afficher</div>
+                          <div className="text-white font-semibold">{t('whereToDisplay')}</div>
                           <div className="text-gray-400">{item.placements.slice(0, 3).join(' · ')}</div>
                         </div>
                       ) : null}
@@ -4917,9 +4807,9 @@ analytics.subscribe("product_added_to_cart", (event) => {
             {/* Historique des jobs bundles */}
             {bundlesHistoryOpen && (
               <div className="mt-6">
-                <h3 className="text-white font-bold mb-2">Historique des analyses</h3>
+                <h3 className="text-white font-bold mb-2">{t('analysisHistory')}</h3>
                 {bundlesHistory.length === 0 ? (
-                  <p className="text-sm text-gray-500">Aucun ancien résultat disponible.</p>
+                  <p className="text-sm text-gray-500">{t('noOldResults')}</p>
                 ) : (
                   <ul className="space-y-2">
                     {bundlesHistory.map((job, idx) => (
@@ -4935,7 +4825,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           className="self-start bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold py-1 px-3 rounded"
                           type="button"
                         >
-                          {selectedBundlesHistoryJobId && selectedBundlesHistoryJobId === (job.job_id || '') ? 'Résultat affiché' : 'Charger ce résultat'}
+                          {selectedBundlesHistoryJobId && selectedBundlesHistoryJobId === (job.job_id || '') ? t('resultDisplayed') : t('loadThisResult')}
                         </button>
                       </li>
                     ))}
@@ -4950,28 +4840,28 @@ analytics.subscribe("product_added_to_cart", (event) => {
           <div className="bg-gray-800 rounded-lg border border-gray-700">
             <div className="px-6 py-5 border-b border-gray-700">
               <h2 className="text-white text-xl font-bold flex items-center gap-2">
-                <span>📦</span> Alertes rupture de stock
+                <span>📦</span> {t('stockAlerts')}
               </h2>
-              <p className="text-gray-400 text-sm mt-1">Entrez un seuil à côté de chaque produit. La sauvegarde est automatique. Vous recevrez un email si le stock atteint le seuil.</p>
+              <p className="text-gray-400 text-sm mt-1">{t('stockAlertsDesc')}</p>
             </div>
 
             {stockProductsLoading ? (
               <div className="p-8 text-center">
                 <svg className="animate-spin h-6 w-6 text-yellow-400 mx-auto mb-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                <p className="text-gray-400 text-sm">Chargement des produits...</p>
+                <p className="text-gray-400 text-sm">{t('loadingProducts')}</p>
               </div>
             ) : stockProducts.length === 0 ? (
               <div className="p-8 text-center">
-                <p className="text-gray-500 text-sm">Aucun produit Shopify trouvé.</p>
+                <p className="text-gray-500 text-sm">{t('noShopifyProducts')}</p>
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-gray-700 bg-gray-900/50">
-                      <th className="text-left px-6 py-3 text-xs text-gray-400 font-semibold uppercase">Produit</th>
-                      <th className="text-center px-4 py-3 text-xs text-gray-400 font-semibold uppercase w-28">Stock</th>
-                      <th className="text-center px-4 py-3 text-xs text-gray-400 font-semibold uppercase w-36">Seuil d'alerte</th>
+                      <th className="text-left px-6 py-3 text-xs text-gray-400 font-semibold uppercase">{t('product')}</th>
+                      <th className="text-center px-4 py-3 text-xs text-gray-400 font-semibold uppercase w-28">{t('stock')}</th>
+                      <th className="text-center px-4 py-3 text-xs text-gray-400 font-semibold uppercase w-36">{t('alertThreshold')}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-700/50">
@@ -5008,7 +4898,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
             )}
 
             <div className="px-6 py-3 border-t border-gray-700 bg-gray-900/30">
-              <p className="text-xs text-gray-500">Le serveur vérifie automatiquement vos stocks <span className="text-yellow-400">toutes les 5 minutes</span>, 24/7. Un email est envoyé quand le stock atteint le seuil configuré.</p>
+              <p className="text-xs text-gray-500">{t('serverChecksStock')} <span className="text-yellow-400">{t('every5Minutes')}</span>, {t('emailWhenThreshold')}</p>
             </div>
           </div>
         )}
@@ -5016,23 +4906,23 @@ analytics.subscribe("product_added_to_cart", (event) => {
         {activeTab === 'action-returns' && (
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 space-y-6">
             <div>
-              <h2 className="text-white text-xl font-bold mb-2">Anti-retours / chargebacks</h2>
-              <p className="text-gray-400">Détecte les produits à risque de retours ou litiges.</p>
+              <h2 className="text-white text-xl font-bold mb-2">{t('tabReturns')}</h2>
+              <p className="text-gray-400">{t('returnsDesc')}</p>
             </div>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <p className="text-sm text-gray-400">{getInsightCount(insightsData?.return_risks)} alertes</p>
+              <p className="text-sm text-gray-400">{getInsightCount(insightsData?.return_risks)} {t('alerts')}</p>
               <button
                 onClick={() => runActionAnalysis('action-returns')}
                 disabled={insightsLoading}
                 className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
               >
-                {insightsLoading ? 'Analyse en cours...' : 'Lancer l\'analyse IA'}
+                {insightsLoading ? t('analysisInProgress') : t('launchAIAnalysis')}
               </button>
             </div>
             {renderStatus('action-returns')}
             <div className="space-y-3">
               {!insightsLoading && (!insightsData?.return_risks || insightsData.return_risks.length === 0) ? (
-                <p className="text-sm text-gray-500">Aucun signal détecté.</p>
+                <p className="text-sm text-gray-500">{t('noSignalDetected')}</p>
               ) : (
                 insightsData?.return_risks?.slice(0, 8).map((item, index) => (
                   <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
@@ -5051,22 +4941,22 @@ analytics.subscribe("product_added_to_cart", (event) => {
         {/* AI Analysis Tab */}
         {activeTab === 'ai' && (
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-            <h2 className="text-white text-xl font-bold mb-4">Analyser avec l'IA</h2>
+            <h2 className="text-white text-xl font-bold mb-4">{t('analyzeWithAI')}</h2>
             
             {products && products.length > 0 ? (
               <div>
-                <p className="text-gray-400 mb-4">{products.length} produits à analyser</p>
+                <p className="text-gray-400 mb-4">{products.length} {t('productsToAnalyze')}</p>
                 <button
                   onClick={analyzeProducts}
                   disabled={loading}
                   className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
                 >
-                  {loading ? 'Analyse en cours...' : 'Lancer l\'analyse IA'}
+                  {loading ? t('analysisInProgress') : t('launchAIAnalysis')}
                 </button>
                 {renderStatus('analyze')}
               </div>
             ) : (
-              <p className="text-gray-400">Charge tes produits Shopify d'abord</p>
+              <p className="text-gray-400">{t('loadShopifyFirst')}</p>
             )}
           </div>
         )}
@@ -5081,10 +4971,10 @@ analytics.subscribe("product_added_to_cart", (event) => {
                   <div className="bg-blue-900 border-2 border-blue-700 rounded-lg p-6 shadow-xl">
                     <div className="flex items-center justify-between">
                       <div>
-                        <h3 className="text-white text-xl font-bold mb-2">Actions Automatiques IA</h3>
-                        <p className="text-green-200 text-sm">L'IA peut appliquer automatiquement les optimisations recommandées à votre boutique Shopify.</p>
+                        <h3 className="text-white text-xl font-bold mb-2">{t('autoAIActions')}</h3>
+                        <p className="text-green-200 text-sm">{t('autoAIActionsDesc')}</p>
                         {subscription?.plan === 'premium' && (
-                          <p className="text-yellow-300 text-xs mt-1">Premium: Modifications automatiques sans limites</p>
+                          <p className="text-yellow-300 text-xs mt-1">{t('premiumUnlimited')}</p>
                         )}
                       </div>
                       <button
@@ -5094,34 +4984,34 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                         </svg>
-                        Appliquer les recommandations
+                        {t('applyRecommendations')}
                       </button>
                     </div>
                   </div>
                 )}
                 {/* Vue d'ensemble */}
                 <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-                  <h2 className="text-white text-2xl font-bold mb-4">Vue d'ensemble de votre boutique</h2>
+                  <h2 className="text-white text-2xl font-bold mb-4">{t('shopOverview')}</h2>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div className="bg-gray-700 p-4 rounded-lg">
-                      <p className="text-gray-400 text-sm">Produits totaux</p>
+                      <p className="text-gray-400 text-sm">{t('totalProducts')}</p>
                       <p className="text-white text-2xl font-bold">{analysisResults.overview?.total_products}</p>
                     </div>
                     <div className="bg-gray-700 p-4 rounded-lg">
-                      <p className="text-gray-400 text-sm">Publiés</p>
+                      <p className="text-gray-400 text-sm">{t('published')}</p>
                       <p className="text-green-400 text-2xl font-bold">{analysisResults.overview?.published}</p>
                     </div>
                     <div className="bg-gray-700 p-4 rounded-lg">
-                      <p className="text-gray-400 text-sm">Variantes</p>
+                      <p className="text-gray-400 text-sm">{t('variants')}</p>
                       <p className="text-blue-400 text-2xl font-bold">{analysisResults.overview?.total_variants}</p>
                     </div>
                     <div className="bg-gray-700 p-4 rounded-lg">
-                      <p className="text-gray-400 text-sm">Prix moyen</p>
+                      <p className="text-gray-400 text-sm">{t('averagePrice')}</p>
                       <p className="text-yellow-400 text-2xl font-bold">{analysisResults.overview?.price_range?.average?.toFixed(2)}$</p>
                     </div>
                   </div>
                   <div className="mt-4 bg-gray-700 p-4 rounded-lg">
-                    <p className="text-gray-400 text-sm">Santé du catalogue</p>
+                    <p className="text-gray-400 text-sm">{t('catalogHealth')}</p>
                     <p className="text-white text-xl font-bold">{analysisResults.overview?.catalog_health}</p>
                   </div>
                 </div>
@@ -5129,17 +5019,17 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 {/* Points critiques */}
                 {analysisResults.critical_issues && analysisResults.critical_issues.length > 0 && (
                   <div className="bg-gray-800 border-2 border-yellow-700 rounded-lg p-6">
-                    <h2 className="text-white text-2xl font-bold mb-4">Points critiques à corriger MAINTENANT</h2>
+                    <h2 className="text-white text-2xl font-bold mb-4">{t('criticalPointsNow')}</h2>
                     <div className="space-y-4">
                       {analysisResults.critical_issues.map((issue, idx) => (
                         <div key={idx} className="bg-gray-900 p-4 rounded-lg">
                           <div className="flex items-start gap-3">
                             <div className="flex-1">
-                              <p className="text-yellow-300 font-bold text-sm mb-1">SÉVÉRITÉ: {issue.severity}</p>
+                              <p className="text-yellow-300 font-bold text-sm mb-1">{t('severity')}: {issue.severity}</p>
                               <p className="text-white font-bold mb-2">{issue.issue}</p>
                               <p className="text-gray-300 text-sm mb-2">{issue.impact}</p>
                               <div className="bg-gray-800 p-3 rounded mt-2">
-                                <p className="text-white font-bold text-sm">Action immédiate:</p>
+                                <p className="text-white font-bold text-sm">{t('immediateAction')}:</p>
                                 <p className="text-gray-200 text-sm mt-1">{issue.action}</p>
                               </div>
                             </div>
@@ -5152,12 +5042,12 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                 {/* Actions immédiates */}
                 <div className="bg-blue-900 border-2 border-blue-700 rounded-lg p-6">
-                  <h2 className="text-white text-2xl font-bold mb-4">🎯 Actions à faire MAINTENANT</h2>
+                  <h2 className="text-white text-2xl font-bold mb-4">🎯 {t('actionsToDoNow')}</h2>
                   <div className="space-y-4">
                     {analysisResults.immediate_actions?.map((action, idx) => (
                       <div key={idx} className="bg-green-800 bg-opacity-50 p-5 rounded-lg">
                         <div className="flex items-center gap-2 mb-3">
-                          <span className="bg-green-600 text-white font-bold px-3 py-1 rounded-full text-sm">PRIORITÉ {action.priority}</span>
+                          <span className="bg-green-600 text-white font-bold px-3 py-1 rounded-full text-sm">{t('priority')} {action.priority}</span>
                           <h3 className="text-white font-bold text-lg">{action.action}</h3>
                         </div>
                         <div className="space-y-2 mb-3">
@@ -5166,8 +5056,8 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           ))}
                         </div>
                         <div className="flex gap-4 text-sm">
-                          <span className="text-gray-300">Temps: {action.time_required}</span>
-                          <span className="text-yellow-300">Impact: {action.expected_impact}</span>
+                          <span className="text-gray-300">{t('time')}: {action.time_required}</span>
+                          <span className="text-yellow-300">{t('impact')}: {action.expected_impact}</span>
                         </div>
                       </div>
                     ))}
@@ -5176,10 +5066,10 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                 {/* Recommandations stratégiques */}
                 <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-                  <h2 className="text-white text-2xl font-bold mb-4">🎯 Recommandations stratégiques</h2>
+                  <h2 className="text-white text-2xl font-bold mb-4">🎯 {t('strategicRecommendations')}</h2>
                   <p className="text-gray-400 mb-4">
-                    {analysisResults.strategic_recommendations?.total_recommendations} recommandations trouvées 
-                    ({analysisResults.strategic_recommendations?.high_priority} haute priorité)
+                    {analysisResults.strategic_recommendations?.total_recommendations} {t('recommendationsFound')} 
+                    ({analysisResults.strategic_recommendations?.high_priority} {t('highPriority')})
                   </p>
                   <div className="space-y-4">
                     {analysisResults.strategic_recommendations?.recommendations?.map((rec, idx) => (
@@ -5196,7 +5086,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         <h3 className="text-white font-bold mb-2">{rec.issue}</h3>
                         <p className="text-gray-300 mb-3">{rec.recommendation}</p>
                         <div className="bg-gray-800 p-3 rounded">
-                          <p className="text-green-400 text-sm font-bold">💰 Impact attendu:</p>
+                          <p className="text-green-400 text-sm font-bold">💰 {t('expectedImpact')}:</p>
                           <p className="text-green-300 text-sm">{rec.impact}</p>
                         </div>
                         <div className="bg-blue-900 bg-opacity-30 p-3 rounded mt-2">
@@ -5210,14 +5100,14 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                 {/* Stratégie de prix */}
                 <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-                  <h2 className="text-white text-2xl font-bold mb-4">💰 Optimisation des prix</h2>
+                  <h2 className="text-white text-2xl font-bold mb-4">💰 {t('priceOptimization')}</h2>
                   <div className="space-y-4">
                     <div className="bg-gray-700 p-4 rounded-lg">
-                      <h3 className="text-white font-bold mb-2">Stratégie actuelle</h3>
+                      <h3 className="text-white font-bold mb-2">{t('currentStrategy')}</h3>
                       <p className="text-gray-300">{analysisResults.pricing_strategy?.current_strategy}</p>
                     </div>
                     
-                    <h3 className="text-white font-bold mt-4">Optimisations suggérées (Top 5 produits):</h3>
+                    <h3 className="text-white font-bold mt-4">{t('suggestedOptimizations')}</h3>
                     <div className="space-y-3">
                       {analysisResults.pricing_strategy?.optimizations?.map((opt, idx) => (
                         <div key={idx} className="bg-gray-700 p-4 rounded-lg">
@@ -5229,11 +5119,11 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           </div>
                           <div className="grid grid-cols-2 gap-4 mb-2">
                             <div>
-                              <p className="text-gray-400 text-sm">Prix actuel</p>
+                              <p className="text-gray-400 text-sm">{t('currentPrice')}</p>
                               <p className="text-white text-lg font-bold">{opt.current_price}$</p>
                             </div>
                             <div>
-                              <p className="text-gray-400 text-sm">Prix suggéré</p>
+                              <p className="text-gray-400 text-sm">{t('suggestedPrice')}</p>
                               <p className="text-green-400 text-lg font-bold">{opt.suggested_price}$</p>
                             </div>
                           </div>
@@ -5243,7 +5133,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                       ))}
                     </div>
 
-                    <h3 className="text-white font-bold mt-4">Opportunités de pricing:</h3>
+                    <h3 className="text-white font-bold mt-4">{t('pricingOpportunities')}</h3>
                     <div className="space-y-3">
                       {analysisResults.pricing_strategy?.opportunities?.map((opp, idx) => (
                         <div key={idx} className="bg-blue-900 bg-opacity-30 p-4 rounded-lg">
@@ -5258,9 +5148,9 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                 {/* Qualité du contenu */}
                 <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-                  <h2 className="text-white text-2xl font-bold mb-4">📝 Qualité du contenu</h2>
+                  <h2 className="text-white text-2xl font-bold mb-4">📝 {t('contentQuality')}</h2>
                   <div className="bg-gray-700 p-4 rounded-lg mb-4">
-                    <p className="text-gray-400 text-sm mb-2">Score global</p>
+                    <p className="text-gray-400 text-sm mb-2">{t('globalScore')}</p>
                     <div className="flex items-center gap-3">
                       <div className="flex-1 bg-gray-600 rounded-full h-4">
                         <div 
@@ -5277,7 +5167,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                   {analysisResults.content_improvements?.issues_found?.length > 0 && (
                     <>
-                      <h3 className="text-white font-bold mb-3">Problèmes détectés:</h3>
+                      <h3 className="text-white font-bold mb-3">{t('issuesDetected')}</h3>
                       <div className="space-y-3 mb-4">
                         {analysisResults.content_improvements.issues_found.map((issue, idx) => (
                           <div key={idx} className="bg-yellow-900 bg-opacity-30 p-4 rounded-lg">
@@ -5290,19 +5180,19 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               </span>
                               <p className="text-yellow-300 font-bold">{issue.issue}</p>
                             </div>
-                            <p className="text-gray-300 text-sm">💡 Solution: {issue.fix}</p>
+                            <p className="text-gray-300 text-sm">💡 {t('solution')}: {issue.fix}</p>
                           </div>
                         ))}
                       </div>
                     </>
                   )}
 
-                  <h3 className="text-white font-bold mb-3">Quick Wins (résultats rapides):</h3>
+                  <h3 className="text-white font-bold mb-3">{t('quickWinsLabel')}</h3>
                   <div className="space-y-3">
                     {analysisResults.content_improvements?.quick_wins?.map((win, idx) => (
                       <div key={idx} className="bg-gray-900 p-4 rounded-lg border border-gray-700">
                         <p className="text-green-400 font-bold mb-2">{win.action}</p>
-                        {win.example && <p className="text-gray-300 text-sm mb-2">Exemple: {win.example}</p>}
+                        {win.example && <p className="text-gray-300 text-sm mb-2">{t('example')}: {win.example}</p>}
                         <p className="text-green-300 text-sm">{win.impact}</p>
                       </div>
                     ))}
@@ -5311,17 +5201,17 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                 {/* Stratégies de vente */}
                 <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-                  <h2 className="text-white text-2xl font-bold mb-4">Stratégies Upsell & Cross-sell</h2>
+                  <h2 className="text-white text-2xl font-bold mb-4">{t('upsellCrossSell')}</h2>
                   
                   {analysisResults.sales_strategies?.upsell_opportunities?.length > 0 && (
                     <>
-                      <h3 className="text-white font-bold mb-3">Opportunités d'Upsell:</h3>
+                      <h3 className="text-white font-bold mb-3">{t('upsellOpportunities')}</h3>
                       <div className="space-y-3 mb-6">
                         {analysisResults.sales_strategies.upsell_opportunities.map((upsell, idx) => (
                           <div key={idx} className="bg-gray-900 p-4 rounded-lg border border-gray-700">
                             <h4 className="text-yellow-400 font-bold mb-2">{upsell.strategy}</h4>
                             <p className="text-gray-300 text-sm mb-2">{upsell.description}</p>
-                            {upsell.example && <p className="text-gray-300 text-sm mb-2">Exemple: {upsell.example}</p>}
+                            {upsell.example && <p className="text-gray-300 text-sm mb-2">{t('example')}: {upsell.example}</p>}
                             <p className="text-green-400 text-sm font-bold">{upsell.expected_impact}</p>
                           </div>
                         ))}
@@ -5331,13 +5221,13 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                   {analysisResults.sales_strategies?.cross_sell_bundles?.length > 0 && (
                     <>
-                      <h3 className="text-white font-bold mb-3">Bundles suggérés:</h3>
+                      <h3 className="text-white font-bold mb-3">{t('suggestedBundles')}</h3>
                       <div className="space-y-3 mb-6">
                         {analysisResults.sales_strategies.cross_sell_bundles.map((bundle, idx) => (
                           <div key={idx} className="bg-gray-900 p-4 rounded-lg border border-gray-700">
                             <h4 className="text-yellow-400 font-bold mb-2">{bundle.bundle_name} (-{bundle.discount})</h4>
                             <div className="mb-2">
-                              <p className="text-gray-400 text-sm mb-1">Produits inclus:</p>
+                              <p className="text-gray-400 text-sm mb-1">{t('includedProducts')}:</p>
                               <ul className="list-disc list-inside text-gray-300 text-sm">
                                 {bundle.products?.map((p, pidx) => (
                                   <li key={pidx}>{p}</li>
@@ -5352,7 +5242,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     </>
                   )}
 
-                  <h3 className="text-white font-bold mb-3">Triggers psychologiques:</h3>
+                  <h3 className="text-white font-bold mb-3">{t('psychologicalTriggers')}</h3>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     {analysisResults.sales_strategies?.psychological_triggers?.map((trigger, idx) => (
                       <div key={idx} className="bg-gray-700 p-4 rounded-lg">
@@ -5366,7 +5256,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                 {/* Opportunités de croissance */}
                 <div className="bg-blue-900 rounded-lg p-6 border border-blue-700">
-                  <h2 className="text-white text-2xl font-bold mb-4">Opportunités de croissance</h2>
+                  <h2 className="text-white text-2xl font-bold mb-4">{t('growthOpportunities')}</h2>
                   <div className="space-y-4">
                     {analysisResults.growth_opportunities?.map((opp, idx) => (
                       <div key={idx} className="bg-black bg-opacity-30 p-5 rounded-lg">
@@ -5377,15 +5267,15 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         <p className="text-gray-200 mb-4">{opp.description}</p>
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
                           <div className="bg-gray-800 p-3 rounded">
-                            <p className="text-gray-400 text-xs mb-1">Investissement</p>
+                            <p className="text-gray-400 text-xs mb-1">{t('investment')}</p>
                             <p className="text-white font-bold">{opp.investment}</p>
                           </div>
                           <div className="bg-gray-800 p-3 rounded">
-                            <p className="text-gray-400 text-xs mb-1">Retour attendu</p>
+                            <p className="text-gray-400 text-xs mb-1">{t('expectedReturn')}</p>
                             <p className="text-green-400 font-bold">{opp.expected_return}</p>
                           </div>
                           <div className="bg-gray-800 p-3 rounded">
-                            <p className="text-gray-400 text-xs mb-1">Difficulté</p>
+                            <p className="text-gray-400 text-xs mb-1">{t('difficulty')}</p>
                             <p className="text-yellow-400 font-bold">{opp.difficulty}</p>
                           </div>
                         </div>
@@ -5396,7 +5286,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                 {/* Recommandations par produit */}
                 <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-                  <h2 className="text-white text-2xl font-bold mb-4">🎨 Recommandations par produit (Top 10)</h2>
+                  <h2 className="text-white text-2xl font-bold mb-4">🎨 {t('productRecommendations')}</h2>
                   <div className="space-y-4">
                     {analysisResults.product_recommendations?.map((rec, idx) => (
                       <div key={idx} className="bg-gray-700 p-5 rounded-lg">
@@ -5431,18 +5321,18 @@ analytics.subscribe("product_added_to_cart", (event) => {
                                       disabled={subscription?.plan !== 'premium' || applyingRecommendationId === `${rec.product_id}-${recItem.type}`}
                                       className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold px-3 py-1 rounded"
                                     >
-                                      {applyingRecommendationId === `${rec.product_id}-${recItem.type}` ? 'Application...' : 'Faire modification'}
+                                      {applyingRecommendationId === `${rec.product_id}-${recItem.type}` ? t('applying') : t('applyModification')}
                                     </button>
                                   ) : (
                                     <button
                                       disabled
                                       className="bg-gray-600 text-white text-xs font-semibold px-3 py-1 rounded opacity-70"
                                     >
-                                      Modification indisponible
+                                      {t('modificationUnavailable')}
                                     </button>
                                   )}
                                   {subscription?.plan !== 'premium' && (
-                                    <span className="text-xs text-yellow-300">Premium requis</span>
+                                    <span className="text-xs text-yellow-300">{t('premiumRequired')}</span>
                                   )}
                                 </div>
                                 {renderStatus(`rec-${rec.product_id}-${recItem.type}`)}
@@ -5450,7 +5340,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             ))}
                           </div>
                         ) : (
-                          <p className="text-green-400">Aucune amélioration critique nécessaire</p>
+                          <p className="text-green-400">{t('noImprovementNeeded')}</p>
                         )}
                       </div>
                     ))}
@@ -5463,18 +5353,18 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     onClick={() => setActiveTab('ai')}
                     className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-lg"
                   >
-                    🔄 Lancer une nouvelle analyse
+                    🔄 {t('launchNewAnalysis')}
                   </button>
                 </div>
               </>
             ) : (
               <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 text-center">
-                <p className="text-gray-400 mb-4">Aucune analyse disponible</p>
+                <p className="text-gray-400 mb-4">{t('noAnalysisAvailable')}</p>
                 <button
                   onClick={() => setActiveTab('ai')}
                   className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg"
                 >
-                  Lancer une analyse
+                  {t('launchAnalysis')}
                 </button>
               </div>
             )}
@@ -5492,7 +5382,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                Confirmer les modifications
+                {t('confirmModifications')}
               </h2>
               <button
                 onClick={() => !applyingActions && setShowApplyModal(false)}
@@ -5508,11 +5398,11 @@ analytics.subscribe("product_added_to_cart", (event) => {
             {/* Content */}
             <div className="p-6 overflow-y-auto max-h-[calc(80vh-200px)]">
               <div className="bg-yellow-900/30 border border-yellow-600 rounded-lg p-4 mb-6">
-                <p className="text-yellow-300 font-bold mb-2">Attention</p>
-                <p className="text-yellow-200 text-sm">L'IA va modifier {selectedActions.length} éléments dans votre boutique Shopify. Cette action est irréversible.</p>
+                <p className="text-yellow-300 font-bold mb-2">{t('warning')}</p>
+                <p className="text-yellow-200 text-sm">L'IA va modifier {selectedActions.length} éléments dans votre boutique Shopify. {t('irreversibleAction')}</p>
               </div>
 
-              <h3 className="text-white font-bold mb-4 text-lg">Modifications à appliquer:</h3>
+              <h3 className="text-white font-bold mb-4 text-lg">{t('modificationsToApply')}</h3>
               
               <div className="space-y-3">
                 {selectedActions.map((action, idx) => (
@@ -5530,7 +5420,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           <>
                             <p className="text-gray-300 text-sm mb-2">{action.reason}</p>
                             <div className="flex items-center gap-4 text-sm">
-                              <span className="text-white">Prix actuel: {action.current}$</span>
+                              <span className="text-white">{t('currentPrice')}: {action.current}$</span>
                               <span className="text-gray-500">→</span>
                               <span className="text-green-400 font-bold">Nouveau prix: {action.new}$</span>
                             </div>
@@ -5548,7 +5438,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               <span className="text-blue-400 text-sm font-bold">{action.type.toUpperCase()}</span>
                             </div>
                             <p className="text-gray-400 text-sm mb-1">Problème: {action.issue}</p>
-                            <p className="text-green-300 text-sm">Solution: {action.suggestion}</p>
+                            <p className="text-green-300 text-sm">{t('solution')}: {action.suggestion}</p>
                           </>
                         )}
                       </div>
@@ -5559,8 +5449,8 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
               {selectedActions.length === 0 && (
                 <div className="text-center text-gray-400 py-8">
-                  <p>Aucune action automatique disponible pour le moment.</p>
-                  <p className="text-sm mt-2">Lance une nouvelle analyse pour obtenir des recommandations.</p>
+                  <p>{t('noAutoActions')}</p>
+                  <p className="text-sm mt-2">{t('launchAnalysisForRecs')}</p>
                 </div>
               )}
             </div>
@@ -5572,7 +5462,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 disabled={applyingActions}
                 className="text-gray-400 hover:text-white px-6 py-2 rounded-lg transition disabled:opacity-50"
               >
-                Annuler
+                {t('cancel')}
               </button>
               <button
                 onClick={handleApplyActions}
@@ -5582,14 +5472,14 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 {applyingActions ? (
                   <>
                     <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                    Application en cours...
+                    {t('applying')}
                   </>
                 ) : (
                   <>
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    Confirmer et appliquer ({selectedActions.length})
+                    {t('confirmAndApply')} ({selectedActions.length})
                   </>
                 )}
               </button>
@@ -5738,9 +5628,9 @@ analytics.subscribe("product_added_to_cart", (event) => {
                       <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
                         <h4 className="text-white font-semibold mb-2">{t('language')}</h4>
                         <select value={language} onChange={(e) => setLanguage(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white">
-                          <option value="fr">Français</option>
-                          <option value="en">English</option>
-                          <option value="es">Español</option>
+                          {LANGUAGES.map(lang => (
+                            <option key={lang.code} value={lang.code}>{lang.flag} {lang.label}</option>
+                          ))}
                         </select>
                       </div>
                       <button onClick={handleSaveInterface} disabled={saveLoading} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold w-full">
@@ -5753,20 +5643,20 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                 {settingsTab === 'shopify' && (
                   <div className="space-y-6">
-                    <h3 className="text-xl font-bold text-white mb-4">Connexion Shopify</h3>
+                    <h3 className="text-xl font-bold text-white mb-4">{t('shopifyConnection')}</h3>
                     <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 max-w-2xl">
                       <div className="space-y-4">
                         {shopifyConnected && shopifyUrl && (
                           <div className="flex items-center justify-between bg-gray-900 border border-gray-700 rounded-xl px-4 py-3">
                             <div>
-                              <p className="text-sm text-gray-400">Boutique connectée</p>
+                              <p className="text-sm text-gray-400">{t('connectedShop')}</p>
                               <p className="text-white font-semibold">{shopifyUrl}</p>
                             </div>
-                            <span className="text-xs text-green-300 bg-green-900/30 border border-green-700/40 px-3 py-1 rounded-full">Connecté</span>
+                            <span className="text-xs text-green-300 bg-green-900/30 border border-green-700/40 px-3 py-1 rounded-full">{t('connected')}</span>
                           </div>
                         )}
                         <div>
-                          <label className="block text-gray-400 text-sm mb-2">URL de boutique</label>
+                          <label className="block text-gray-400 text-sm mb-2">{t('shopUrl')}</label>
                           <input
                             type="text"
                             placeholder="ma-boutique.myshopify.com"
@@ -5778,7 +5668,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                         {!shopifyConnected && (
                           <div>
-                            <label className="block text-gray-400 text-sm mb-2">Token d'accès</label>
+                            <label className="block text-gray-400 text-sm mb-2">{t('accessToken')}</label>
                             <input
                               type="password"
                               placeholder="shpat_..."
@@ -5786,7 +5676,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               onChange={(e) => setShopifyToken(e.target.value)}
                               className="w-full bg-gray-700 text-white px-4 py-2 rounded-lg border border-gray-600"
                             />
-                            <p className="text-xs text-gray-500 mt-2">Scopes requis: read_products, write_products, read_orders, read_customers, read_analytics.</p>
+                            <p className="text-xs text-gray-500 mt-2">{t('requiredScopes')}</p>
                           </div>
                         )}
 
@@ -5795,13 +5685,13 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             onClick={() => setShowShopifyToken((prev) => !prev)}
                             className="w-full bg-gray-700 hover:bg-gray-600 text-white font-semibold py-2 px-4 rounded-lg"
                           >
-                            {showShopifyToken ? 'Masquer le token' : 'Mettre à jour le token'}
+                            {showShopifyToken ? t('hideToken') : t('updateToken')}
                           </button>
                         )}
 
                         {shopifyConnected && showShopifyToken && (
                           <div>
-                            <label className="block text-gray-400 text-sm mb-2">Nouveau token d'accès</label>
+                            <label className="block text-gray-400 text-sm mb-2">{t('newAccessToken')}</label>
                             <input
                               type="password"
                               placeholder="shpat_..."
@@ -5809,7 +5699,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               onChange={(e) => setShopifyToken(e.target.value)}
                               className="w-full bg-gray-700 text-white px-4 py-2 rounded-lg border border-gray-600"
                             />
-                            <p className="text-xs text-gray-500 mt-2">Scopes requis: read_products, write_products, read_orders, read_customers, read_analytics.</p>
+                            <p className="text-xs text-gray-500 mt-2">{t('requiredScopes')}</p>
                           </div>
                         )}
 
@@ -5817,7 +5707,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           onClick={connectShopify}
                           className="w-full bg-yellow-600 hover:bg-yellow-500 text-black font-bold py-2 px-4 rounded-lg"
                         >
-                          {shopifyConnected ? 'Mettre à jour la connexion' : 'Connecter Shopify'}
+                          {shopifyConnected ? t('updateConnection') : t('connectShopify')}
                         </button>
                         {renderStatus('shopify')}
                       </div>
@@ -5828,7 +5718,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             onClick={loadProducts}
                             className="bg-yellow-600 hover:bg-yellow-500 text-black font-bold py-2 px-4 rounded-lg"
                           >
-                            Charger mes produits ({products?.length || 0})
+                            {t('loadMyProducts')} ({products?.length || 0})
                           </button>
                         </div>
                       )}
@@ -5911,9 +5801,9 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     <div className="bg-yellow-900/20 border border-yellow-700 rounded-lg p-4 mb-4">
                       <p className="text-yellow-400 text-sm">{t('apiWarning')}</p>
                     </div>
-                    {apiLoading && <div className="text-gray-400">Chargement...</div>}
+                    {apiLoading && <div className="text-gray-400">{t('loading')}</div>}
                     {!apiLoading && apiKeys.length === 0 && (
-                      <div className="text-gray-400">Aucune clé API disponible.</div>
+                      <div className="text-gray-400">{t('noApiKeys')}</div>
                     )}
                     <div className="space-y-4">
                       {apiKeys.map((keyItem) => (
@@ -5928,7 +5818,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               disabled={keyItem.revoked || apiLoading}
                               className="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 px-4 py-2 rounded-lg text-white text-sm"
                             >
-                              {keyItem.revoked ? 'Révoquée' : t('revoke')}
+                              {keyItem.revoked ? t('revoked') : t('revoke')}
                             </button>
                           </div>
                           {pendingRevokeKeyId === keyItem.id && !keyItem.revoked && (
@@ -5938,13 +5828,13 @@ analytics.subscribe("product_added_to_cart", (event) => {
                                 disabled={apiLoading}
                                 className="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 px-4 py-2 rounded-lg text-white text-sm"
                               >
-                                Confirmer
+                                {t('confirm')}
                               </button>
                               <button
                                 onClick={() => setPendingRevokeKeyId(null)}
                                 className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-white text-sm"
                               >
-                                Annuler
+                                {t('cancel')}
                               </button>
                             </div>
                           )}
@@ -5981,7 +5871,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
               }, 100)
             }}
             className="fixed bottom-6 right-6 z-40 group"
-            title="Assistant IA"
+            title={t('aiAssistant')}
           >
             <div className="relative w-14 h-14 rounded-full bg-gradient-to-br from-yellow-500 to-yellow-700 shadow-2xl shadow-yellow-600/30 flex items-center justify-center border-2 border-yellow-400/40 transition-all duration-200 group-hover:scale-110 group-hover:shadow-yellow-500/50">
               <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
@@ -6038,7 +5928,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             </svg>
                             <input
                               type="text"
-                              placeholder="Rechercher des conversations..."
+                              placeholder="{t('searchConversations')}"
                               value={conversationSearch}
                               onChange={(e) => setConversationSearch(e.target.value)}
                               className="w-full bg-[#0f1117] text-sm text-gray-300 pl-9 pr-8 py-2 rounded-lg border border-gray-700/50 focus:border-yellow-500/50 focus:outline-none placeholder:text-gray-600"
@@ -6056,7 +5946,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700/40 transition-colors"
                           >
                             <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 3V13M3 8H13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-                            Nouvelle conversation
+                            {t('newConversation')}
                           </button>
                           {Object.entries(groupedConversations).map(([dateLabel, convs]) => (
                             <div key={dateLabel}>
@@ -6085,14 +5975,14 @@ analytics.subscribe("product_added_to_cart", (event) => {
                                   <button
                                     onClick={(e) => { e.stopPropagation(); setRenamingConversationId(conv.id); setRenamingValue(conv.title) }}
                                     className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-gray-300 p-0.5 transition-opacity"
-                                    title="Renommer"
+                                    title={t('rename')}
                                   >
                                     <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M11 2L14 5L5 14H2V11L11 2Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/></svg>
                                   </button>
                                   <button
                                     onClick={(e) => { e.stopPropagation(); deleteConversation(conv.id) }}
                                     className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 p-0.5 transition-opacity"
-                                    title="Supprimer"
+                                    title={t('delete')}
                                   >
                                     <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
                                   </button>
@@ -6101,7 +5991,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             </div>
                           ))}
                           {filteredConversations.length === 0 && (
-                            <div className="px-4 py-6 text-center text-sm text-gray-600">Aucune conversation</div>
+                            <div className="px-4 py-6 text-center text-sm text-gray-600">{t('noConversations')}</div>
                           )}
                         </div>
                       </div>
@@ -6112,7 +6002,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     <button
                       onClick={startNewConversation}
                       className="p-2 text-gray-400 hover:text-white rounded-lg hover:bg-gray-700/40 transition-colors"
-                      title="Nouvelle conversation"
+                      title={t('newConversation')}
                     >
                       <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3V13M3 8H13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
                     </button>
@@ -6130,7 +6020,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     <button
                       onClick={() => setShowChatPanel(false)}
                       className="p-2 text-gray-400 hover:text-white rounded-lg hover:bg-gray-700/40 transition-colors"
-                      title="Fermer"
+                      title={t('close')}
                     >
                       <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
                     </button>
@@ -6154,12 +6044,12 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         </svg>
                       </div>
                       <p className="text-gray-500 text-sm mb-1">{getGreeting()}, {profile?.first_name || user?.user_metadata?.full_name?.split(' ')[0] || 'là'}</p>
-                      <h3 className="text-white text-lg font-semibold mb-6">Comment puis-je vous aider ?</h3>
+                      <h3 className="text-white text-lg font-semibold mb-6">{t('howCanIHelp')}</h3>
                       <button
-                        onClick={() => sendChatMessage('Quoi de neuf ?')}
+                        onClick={() => sendChatMessage(t('whatsNew'))}
                         className="px-5 py-2 rounded-full border border-gray-600 text-gray-400 text-sm hover:border-yellow-500/50 hover:text-yellow-400 transition-all duration-200"
                       >
-                        Quoi de neuf ?
+                        {t('whatsNew')}
                       </button>
                     </div>
                   ) : (
@@ -6241,7 +6131,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                   {showProductPicker && (
                     <div className="mb-3 bg-[#1a1d27] border border-yellow-600/30 rounded-xl overflow-hidden" ref={productPickerRef}>
                       <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-700/50">
-                        <span className="text-sm font-semibold text-yellow-300">🛍️ Mentionner un produit</span>
+                        <span className="text-sm font-semibold text-yellow-300">🛍️ {t('mentionProduct')}</span>
                         <button onClick={() => { setShowProductPicker(false); setProductPickerSearch('') }} className="text-gray-400 hover:text-white text-lg">✕</button>
                       </div>
                       <div className="px-3 py-2">
@@ -6249,14 +6139,14 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           type="text"
                           value={productPickerSearch}
                           onChange={(e) => setProductPickerSearch(e.target.value)}
-                          placeholder="Rechercher un produit..."
+                          placeholder="{t('searchProduct')}"
                           className="w-full bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-700 text-sm placeholder:text-gray-500 outline-none focus:border-yellow-500/40"
                           autoFocus
                         />
                       </div>
                       <div className="max-h-48 overflow-y-auto px-1 pb-2">
                         {(!products || products.length === 0) ? (
-                          <p className="text-center text-gray-500 text-xs py-4">Connecte Shopify pour voir tes produits.</p>
+                          <p className="text-center text-gray-500 text-xs py-4">{t('connectShopifyProducts')}</p>
                         ) : (
                           (products || []).filter(p =>
                             !productPickerSearch || p.title?.toLowerCase().includes(productPickerSearch.toLowerCase())
@@ -6306,11 +6196,11 @@ analytics.subscribe("product_added_to_cart", (event) => {
                       </div>
                       <div className="flex flex-wrap gap-1.5">
                         {[
-                          'Ma description est-elle bonne ?',
-                          'Mes photos sont-elles attrayantes ?',
-                          'Comment améliorer mon titre SEO ?',
-                          'Quel prix recommandes-tu ?',
-                          'Quels sont les points forts et faibles ?',
+                          t('questionDescription'),
+                          t('questionPhotos'),
+                          t('questionSEO'),
+                          t('questionPrice'),
+                          t('questionStrengths'),
                         ].map((q) => (
                           <button
                             key={q}
@@ -6356,7 +6246,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             className={`p-1.5 rounded-lg transition-colors ${
                               showAttachMenu ? 'text-yellow-400 bg-gray-700/40' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-700/30'
                             }`}
-                            title="Ajouter"
+                            title={t('add')}
                           >
                             {showAttachMenu ? (
                               <svg width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
@@ -6369,11 +6259,11 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             <div className="absolute bottom-full left-0 mb-2 w-60 bg-[#1e2130] border border-gray-700/60 rounded-xl shadow-2xl z-[60] overflow-hidden py-1">
                               <button onClick={() => { fileInputRef.current?.click() }} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700/40 transition-colors">
                                 <svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-gray-400"><path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" stroke="currentColor" strokeWidth="1.5"/></svg>
-                                Fichiers
+                                {t('files')}
                               </button>
                               <button onClick={() => { fileInputRef.current?.click() }} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700/40 transition-colors">
                                 <svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-gray-400"><path d="M5 15L10 5L15 15" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><circle cx="10" cy="3" r="1.5" fill="currentColor"/></svg>
-                                Charger depuis l'appareil
+                                {t('loadFromDevice')}
                               </button>
                               <div className="border-t border-gray-700/40 my-1"></div>
                               <button onClick={() => { setChatInput(prev => prev + '@'); setShowAttachMenu(false) }} className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700/40 transition-colors">
@@ -6386,7 +6276,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               </button>
                               <div className="border-t border-gray-700/40 my-1"></div>
                               <button onClick={() => { setShowProductPicker(true); setShowAttachMenu(false); if (!products || products.length === 0) loadProducts() }} className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-yellow-300 hover:bg-yellow-600/10 transition-colors">
-                                <span className="flex items-center gap-3"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-yellow-400"><path d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17M17 17a2 2 0 100-4 2 2 0 000 4zM7 17a2 2 0 100-4 2 2 0 000 4z" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>Mentionner un produit</span>
+                                <span className="flex items-center gap-3"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-yellow-400"><path d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17M17 17a2 2 0 100-4 2 2 0 000 4zM7 17a2 2 0 100-4 2 2 0 000 4z" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>{t('mentionProduct')}</span>
                                 <span className="text-xs text-yellow-600/70 bg-yellow-900/30 px-1.5 py-0.5 rounded">🛍️</span>
                               </button>
                             </div>
@@ -6399,7 +6289,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     {voiceDictationMode ? (
                       voiceTranscribing ? (
                         <div className="flex-1 flex items-center justify-center h-11 px-1">
-                          <span className="text-sm text-gray-300">Retranscription en cours…</span>
+                          <span className="text-sm text-gray-300">{t('transcribing')}…</span>
                         </div>
                       ) : (
                         /* ChatGPT-style dense waveform across full width */
@@ -6420,7 +6310,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     ) : (
                       <textarea
                         ref={chatTextareaRef}
-                        placeholder="Posez n'importe quelle question..."
+                        placeholder="{t('askAnyQuestion')}"
                         value={chatInput}
                         onChange={(e) => setChatInput(e.target.value)}
                         onFocus={() => {
@@ -6460,14 +6350,14 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           <button
                             onClick={cancelDictation}
                             className="w-8 h-8 flex items-center justify-center text-gray-300 hover:text-white bg-gray-700/50 hover:bg-gray-600/70 rounded-full transition-colors"
-                            title="Annuler"
+                            title={t('cancel')}
                           >
                             <span className="text-base font-semibold">✕</span>
                           </button>
                           <button
                             onClick={confirmDictation}
                             className="w-8 h-8 flex items-center justify-center text-white bg-green-600/80 hover:bg-green-500 rounded-full transition-colors"
-                            title="Valider"
+                            title={t('validate')}
                           >
                             <span className="text-base font-semibold">✓</span>
                           </button>
@@ -6479,7 +6369,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         onClick={() => sendChatMessage()}
                         disabled={chatLoading}
                         className="p-1.5 text-yellow-500 hover:text-yellow-400 disabled:text-gray-600 transition-colors shrink-0"
-                        title="Envoyer"
+                        title={t('send')}
                       >
                         <svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor">
                           <path d="M3.105 2.29a1 1 0 011.265-.42l13 6.5a1 1 0 010 1.79l-13 6.5A1 1 0 013 15.79V11.5l8-1.5-8-1.5V4.21a1 1 0 01.105-.92z"/>
@@ -6490,7 +6380,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                       <button
                         onClick={startDictation}
                         className="p-1.5 text-gray-500 hover:text-gray-300 transition-colors shrink-0 rounded-lg"
-                        title="Dictée vocale"
+                        title={t('voiceDictation')}
                       >
                         <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
                           <rect x="7" y="2" width="6" height="10" rx="3" stroke="currentColor" strokeWidth="1.5"/>
@@ -6502,7 +6392,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                   </div>
 
                   <div className="flex items-center justify-center mt-2 px-1">
-                    <p className="text-[10px] text-gray-600">ShopBrain IA peut faire des erreurs. Vérifiez les informations importantes.</p>
+                    <p className="text-[10px] text-gray-600">{t('disclaimer')}</p>
                   </div>
 
                   <input
