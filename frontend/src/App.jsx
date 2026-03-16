@@ -1,6 +1,7 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import { useTranslation } from './LanguageContext'
+import { LANGUAGES } from './translations'
 
 // ⚡ Lazy load heavy components — Dashboard and PricingTable are only loaded when needed
 const Dashboard = lazy(() => import('./Dashboard'))
@@ -43,7 +44,22 @@ export default function App() {
   const [user, setUser] = useState(null)
   const [hasSubscription, setHasSubscription] = useState(false)
 
-  const { t } = useTranslation()
+  const { t, language, setLanguage } = useTranslation()
+  const [langDropdownOpen, setLangDropdownOpen] = useState(false)
+  const langRef = React.useRef(null)
+
+  // Close language dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (langRef.current && !langRef.current.contains(e.target)) {
+        setLangDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const currentLang = LANGUAGES.find(l => l.code === language) || LANGUAGES[0]
 
   const PRICING_PLANS = [
     {
@@ -539,8 +555,39 @@ export default function App() {
       }`}>
         <div className="max-w-7xl mx-auto px-4 md:px-8">
           <div className="flex items-center justify-between h-14 md:h-16">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 md:gap-4">
               <span className="text-base md:text-xl font-semibold text-white">ShopBrain AI</span>
+              
+              {/* Language selector */}
+              <div className="relative" ref={langRef}>
+                <button
+                  onClick={() => setLangDropdownOpen(!langDropdownOpen)}
+                  className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-gray-800/60 hover:bg-gray-700 border border-gray-700 hover:border-gray-500 transition-all text-sm text-gray-300 hover:text-white"
+                >
+                  <span className="text-base">{currentLang.flag}</span>
+                  <span className="hidden sm:inline text-xs font-medium">{currentLang.label}</span>
+                  <svg className={`w-3 h-3 transition-transform ${langDropdownOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                </button>
+                {langDropdownOpen && (
+                  <div className="absolute top-full left-0 mt-1 w-52 max-h-72 overflow-y-auto bg-gray-800 border border-gray-600 rounded-xl shadow-2xl z-[100] py-1 scrollbar-thin scrollbar-thumb-gray-600">
+                    {LANGUAGES.map(lang => (
+                      <button
+                        key={lang.code}
+                        onClick={() => { setLanguage(lang.code); setLangDropdownOpen(false) }}
+                        className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-colors ${
+                          lang.code === language
+                            ? 'bg-yellow-600/20 text-yellow-400 font-medium'
+                            : 'text-gray-300 hover:bg-gray-700 hover:text-white'
+                        }`}
+                      >
+                        <span className="text-base">{lang.flag}</span>
+                        <span>{lang.label}</span>
+                        {lang.code === language && <span className="ml-auto text-yellow-400">✓</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
             
             <div className="hidden md:flex items-center gap-8">
