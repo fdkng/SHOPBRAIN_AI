@@ -407,7 +407,7 @@ export default function Dashboard() {
     })
   }
 
-  const formatErrorDetail = (detail, fallback = 'Erreur') => {
+  const formatErrorDetail = (detail, fallback = t('error')) => {
     if (!detail) return fallback
     if (typeof detail === 'string') return detail
     if (typeof detail?.message === 'string') return detail.message
@@ -418,23 +418,23 @@ export default function Dashboard() {
     }
   }
 
-  const normalizeNetworkErrorMessage = (err, fallback = 'Erreur réseau') => {
+  const normalizeNetworkErrorMessage = (err, fallback = t('networkError')) => {
     const raw = String(err?.message || '').trim()
     if (err?.name === 'AbortError') {
-      return 'L’analyse prend plus de temps que prévu (délai dépassé). Réessaie — le backend est joignable, mais la requête est trop lente.'
+      return t('analysisTimeout')
     }
     const isNetwork = /Failed to fetch|NetworkError|Load failed|fetch/i.test(raw)
     if (isNetwork) {
       const freshHealth = backendHealth && backendHealthTs && (Date.now() - backendHealthTs < 2 * 60 * 1000)
       if (freshHealth && backendHealth?.status === 'ok') {
-        return 'Erreur réseau lors de la requête (le backend répond sur /health). Vérifie ta connexion ou bloqueurs réseau, puis réessaie.'
+        return t('networkErrorBackendOk')
       }
-      return 'Connexion au backend impossible pour le moment (serveur en réveil). Réessaie dans 10-20 secondes.'
+      return t('backendWaking')
     }
     return raw || fallback
   }
 
-  const formatUserFacingError = (err, fallback = 'Une erreur est survenue') => {
+  const formatUserFacingError = (err, fallback = t('genericError')) => {
     const message = normalizeNetworkErrorMessage(err, fallback)
     return message || fallback
   }
@@ -624,14 +624,14 @@ export default function Dashboard() {
       })
       const data = await response.json()
       if (data.success) {
-        setStatus('api', 'success', `Nouvelle clé générée: ${data.api_key}. Copie-la maintenant, elle ne sera plus affichée.`)
+        setStatus('api', 'success', `${t('newKeyGenerated')}: ${data.api_key}. ${t('copyKeyNow')}`)
         setApiKeys((prev) => [data.key, ...prev])
       } else {
-        setStatus('api', 'error', 'Erreur: ' + (data.detail || 'Erreur'))
+        setStatus('api', 'error', t('error') + ': ' + (data.detail || t('error')))
       }
     } catch (err) {
       console.error('API key generate error:', err)
-      setStatus('api', 'error', 'Erreur lors de la génération')
+      setStatus('api', 'error', t('errorGenerating'))
     } finally {
       setApiLoading(false)
     }
@@ -640,7 +640,7 @@ export default function Dashboard() {
   const handleRevokeApiKey = async (keyId) => {
     if (pendingRevokeKeyId !== keyId) {
       setPendingRevokeKeyId(keyId)
-      setStatus('api', 'warning', 'Confirme la révocation de cette clé pour continuer.')
+      setStatus('api', 'warning', t('confirmRevoke'))
       return
     }
     setPendingRevokeKeyId(null)
@@ -661,13 +661,13 @@ export default function Dashboard() {
       const data = await response.json()
       if (data.success) {
         setApiKeys((prev) => prev.map((k) => k.id === keyId ? { ...k, revoked: true } : k))
-        setStatus('api', 'success', 'Clé révoquée avec succès.')
+        setStatus('api', 'success', t('keyRevoked'))
       } else {
-        setStatus('api', 'error', 'Erreur: ' + (data.detail || 'Erreur'))
+        setStatus('api', 'error', t('error') + ': ' + (data.detail || t('error')))
       }
     } catch (err) {
       console.error('API key revoke error:', err)
-      setStatus('api', 'error', 'Erreur lors de la révocation')
+      setStatus('api', 'error', t('errorRevoking'))
     } finally {
       setApiLoading(false)
     }
@@ -1023,7 +1023,7 @@ export default function Dashboard() {
       console.log(`⚡ Total init time: ${Math.round(performance.now() - initStart)}ms`)
     } catch (err) {
       console.error('Error:', err)
-      setError('Erreur d\'authentification')
+      setError(t('authError'))
       setLoading(false)
     }
   }
@@ -1074,7 +1074,7 @@ export default function Dashboard() {
       if (!targetPlan || targetPlan === subscription?.plan) return
       const session = await getCachedSession()
       if (!session) {
-        setStatus('change-plan', 'error', 'Session expirée, reconnecte-toi.')
+        setStatus('change-plan', 'error', t('sessionExpiredReconnect'))
         return
       }
 
@@ -1091,11 +1091,11 @@ export default function Dashboard() {
       if (data?.success && data?.url) {
         window.location.href = data.url
       } else {
-        setStatus('change-plan', 'error', 'Erreur lors de la création de la session Stripe')
+        setStatus('change-plan', 'error', t('stripeSessionError'))
       }
     } catch (e) {
       console.error('Change plan error:', e)
-      setStatus('change-plan', 'error', 'Une erreur est survenue')
+      setStatus('change-plan', 'error', t('genericError'))
     }
   }
 
@@ -1189,9 +1189,9 @@ export default function Dashboard() {
 
   const getGreeting = () => {
     const hour = new Date().getHours()
-    if (hour >= 5 && hour < 12) return 'Bonjour'
-    if (hour >= 12 && hour < 18) return 'Bon après-midi'
-    return 'Bonsoir'
+    if (hour >= 5 && hour < 12) return t('goodMorning')
+    if (hour >= 12 && hour < 18) return t('goodAfternoon')
+    return t('goodEvening')
   }
 
   const getConversationDateLabel = (dateStr) => {
@@ -1200,8 +1200,8 @@ export default function Dashboard() {
     const yesterday = new Date(today)
     yesterday.setDate(yesterday.getDate() - 1)
     if (date.toDateString() === today.toDateString()) return t("today")
-    if (date.toDateString() === yesterday.toDateString()) return 'Hier'
-    return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })
+    if (date.toDateString() === yesterday.toDateString()) return t('yesterday')
+    return date.toLocaleDateString(language === 'fr' ? 'fr-FR' : language === 'en' ? 'en-US' : language === 'es' ? 'es-ES' : language === 'de' ? 'de-DE' : language, { day: 'numeric', month: 'long' })
   }
 
   const filteredConversations = chatConversations
@@ -1563,10 +1563,10 @@ export default function Dashboard() {
       }
       
       const session = await getCachedSession()
-      if (!session) throw new Error('Session expirée')
+      if (!session) throw new Error(t('sessionExpired'))
 
       // Build payload with images if attached
-      const chatPayload = { message: userMessage || 'Identifie précisément ce produit (marque et modèle), donne-moi une fourchette de prix de revente basée sur le marché actuel, et tes conseils de vente.' }
+      const chatPayload = { message: userMessage || t('defaultVisionPrompt') }
       if (currentAttachments.length > 0) {
         chatPayload.images = currentAttachments
           .filter(a => a.preview && a.type?.startsWith('image/'))
@@ -1578,17 +1578,17 @@ export default function Dashboard() {
         const variant = p.variants?.[0] || {}
         const imgUrl = p.image?.src || p.images?.[0]?.src || ''
         chatPayload.context = [
-          `PRODUIT MENTIONNÉ PAR L'UTILISATEUR (de sa boutique Shopify):`,
-          `Titre: ${p.title}`,
-          `Prix: ${variant.price || 'N/A'} ${variant.currency || 'CAD'}`,
-          `Description: ${(p.body_html || '').replace(/<[^>]*>/g, '').slice(0, 800)}`,
-          `Tags: ${p.tags || 'aucun'}`,
-          `Type: ${p.product_type || 'non spécifié'}`,
-          `Vendor: ${p.vendor || 'non spécifié'}`,
-          `Image principale: ${imgUrl}`,
-          `Variantes: ${(p.variants || []).map(v => `${v.title} - ${v.price}`).join(', ')}`,
-          `Stock: ${(p.variants || []).map(v => `${v.title}: ${v.inventory_quantity ?? 'N/A'}`).join(', ')}`,
-          `Statut: ${p.status || 'actif'}`,
+          `${t('mentionedProductContext')}:`,
+          `${t('titleLabel')}: ${p.title}`,
+          `${t('priceLabel')}: ${variant.price || 'N/A'} ${variant.currency || 'CAD'}`,
+          `${t('descriptionLabel')}: ${(p.body_html || '').replace(/<[^>]*>/g, '').slice(0, 800)}`,
+          `${t('tagsLabel')}: ${p.tags || t('none')}`,
+          `${t('typeLabel')}: ${p.product_type || t('unspecified')}`,
+          `${t('vendorLabel')}: ${p.vendor || t('unspecified')}`,
+          `${t('mainImage')}: ${imgUrl}`,
+          `${t('variantsLabel')}: ${(p.variants || []).map(v => `${v.title} - ${v.price}`).join(', ')}`,
+          `${t('stockLabel')}: ${(p.variants || []).map(v => `${v.title}: ${v.inventory_quantity ?? 'N/A'}`).join(', ')}`,
+          `${t('statusLabel')}: ${p.status || t('active')}`,
         ].join('\n')
         setMentionedProduct(null)
       }
@@ -1638,13 +1638,13 @@ export default function Dashboard() {
       } else {
         setChatMessages(prev => [...prev, { 
           role: 'assistant', 
-          text: 'Erreur: ' + (data.detail || 'Erreur inconnue') 
+          text: t('error') + ': ' + (data.detail || t('unknownError')) 
         }])
       }
     } catch (err) {
       setChatMessages(prev => [...prev, { 
         role: 'assistant', 
-        text: formatUserFacingError(err, 'Erreur de connexion')
+        text: formatUserFacingError(err, t('connectionError'))
       }])
     } finally {
       setChatLoading(false)
@@ -1658,13 +1658,13 @@ export default function Dashboard() {
     if (!file) return
 
     if (!file.type.startsWith('image/')) {
-      setStatus('profile', 'warning', 'Format invalide. Choisis une image.')
+      setStatus('profile', 'warning', t('invalidImageFormat'))
       event.target.value = ''
       return
     }
 
     if (file.size > 5 * 1024 * 1024) {
-      setStatus('profile', 'warning', 'Image trop volumineuse (max 5MB).')
+      setStatus('profile', 'warning', t('imageTooLarge'))
       event.target.value = ''
       return
     }
@@ -1673,7 +1673,7 @@ export default function Dashboard() {
       setAvatarUploading(true)
       const session = await getCachedSession()
       if (!session) {
-        setStatus('profile', 'error', 'Session expirée, reconnecte-toi.')
+        setStatus('profile', 'error', t('sessionExpiredReconnect'))
         return
       }
 
@@ -1691,13 +1691,13 @@ export default function Dashboard() {
       const data = await response.json()
       if (data.success && data.avatar_url) {
         setProfile((prev) => prev ? { ...prev, avatar_url: data.avatar_url } : prev)
-        setStatus('profile', 'success', 'Photo de profil mise à jour')
+        setStatus('profile', 'success', t('profilePhotoUpdated'))
       } else {
-        setStatus('profile', 'error', 'Erreur: ' + (data.detail || 'Erreur inconnue'))
+        setStatus('profile', 'error', t('error') + ': ' + (data.detail || t('unknownError')))
       }
     } catch (err) {
       console.error('Avatar upload error:', err)
-      setStatus('profile', 'error', 'Erreur lors de l’upload')
+      setStatus('profile', 'error', t('uploadError'))
     } finally {
       setAvatarUploading(false)
       event.target.value = ''
@@ -1721,13 +1721,13 @@ export default function Dashboard() {
       })
       const data = await response.json()
       if (data.success) {
-        setStatus('profile', 'success', 'Profil mis à jour')
+        setStatus('profile', 'success', t('profileUpdated'))
         await initializeUser()
       } else {
-        setStatus('profile', 'error', 'Erreur: ' + (data.detail || 'Erreur'))
+        setStatus('profile', 'error', t('error') + ': ' + (data.detail || t('error')))
       }
     } catch (err) {
-      setStatus('profile', 'error', formatUserFacingError(err, 'Erreur profil'))
+      setStatus('profile', 'error', formatUserFacingError(err, t('profileError')))
     } finally {
       setSaveLoading(false)
     }
@@ -1735,15 +1735,15 @@ export default function Dashboard() {
 
   const handleUpdatePassword = async () => {
     if (!currentPassword || !newPassword) {
-      setStatus('password', 'warning', 'Veuillez remplir tous les champs')
+      setStatus('password', 'warning', t('fillAllFields'))
       return
     }
     if (newPassword !== confirmPassword) {
-      setStatus('password', 'warning', 'Les mots de passe ne correspondent pas')
+      setStatus('password', 'warning', t('passwordsDontMatch'))
       return
     }
     if (newPassword.length < 8) {
-      setStatus('password', 'warning', 'Le mot de passe doit avoir au moins 8 caractères')
+      setStatus('password', 'warning', t('passwordMin8'))
       return
     }
     try {
@@ -1762,15 +1762,15 @@ export default function Dashboard() {
       })
       const data = await response.json()
       if (data.success) {
-        setStatus('password', 'success', 'Mot de passe mis à jour')
+        setStatus('password', 'success', t('passwordUpdated'))
         setCurrentPassword('')
         setNewPassword('')
         setConfirmPassword('')
       } else {
-        setStatus('password', 'error', 'Erreur: ' + (data.detail || 'Erreur'))
+        setStatus('password', 'error', t('error') + ': ' + (data.detail || t('error')))
       }
     } catch (err) {
-      setStatus('password', 'error', formatUserFacingError(err, 'Erreur mot de passe'))
+      setStatus('password', 'error', formatUserFacingError(err, t('passwordError')))
     } finally {
       setSaveLoading(false)
     }
@@ -1791,12 +1791,12 @@ export default function Dashboard() {
       const data = await response.json()
       if (data.success) {
         setTwoFAEnabled(!twoFAEnabled)
-        setStatus('2fa', 'success', '2FA ' + (twoFAEnabled ? 'désactivée' : 'activée'))
+        setStatus('2fa', 'success', '2FA ' + (twoFAEnabled ? t('disabled') : t('enabled')))
       } else {
-        setStatus('2fa', 'error', 'Erreur: ' + (data.detail || 'Erreur'))
+        setStatus('2fa', 'error', t('error') + ': ' + (data.detail || t('error')))
       }
     } catch (err) {
-      setStatus('2fa', 'error', formatUserFacingError(err, 'Erreur 2FA'))
+      setStatus('2fa', 'error', formatUserFacingError(err, t('error2FA')))
     } finally {
       setSaveLoading(false)
     }
@@ -1875,7 +1875,7 @@ export default function Dashboard() {
   const handleCancelSubscription = async () => {
     if (!pendingCancelSubscription) {
       setPendingCancelSubscription(true)
-      setStatus('billing-cancel', 'warning', 'Clique une seconde fois pour confirmer l’annulation.')
+      setStatus('billing-cancel', 'warning', t('confirmCancelClick'))
       return
     }
     setPendingCancelSubscription(false)
@@ -1891,13 +1891,13 @@ export default function Dashboard() {
       })
       const data = await response.json()
       if (data.success) {
-        setStatus('billing-cancel', 'success', 'Abonnement annulé')
+        setStatus('billing-cancel', 'success', t('subscriptionCancelled'))
         await initializeUser()
       } else {
-        setStatus('billing-cancel', 'error', 'Erreur: ' + (data.detail || 'Erreur'))
+        setStatus('billing-cancel', 'error', t('error') + ': ' + (data.detail || t('error')))
       }
     } catch (err) {
-      setStatus('billing-cancel', 'error', formatUserFacingError(err, 'Erreur annulation'))
+      setStatus('billing-cancel', 'error', formatUserFacingError(err, t('cancellationError')))
     } finally {
       setSaveLoading(false)
     }
@@ -1918,10 +1918,10 @@ export default function Dashboard() {
       if (data.success && data.portal_url) {
         window.location.href = data.portal_url
       } else {
-        setStatus('billing-payment', 'error', 'Erreur: ' + (data.detail || 'Erreur'))
+        setStatus('billing-payment', 'error', t('error') + ': ' + (data.detail || t('error')))
       }
     } catch (err) {
-      setStatus('billing-payment', 'error', formatUserFacingError(err, 'Erreur paiement'))
+      setStatus('billing-payment', 'error', formatUserFacingError(err, t('paymentError')))
     } finally {
       setSaveLoading(false)
     }
@@ -1929,17 +1929,17 @@ export default function Dashboard() {
 
   const connectShopify = async () => {
     if (shopifyConnected && !shopifyToken) {
-      setStatus('shopify', 'success', 'Shopify déjà connecté. Aucun token requis pour continuer.')
+      setStatus('shopify', 'success', t('shopifyAlreadyConnected'))
       return
     }
     if (!shopifyUrl || !shopifyToken) {
-      setStatus('shopify', 'warning', 'Veuillez remplir l\'URL et le token')
+      setStatus('shopify', 'warning', t('fillUrlAndToken'))
       return
     }
     
     // Valider le format de l'URL
     if (!shopifyUrl.endsWith('.myshopify.com')) {
-      setStatus('shopify', 'warning', 'Format URL invalide. Utilisez: votre-boutique.myshopify.com')
+      setStatus('shopify', 'warning', t('invalidUrlFormat'))
       return
     }
     
@@ -1950,7 +1950,7 @@ export default function Dashboard() {
       const session = await getCachedSession()
       
       if (!session) {
-        setStatus('shopify', 'error', 'Session expirée, reconnectez-vous')
+        setStatus('shopify', 'error', t('sessionExpiredReconnect'))
         return
       }
       
@@ -1971,14 +1971,14 @@ export default function Dashboard() {
       
       if (!testResponse.ok) {
         const errorData = await testResponse.json()
-        throw new Error(errorData.detail || 'Test de connexion échoué')
+        throw new Error(errorData.detail || t('connectionTestFailed'))
       }
       
       const testData = await testResponse.json()
       console.log('Test passed:', testData)
       
       if (!testData.ready_to_save) {
-        setStatus('shopify', 'error', 'La connexion a échoué. Vérifiez vos credentials.')
+        setStatus('shopify', 'error', t('connectionFailed'))
         return
       }
       
@@ -1999,13 +1999,13 @@ export default function Dashboard() {
       
       if (!saveResponse.ok) {
         const errorData = await saveResponse.json()
-        throw new Error(errorData.detail || 'Sauvegarde échouée')
+        throw new Error(errorData.detail || t('saveFailed'))
       }
       
       const saveData = await saveResponse.json()
       
       if (saveData.success) {
-        setStatus('shopify', 'success', `Shopify connecté. ${testData.tests?.products_fetch?.product_count || 0} produits trouvés.`)
+        setStatus('shopify', 'success', `${t('shopifyConnected')} ${testData.tests?.products_fetch?.product_count || 0} ${t('productsFound')}`)
         setShopifyConnected(true)
         setShowShopifyToken(false)
         setShopifyToken('')
@@ -2014,11 +2014,11 @@ export default function Dashboard() {
         // Charger les produits
         await loadProducts()
       } else {
-        throw new Error('Sauvegarde échouée')
+        throw new Error(t('saveFailed'))
       }
     } catch (err) {
       console.error('Error:', err)
-      const message = formatUserFacingError(err, 'Erreur Shopify')
+      const message = formatUserFacingError(err, t('shopifyError'))
       setStatus('shopify', 'error', message)
       setError(message)
     } finally {
@@ -2034,7 +2034,7 @@ export default function Dashboard() {
       const session = await getCachedSession()
       
       if (!session) {
-        setError('Session expirée, reconnectez-vous')
+        setError(t('sessionExpiredReconnect'))
         return
       }
       
@@ -2065,12 +2065,12 @@ export default function Dashboard() {
         }
       } else {
         setProducts([])
-        setError('Aucun produit trouvé. Connectez votre boutique Shopify d\'abord.')
+        setError(t('noProductsFound'))
         return []
       }
     } catch (err) {
       console.error('Error loading products:', err)
-      setError(formatUserFacingError(err, 'Erreur chargement produits'))
+      setError(formatUserFacingError(err, t('errorLoadingProducts')))
       setProducts([])
       return []
     } finally {
@@ -2086,7 +2086,7 @@ export default function Dashboard() {
       const session = await getCachedSession()
 
       if (!session) {
-        setAnalyticsError('Session expirée, reconnectez-vous')
+        setAnalyticsError(t('sessionExpiredReconnect'))
         return
       }
 
@@ -2107,11 +2107,11 @@ export default function Dashboard() {
       if (data.success) {
         setAnalyticsData(data)
       } else {
-        setAnalyticsError('Analytics indisponibles')
+        setAnalyticsError(t('analyticsUnavailable'))
       }
     } catch (err) {
       console.error('Error loading analytics:', err)
-      setAnalyticsError(formatUserFacingError(err, 'Erreur analytics'))
+      setAnalyticsError(formatUserFacingError(err, t('analyticsError')))
     } finally {
       setAnalyticsLoading(false)
     }
@@ -2255,7 +2255,7 @@ export default function Dashboard() {
       const session = await getCachedSession()
 
       if (!session) {
-        throw new Error('Session expirée, reconnectez-vous')
+        throw new Error(t('sessionExpiredReconnect'))
       }
 
       // Ensure backend is reachable before authenticated calls.
@@ -2288,7 +2288,7 @@ export default function Dashboard() {
       }
 
       if (!data.success) {
-        throw new Error(data.detail || 'Analyse indisponible')
+        throw new Error(data.detail || t('analysisUnavailable'))
       }
 
       // In silent/background mode, do NOT overwrite insightsData — return data only
@@ -2352,7 +2352,7 @@ export default function Dashboard() {
       setInsightsError('')
       setBundlesJobStatus('starting')
       const session = await getCachedSession()
-      if (!session) throw new Error('Session expirée, reconnectez-vous')
+      if (!session) throw new Error(t('sessionExpiredReconnect'))
       await waitForBackendReady({ retries: 8, retryDelayMs: 2000, timeoutMs: 22000 })
       await warmupBackend(session.access_token)
       // Lancer le job async
@@ -2364,7 +2364,7 @@ export default function Dashboard() {
         }
       })
       const data = await resp.json()
-      if (!resp.ok || !data?.job_id) throw new Error(data?.detail || 'Erreur lancement analyse')
+      if (!resp.ok || !data?.job_id) throw new Error(data?.detail || t('analysisLaunchError'))
       // Poller le job
       await pollBundlesJob(data.job_id, session.access_token)
     } catch (err) {
@@ -2383,7 +2383,7 @@ export default function Dashboard() {
     let done = false
     let tries = 0
     setBundlesJobStatus('running')
-    setStatus('action-bundles', 'info', 'Analyse bundles en cours...')
+    setStatus('action-bundles', 'info', t('analysisBundlesInProgress'))
     while (!done && tries < 40) {
       tries++
       await new Promise((r) => setTimeout(r, 2000))
@@ -2406,16 +2406,16 @@ export default function Dashboard() {
         }))
         setBundlesDiagnostics(diagnostics)
         if (suggestions.length === 0) {
-          const reason = diagnostics?.no_result_reason || 'Analyse terminée: aucune opportunité détectée.'
+          const reason = diagnostics?.no_result_reason || t('analysisNoOpportunity')
           setStatus('action-bundles', 'warning', reason)
         } else {
-          setStatus('action-bundles', 'success', `Analyse terminée: ${suggestions.length} suggestion(s).`)
+          setStatus('action-bundles', 'success', `${t('analysisComplete')}: ${suggestions.length} suggestion(s).`)
         }
         setBundlesJobStatus('done')
         done = true
         break
       } else if (status === 'failed') {
-        const failureMessage = data?.error || data?.job?.error || 'Erreur analyse'
+        const failureMessage = data?.error || data?.job?.error || t('analysisError')
         setInsightsError(failureMessage)
         setStatus('action-bundles', 'error', failureMessage)
         setBundlesJobStatus('failed')
@@ -2423,8 +2423,8 @@ export default function Dashboard() {
       }
     }
     if (!done) {
-      setInsightsError('Analyse trop longue ou échouée')
-      setStatus('action-bundles', 'error', 'Analyse trop longue ou échouée')
+      setInsightsError(t('analysisTooLong'))
+      setStatus('action-bundles', 'error', t('analysisTooLong'))
       setBundlesJobStatus('timeout')
     }
   }
@@ -2449,7 +2449,7 @@ export default function Dashboard() {
       setBundlesHistoryOpen(true)
       clearStatus('action-bundles')
       const session = await getCachedSession()
-      if (!session) throw new Error('Session expirée, reconnectez-vous')
+      if (!session) throw new Error(t('sessionExpiredReconnect'))
       await waitForBackendReady({ retries: 8, retryDelayMs: 2000, timeoutMs: 22000 })
       await warmupBackend(session.access_token)
       const resp = await fetch(`${API_URL}/api/shopify/bundles/list`, {
@@ -2463,7 +2463,7 @@ export default function Dashboard() {
       const jobs = Array.isArray(data?.jobs)
         ? data.jobs
         : (Array.isArray(data?.local_jobs) ? data.local_jobs : [])
-      if (!resp.ok || !Array.isArray(jobs)) throw new Error(data?.detail || 'Erreur historique')
+      if (!resp.ok || !Array.isArray(jobs)) throw new Error(data?.detail || t('historyError'))
       setBundlesHistory(jobs)
 
       const firstWithResult = jobs.find((job) => Array.isArray(job?.result?.bundle_suggestions))
@@ -2478,7 +2478,7 @@ export default function Dashboard() {
   }
 
   useEffect(() => {
-    // Passive health probe to stabilize “Comparaison marché externe” status.
+    // Passive health probe to stabilize "Comparaison marché externe" status.
     // Also refresh periodically so status doesn't only change after a click.
     let cancelled = false
 
@@ -2510,7 +2510,7 @@ export default function Dashboard() {
       const session = await getCachedSession()
 
       if (!session) {
-        setStatus('blockers', 'error', 'Session expirée, reconnectez-vous')
+        setStatus('blockers', 'error', t('sessionExpiredReconnect'))
         return
       }
 
@@ -2540,13 +2540,13 @@ export default function Dashboard() {
         setBlockersData(data)
         clearStatus('blockers')
       } else {
-        setStatus('blockers', 'error', 'Analyse indisponible')
+        setStatus('blockers', 'error', t('analysisUnavailable'))
       }
     } catch (err) {
       console.error('Error loading blockers:', err)
       if (requestId !== blockersRequestIdRef.current) return
       const hasData = Array.isArray(blockersData?.blockers) && blockersData.blockers.length > 0
-      const message = formatUserFacingError(err, 'Erreur analyse')
+      const message = formatUserFacingError(err, t('analysisError'))
       setStatus('blockers', hasData ? 'warning' : 'error', message)
     } finally {
       if (requestId === blockersRequestIdRef.current) {
@@ -2561,7 +2561,7 @@ export default function Dashboard() {
       setUnderperformingLoading(true)
       const session = await getCachedSession()
       if (!session) {
-        setStatus('underperforming', 'error', 'Session expirée, reconnectez-vous')
+        setStatus('underperforming', 'error', t('sessionExpiredReconnect'))
         return
       }
       await waitForBackendReady({ retries: 8, retryDelayMs: 2000, timeoutMs: 22000 })
@@ -2586,11 +2586,11 @@ export default function Dashboard() {
         setUnderperformingData(data)
         clearStatus('underperforming')
       } else {
-        setStatus('underperforming', 'error', 'Analyse indisponible')
+        setStatus('underperforming', 'error', t('analysisUnavailable'))
       }
     } catch (err) {
       console.error('Error loading underperforming:', err)
-      const message = formatUserFacingError(err, 'Erreur analyse sous-performants')
+      const message = formatUserFacingError(err, t('analysisError'))
       setStatus('underperforming', 'error', message)
     } finally {
       setUnderperformingLoading(false)
@@ -2623,7 +2623,7 @@ export default function Dashboard() {
 
   const runActionAnalysis = async (actionKey, options = {}) => {
     try {
-      setStatus(actionKey, 'info', 'Analyse en cours...')
+      setStatus(actionKey, 'info', t('analysisInProgress'))
       if (actionKey === 'action-rewrite') {
         setInsightsData(null)
       }
@@ -2717,7 +2717,7 @@ export default function Dashboard() {
             const detail = legacyPayload?.detail || legacyPayload?.error
             throw new Error(detail || `HTTP ${legacyResp?.status || 'ERR'}`)
           }
-          if (!legacyPayload?.success) throw new Error(legacyPayload?.detail || 'Analyse IA indisponible')
+          if (!legacyPayload?.success) throw new Error(legacyPayload?.detail || t('aiAnalysisUnavailable'))
 
           if (Number.isFinite(Number(legacyPayload?.products_analyzed))) {
             setInsightsData((prev) => ({
@@ -2741,12 +2741,12 @@ export default function Dashboard() {
 
             return {
               product_id: match?.id ? String(match.id) : `ai-${index}`,
-              title: title || match?.title || `Produit ${index + 1}`,
-              suggestion: opt?.reason || 'Ajustement recommandé par analyse IA',
+              title: title || match?.title || `${t('product')} ${index + 1}`,
+              suggestion: opt?.reason || t('aiRecommendedAdjustment'),
               current_price: Number.isFinite(currentPrice) ? currentPrice : null,
               suggested_price: Number.isFinite(suggestedPrice) ? suggestedPrice : null,
               target_delta_pct: Number.isFinite(targetDeltaPct) ? targetDeltaPct : null,
-              reason: opt?.expected_impact || opt?.reason || 'Opportunité détectée par l’IA',
+              reason: opt?.expected_impact || opt?.reason || t('opportunityDetected'),
               source: 'ai_analyze_store'
             }
           })
@@ -2763,7 +2763,7 @@ export default function Dashboard() {
         try {
           const session = await getCachedSession()
           if (!session) {
-            setStatus(actionKey, 'error', 'Session expirée, reconnectez-vous')
+            setStatus(actionKey, 'error', t('sessionExpiredReconnect'))
             return
           }
 
@@ -2788,18 +2788,18 @@ export default function Dashboard() {
             const detail = data?.detail || data?.error
             throw new Error(detail || `HTTP ${response?.status || 'ERR'}`)
           }
-          if (!data?.success) throw new Error(data?.detail || 'Analyse images indisponible')
+          if (!data?.success) throw new Error(data?.detail || t('imageAnalysisUnavailable'))
 
           setInsightsData({
             success: true,
             image_risks: Array.isArray(data?.image_risks) ? data.image_risks : [],
             notes: Array.isArray(data?.notes) ? data.notes : [],
           })
-          setStatus(actionKey, 'success', 'Analyse terminée.')
+          setStatus(actionKey, 'success', t('analysisComplete'))
         } catch (err) {
-          const message = normalizeNetworkErrorMessage(err, 'Erreur analyse')
+          const message = normalizeNetworkErrorMessage(err, t('analysisError'))
           if (String(message || '').toLowerCase().includes('ia images non configurée') || String(message || '').includes('OPENAI_API_KEY')) {
-            setStatus(actionKey, 'error', 'IA images non configurée côté backend (OPENAI_API_KEY). Ajoute la clé puis relance l’analyse.')
+            setStatus(actionKey, 'error', t('aiImagesNotConfigured') + ' ' + t('addKeyRetryAnalysis'))
           } else {
             setStatus(actionKey, 'error', message)
           }
@@ -2809,14 +2809,14 @@ export default function Dashboard() {
         return
       } else if (actionKey === 'action-rewrite') {
         clearStatus(actionKey)
-        setStatus(actionKey, 'info', 'Analyse de réécriture en cours... (peut prendre 15-30 secondes)')
+        setStatus(actionKey, 'info', t('rewriteAnalysisInProgress'))
         const session = await getCachedSession()
         if (!session) {
-          setStatus(actionKey, 'error', 'Session expirée, reconnectez-vous')
+          setStatus(actionKey, 'error', t('sessionExpiredReconnect'))
           return
         }
         if (!options.productId) {
-          setStatus(actionKey, 'warning', 'Sélectionne un produit à analyser')
+          setStatus(actionKey, 'warning', t('selectProductToAnalyze'))
           return
         }
         const rewriteController = new AbortController()
@@ -2837,7 +2837,7 @@ export default function Dashboard() {
         }
         const data = await response.json()
         if (!data.success) {
-          throw new Error(data.error || 'Erreur réécriture')
+          throw new Error(data.error || t('rewriteError'))
         }
         setInsightsData({
           rewrite_opportunities: [{
@@ -2861,7 +2861,7 @@ export default function Dashboard() {
 
         // For pricing, generate AI opportunities first to avoid blocking on slow Shopify insights.
         if (actionKey === 'action-price') {
-          setStatus(actionKey, 'info', 'Génération IA des opportunités de prix...')
+          setStatus(actionKey, 'info', t('aiPriceOpportunitiesInProgress'))
           const aiPriceItems = await loadAiPriceInsights()
           if (Array.isArray(aiPriceItems) && aiPriceItems.length > 0) {
             const healthSaysOpenAI = backendHealth?.services?.openai === 'configured'
@@ -2877,7 +2877,7 @@ export default function Dashboard() {
             }
 
             setInsightsData(enriched)
-            setStatus(actionKey, 'success', 'Analyse terminée (IA).')
+            setStatus(actionKey, 'success', t('analysisCompleteAI'))
 
             // Best-effort: try to fetch Shopify insights in background to enrich, but never fail the UI.
             loadInsights(undefined, true, options.productId, { silent: true }).then((data) => {
@@ -2913,7 +2913,7 @@ export default function Dashboard() {
         let priceItems = getPriceItems(data)
 
         if (actionKey === 'action-price' && priceItems.length === 0) {
-          setStatus(actionKey, 'info', 'Analyse IA avancée des prix en cours...')
+          setStatus(actionKey, 'info', t('advancedPriceAnalysisInProgress'))
           const aiPriceItems = await loadAiPriceInsights()
           if (Array.isArray(aiPriceItems) && aiPriceItems.length > 0) {
             enrichedData = {
@@ -2940,31 +2940,31 @@ export default function Dashboard() {
 
         const maybeList = listByActionKey[actionKey]
         if (Array.isArray(maybeList) && maybeList.length === 0) {
-          setStatus(actionKey, 'warning', 'Analyse terminée: aucune opportunité détectée.')
+          setStatus(actionKey, 'warning', t('analysisNoOpportunity'))
           return
         }
       }
-      setStatus(actionKey, 'success', 'Analyse terminée.')
+      setStatus(actionKey, 'success', t('analysisComplete'))
     } catch (err) {
-      setStatus(actionKey, 'error', normalizeNetworkErrorMessage(err, 'Erreur analyse'))
+      setStatus(actionKey, 'error', normalizeNetworkErrorMessage(err, t('analysisError')))
     }
   }
 
   const handleApplyBlockerAction = async (productId, action, statusKey = 'blockers') => {
     const plan = String(subscription?.plan || '').toLowerCase()
     if (!['pro', 'premium'].includes(plan)) {
-      setStatus(statusKey, 'warning', 'Fonctionnalité réservée aux plans Pro/Premium')
+      setStatus(statusKey, 'warning', t('premiumRequired'))
       return
     }
 
     try {
       clearStatus(statusKey)
       setApplyingBlockerActionId(`${productId}-${action.type}`)
-      setStatus(statusKey, 'info', `Application ${action.type === 'title' ? 'du titre' : 'de la description'} en cours...`)
+      setStatus(statusKey, 'info', `${t('applying')} ${action.type === 'title' ? t('titleLower') : t('descriptionLower')}...`)
       const session = await getCachedSession()
 
       if (!session) {
-        setStatus(statusKey, 'error', 'Session expirée, reconnectez-vous')
+        setStatus(statusKey, 'error', t('sessionExpiredReconnect'))
         return
       }
 
@@ -3000,16 +3000,16 @@ export default function Dashboard() {
         throw new Error(errorData.detail || `HTTP ${response.status}`)
       }
 
-      setStatus(statusKey, 'success', '✅ Modification appliquée avec succès sur Shopify !')
+      setStatus(statusKey, 'success', '✅ ' + t('modificationApplied'))
       setTimeout(() => clearStatus(statusKey), 8000)
       loadBlockers()
     } catch (err) {
       console.error('Error applying blocker action:', err)
       const errMsg = err?.name === 'AbortError'
-        ? 'La requête a pris trop de temps. Réessaie.'
+        ? t('requestTooLong')
         : (err?.message && err.message !== 'Failed to fetch')
           ? err.message
-          : 'Erreur lors de l\'application. Vérifie ta connexion et réessaie.'
+          : t('applyError')
       setStatus(statusKey, 'error', errMsg)
     } finally {
       setApplyingBlockerActionId(null)
@@ -3022,7 +3022,7 @@ export default function Dashboard() {
       const session = await getCachedSession()
 
       if (!session) {
-        setStatus('invoice', 'error', 'Session expirée, reconnectez-vous')
+        setStatus('invoice', 'error', t('sessionExpiredReconnect'))
         return
       }
 
@@ -3045,7 +3045,7 @@ export default function Dashboard() {
       }
     } catch (err) {
       console.error('Error loading customers:', err)
-      setStatus('invoice', 'error', formatUserFacingError(err, 'Erreur chargement clients'))
+      setStatus('invoice', 'error', formatUserFacingError(err, t('errorLoadingClients')))
     } finally {
       setCustomersLoading(false)
     }
@@ -3056,7 +3056,7 @@ export default function Dashboard() {
       setOrdersListLoading(true)
       const session = await getCachedSession()
       if (!session) {
-        setStatus('invoice', 'error', 'Session expirée, reconnectez-vous')
+        setStatus('invoice', 'error', t('sessionExpiredReconnect'))
         return
       }
       const response = await fetch(`${API_URL}/api/shopify/orders-list?limit=100`, {
@@ -3076,7 +3076,7 @@ export default function Dashboard() {
       }
     } catch (err) {
       console.error('Error loading orders list:', err)
-      setStatus('invoice', 'error', formatUserFacingError(err, 'Erreur chargement commandes'))
+      setStatus('invoice', 'error', formatUserFacingError(err, t('errorLoadingOrders')))
     } finally {
       setOrdersListLoading(false)
     }
@@ -3087,7 +3087,7 @@ export default function Dashboard() {
       setSendingInvoiceFor(index)
       const session = await getCachedSession()
       if (!session) {
-        setStatus('invoice', 'error', 'Session expirée, reconnectez-vous')
+        setStatus('invoice', 'error', t('sessionExpiredReconnect'))
         return
       }
       const response = await fetch(`${API_URL}/api/shopify/send-invoice-email`, {
@@ -3111,13 +3111,13 @@ export default function Dashboard() {
       }
       const data = await response.json()
       if (data.success) {
-        setStatus('invoice', 'success', `Facture envoyée à ${row.email}`)
+        setStatus('invoice', 'success', `${t('invoiceSentTo')} ${row.email}`)
       } else {
-        setStatus('invoice', 'error', 'Échec envoi facture')
+        setStatus('invoice', 'error', t('invoiceSendFailed'))
       }
     } catch (err) {
       console.error('Error sending invoice:', err)
-      setStatus('invoice', 'error', formatUserFacingError(err, 'Erreur envoi facture'))
+      setStatus('invoice', 'error', formatUserFacingError(err, t('errorSendingInvoice')))
     } finally {
       setSendingInvoiceFor(null)
     }
@@ -3125,7 +3125,7 @@ export default function Dashboard() {
 
   const addInvoiceItem = () => {
     if (!invoiceProductId) {
-      setStatus('invoice', 'warning', 'Sélectionne un produit')
+      setStatus('invoice', 'warning', t('selectProduct'))
       return
     }
     const product = (products || []).find((p) => String(p.id) === String(invoiceProductId))
@@ -3159,7 +3159,7 @@ export default function Dashboard() {
       return
     }
     if (!invoiceCustomerId && !invoiceCustomerEmail) {
-      setStatus('invoice', 'warning', 'Sélectionne un client ou un email')
+      setStatus('invoice', 'warning', t('selectClientOrEmail'))
       return
     }
 
@@ -3167,7 +3167,7 @@ export default function Dashboard() {
       setInvoiceSubmitting(true)
       const session = await getCachedSession()
       if (!session) {
-        setStatus('invoice', 'error', 'Session expirée, reconnectez-vous')
+        setStatus('invoice', 'error', t('sessionExpiredReconnect'))
         return
       }
 
@@ -3203,13 +3203,13 @@ export default function Dashboard() {
         setInvoiceNote('')
         setInvoiceCustomerId('')
         setInvoiceCustomerEmail('')
-        setStatus('invoice', 'success', 'Facture créée avec succès')
+        setStatus('invoice', 'success', t('invoiceCreated'))
       } else {
-        setStatus('invoice', 'error', 'Échec création facture')
+        setStatus('invoice', 'error', t('invoiceCreateFailed'))
       }
     } catch (err) {
       console.error('Error creating invoice:', err)
-      setStatus('invoice', 'error', formatUserFacingError(err, 'Erreur facture'))
+      setStatus('invoice', 'error', formatUserFacingError(err, t('invoiceError')))
     } finally {
       setInvoiceSubmitting(false)
     }
@@ -3271,7 +3271,7 @@ export default function Dashboard() {
           setShopifyConnected(true)
         } else if (data.success && data.connected === false) {
           setShopifyConnected(false)
-          setStatus('shopify', 'warning', 'Connexion Shopify expirée. Reconnecte ta boutique.')
+          setStatus('shopify', 'warning', t('shopifyConnectionExpired'))
         }
       } catch (err) {
         console.error('Shopify keep-alive failed:', err)
@@ -3316,13 +3316,13 @@ export default function Dashboard() {
         console.log('Analyse terminée:', data.analysis)
         setAnalysisResults(data.analysis)
         setActiveTab('analysis')
-        setStatus('analyze', 'success', 'Analyse terminée. Les résultats sont disponibles.')
+        setStatus('analyze', 'success', t('analysisResultsAvailable'))
       } else {
-        setStatus('analyze', 'error', 'Erreur lors de l\'analyse: ' + (data.detail || 'Erreur inconnue'))
+        setStatus('analyze', 'error', t('analysisError') + ': ' + (data.detail || t('unknownError')))
       }
     } catch (err) {
       console.error('Erreur analyse:', err)
-      setStatus('analyze', 'error', formatUserFacingError(err, 'Erreur analyse'))
+      setStatus('analyze', 'error', formatUserFacingError(err, t('analysisError')))
     } finally {
       setLoading(false)
     }
@@ -3389,16 +3389,16 @@ export default function Dashboard() {
       const data = await response.json()
       
       if (data.success) {
-        setStatus('apply-actions', 'success', 'Modifications appliquées avec succès.')
+        setStatus('apply-actions', 'success', t('modificationsApplied'))
         setShowApplyModal(false)
         // Reload products to see changes
         await loadProducts()
       } else {
-        setStatus('apply-actions', 'error', 'Erreur: ' + formatErrorDetail(data.detail, 'Erreur lors de l\'application'))
+        setStatus('apply-actions', 'error', t('error') + ': ' + formatErrorDetail(data.detail, t('applyError')))
       }
     } catch (err) {
       console.error('Error applying actions:', err)
-      setStatus('apply-actions', 'error', formatUserFacingError(err, 'Erreur application'))
+      setStatus('apply-actions', 'error', formatUserFacingError(err, t('applyError')))
     } finally {
       setApplyingActions(false)
     }
@@ -3406,7 +3406,7 @@ export default function Dashboard() {
 
   const handleApplyRecommendation = async (productId, recommendationType) => {
     if (!['pro', 'premium'].includes(subscription?.plan)) {
-      setStatus(`rec-${productId}-${recommendationType}`, 'warning', 'Cette fonctionnalité est réservée aux plans PRO ou PREMIUM')
+      setStatus(`rec-${productId}-${recommendationType}`, 'warning', t('premiumRequired'))
       return
     }
 
@@ -3426,13 +3426,13 @@ export default function Dashboard() {
       })
       const data = await response.json()
       if (data.success) {
-        setStatus(`rec-${productId}-${recommendationType}`, 'success', 'Modification appliquée sur Shopify')
+        setStatus(`rec-${productId}-${recommendationType}`, 'success', t('modificationApplied'))
         await loadProducts()
       } else {
-        setStatus(`rec-${productId}-${recommendationType}`, 'error', 'Erreur: ' + formatErrorDetail(data.detail))
+        setStatus(`rec-${productId}-${recommendationType}`, 'error', t('error') + ': ' + formatErrorDetail(data.detail))
       }
     } catch (err) {
-      setStatus(`rec-${productId}-${recommendationType}`, 'error', formatUserFacingError(err, 'Erreur application'))
+      setStatus(`rec-${productId}-${recommendationType}`, 'error', formatUserFacingError(err, t('applyError')))
     } finally {
       setApplyingRecommendationId(null)
     }
@@ -3455,8 +3455,8 @@ export default function Dashboard() {
         <div className="text-center text-white">
           <div className="w-12 h-12 border-2 border-gray-600 border-t-yellow-500 rounded-full animate-spin mx-auto mb-6"></div>
           <h2 className="text-2xl font-bold mb-3">{t('paymentProcessing')}</h2>
-          <p className="text-gray-400 mb-6">Merci! Nous enregistrons ton abonnement.</p>
-          <p className="text-xs text-gray-500">Tu seras redirigé automatiquement...</p>
+          <p className="text-gray-400 mb-6">{t('paymentRegistering')}</p>
+          <p className="text-xs text-gray-500">{t('redirectingAutomatically')}</p>
         </div>
       </div>
     )
@@ -3466,11 +3466,11 @@ export default function Dashboard() {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
         <div className="text-center text-white">
-          <div className="text-xl mb-2">Synchronisation de l’abonnement…</div>
-          <div className="text-gray-300 text-sm mb-4">Si tu viens de payer, ça peut prendre quelques secondes.</div>
+          <div className="text-xl mb-2">{t('syncingSubscription')}</div>
+          <div className="text-gray-300 text-sm mb-4">{t('paymentMayTakeSeconds')}</div>
           <div className="flex gap-3 justify-center">
-            <button onClick={initializeUser} className="bg-yellow-600 hover:bg-yellow-700 px-5 py-2 rounded-lg text-white text-sm font-medium transition-colors">Réessayer</button>
-            <button onClick={() => { window.location.hash = '#stripe-pricing' }} className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-white">Voir les plans</button>
+            <button onClick={initializeUser} className="bg-yellow-600 hover:bg-yellow-700 px-5 py-2 rounded-lg text-white text-sm font-medium transition-colors">{t('retry')}</button>
+            <button onClick={() => { window.location.hash = '#stripe-pricing' }} className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-white">{t('viewPlans')}</button>
           </div>
         </div>
       </div>
@@ -3603,14 +3603,14 @@ export default function Dashboard() {
                     onClick={() => handleChangePlan('pro')}
                     className="w-full text-left px-4 py-3 rounded-lg bg-gray-700 hover:bg-gray-600 text-white"
                   >
-                    <div className="font-semibold">PRO - $199/mois</div>
+                    <div className="font-semibold">PRO - $199/{t('month')}</div>
                     <div className="text-sm text-gray-400">500 {t('productsPerMonth')} {t('reportsIncluded')}</div>
                   </button>
                   <button
                     onClick={() => handleChangePlan('premium')}
                     className="w-full text-left px-4 py-3 rounded-lg bg-gray-700 hover:bg-gray-600 text-white"
                   >
-                    <div className="font-semibold">PREMIUM - $299/mois</div>
+                    <div className="font-semibold">PREMIUM - $299/{t('month')}</div>
                     <div className="text-sm text-gray-400">{t('unlimitedAutoActions')}</div>
                   </button>
                 </>
@@ -3620,19 +3620,19 @@ export default function Dashboard() {
                   onClick={() => handleChangePlan('premium')}
                   className="w-full text-left px-4 py-3 rounded-lg bg-gray-700 hover:bg-gray-600 text-white"
                 >
-                  <div className="font-semibold">PREMIUM - $299/mois</div>
-                  <div className="text-sm text-gray-400">Illimité + actions auto</div>
+                  <div className="font-semibold">PREMIUM - $299/{t('month')}</div>
+                  <div className="text-sm text-gray-400">{t('unlimitedAutoActions')}</div>
                 </button>
               )}
               {subscription?.plan === 'premium' && (
-                <div className="px-4 py-3 text-gray-400">You're already on PREMIUM</div>
+                <div className="px-4 py-3 text-gray-400">{t('alreadyOnPremium')}</div>
               )}
               <div className="border-t border-gray-600 pt-2 mt-2">
                 <button
                   onClick={() => { setShowPlanMenu(false); window.location.hash = '#stripe-pricing' }}
                   className="w-full text-center px-4 py-2 rounded-lg text-blue-400 hover:bg-gray-700"
                 >
-                  View All Plans
+                  {t('viewAllPlans')}
                 </button>
               </div>
             </div>
@@ -3646,21 +3646,21 @@ export default function Dashboard() {
           <div className="max-w-7xl mx-auto px-6 mb-4">
             <div className="bg-green-800 border border-green-600 text-green-100 p-4 rounded-lg flex items-center justify-between">
               <div>
-                <p className="font-bold">Paiement confirmé — abonnement activé</p>
-                <p className="text-sm opacity-90">Ton plan est appliqué et disponible dans le dashboard.</p>
+                <p className="font-bold">{t('paymentConfirmedActivated')}</p>
+                <p className="text-sm opacity-90">{t('planAppliedAvailable')}</p>
               </div>
               <div className="flex gap-3">
                 <button
                   onClick={() => { window.location.hash = '#/' }}
                   className="bg-green-600 hover:bg-green-700 text-white font-semibold px-4 py-2 rounded-lg"
                 >
-                  Retour à l'accueil
+                  {t('backToHome')}
                 </button>
                 <button
                   onClick={() => { window.location.hash = '#dashboard' }}
                   className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg"
                 >
-                  Aller au dashboard
+                  {t('goToDashboard')}
                 </button>
               </div>
             </div>
@@ -3973,7 +3973,7 @@ export default function Dashboard() {
                           <span className="text-gray-300 text-sm font-semibold">{Number(row.price).toFixed(2)} {row.currency}</span>
                         </div>
                         <div className="flex items-center justify-between">
-                          <span className="text-xs text-gray-500">Qté: {row.quantity}</span>
+                          <span className="text-xs text-gray-500">{t('qty')}: {row.quantity}</span>
                           <button
                             onClick={() => sendInvoiceEmailForRow(row, index)}
                             disabled={!row.email || sendingInvoiceFor === index}
@@ -4148,7 +4148,7 @@ export default function Dashboard() {
                         <span className="flex-shrink-0 w-6 h-6 rounded-full bg-red-600/30 text-red-300 flex items-center justify-center text-xs font-bold">1</span>
                         <div>
                           <p className="text-sm text-white font-medium">{t('pixelStep1Title')}</p>
-                          <p className="text-xs text-gray-400">Va dans <span className="text-white font-mono bg-gray-800 px-1 rounded">Settings</span> {t('pixelStep1Desc')}</p>
+                          <p className="text-xs text-gray-400">{t('pixelStep1Desc')}</p>
                         </div>
                       </div>
 
@@ -4156,7 +4156,7 @@ export default function Dashboard() {
                         <span className="flex-shrink-0 w-6 h-6 rounded-full bg-red-600/30 text-red-300 flex items-center justify-center text-xs font-bold">2</span>
                         <div>
                           <p className="text-sm text-white font-medium">{t('pixelStep2Title')}</p>
-                          <p className="text-xs text-gray-400">En français, ça peut s'appeler <span className="text-white font-mono bg-gray-800 px-1 rounded">Événements clients</span>.</p>
+                          <p className="text-xs text-gray-400">{t('pixelStep2Desc')}</p>
                         </div>
                       </div>
 
@@ -4164,7 +4164,7 @@ export default function Dashboard() {
                         <span className="flex-shrink-0 w-6 h-6 rounded-full bg-red-600/30 text-red-300 flex items-center justify-center text-xs font-bold">3</span>
                         <div>
                           <p className="text-sm text-white font-medium">{t('pixelStep3Title')}</p>
-                          <p className="text-xs text-gray-400">En français : <span className="text-white font-mono bg-gray-800 px-1 rounded">Ajouter un pixel personnalisé</span>.</p>
+                          <p className="text-xs text-gray-400">{t('pixelStep3Desc')}</p>
                         </div>
                       </div>
 
@@ -4172,7 +4172,7 @@ export default function Dashboard() {
                         <span className="flex-shrink-0 w-6 h-6 rounded-full bg-red-600/30 text-red-300 flex items-center justify-center text-xs font-bold">4</span>
                         <div>
                           <p className="text-sm text-white font-medium">{t('pixelStep4Title')}</p>
-                          <p className="text-xs text-gray-400">Écris <span className="text-white font-mono bg-gray-800 px-1 rounded">ShopBrain Pixel</span> comme nom.</p>
+                          <p className="text-xs text-gray-400">{t('pixelStep4Desc')}</p>
                         </div>
                       </div>
 
@@ -4180,7 +4180,7 @@ export default function Dashboard() {
                         <span className="flex-shrink-0 w-6 h-6 rounded-full bg-red-600/30 text-red-300 flex items-center justify-center text-xs font-bold">5</span>
                         <div>
                           <p className="text-sm text-white font-medium">{t('pixelStep5Title')}</p>
-                          <p className="text-xs text-gray-400"><b>Permission :</b> « Not required » · <b>Data sale :</b> « Data collected does not qualify as data sale ».</p>
+                          <p className="text-xs text-gray-400">{t('pixelStep5Desc')}</p>
                         </div>
                       </div>
 
@@ -4233,7 +4233,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         }}
                         className="absolute top-2 right-2 px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-gray-300 hover:text-white transition z-10"
                       >
-                        {pixelCodeCopied ? '✅ Copié !' : '📋 Copier le code'}
+                        {pixelCodeCopied ? t('copied') : t('copyCode')}
                       </button>
                       <pre className="bg-gray-950 border border-gray-700 rounded-lg p-3 text-xs text-green-400 overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed">{`const BACKEND = "https://shopbrain-backend.onrender.com/api/shopify/pixel-event";
 const SHOP_DOMAIN = (typeof Shopify !== "undefined" && Shopify.shop) ? Shopify.shop : null;
@@ -4272,7 +4272,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                       <span className="flex-shrink-0 w-6 h-6 rounded-full bg-red-600/30 text-red-300 flex items-center justify-center text-xs font-bold">7</span>
                       <div>
                         <p className="text-sm text-white font-medium">{t('pixelStep7Title')}</p>
-                        <p className="text-xs text-gray-400">Assure-toi que le pixel est bien <span className="text-green-400 font-semibold">connecté</span> (bouton vert). Reviens ici et recharge la page pour vérifier le statut.</p>
+                        <p className="text-xs text-gray-400">{t('pixelStep7Desc')}</p>
                       </div>
                     </div>
 
@@ -4306,7 +4306,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     <div key={item.product_id || item.title} className="bg-gray-900/70 border border-gray-700 rounded-xl p-4">
                       <div className="flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm">{item.category || '⚠️ Frein détecté'}</span>
+                          <span className="text-sm">{item.category || t('blockerDetected')}</span>
                         </div>
                         <p className="text-white font-semibold mt-1">{item.title || 'Produit'}</p>
                         <div className="flex flex-wrap gap-3 mt-2 text-xs text-gray-400">
@@ -4677,13 +4677,13 @@ analytics.subscribe("product_added_to_cart", (event) => {
                                   <div className="font-semibold text-white">Image {img.index || (idx + 1)} — {img.name}</div>
                                   <div className="text-gray-300">{img.what_to_shoot}</div>
                                   {Array.isArray(img.uses_facts) && img.uses_facts.length > 0 ? (
-                                    <div className="text-gray-400 mt-2">Pourquoi c’est adapté: <span className="text-white">{img.uses_facts.slice(0, 3).join(' · ')}</span></div>
+                                    <div className="text-gray-400 mt-2">{t('whyAdapted')}: <span className="text-white">{img.uses_facts.slice(0, 3).join(' · ')}</span></div>
                                   ) : null}
                                   <div className="text-gray-400 mt-1">
-                                    Fond: {img.background} • {t('toneLabel')}: {img.color_tone} • Props: {img.props}
+                                    {t('backgroundLabel')}: {img.background} • {t('toneLabel')}: {img.color_tone} • Props: {img.props}
                                   </div>
-                                  <div className="text-gray-400">Caméra: {img.camera} • Lumière: {img.lighting}</div>
-                                  {img.editing_notes ? <div className="text-gray-500">Retouche: {img.editing_notes}</div> : null}
+                                  <div className="text-gray-400">{t('cameraLabel')}: {img.camera} • {t('lightingLabel')}: {img.lighting}</div>
+                                  {img.editing_notes ? <div className="text-gray-500">{t('editingLabel')}: {img.editing_notes}</div> : null}
                                 </div>
                               ))}
                             </div>
@@ -5270,7 +5270,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                   </div>
                 </div>
 
-                {/* Opportunités de croissance */}
+                {/* Growth opportunities */}
                 <div className="bg-blue-900 rounded-lg p-6 border border-blue-700">
                   <h2 className="text-white text-2xl font-bold mb-4">{t('growthOpportunities')}</h2>
                   <div className="space-y-4">
@@ -5415,7 +5415,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
             <div className="p-6 overflow-y-auto max-h-[calc(80vh-200px)]">
               <div className="bg-yellow-900/30 border border-yellow-600 rounded-lg p-4 mb-6">
                 <p className="text-yellow-300 font-bold mb-2">{t('warning')}</p>
-                <p className="text-yellow-200 text-sm">L'IA va modifier {selectedActions.length} éléments dans votre boutique Shopify. {t('irreversibleAction')}</p>
+                <p className="text-yellow-200 text-sm">{t('aiWillModify')} {selectedActions.length} {t('elementsInShopify')}. {t('irreversibleAction')}</p>
               </div>
 
               <h3 className="text-white font-bold mb-4 text-lg">{t('modificationsToApply')}</h3>
@@ -5438,7 +5438,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             <div className="flex items-center gap-4 text-sm">
                               <span className="text-white">{t('currentPrice')}: {action.current}$</span>
                               <span className="text-gray-500">→</span>
-                              <span className="text-green-400 font-bold">Nouveau prix: {action.new}$</span>
+                              <span className="text-green-400 font-bold">{t('newPrice')}: {action.new}$</span>
                             </div>
                           </>
                         )}
@@ -5453,7 +5453,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               </span>
                               <span className="text-blue-400 text-sm font-bold">{action.type.toUpperCase()}</span>
                             </div>
-                            <p className="text-gray-400 text-sm mb-1">Problème: {action.issue}</p>
+                            <p className="text-gray-400 text-sm mb-1">{t('problemLabel')}: {action.issue}</p>
                             <p className="text-green-300 text-sm">{t('solution')}: {action.suggestion}</p>
                           </>
                         )}
@@ -6025,7 +6025,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     <button
                       onClick={() => setChatExpanded(!chatExpanded)}
                       className="p-2 text-gray-400 hover:text-white rounded-lg hover:bg-gray-700/40 transition-colors"
-                      title={chatExpanded ? 'Réduire' : 'Agrandir'}
+                      title={chatExpanded ? t('collapse') : t('expand')}
                     >
                       {chatExpanded ? (
                         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 2V6H14M6 14V10H2M14 10H10V14M2 6H6V2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>
@@ -6059,7 +6059,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           <circle cx="24" cy="8" r="1.5" fill="#facc15" opacity="0.7"/>
                         </svg>
                       </div>
-                      <p className="text-gray-500 text-sm mb-1">{getGreeting()}, {profile?.first_name || user?.user_metadata?.full_name?.split(' ')[0] || 'là'}</p>
+                      <p className="text-gray-500 text-sm mb-1">{getGreeting()}, {profile?.first_name || user?.user_metadata?.full_name?.split(' ')[0] || t('there')}</p>
                       <h3 className="text-white text-lg font-semibold mb-6">{t('howCanIHelp')}</h3>
                       <button
                         onClick={() => sendChatMessage(t('whatsNew'))}
@@ -6287,7 +6287,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                                 <span className="text-xs text-gray-600 bg-gray-800 px-1.5 py-0.5 rounded">@</span>
                               </button>
                               <button onClick={() => { setChatInput(prev => prev + '/'); setShowAttachMenu(false) }} className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-gray-300 hover:bg-gray-700/40 transition-colors">
-                                <span className="flex items-center gap-3"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-gray-400"><path d="M13 3L7 17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>Compétences</span>
+                                <span className="flex items-center gap-3"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-gray-400"><path d="M13 3L7 17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>{t('skills')}</span>
                                 <span className="text-xs text-gray-600 bg-gray-800 px-1.5 py-0.5 rounded">/</span>
                               </button>
                               <div className="border-t border-gray-700/40 my-1"></div>
