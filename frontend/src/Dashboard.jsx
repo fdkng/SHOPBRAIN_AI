@@ -3130,7 +3130,7 @@ export default function Dashboard() {
     }
     const product = (products || []).find((p) => String(p.id) === String(invoiceProductId))
     if (!product || !product.variants || product.variants.length === 0) {
-      setStatus('invoice', 'error', 'Produit invalide ou sans variante')
+      setStatus('invoice', 'error', t('invalidProductOrVariant'))
       return
     }
     const variant = product.variants[0]
@@ -3155,7 +3155,7 @@ export default function Dashboard() {
 
   const submitInvoice = async () => {
     if (!invoiceItems.length) {
-      setStatus('invoice', 'warning', 'Ajoute au moins un produit')
+      setStatus('invoice', 'warning', t('addAtLeastOneProduct'))
       return
     }
     if (!invoiceCustomerId && !invoiceCustomerEmail) {
@@ -3288,7 +3288,7 @@ export default function Dashboard() {
 
   const analyzeProducts = async () => {
     if (!products || products.length === 0) {
-      setStatus('analyze', 'warning', 'Charge tes produits d\'abord')
+      setStatus('analyze', 'warning', t('loadProductsFirst'))
       return
     }
     
@@ -4058,15 +4058,15 @@ export default function Dashboard() {
                           <span className="text-sm">{item.category}</span>
                           <span className="text-xs bg-amber-900/40 text-amber-300 px-2 py-0.5 rounded-full">Score: {item.score}/100</span>
                         </div>
-                        <p className="text-white font-semibold mt-1">{item.title || 'Produit'}</p>
+                        <p className="text-white font-semibold mt-1">{item.title || t('product')}</p>
                         <div className="flex flex-wrap gap-3 mt-2 text-xs text-gray-400">
-                          <span>🛒 {item.orders} cmd{item.orders !== 1 ? 's' : ''}</span>
+                          <span>🛒 {item.orders} {t('cmd')}{item.orders !== 1 ? 's' : ''}</span>
                           <span>💰 CA: {formatCurrency(item.revenue, underperformingData?.currency || 'EUR')}</span>
-                          <span>📦 Stock: {item.inventory}</span>
-                          <span>🏷️ Prix: {formatCurrency(item.price, underperformingData?.currency || 'EUR')}</span>
-                          {item.daily_sales != null && <span>📊 {item.daily_sales}/jour</span>}
-                          {item.days_of_stock != null && <span>⏱️ {item.days_of_stock}j de stock</span>}
-                          {item.refund_count > 0 && <span className="text-red-400">↩️ {item.refund_count} retour{item.refund_count > 1 ? 's' : ''} ({(item.refund_rate * 100).toFixed(0)}%)</span>}
+                          <span>📦 {t('stockLabel')}: {item.inventory}</span>
+                          <span>🏷️ {t('priceLabel')}: {formatCurrency(item.price, underperformingData?.currency || 'EUR')}</span>
+                          {item.daily_sales != null && <span>📊 {item.daily_sales}{t('perDay')}</span>}
+                          {item.days_of_stock != null && <span>⏱️ {item.days_of_stock}{t('daysOfStock')}</span>}
+                          {item.refund_count > 0 && <span className="text-red-400">↩️ {item.refund_count} {t('returns')}{item.refund_count > 1 ? 's' : ''} ({(item.refund_rate * 100).toFixed(0)}%)</span>}
                         </div>
                         {item.reasons?.length > 0 && (
                           <div className="mt-2 space-y-1">
@@ -4308,14 +4308,14 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-sm">{item.category || t('blockerDetected')}</span>
                         </div>
-                        <p className="text-white font-semibold mt-1">{item.title || 'Produit'}</p>
+                        <p className="text-white font-semibold mt-1">{item.title || t('product')}</p>
                         <div className="flex flex-wrap gap-3 mt-2 text-xs text-gray-400">
-                          <span>🛒 {item.orders} cmd{item.orders !== 1 ? 's' : ''}</span>
+                          <span>🛒 {item.orders} {t('cmd')}{item.orders !== 1 ? 's' : ''}</span>
                           <span>💰 {formatCurrency(item.revenue, blockersData?.currency || analyticsData?.currency || 'EUR')}</span>
-                          {item.views > 0 && <span>👁️ {item.views} vues</span>}
-                          {item.add_to_cart > 0 && <span>🛒 {item.add_to_cart} ajouts panier</span>}
-                          {item.view_to_cart_rate != null && <span className={item.view_to_cart_rate < 0.03 ? 'text-red-400' : 'text-green-400'}>Vue→Panier: {(item.view_to_cart_rate * 100).toFixed(1)}%</span>}
-                          {item.cart_to_order_rate != null && <span className={item.cart_to_order_rate < 0.2 ? 'text-red-400' : 'text-green-400'}>Panier→Achat: {(item.cart_to_order_rate * 100).toFixed(1)}%</span>}
+                          {item.views > 0 && <span>👁️ {item.views} {t('views')}</span>}
+                          {item.add_to_cart > 0 && <span>🛒 {item.add_to_cart} {t('cartAdds')}</span>}
+                          {item.view_to_cart_rate != null && <span className={item.view_to_cart_rate < 0.03 ? 'text-red-400' : 'text-green-400'}>{t('viewToCart')}: {(item.view_to_cart_rate * 100).toFixed(1)}%</span>}
+                          {item.cart_to_order_rate != null && <span className={item.cart_to_order_rate < 0.2 ? 'text-red-400' : 'text-green-400'}>{t('cartToOrder')}: {(item.cart_to_order_rate * 100).toFixed(1)}%</span>}
                         </div>
                       </div>
                     </div>
@@ -4343,7 +4343,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                   <option value="">{t('selectProduct')}</option>
                   {(products || []).map((product) => (
                     <option key={product.id} value={product.id}>
-                      {product.title || product.name || `Produit ${product.id}`}
+                      {product.title || product.name || `${t('product')} ${product.id}`}
                     </option>
                   ))}
                 </select>
@@ -4361,7 +4361,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
               <textarea
                 value={rewriteInstructions}
                 onChange={(e) => setRewriteInstructions(e.target.value)}
-                placeholder="Ex: Ton humoristique, mentionne la livraison gratuite, cibler les jeunes mamans, utiliser un vocabulaire luxe..."
+                placeholder={t('rewritePlaceholder')}
                 className="w-full bg-gray-900 border border-gray-700 text-white text-sm rounded-lg px-3 py-2 min-h-[80px] resize-y placeholder-gray-600 focus:border-green-500 focus:ring-1 focus:ring-green-500 outline-none"
                 rows={3}
               />
@@ -4383,7 +4383,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                   <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-6 space-y-4">
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <p className="text-white font-semibold text-lg">{item.title || 'Produit'}</p>
+                        <p className="text-white font-semibold text-lg">{item.title || t('product')}</p>
                         <p className="text-sm text-gray-400">{(item.reasons || []).join(' · ')}</p>
                       </div>
                       <div className="flex gap-2">
@@ -4582,10 +4582,10 @@ analytics.subscribe("product_added_to_cart", (event) => {
               ) : (
                 insightsData?.image_risks?.slice(0, 8).map((item, index) => (
                   <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
-                    <p className="text-white font-semibold text-lg">{item.title || `Produit #${item.product_id}`}</p>
+                    <p className="text-white font-semibold text-lg">{item.title || `${t('product')} #${item.product_id}`}</p>
                     <p className="text-sm text-gray-400">
                       {item.images_count} images{item.missing_alt ? ` • alt ${t('missing')}` : ''}
-                      {item.view_to_cart_rate !== null && item.view_to_cart_rate !== undefined ? ` • v→panier ${Math.round(item.view_to_cart_rate * 100)}%` : ''}
+                      {item.view_to_cart_rate !== null && item.view_to_cart_rate !== undefined ? ` • ${t('viewToCart')} ${Math.round(item.view_to_cart_rate * 100)}%` : ''}
                     </p>
 
                     {item?.recommendations ? (
@@ -4593,7 +4593,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         <div className="text-base text-gray-200">
                           {t('target')}: <span className="text-white font-semibold">{item.recommendations.target_total_images}</span> {t('imagesLabel')}
                           {Number.isFinite(Number(item.recommendations.recommended_new_images)) && item.recommendations.recommended_new_images > 0
-                            ? <span className="text-gray-400"> • à produire: {item.recommendations.recommended_new_images}</span>
+                            ? <span className="text-gray-400"> • {t('toProduce')}: {item.recommendations.recommended_new_images}</span>
                             : <span className="text-gray-400"> • {t('quantityOk')}</span>
                           }
                         </div>
@@ -4944,7 +4944,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                   <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
                     <p className="text-white font-semibold">{item.title || item.product_id}</p>
                     <p className="text-xs text-gray-500">
-                      {item.refunds || 0} retours{item.refund_rate !== null && item.refund_rate !== undefined ? ` • taux ${Math.round(item.refund_rate * 100)}%` : ''}
+                      {item.refunds || 0} {t('returnsCount')}{item.refund_rate !== null && item.refund_rate !== undefined ? ` • ${t('rateLabel')} ${Math.round(item.refund_rate * 100)}%` : ''}
                     </p>
                   </div>
                 ))

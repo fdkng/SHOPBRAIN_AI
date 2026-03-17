@@ -491,7 +491,7 @@ export default function App() {
         const errorData = await response.json().catch(() => ({}))
         setLandingStatusByKey((prev) => ({
           ...prev,
-          pricing: { type: 'error', message: `Erreur: ${errorData.detail || response.statusText || 'Impossible de créer la session de paiement'}` }
+          pricing: { type: 'error', message: `${t('error')}: ${errorData.detail || response.statusText || t('unableToCreateSession')}` }
         }))
         console.error('Checkout session error:', errorData)
         return
@@ -847,7 +847,7 @@ export default function App() {
 
             {authMessage && (
               <div className={`mt-4 p-3 rounded-xl text-xs ${
-                authMessage.toLowerCase().startsWith('succès') || authMessage.toLowerCase().startsWith('compte créé')
+                authMessage.toLowerCase().startsWith(t('success').toLowerCase()) || authMessage.toLowerCase().startsWith(t('accountCreated').toLowerCase())
                   ? 'bg-green-50 text-green-700'
                   : 'bg-yellow-50 text-yellow-800'
               }`}>
