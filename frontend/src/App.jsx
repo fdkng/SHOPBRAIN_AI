@@ -1,4 +1,5 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react'
+import { useTranslation } from './LanguageContext'
 import { createClient } from '@supabase/supabase-js'
 
 // ⚡ Lazy load heavy components — Dashboard and PricingTable are only loaded when needed
@@ -6,14 +7,17 @@ const Dashboard = lazy(() => import('./Dashboard'))
 const StripePricingTable = lazy(() => import('./PricingTable'))
 
 // ⚡ Loading fallback for lazy components
-const LazyFallback = () => (
-  <div className="min-h-screen bg-[#0b0d12] flex items-center justify-center">
-    <div className="flex flex-col items-center gap-4">
-      <div className="w-10 h-10 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin" />
-      <p className="text-gray-400 text-sm">Chargement...</p>
+const LazyFallback = () => {
+  const { t } = useTranslation()
+  return (
+    <div className="min-h-screen bg-[#0b0d12] flex items-center justify-center">
+      <div className="flex flex-col items-center gap-4">
+        <div className="w-10 h-10 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin" />
+        <p className="text-gray-400 text-sm">{t('loading')}</p>
+      </div>
     </div>
-  </div>
-)
+  )
+}
 
 const supabase = createClient(
   'https://jgmsfadayzbgykzajvmw.supabase.co',
@@ -23,63 +27,66 @@ const supabase = createClient(
 // Stripe Payment Links are created dynamically via backend API
 // No static links needed - backend generates them on demand
 
-const PRICING_PLANS = [
-  {
-    name: 'Standard',
-    price: '$99',
-    popular: false,
-    features: [
-      'Détection des produits sous-performants',
-      'Réécriture automatique des titres',
-      'Suggestions d\'optimisation de prix',
-      'Analyse 50 produits/mois',
-      '1 boutique Shopify',
-      'Rapport mensuel'
-    ],
-    cta: 'Commencer',
-    plan_id: 'standard',
-    highlight: false
-  },
-  {
-    name: 'Pro',
-    price: '$199',
-    popular: true,
-    features: [
-      'Détection avancée des produits faibles',
-      'Réécriture intelligente titres + descriptions',
-      'Optimisation automatique des prix',
-      'Recommandations d\'images stratégiques',
-      'Cross-sell & Upsell personnalisés',
-      'Analyse 500 produits/mois',
-      '3 boutiques Shopify',
-      'Rapports hebdomadaires automatisés'
-    ],
-    cta: 'Commencer maintenant',
-    plan_id: 'pro',
-    highlight: true
-  },
-  {
-    name: 'Premium',
-    price: '$299',
-    popular: false,
-    features: [
-      'IA prédictive des tendances de vente',
-      'Génération complète de contenu optimisé',
-      'Actions automatiques (prix, images, stock)',
-      'Stratégies Cross-sell & Upsell avancées',
-      'Rapports quotidiens personnalisés (PDF/Email)',
-      'Analyse illimitée de produits',
-      'Boutiques Shopify illimitées',
-      'Account manager dédié',
-      'Accès API complet'
-    ],
-    cta: 'Obtenir Premium',
-    plan_id: 'premium',
-    highlight: false
-  }
-]
 
 export default function App() {
+  const { t } = useTranslation()
+
+  const PRICING_PLANS = [
+    {
+      name: 'Standard',
+      price: '$99',
+      popular: false,
+      features: [
+        t('pf_standard_1'),
+        t('pf_standard_2'),
+        t('pf_standard_3'),
+        t('pf_standard_4'),
+        t('pf_standard_5'),
+        t('pf_standard_6')
+      ],
+      cta: t('pf_standard_cta'),
+      plan_id: 'standard',
+      highlight: false
+    },
+    {
+      name: 'Pro',
+      price: '$199',
+      popular: true,
+      features: [
+        t('pf_pro_1'),
+        t('pf_pro_2'),
+        t('pf_pro_3'),
+        t('pf_pro_4'),
+        t('pf_pro_5'),
+        t('pf_pro_6'),
+        t('pf_pro_7'),
+        t('pf_pro_8')
+      ],
+      cta: t('pf_pro_cta'),
+      plan_id: 'pro',
+      highlight: true
+    },
+    {
+      name: 'Premium',
+      price: '$299',
+      popular: false,
+      features: [
+        t('pf_premium_1'),
+        t('pf_premium_2'),
+        t('pf_premium_3'),
+        t('pf_premium_4'),
+        t('pf_premium_5'),
+        t('pf_premium_6'),
+        t('pf_premium_7'),
+        t('pf_premium_8'),
+        t('pf_premium_9')
+      ],
+      cta: t('pf_premium_cta'),
+      plan_id: 'premium',
+      highlight: false
+    }
+  ]
+
   const [showAuthModal, setShowAuthModal] = useState(false)
   const [authMode, setAuthMode] = useState('signup') // 'signup' or 'login'
   const [formData, setFormData] = useState({
@@ -131,7 +138,7 @@ export default function App() {
             const { data: { session } } = await supabase.auth.getSession()
             if (session && session.access_token) {
               setPaymentProcessingState('verifying')
-              setPaymentProcessingMessage('Vérification du paiement en cours...')
+              setPaymentProcessingMessage(t('paymentVerifying'))
 
               const resp = await fetch('https://shopbrain-backend.onrender.com/api/subscription/verify-session', {
                 method: 'POST',
@@ -148,24 +155,24 @@ export default function App() {
                 if (data?.success) {
                   setHasSubscription(true)
                   setPaymentProcessingState('verified')
-                  setPaymentProcessingMessage('Paiement confirmé — abonnement activé')
+                  setPaymentProcessingMessage(t('paymentConfirmedSubscriptionActive'))
                   setCurrentView('dashboard')
                   window.location.hash = '#dashboard'
                   return
                 } else {
                   setPaymentProcessingState('failed')
-                  setPaymentProcessingMessage(data?.message || 'La vérification a échoué')
+                  setPaymentProcessingMessage(data?.message || t('verificationFailed'))
                 }
               } else {
                 console.warn('verify-session failed:', resp.status, resp.statusText)
                 setPaymentProcessingState('failed')
-                setPaymentProcessingMessage(`Erreur serveur: ${resp.status}`)
+                setPaymentProcessingMessage(`${t('error')} serveur: ${resp.status}`)
               }
             }
           } catch (e) {
             console.error('Error calling verify-session:', e)
             setPaymentProcessingState('failed')
-            setPaymentProcessingMessage(e.message || 'Erreur lors de la vérification')
+            setPaymentProcessingMessage(e.message || t('verificationError'))
           }
         })()
       }
@@ -313,7 +320,7 @@ export default function App() {
     
     // Validation
     if (formData.password.length < 6) {
-      setAuthMessage('Le mot de passe doit contenir au moins 6 caractères')
+      setAuthMessage(t('passwordMinLength'))
       return
     }
     
@@ -335,7 +342,7 @@ export default function App() {
       
       if (error) {
         if (error.message.includes('already registered')) {
-          setAuthMessage('Cet email est déjà utilisé. Connecte-toi ou utilise un autre email.')
+          setAuthMessage(t('emailAlreadyUsed'))
         } else {
           setAuthMessage(error.message)
         }
@@ -351,12 +358,12 @@ export default function App() {
           document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' })
         }, 500)
       } else {
-        setAuthMessage('Compte créé. Vérifie ton email pour activer le compte, puis connecte-toi.')
+        setAuthMessage(t('accountCreatedVerifyEmail'))
         setAuthMode('login')
       }
       
     } catch (error) {
-      setAuthMessage('Une erreur est survenue. Réessaie.')
+      setAuthMessage(t('genericError'))
       console.error(error)
     }
   }
@@ -373,7 +380,7 @@ export default function App() {
       
       if (error) {
         if (error.message.includes('Invalid login credentials')) {
-          setAuthMessage('Email ou mot de passe incorrect')
+          setAuthMessage(t('invalidCredentials'))
         } else {
           setAuthMessage(error.message)
         }
@@ -386,7 +393,7 @@ export default function App() {
       setFormData({ firstName: '', lastName: '', username: '', email: '', password: '' })
       
     } catch (error) {
-      setAuthMessage('Une erreur est survenue. Réessaie.')
+      setAuthMessage(t('genericError'))
       console.error(error)
     }
   }
@@ -401,10 +408,10 @@ export default function App() {
       })
       
       if (error) {
-        setAuthMessage('Erreur avec Google Sign-In: ' + error.message)
+        setAuthMessage(t('googleSignInError') + error.message)
       }
     } catch (error) {
-      setAuthMessage('Une erreur est survenue avec Google.')
+      setAuthMessage(t('googleGenericError'))
       console.error(error)
     }
   }
@@ -414,7 +421,7 @@ export default function App() {
     if (!user) {
       setLandingStatusByKey((prev) => ({
         ...prev,
-        pricing: { type: 'warning', message: 'Tu dois d\'abord créer un compte avant de t\'abonner.' }
+        pricing: { type: 'warning', message: t('mustCreateAccountFirst') }
       }))
       setShowAuthModal(true)
       setAuthMode('signup')
@@ -427,7 +434,7 @@ export default function App() {
       if (!session) {
         setLandingStatusByKey((prev) => ({
           ...prev,
-          pricing: { type: 'error', message: 'Erreur: Session non trouvée. Reconnecte-toi.' }
+          pricing: { type: 'error', message: t('sessionNotFound') }
         }))
         return
       }
@@ -435,7 +442,7 @@ export default function App() {
       if (!session.access_token) {
         setLandingStatusByKey((prev) => ({
           ...prev,
-          pricing: { type: 'error', message: 'Erreur: Token d\'accès manquant. Reconnecte-toi.' }
+          pricing: { type: 'error', message: t('accessTokenMissing') }
         }))
         console.error('Missing access_token in session:', session)
         return
@@ -469,7 +476,7 @@ export default function App() {
         const errorData = await response.json().catch(() => ({}))
         setLandingStatusByKey((prev) => ({
           ...prev,
-          pricing: { type: 'error', message: `Erreur: ${errorData.detail || response.statusText || 'Impossible de créer la session de paiement'}` }
+          pricing: { type: 'error', message: `${t('error')}: ${errorData.detail || response.statusText || t('unableToCreateCheckoutSession')}` }
         }))
         console.error('Checkout session error:', errorData)
         return
@@ -482,14 +489,14 @@ export default function App() {
       } else {
         setLandingStatusByKey((prev) => ({
           ...prev,
-          pricing: { type: 'error', message: 'Erreur: URL de checkout manquante' }
+          pricing: { type: 'error', message: t('checkoutUrlMissing') }
         }))
         console.error('Checkout response:', data)
       }
     } catch (error) {
       setLandingStatusByKey((prev) => ({
         ...prev,
-        pricing: { type: 'error', message: `Erreur de connexion: ${error.message}` }
+        pricing: { type: 'error', message: `${t('connectionError')}: ${error.message}` }
       }))
       console.error('Stripe checkout error:', error)
     }
@@ -539,13 +546,13 @@ export default function App() {
             
             <div className="hidden md:flex items-center gap-8">
               <a href="#features" className="text-sm font-normal text-gray-400 hover:text-white transition-colors">
-                Fonctionnalités
+                {t("navFeatures")}
               </a>
               <a href="#how-it-works" className="text-sm font-normal text-gray-400 hover:text-white transition-colors">
-                Fonctionnement
+                {t("navHowItWorks")}
               </a>
               <a href="#pricing" className="text-sm font-normal text-gray-400 hover:text-white transition-colors">
-                Tarifs
+                {t("navPricing")}
               </a>
             </div>
 
@@ -553,7 +560,7 @@ export default function App() {
               <div className="flex items-center gap-2 md:gap-3">
                 <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-green-900/30 text-green-300 rounded-full text-sm border border-green-700/40">
                   <span className="w-2 h-2 bg-green-400 rounded-full"></span>
-                  <span className="font-medium">{user.user_metadata?.first_name || 'Connecté'}</span>
+                  <span className="font-medium">{user.user_metadata?.first_name || t('connected')}</span>
                 </div>
                 <button
                   onClick={() => {
@@ -562,7 +569,7 @@ export default function App() {
                     } else {
                       setLandingStatusByKey((prev) => ({
                         ...prev,
-                        dashboardNav: { type: 'warning', message: 'Abonnement requis pour accéder au dashboard.' }
+                        dashboardNav: { type: 'warning', message: t('subscriptionRequired') }
                       }))
                       window.location.hash = '#pricing'
                     }
@@ -582,7 +589,7 @@ export default function App() {
                   }}
                   className="px-2 md:px-4 py-2 text-gray-400 hover:text-white text-xs md:text-sm font-medium transition"
                 >
-                  Déconnexion
+                  {t("logout")}
                 </button>
               </div>
             ) : (
@@ -590,7 +597,7 @@ export default function App() {
                 onClick={() => setShowAuthModal(true)}
                 className="px-3 md:px-4 py-2 bg-yellow-600 text-black text-xs md:text-sm font-medium rounded-full hover:bg-yellow-500 transition-all hover:scale-105 shadow-md"
               >
-                Se connecter
+                {t("login")}
               </button>
             )}
           </div>
@@ -602,14 +609,14 @@ export default function App() {
           <div className={`rounded-2xl p-6 flex items-center justify-between shadow-sm ${paymentProcessingState === 'verified' ? 'bg-green-50 border border-green-200 text-green-800' : paymentProcessingState === 'failed' ? 'bg-gray-50 border border-yellow-200 text-yellow-800' : 'bg-yellow-50 border border-yellow-200 text-yellow-800'}`}>
             <div className="flex items-center gap-4">
               <span className="text-4xl">
-                {paymentProcessingState === 'verified' ? 'OK' : paymentProcessingState === 'failed' ? 'Erreur' : '...'}
+                {paymentProcessingState === 'verified' ? 'OK' : paymentProcessingState === 'failed' ? t('error') : '...'}
               </span>
               <div>
                 <div className="font-semibold text-lg">
-                  {paymentProcessingState === 'verified' ? 'Paiement confirmé!' : paymentProcessingState === 'failed' ? 'Échec du traitement' : 'Traitement du paiement'}
+                  {paymentProcessingState === 'verified' ? t('paymentConfirmed') : paymentProcessingState === 'failed' ? t('processingFailed') : t('processingPayment')}
                 </div>
                 <div className="text-sm">
-                  {paymentProcessingMessage || (paymentProcessingState === 'verified' ? 'Ton abonnement est actif. Tu peux maintenant accéder à ton dashboard.' : paymentProcessingState === 'failed' ? 'Le traitement a échoué. Réessaie ou contacte le support.' : 'Vérification en cours — cela peut prendre quelques secondes.')}
+                  {paymentProcessingMessage || (paymentProcessingState === 'verified' ? t('subscriptionActiveAccessDashboard') : paymentProcessingState === 'failed' ? t('processingFailedRetryOrContact') : t('verificationInProgress'))}
                 </div>
               </div>
             </div>
@@ -621,7 +628,7 @@ export default function App() {
                   hasSubscription ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-200 text-gray-600 cursor-not-allowed'
                 }`}
               >
-                Accéder au dashboard
+                {t("accessDashboard")}
               </button>
             </div>
           </div>
@@ -634,7 +641,7 @@ export default function App() {
           <div className="bg-white rounded-2xl md:rounded-3xl max-w-md w-full p-5 md:p-8 shadow-2xl animate-scaleIn max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-2xl font-semibold text-gray-900">
-                {authMode === 'signup' ? 'Créer un compte' : 'Se connecter'}
+                {authMode === 'signup' ? t('createAccount') : t('login')}
               </h3>
               <button onClick={() => setShowAuthModal(false)} className="text-gray-400 hover:text-gray-600 text-2xl font-light">×</button>
             </div>
@@ -647,7 +654,7 @@ export default function App() {
                   authMode === 'signup' ? 'bg-white text-gray-900 shadow' : 'text-gray-600'
                 }`}
               >
-                Inscription
+                {t("signupTab")}
               </button>
               <button
                 onClick={() => setAuthMode('login')}
@@ -655,7 +662,7 @@ export default function App() {
                   authMode === 'login' ? 'bg-white text-gray-900 shadow' : 'text-gray-600'
                 }`}
               >
-                Connexion
+                {t("loginTab")}
               </button>
             </div>
 
@@ -664,52 +671,52 @@ export default function App() {
               <form onSubmit={handleSignup} className="space-y-4">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-2">Prénom *</label>
+                    <label className="block text-xs font-medium text-gray-700 mb-2">{t('firstNameLabel')}</label>
                     <input
                       type="text"
                       value={formData.firstName}
                       onChange={(e) => setFormData({...formData, firstName: e.target.value})}
-                      placeholder="Jean"
+                      placeholder={t("firstNamePlaceholder")}
                       required
                       className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm text-gray-900 placeholder-gray-400"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-2">Nom *</label>
+                    <label className="block text-xs font-medium text-gray-700 mb-2">{t('lastNameLabel')}</label>
                     <input
                       type="text"
                       value={formData.lastName}
                       onChange={(e) => setFormData({...formData, lastName: e.target.value})}
-                      placeholder="Dupont"
+                      placeholder={t("lastNamePlaceholder")}
                       required
                       className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm text-gray-900 placeholder-gray-400"
                     />
                   </div>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-2">Nom d'utilisateur *</label>
+                  <label className="block text-xs font-medium text-gray-700 mb-2">{t('usernameLabel')}</label>
                   <input
                     type="text"
                     value={formData.username}
                     onChange={(e) => setFormData({...formData, username: e.target.value})}
-                    placeholder="monpseudo"
+                    placeholder={t("usernamePlaceholder")}
                     required
                     className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm text-gray-900 placeholder-gray-400"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-2">Email *</label>
+                  <label className="block text-xs font-medium text-gray-700 mb-2">{t('emailLabel')}</label>
                   <input
                     type="email"
                     value={formData.email}
                     onChange={(e) => setFormData({...formData, email: e.target.value})}
-                    placeholder="votre@email.com"
+                    placeholder={t("emailPlaceholder")}
                     required
                     className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm text-gray-900 placeholder-gray-400"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-2">Mot de passe *</label>
+                  <label className="block text-xs font-medium text-gray-700 mb-2">{t('passwordLabel')}</label>
                   <input
                     type="password"
                     value={formData.password}
@@ -719,16 +726,16 @@ export default function App() {
                     minLength={6}
                     className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm text-gray-900 placeholder-gray-400"
                   />
-                  <p className="text-xs text-gray-500 mt-1">Minimum 6 caractères</p>
+                  <p className="text-xs text-gray-500 mt-1">{t('passwordHint')}</p>
                 </div>
                 <button
                   type="submit"
                   className="w-full px-6 py-3 bg-blue-600 text-white font-medium rounded-xl hover:bg-blue-700 transition-colors text-sm"
                 >
-                  Créer mon compte
+                  {t("createMyAccount")}
                 </button>
                 <p className="text-xs text-gray-600 text-center">
-                  Un email de confirmation sera envoyé pour activer ton compte
+                  {t('confirmationEmailNotice')}
                 </p>
               </form>
             )}
@@ -737,18 +744,18 @@ export default function App() {
             {authMode === 'login' && (
               <form onSubmit={handleLogin} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-2">Email</label>
+                  <label className="block text-xs font-medium text-gray-700 mb-2">{t("emailLabel")}</label>
                   <input
                     type="email"
                     value={formData.email}
                     onChange={(e) => setFormData({...formData, email: e.target.value})}
-                    placeholder="votre@email.com"
+                    placeholder={t("emailPlaceholder")}
                     required
                     className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent text-sm text-gray-900 placeholder-gray-400"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-2">Mot de passe</label>
+                  <label className="block text-xs font-medium text-gray-700 mb-2">{t("passwordLabel")}</label>
                   <input
                     type="password"
                     value={formData.password}
@@ -762,8 +769,8 @@ export default function App() {
                   type="submit"
                   className="w-full px-6 py-3 bg-blue-600 text-white font-medium rounded-xl hover:bg-blue-700 transition-colors text-sm"
                 >
-                  Se connecter
-                </button>
+                {t("login")}
+              </button>
               </form>
             )}
 
@@ -773,7 +780,7 @@ export default function App() {
                 <div className="w-full border-t border-gray-200"></div>
               </div>
               <div className="relative flex justify-center text-xs">
-                <span className="px-2 bg-white text-gray-500">OU</span>
+                <span className="px-2 bg-white text-gray-500">{t("or")}</span>
               </div>
             </div>
 
@@ -788,9 +795,7 @@ export default function App() {
                 <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
                 <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
                 <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-              </svg>
-              Continuer avec Google
-            </button>
+              </svg>{t("continueWithGoogle")}</button>
 
             {authMessage && (
               <div className={`mt-4 p-3 rounded-xl text-xs ${
@@ -810,32 +815,28 @@ export default function App() {
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-8 md:mb-12 animate-fadeIn">
             <div className="inline-block mb-4 md:mb-6">
-              <span className="px-3 md:px-4 py-1.5 md:py-2 bg-blue-900/60 text-blue-300 border border-blue-700/50 rounded-full text-[10px] md:text-xs font-semibold uppercase tracking-[0.2em]">
-                Nouveau — IA Générative Shopify
-              </span>
+              <span className="px-3 md:px-4 py-1.5 md:py-2 bg-blue-900/60 text-blue-300 border border-blue-700/50 rounded-full text-[10px] md:text-xs font-semibold uppercase tracking-[0.2em]">{t("heroBadge")}</span>
             </div>
             <h1 className="text-3xl md:text-6xl lg:text-7xl font-bold text-white tracking-tight leading-[1.1] md:leading-[1.05] mb-3 md:mb-4">
-              L'IA qui transforme vos ventes Shopify
+              {t('heroTitle')}
             </h1>
             <p className="text-sm md:text-lg text-gray-400 mb-8 md:mb-12 max-w-3xl mx-auto leading-relaxed">
-              Pilotez votre croissance avec une IA d'élite, claire et actionnable.
+              {t('heroSubtitle')}
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3 md:gap-4 mb-6 md:mb-8">
               <button
                 onClick={() => window.location.hash = '#stripe-pricing'}
                 className="w-full sm:w-auto px-8 md:px-10 py-4 md:py-5 bg-yellow-600 text-black text-base md:text-lg font-semibold rounded-full hover:bg-yellow-500 transition-all hover:scale-105 shadow-2xl hover:shadow-yellow-500/30"
-              >
-                Voir tous les plans
-              </button>
+              >{t("viewAllPlans")}</button>
               <button
                 onClick={() => setShowAuthModal(true)}
                 className="w-full sm:w-auto px-8 md:px-10 py-4 md:py-5 text-white text-base md:text-lg font-semibold border-2 border-gray-600 rounded-full hover:bg-gray-800 hover:text-white transition-all hover:scale-105"
               >
-                Se connecter
+                {t("login")}
               </button>
             </div>
             <p className="text-xs md:text-sm text-gray-400">
-              • Sans engagement • Essai 14 jours • Résultats garantis
+              {t('heroDisclaimer')}
             </p>
           </div>
 
@@ -850,7 +851,7 @@ export default function App() {
                   } else {
                     setLandingStatusByKey((prev) => ({
                       ...prev,
-                      dashboardHero: { type: 'warning', message: 'Abonnement requis pour accéder au dashboard.' }
+                      dashboardHero: { type: 'warning', message: t('subscriptionRequired') }
                     }))
                     document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' })
                   }
@@ -869,7 +870,7 @@ export default function App() {
           )}
           {!user && (
             <div className="mt-16 text-center">
-              <p className="text-gray-400 mb-6">Connecte-toi pour accéder à ton dashboard et voir ton IA</p>
+              <p className="text-gray-400 mb-6">{t('loginToAccessDashboard')}</p>
             </div>
           )}
         </div>
@@ -879,27 +880,27 @@ export default function App() {
       <section className="py-20 px-6 bg-gray-950 border-y border-gray-800">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-12">
-            <p className="text-xs uppercase tracking-[0.3em] text-gray-500 mb-4">Avant le dashboard</p>
-            <h2 className="text-4xl md:text-5xl font-bold text-white mb-4">Répondre aux questions critiques avant d’agir</h2>
-            <p className="text-lg text-gray-400 max-w-3xl mx-auto">ShopBrain structure les décisions avec des questions métiers claires et priorisées.</p>
+            <p className="text-xs uppercase tracking-[0.3em] text-gray-500 mb-4">{t('beforeDashboardLabel')}</p>
+            <h2 className="text-4xl md:text-5xl font-bold text-white mb-4">{t('preDashboardTitle')}</h2>
+            <p className="text-lg text-gray-400 max-w-3xl mx-auto">{t('preDashboardSubtitle')}</p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {[
               {
-                question: 'Quelles actions ont un impact immédiat sur les revenus ?',
-                answer: 'Le cockpit identifie les optimisations à ROI rapide avant d’exécuter.'
+                question: t('faqQuestion1'),
+                answer: t('faqAnswer1')
               },
               {
-                question: 'Où perdons-nous des ventes ?',
-                answer: 'Les points de friction sont isolés par segment, produit et canal.'
+                question: t('faqQuestion2'),
+                answer: t('faqAnswer2')
               },
               {
-                question: 'Quelles fiches produits doivent être corrigées en priorité ?',
-                answer: 'Les anomalies critiques sont hiérarchisées avec un plan d’action.'
+                question: t('faqQuestion3'),
+                answer: t('faqAnswer3')
               },
               {
-                question: 'Quel est l’impact réel des actions IA ?',
-                answer: 'Chaque décision est suivie avec KPI, historique et exécution.'
+                question: t('faqQuestion4'),
+                answer: t('faqAnswer4')
               }
             ].map((item, idx) => (
               <div key={idx} className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
@@ -923,23 +924,23 @@ export default function App() {
       <section className="py-14 md:py-24 px-4 md:px-6 bg-gray-900">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-10 md:mb-16">
-            <p className="text-xs uppercase tracking-[0.3em] text-gray-400 mb-3 md:mb-4">Écosystème</p>
-            <h2 className="text-2xl md:text-5xl font-bold text-white mb-3 md:mb-4">Un cockpit complet, pensé pour la performance</h2>
-            <p className="text-sm md:text-lg text-gray-400 max-w-3xl mx-auto">Centralisez l’IA, la stratégie et l’exécution dans un hub unique, avec un rendu premium et une lisibilité irréprochable.</p>
+            <p className="text-xs uppercase tracking-[0.3em] text-gray-400 mb-3 md:mb-4">{t('ecosystemLabel')}</p>
+            <h2 className="text-2xl md:text-5xl font-bold text-white mb-3 md:mb-4">{t('ecosystemTitle')}</h2>
+            <p className="text-sm md:text-lg text-gray-400 max-w-3xl mx-auto">{t('ecosystemSubtitle')}</p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {[
               {
                 title: 'Studio IA',
-                desc: 'Analyse tes produits et propose des améliorations concrètes, avec historique clair des changements.'
+                desc: t('ecosystemStudioDesc')
               },
               {
                 title: 'Command Center',
-                desc: 'Centralise les priorités, les alertes et les actions à lancer pour piloter la boutique.'
+                desc: t('ecosystemCommandDesc')
               },
               {
                 title: 'Automation Hub',
-                desc: 'Planifie et exécute automatiquement les optimisations, sans interventions répétitives.'
+                desc: t('ecosystemAutomationDesc')
               }
             ].map((card, idx) => (
               <div key={idx} className="bg-gray-800 border border-gray-700 rounded-3xl p-6">
@@ -955,37 +956,37 @@ export default function App() {
       <section className="py-14 md:py-24 px-4 md:px-6 bg-gray-900">
         <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-10 items-center">
           <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-gray-400 mb-3 md:mb-4">Command Center</p>
-            <h2 className="text-2xl md:text-5xl font-bold text-white mb-3 md:mb-4">Tout comprendre en un coup d’œil</h2>
-            <p className="text-sm md:text-lg text-gray-400 mb-4 md:mb-6">Le tableau de bord explique clairement quoi améliorer, pourquoi, et comment agir.</p>
+            <p className="text-xs uppercase tracking-[0.3em] text-gray-400 mb-3 md:mb-4">{t('ecosystemCommandTitle')}</p>
+            <h2 className="text-2xl md:text-5xl font-bold text-white mb-3 md:mb-4">{t('commandCenterTitle')}</h2>
+            <p className="text-sm md:text-lg text-gray-400 mb-4 md:mb-6">{t('commandCenterSubtitle')}</p>
             <div className="space-y-3">
               <div className="flex items-center justify-between bg-gray-800 border border-gray-700 rounded-2xl px-4 py-3">
-                <span className="text-gray-300 text-sm">Actions recommandées</span>
-                <span className="text-gray-500 text-sm">Claires et classées</span>
+                <span className="text-gray-300 text-sm">{t('recommendedActions')}</span>
+                <span className="text-gray-500 text-sm">{t('clearAndRanked')}</span>
               </div>
               <div className="flex items-center justify-between bg-gray-800 border border-gray-700 rounded-2xl px-4 py-3">
-                <span className="text-gray-300 text-sm">Problèmes détectés</span>
-                <span className="text-gray-500 text-sm">Avec explication</span>
+                <span className="text-gray-300 text-sm">{t('detectedProblems')}</span>
+                <span className="text-gray-500 text-sm">{t('withExplanation')}</span>
               </div>
               <div className="flex items-center justify-between bg-gray-800 border border-gray-700 rounded-2xl px-4 py-3">
-                <span className="text-gray-300 text-sm">Suivi des résultats</span>
-                <span className="text-gray-500 text-sm">Avant / après</span>
+                <span className="text-gray-300 text-sm">{t('resultsTracking')}</span>
+                <span className="text-gray-500 text-sm">{t('beforeAfterShort')}</span>
               </div>
             </div>
           </div>
           <div className="bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700 rounded-3xl p-8">
             <div className="space-y-4">
               <div className="bg-gray-900/60 border border-gray-800 rounded-2xl p-4">
-                <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Vue claire</p>
-                <p className="text-sm text-gray-300 mt-2">Comprends rapidement ce qui bloque les ventes et ce qui doit être optimisé.</p>
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-400">{t('clearView')}</p>
+                <p className="text-sm text-gray-300 mt-2">{t('clearViewDesc')}</p>
               </div>
               <div className="bg-gray-900/60 border border-gray-800 rounded-2xl p-4">
-                <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Priorités utiles</p>
-                <p className="text-sm text-gray-300 mt-2">Les actions sont classées pour que tu saches quoi faire en premier.</p>
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-400">{t('usefulPriorities')}</p>
+                <p className="text-sm text-gray-300 mt-2">{t('usefulPrioritiesDesc')}</p>
               </div>
               <div className="bg-gray-900/60 border border-gray-800 rounded-2xl p-4">
-                <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Résultats mesurés</p>
-                <p className="text-sm text-gray-300 mt-2">Chaque action est suivie pour voir l'impact réel sur les ventes.</p>
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-400">{t('measuredResults')}</p>
+                <p className="text-sm text-gray-300 mt-2">{t('measuredResultsDesc')}</p>
               </div>
             </div>
           </div>
@@ -996,27 +997,27 @@ export default function App() {
       <section className="py-14 md:py-24 px-4 md:px-6 bg-gray-900">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-8 md:mb-14">
-            <p className="text-xs uppercase tracking-[0.3em] text-gray-400 mb-3 md:mb-4">Avant / Après</p>
-            <h2 className="text-2xl md:text-5xl font-bold text-white mb-3 md:mb-4">Passez d’un Shopify dispersé à un cockpit maîtrisé</h2>
-            <p className="text-sm md:text-lg text-gray-400 max-w-3xl mx-auto">Une gouvernance claire, une IA pilotable et des actions traçables à l’échelle.</p>
+            <p className="text-xs uppercase tracking-[0.3em] text-gray-400 mb-3 md:mb-4">{t('beforeAfterLabel')}</p>
+            <h2 className="text-2xl md:text-5xl font-bold text-white mb-3 md:mb-4">{t('beforeAfterTitle')}</h2>
+            <p className="text-sm md:text-lg text-gray-400 max-w-3xl mx-auto">{t('beforeAfterSubtitle')}</p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="bg-gray-800 border border-gray-700 rounded-3xl p-6">
-              <h3 className="text-white text-xl font-semibold mb-4">Sans ShopBrain</h3>
+              <h3 className="text-white text-xl font-semibold mb-4">{t('withoutShopBrain')}</h3>
               <ul className="space-y-3 text-sm text-gray-300">
-                <li>Décisions éparpillées, peu de visibilité sur l’impact.</li>
-                <li>Optimisations ponctuelles et non suivies.</li>
-                <li>Gestion manuelle des contenus et prix.</li>
-                <li>Peu de priorisation et pas de traçabilité.</li>
+                <li>{t('withoutItem1')}</li>
+                <li>{t('withoutItem2')}</li>
+                <li>{t('withoutItem3')}</li>
+                <li>{t('withoutItem4')}</li>
               </ul>
             </div>
             <div className="bg-gray-800 border border-gray-700 rounded-3xl p-6">
-              <h3 className="text-white text-xl font-semibold mb-4">Avec ShopBrain</h3>
+              <h3 className="text-white text-xl font-semibold mb-4">{t('withShopBrain')}</h3>
               <ul className="space-y-3 text-sm text-gray-300">
-                <li>Vision unifiée : IA, KPI, risques, exécutions.</li>
-                <li>Optimisations programmées et mesurées.</li>
-                <li>Automations avancées multi‑produits.</li>
-                <li>Priorités claires et impact immédiat.</li>
+                <li>{t('withItem1')}</li>
+                <li>{t('withItem2')}</li>
+                <li>{t('withItem3')}</li>
+                <li>{t('withItem4')}</li>
               </ul>
             </div>
           </div>
@@ -1027,16 +1028,16 @@ export default function App() {
       <section className="py-14 md:py-24 px-4 md:px-6 bg-gray-900">
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-10 md:mb-16">
-            <p className="text-xs uppercase tracking-[0.3em] text-gray-400 mb-3 md:mb-4">Bénéfices</p>
-            <h2 className="text-2xl md:text-5xl font-bold text-white mb-3 md:mb-4">Des bénéfices concrets et visibles</h2>
-            <p className="text-sm md:text-lg text-gray-400 max-w-3xl mx-auto">Moins de flou, plus d’actions claires et de ventes mesurables.</p>
+            <p className="text-xs uppercase tracking-[0.3em] text-gray-400 mb-3 md:mb-4">{t('benefitsLabel')}</p>
+            <h2 className="text-2xl md:text-5xl font-bold text-white mb-3 md:mb-4">{t('benefitsTitle')}</h2>
+            <p className="text-sm md:text-lg text-gray-400 max-w-3xl mx-auto">{t('benefitsSubtitle')}</p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             {[
-              { title: 'Gagne du temps', desc: 'L’IA prépare les actions, tu n’as plus à tout analyser manuellement.' },
-              { title: 'Décisions claires', desc: 'Chaque recommandation est expliquée pour savoir quoi faire.' },
-              { title: 'Ventes suivies', desc: 'Tu vois l’impact réel après chaque optimisation appliquée.' },
-              { title: 'Shopify connecté', desc: 'Les données viennent directement de ta boutique.' }
+              { title: t('benefitTimeSaveTitle'), desc: t('benefitTimeSaveDesc') },
+              { title: t('benefitClearDecisionsTitle'), desc: t('benefitClearDecisionsDesc') },
+              { title: t('benefitTrackedSalesTitle'), desc: t('benefitTrackedSalesDesc') },
+              { title: t('benefitShopifyConnectedTitle'), desc: t('benefitShopifyConnectedDesc') }
             ].map((b, idx) => (
               <div key={idx} className="bg-gray-900 border border-yellow-500/40 rounded-3xl p-6">
                 <h3 className="text-yellow-300 text-lg font-semibold mb-2">{b.title}</h3>
@@ -1050,7 +1051,7 @@ export default function App() {
       {/* Social Proof */}
       <section className="py-8 md:py-12 px-4 md:px-6 bg-gray-900 border-y border-gray-700">
         <div className="max-w-6xl mx-auto">
-          <p className="text-center text-xs text-gray-400 mb-6 uppercase tracking-[0.3em]">Ils nous font confiance</p>
+          <p className="text-center text-xs text-gray-400 mb-6 uppercase tracking-[0.3em]">{t('theyTrustUs')}</p>
           <div className="flex flex-wrap justify-center items-center gap-6">
             {['Stripe', 'OpenAI', 'Supabase', 'Shopify'].map((brand) => (
               <span
@@ -1069,10 +1070,10 @@ export default function App() {
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-12 md:mb-20">
             <h2 className="text-3xl md:text-6xl font-bold text-white mb-3 md:mb-4">
-              Fonctionnalités<br />surpuissantes.
+              {t("featuresSectionTitle")}<br />{t('featuresSectionTitleSuffix')}
             </h2>
             <p className="text-base md:text-xl text-gray-400">
-              Tout ce dont vous avez besoin pour dominer votre marché.
+              {t('featuresSectionSubtitle')}
             </p>
           </div>
 
@@ -1082,30 +1083,30 @@ export default function App() {
               {
                 icon: 'AI',
                 gradient: 'from-yellow-400 to-orange-500',
-                title: 'Analyse IA en temps réel',
-                desc: 'Scannez des milliers de produits en secondes. Notre IA analyse titres, descriptions, prix et images pour détecter les opportunités d\'optimisation.',
-                stat: '10M+ produits analysés'
+                title: t('featureRealtimeTitle'),
+                desc: t('featureRealtimeDesc'),
+                stat: t('featureRealtimeStat')
               },
               {
                 icon: 'AUTO',
                 gradient: 'from-yellow-600 to-yellow-500',
-                title: 'Optimisation automatique',
-                desc: 'L\'IA génère automatiquement des titres SEO-optimisés, des descriptions persuasives et des tags pertinents. Augmentez vos conversions sans lever le petit doigt.',
-                stat: '+127% conversions moyenne'
+                title: t('featureAutoOptTitle'),
+                desc: t('featureAutoOptDesc'),
+                stat: t('featureAutoOptStat')
               },
               {
                 icon: 'DATA',
                 gradient: 'from-green-400 to-emerald-500',
-                title: 'Analytics & Insights',
-                desc: 'Tableaux de bord en temps réel : ventes, profits, best-sellers, produits sous-performants. Prenez des décisions data-driven.',
-                stat: 'Mises à jour toutes les 5min'
+                title: t('featureAnalyticsTitle'),
+                desc: t('featureAnalyticsDesc'),
+                stat: t('featureAnalyticsStat')
               },
               {
                 icon: 'SHOP',
                 gradient: 'from-blue-700 to-blue-600',
-                title: 'Intégration Shopify native',
-                desc: 'Connectez votre boutique en un clic. Synchronisation automatique bidirectionnelle : produits, commandes, clients, inventaire.',
-                stat: 'Sync en <1 seconde'
+                title: t('featureShopifyTitle'),
+                desc: t('featureShopifyDesc'),
+                stat: t('featureShopifyStat')
               }
             ].map((feature, idx) => (
               <div key={idx} className="group relative p-5 md:p-8 bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700 rounded-2xl md:rounded-3xl hover:shadow-2xl hover:scale-[1.02] transition-all duration-300 overflow-hidden">
@@ -1130,26 +1131,26 @@ export default function App() {
       {/* How It Works Section */}
       <section id="how-it-works" className="py-14 md:py-24 px-4 md:px-6 bg-gray-900">
         <div className="max-w-6xl mx-auto">
-          <h2 className="text-2xl md:text-5xl font-bold text-white text-center mb-10 md:mb-16">Fonctionnement</h2>
+          <h2 className="text-2xl md:text-5xl font-bold text-white text-center mb-10 md:mb-16">{t("howItWorksTitle")}</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             {[
               {
                 number: '1',
                 icon: 'CONNECT',
-                title: 'Connectez Shopify',
-                desc: 'Liez votre magasin en toute sécurité'
+                title: t('step1Title'),
+                desc: t('step1Desc')
               },
               {
                 number: '2',
                 icon: 'SELECT',
-                title: 'Sélectionnez produits',
-                desc: 'Choisissez les articles à analyser'
+                title: t('step2Title'),
+                desc: t('step2Desc')
               },
               {
                 number: '3',
                 icon: 'INSIGHT',
-                title: 'Recevez insights',
-                desc: 'Obtenez des recommandations personnalisées'
+                title: t('step3Title'),
+                desc: t('step3Desc')
               }
             ].map((step, idx) => (
               <div key={idx} className="text-center">
@@ -1173,15 +1174,13 @@ export default function App() {
         <div className="max-w-7xl mx-auto relative">
           <div className="text-center mb-10 md:mb-20">
             <h2 className="text-3xl md:text-6xl font-bold text-white mb-4 md:mb-6">
-              Choisissez votre<br />
-              <span className="text-yellow-400">
-                formule gagnante
-              </span>
+              {t("pricingTitleLine1")}<br />
+              <span className="text-yellow-400">{t('pricingTitleLine2')}</span>
             </h2>
             <p className="text-base md:text-xl text-gray-300 mb-2">
-              Tous les plans incluent 14 jours d'essai gratuit. Sans engagement.
+              {t('pricingSubtitle')}
             </p>
-            <p className="text-sm text-yellow-400 font-semibold">Le plan Pro offre le meilleur rapport qualité-prix</p>
+            <p className="text-sm text-yellow-400 font-semibold">{t('pricingProBestValue')}</p>
             {renderLandingStatus('pricing')}
           </div>
 
@@ -1190,7 +1189,7 @@ export default function App() {
               onClick={() => window.location.hash = '#stripe-pricing'}
               className="px-10 py-4 bg-yellow-600 text-black text-base font-semibold rounded-full hover:bg-yellow-500 transition-all"
             >
-              Choisissez votre abonnement
+              {t('chooseSubscription')}
             </button>
           </div>
 
@@ -1215,7 +1214,7 @@ export default function App() {
                   {plan.highlight && (
                     <div className="absolute -top-6 left-1/2 -translate-x-1/2">
                       <div className="inline-flex items-center gap-2 bg-yellow-600 text-white px-4 py-2 rounded-full shadow-lg font-bold text-sm">
-                        <span>LE PLUS POPULAIRE</span>
+                        <span>{t("mostPopularBadge")}</span>
                       </div>
                       <div className="absolute inset-0 bg-yellow-600 rounded-full blur-lg opacity-30 -z-10"></div>
                     </div>
@@ -1225,9 +1224,9 @@ export default function App() {
                     <h3 className="text-2xl font-bold text-white mb-2">{plan.name}</h3>
                     <div className="mb-4">
                       <span className="text-5xl font-bold text-white">{plan.price}</span>
-                      <span className="text-gray-300 text-lg">/mois</span>
+                      <span className="text-gray-300 text-lg">{t('perMonth')}</span>
                     </div>
-                    <p className="text-sm text-gray-400">Facturé mensuellement</p>
+                    <p className="text-sm text-gray-400">{t("billedMonthly")}</p>
                   </div>
 
                   <ul className="space-y-4 mb-8">
@@ -1244,33 +1243,25 @@ export default function App() {
                   </ul>
 
                   {/* CTA removed; selection via Stripe Pricing Table */}
-                  <div className="w-full py-4 rounded-2xl text-base font-semibold text-center border border-gray-700 bg-gray-900 text-gray-300">
-                    Voir tous les plans
-                  </div>
+                  <div className="w-full py-4 rounded-2xl text-base font-semibold text-center border border-gray-700 bg-gray-900 text-gray-300">{t("viewAllPlans")}</div>
                   
-                  <p className="text-center text-xs text-gray-400 mt-4">
-                    Annulation en un clic
-                  </p>
+                  <p className="text-center text-xs text-gray-400 mt-4">{t('cancelInOneClick')}</p>
                 </div>
               </div>
             ))}
           </div>
 
           <div className="mt-16 text-center">
-            <p className="text-gray-300 mb-4">Besoin d'un plan sur mesure ?</p>
+            <p className="text-gray-300 mb-4">{t('needCustomPlan')}</p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
               <button
                 onClick={() => window.location.hash = '#stripe-pricing'}
                 className="px-8 py-3 bg-yellow-700 text-white font-semibold border-2 border-yellow-700 rounded-full hover:bg-yellow-600 transition-all"
-              >
-                Voir tous les plans
-              </button>
+              >{t("viewAllPlans")}</button>
               <a
                 href="mailto:louis-felix.gilbert@outlook.com"
                 className="px-8 py-3 text-yellow-400 font-semibold border-2 border-yellow-700 rounded-full hover:bg-yellow-700 hover:text-white transition-all"
-              >
-                Contactez notre équipe
-              </a>
+              >{t('contactOurTeam')}</a>
             </div>
           </div>
         </div>
@@ -1280,17 +1271,15 @@ export default function App() {
       <section className="py-14 md:py-24 px-4 md:px-6 bg-gray-900">
         <div className="max-w-4xl mx-auto text-center">
           <h2 className="text-2xl md:text-5xl font-bold text-white mb-4 md:mb-6">
-            Prêt à transformer votre Shopify?
+            {t('ctaTitle')}
           </h2>
           <p className="text-sm md:text-lg text-gray-400 mb-6 md:mb-10">
-            Rejoignez des centaines de sellers qui utilisent ShopBrain AI
+            {t('ctaSubtitle')}
           </p>
           <button
             onClick={() => window.location.hash = '#stripe-pricing'}
             className="px-8 py-4 bg-yellow-600 text-black text-base font-medium rounded-full hover:bg-yellow-500 transition-all hover:scale-105 shadow-lg hover:shadow-xl"
-          >
-            Voir tous les plans
-          </button>
+          >{t("viewAllPlans")}</button>
         </div>
       </section>
 
@@ -1299,31 +1288,31 @@ export default function App() {
         <div className="max-w-6xl mx-auto">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-8">
             <div>
-              <h4 className="text-xs font-semibold text-gray-300 mb-4 tracking-wide">PRODUIT</h4>
+              <h4 className="text-xs font-semibold text-gray-300 mb-4 tracking-wide">{t("footerProduct")}</h4>
               <ul className="space-y-3 text-sm text-gray-400">
-                <li><a href="#features" className="hover:text-white transition-colors">Fonctionnalités</a></li>
-                <li><a href="#pricing" className="hover:text-white transition-colors">Tarifs</a></li>
-                <li><a href="#how-it-works" className="hover:text-white transition-colors">Fonctionnement</a></li>
+                <li><a href="#features" className="hover:text-white transition-colors">{t("navFeatures")}</a></li>
+                <li><a href="#pricing" className="hover:text-white transition-colors">{t("navPricing")}</a></li>
+                <li><a href="#how-it-works" className="hover:text-white transition-colors">{t("navHowItWorks")}</a></li>
               </ul>
             </div>
             <div>
-              <h4 className="text-xs font-semibold text-gray-300 mb-4 tracking-wide">ENTREPRISE</h4>
+              <h4 className="text-xs font-semibold text-gray-300 mb-4 tracking-wide">{t("footerCompany")}</h4>
               <ul className="space-y-3 text-sm text-gray-400">
-                <li><a href="#" className="hover:text-white transition-colors">À propos</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Blog</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Contact</a></li>
+                <li><a href="#" className="hover:text-white transition-colors">{t("footerAbout")}</a></li>
+                <li><a href="#" className="hover:text-white transition-colors">{t("footerBlog")}</a></li>
+                <li><a href="#" className="hover:text-white transition-colors">{t("footerContact")}</a></li>
               </ul>
             </div>
             <div>
-              <h4 className="text-xs font-semibold text-gray-300 mb-4 tracking-wide">LÉGAL</h4>
+              <h4 className="text-xs font-semibold text-gray-300 mb-4 tracking-wide">{t("footerLegal")}</h4>
               <ul className="space-y-3 text-sm text-gray-400">
-                <li><a href="#" className="hover:text-white transition-colors">Politique de confidentialité</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Conditions d'utilisation</a></li>
+                <li><a href="#" className="hover:text-white transition-colors">{t("footerPrivacyPolicy")}</a></li>
+                <li><a href="#" className="hover:text-white transition-colors">{t('footerTermsOfUse')}</a></li>
               </ul>
             </div>
           </div>
           <div className="border-t border-gray-700 pt-8">
-            <p className="text-center text-sm text-gray-500">© 2025 ShopBrain AI. Tous droits réservés.</p>
+            <p className="text-center text-sm text-gray-500">{t('footerCopyright')}</p>
           </div>
         </div>
       </footer>
