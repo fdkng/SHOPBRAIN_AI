@@ -118,19 +118,18 @@ export default function App() {
   // Prevent simultaneous subscription checks
   const subscriptionCheckInProgressRef = React.useRef(false)
 
+  // ── One-time setup: scroll, auth listener, payment success ──
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 10)
     window.addEventListener('scroll', handleScroll)
-    
+
     // Check for payment success in query string
     const urlParams = new URLSearchParams(window.location.search)
     const isPaymentSuccess = urlParams.get('payment') === 'success' || urlParams.has('session_id') || urlParams.get('checkout') === 'success'
-    
+
     if (isPaymentSuccess) {
-      // Stay on landing, mark success and poll for subscription
       setPaymentSuccess(true)
 
-      // If Stripe returned a session_id, call verify-session endpoint to force-persist subscription
       const sessionId = urlParams.get('session_id')
       if (sessionId) {
         ;(async () => {
@@ -177,55 +176,42 @@ export default function App() {
         })()
       }
 
-      // Poll subscription status for up to 60 seconds (2s intervals to avoid resource exhaustion)
+      // Poll subscription status for up to 60 seconds
       let pollCount = 0
       const pollInterval = setInterval(() => {
         checkSubscription()
         pollCount++
-        if (pollCount >= 30) {
-          clearInterval(pollInterval)
-        }
+        if (pollCount >= 30) clearInterval(pollInterval)
       }, 2000)
-      return () => clearInterval(pollInterval)
+
+      return () => {
+        window.removeEventListener('scroll', handleScroll)
+        clearInterval(pollInterval)
+      }
     }
-    
-    // Handle hash-based routing
+
+    // Hash-based routing (only on explicit hash change by user)
     const handleHashChange = () => {
-      // Check for payment success
       if (window.location.hash.includes('success=true')) {
         setCurrentView('dashboard')
         return
       }
-      
       if (window.location.hash === '#stripe-pricing') {
         setCurrentView('stripe-pricing')
-      } else if (window.location.hash.includes('dashboard')) {
-        if (user && hasSubscription) setCurrentView('dashboard')
-      } else {
-        setCurrentView('landing')
       }
+      // Note: dashboard routing is handled by the auto-route effect below
     }
     window.addEventListener('hashchange', handleHashChange)
-    handleHashChange() // Check current hash on mount
-    
-    // Check for authenticated user then subscription
+
+    // Initial load: check user + subscription
     checkUser()
     checkSubscription()
-    
+
     // Listen for auth changes
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_IN' && session) {
         setUser(session.user)
         checkSubscription()
-        // After login, show dashboard or handle success
-        const hash = window.location.hash
-        if (hash.includes('success=true')) {
-          setCurrentView('dashboard')
-        } else if (hash.includes('dashboard')) {
-          setCurrentView('dashboard')
-        } else {
-          setCurrentView('landing')
-        }
         setShowAuthModal(false)
       } else if (event === 'SIGNED_OUT') {
         setUser(null)
@@ -233,30 +219,28 @@ export default function App() {
         setCurrentView('landing')
       }
     })
-    
+
     return () => {
       window.removeEventListener('scroll', handleScroll)
       window.removeEventListener('hashchange', handleHashChange)
       authListener?.subscription?.unsubscribe()
     }
-  }, [user, hasSubscription])
+  }, []) // ← empty deps: runs once on mount only
 
-  // Auto-route to dashboard when payment succeeded and subscription detected
+  // ── Auto-route to dashboard when user is logged in AND has a subscription ──
   useEffect(() => {
-    if (paymentSuccess && hasSubscription && user) {
+    if (user && hasSubscription) {
       setCurrentView('dashboard')
-      window.location.hash = '#dashboard'
+      if (!window.location.hash.includes('dashboard')) {
+        window.location.hash = '#dashboard'
+      }
     }
-  }, [paymentSuccess, hasSubscription, user])
+  }, [user, hasSubscription])
 
   const checkUser = async () => {
     const { data: { session } } = await supabase.auth.getSession()
     if (session) {
       setUser(session.user)
-      // Check if user has paid (has subscription)
-      if (window.location.hash.includes('dashboard') || window.location.hash.includes('shopify')) {
-        setCurrentView('dashboard')
-      }
     }
   }
 

@@ -4678,7 +4678,7 @@ def _fetch_shopify_event_counts(user_id: str, shop_domain: str, days: int) -> di
 @app.get("/api/shopify/pixel-status")
 async def get_shopify_pixel_status(request: Request):
     """Vérifie si le Shopify Pixel (custom pixel ou script tag) est installé et actif."""
-    user_id = _require_user_id(request)
+    user_id = get_user_id(request)
     shop_domain, access_token = _get_shopify_connection(user_id)
     headers = {
         "X-Shopify-Access-Token": access_token,
@@ -4711,7 +4711,7 @@ async def get_shopify_pixel_status(request: Request):
                         "created_at": tag.get("created_at"),
                     })
     except Exception as e:
-        logger.warning(f"Pixel check - ScriptTag API error: {e}")
+        print(f"⚠️ Pixel check - ScriptTag API error: {e}")
 
     # 2. Check Web Pixel API (Shopify custom pixels - newer method)
     try:
@@ -4733,7 +4733,7 @@ async def get_shopify_pixel_status(request: Request):
             # Web Pixel API not available on this plan/version — not an error
             pass
     except Exception as e:
-        logger.warning(f"Pixel check - Web Pixel API error: {e}")
+        print(f"⚠️ Pixel check - Web Pixel API error: {e}")
 
     # 3. Check if we have received any pixel events in Supabase (last 30 days)
     try:
@@ -4755,7 +4755,7 @@ async def get_shopify_pixel_status(request: Request):
                     pixel_installed = True
                     pixel_type = pixel_type or "events_detected"
     except Exception as e:
-        logger.warning(f"Pixel check - Supabase events error: {e}")
+        print(f"⚠️ Pixel check - Supabase events error: {e}")
 
     # Determine overall status
     if pixel_installed and pixel_active:
