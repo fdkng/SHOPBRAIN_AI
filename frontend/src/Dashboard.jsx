@@ -1970,8 +1970,16 @@ export default function Dashboard() {
       return
     }
     
+    // Normalize: lowercase, strip protocol, strip trailing slashes
+    let cleanUrl = shopifyUrl.trim().toLowerCase().replace(/\/+$/, '')
+    if (cleanUrl.startsWith('https://')) cleanUrl = cleanUrl.slice(8)
+    if (cleanUrl.startsWith('http://')) cleanUrl = cleanUrl.slice(7)
+    // If user typed just the store name, append .myshopify.com
+    if (!cleanUrl.includes('.')) cleanUrl = cleanUrl + '.myshopify.com'
+    setShopifyUrl(cleanUrl)
+    
     // Valider le format de l'URL
-    if (!shopifyUrl.endsWith('.myshopify.com')) {
+    if (!cleanUrl.endsWith('.myshopify.com')) {
       setStatus('shopify', 'warning', t('invalidUrlFormat'))
       return
     }
@@ -1997,7 +2005,7 @@ export default function Dashboard() {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          shopify_shop_url: shopifyUrl,
+          shopify_shop_url: cleanUrl,
           shopify_access_token: shopifyToken
         })
       })
@@ -2025,7 +2033,7 @@ export default function Dashboard() {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          shopify_shop_url: shopifyUrl,
+          shopify_shop_url: cleanUrl,
           shopify_access_token: shopifyToken
         })
       })
@@ -4268,6 +4276,9 @@ function sendEvent(eventType, productId) {
   } catch (e) {}
 }
 
+// Auto-register: tells ShopBrain this pixel is installed
+sendEvent("pixel_installed", null);
+
 analytics.subscribe("product_viewed", (event) => {
   const productId = event?.data?.product?.id;
   sendEvent("view_item", productId);
@@ -4305,6 +4316,9 @@ function sendEvent(eventType, productId) {
     }).catch(() => {});
   } catch (e) {}
 }
+
+// Auto-register: tells ShopBrain this pixel is installed
+sendEvent("pixel_installed", null);
 
 analytics.subscribe("product_viewed", (event) => {
   const productId = event?.data?.product?.id;

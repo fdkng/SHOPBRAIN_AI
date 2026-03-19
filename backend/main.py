@@ -60,7 +60,7 @@ app = FastAPI()
 SHOPIFY_API_KEY = os.getenv("SHOPIFY_API_KEY")
 SHOPIFY_API_SECRET = os.getenv("SHOPIFY_API_SECRET")
 SHOPIFY_ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN")
-SHOPIFY_SCOPES = "read_products,write_products,read_orders,read_customers,read_analytics"
+SHOPIFY_SCOPES = "read_products,write_products,read_orders,read_customers,read_analytics,read_script_tags"
 SHOPIFY_REDIRECT_URI = os.getenv("SHOPIFY_REDIRECT_URI", "https://shopbrain-backend.onrender.com/auth/shopify/callback")
 
 try:
@@ -893,7 +893,7 @@ def _ai_market_price_estimates(items: list[dict], products_by_id: dict[str, dict
 SHOPIFY_API_KEY = os.getenv("SHOPIFY_API_KEY")
 SHOPIFY_API_SECRET = os.getenv("SHOPIFY_API_SECRET")
 SHOPIFY_ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN")
-SHOPIFY_SCOPES = "read_products,write_products,read_orders,read_customers,read_analytics"
+SHOPIFY_SCOPES = "read_products,write_products,read_orders,read_customers,read_analytics,read_script_tags"
 SHOPIFY_REDIRECT_URI = os.getenv("SHOPIFY_REDIRECT_URI", "https://shopbrain-backend.onrender.com/auth/shopify/callback")
 
 if not OPENAI_API_KEY:
@@ -2036,6 +2036,15 @@ async def update_user_shopify(payload: dict, request: Request):
     if not shopify_url or not shopify_token:
         raise HTTPException(status_code=400, detail="Shop URL et Access Token requis")
     
+    # Normalize: strip protocol, trailing slashes, lowercase
+    shopify_url = shopify_url.lower().strip("/")
+    for prefix in ["https://", "http://"]:
+        if shopify_url.startswith(prefix):
+            shopify_url = shopify_url[len(prefix):]
+    # If user typed just the store name, append .myshopify.com
+    if "." not in shopify_url:
+        shopify_url = f"{shopify_url}.myshopify.com"
+    
     # Valider le format du shop URL
     if not shopify_url.endswith('.myshopify.com'):
         raise HTTPException(status_code=400, detail="URL invalide. Format attendu: boutique.myshopify.com")
@@ -2099,6 +2108,12 @@ async def shopify_callback(code: str, shop: str, state: str, hmac: str = None):
         raise HTTPException(status_code=500, detail="Shopify credentials not configured")
     
     user_id = state  # Retrieve user_id from state parameter
+    
+    # Normalize shop domain
+    shop = shop.strip().lower().strip("/")
+    for prefix in ["https://", "http://"]:
+        if shop.startswith(prefix):
+            shop = shop[len(prefix):]
     
     # Exchange authorization code for access token
     token_url = f"https://{shop}/admin/oauth/access_token"
@@ -2655,11 +2670,17 @@ def _get_shopify_connection(user_id: str):
     if not connection.data:
         raise HTTPException(status_code=404, detail="Aucune boutique Shopify connectée")
 
-    shop_domain = connection.data[0].get("shop_domain")
+    shop_domain = (connection.data[0].get("shop_domain") or "").strip().lower()
     access_token = connection.data[0].get("access_token")
 
     if not shop_domain or not access_token:
         raise HTTPException(status_code=400, detail="Connexion Shopify invalide")
+    
+    # Normalize: ensure clean domain format
+    for prefix in ["https://", "http://"]:
+        if shop_domain.startswith(prefix):
+            shop_domain = shop_domain[len(prefix):]
+    shop_domain = shop_domain.strip("/")
 
     return shop_domain, access_token
 
@@ -4634,17 +4655,24 @@ class PixelEventRequest(BaseModel):
 
 @app.post("/api/shopify/pixel-event")
 async def track_shopify_pixel_event(req: PixelEventRequest, request: Request):
-    """📌 Ingestion d'événements Shopify Pixel (view_item, add_to_cart)."""
+    """📌 Ingestion d'événements Shopify Pixel (view_item, add_to_cart, pixel_installed)."""
     if not req.shop_domain:
         raise HTTPException(status_code=400, detail="Shop domain requis")
 
-    allowed_events = {"view_item", "add_to_cart", "product_viewed", "product_added_to_cart"}
+    # Normalize the incoming shop domain to ensure consistent matching
+    raw_domain = (req.shop_domain or "").strip().lower()
+    for prefix in ["https://", "http://"]:
+        if raw_domain.startswith(prefix):
+            raw_domain = raw_domain[len(prefix):]
+    raw_domain = raw_domain.strip("/")
+
+    allowed_events = {"view_item", "add_to_cart", "product_viewed", "product_added_to_cart", "pixel_installed", "pixel_heartbeat"}
     event_type = (req.event_type or "").strip().lower()
     if event_type not in allowed_events:
         raise HTTPException(status_code=400, detail="Event non supporté")
 
     normalized_product_id = _normalize_shopify_id(req.product_id)
-    user_id = _get_user_id_by_shop_domain(req.shop_domain)
+    user_id = _get_user_id_by_shop_domain(raw_domain)
     if not user_id:
         raise HTTPException(status_code=404, detail="Boutique inconnue")
 
@@ -4654,7 +4682,7 @@ async def track_shopify_pixel_event(req: PixelEventRequest, request: Request):
     supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
     payload = {
         "user_id": user_id,
-        "shop_domain": req.shop_domain,
+        "shop_domain": raw_domain,
         "event_type": event_type,
         "product_id": normalized_product_id,
         "session_id": req.session_id,
@@ -6757,11 +6785,10 @@ async def shopify_orders_paid_webhook(request: Request):
         raise HTTPException(status_code=500, detail="Supabase not configured")
 
     supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-    conn = supabase.table("shopify_connections").select("user_id").eq("shop_domain", shop_domain).limit(1).execute()
-    if not conn.data:
+    user_id = _get_user_id_by_shop_domain(shop_domain)
+    if not user_id:
         return {"success": False, "message": "Shop not connected"}
 
-    user_id = conn.data[0].get("user_id")
     tier = get_user_tier(user_id)
     ensure_feature_allowed(tier, "invoicing")
 
