@@ -228,8 +228,11 @@ export default function App() {
   }, []) // ← empty deps: runs once on mount only
 
   // ── Auto-route to dashboard when user is logged in AND has a subscription ──
+  // Only auto-route ONCE (when subscription is first confirmed), not on every re-render
+  const hasAutoRoutedRef = React.useRef(false)
   useEffect(() => {
-    if (user && hasSubscription) {
+    if (user && hasSubscription && !hasAutoRoutedRef.current) {
+      hasAutoRoutedRef.current = true
       setCurrentView('dashboard')
       if (!window.location.hash.includes('dashboard')) {
         window.location.hash = '#dashboard'

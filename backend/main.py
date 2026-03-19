@@ -1201,7 +1201,9 @@ async def fast_init(request: Request):
                     raw_tier = sub.get('plan_tier') or 'standard'
                     tier_map = {
                         '99': 'standard', '199': 'pro', '299': 'premium',
-                        'standard': 'standard', 'pro': 'pro', 'premium': 'premium'
+                        'standard': 'standard', 'pro': 'pro', 'premium': 'premium',
+                        'gold': 'premium', 'silver': 'pro', 'bronze': 'standard',
+                        'basic': 'standard', 'business': 'pro', 'enterprise': 'premium',
                     }
                     plan = tier_map.get(str(raw_tier).lower(), 'standard')
                     capabilities = {
@@ -2937,6 +2939,12 @@ async def send_invoice_email_endpoint(request: Request, payload: InvoiceEmailReq
         msg["Reply-To"] = GMAIL_SENDER_EMAIL
         msg["To"] = payload.to_email
         msg["Subject"] = subject
+        # Priority headers to help land in inbox
+        msg["X-Priority"] = "1"
+        msg["X-MSMail-Priority"] = "High"
+        msg["Importance"] = "High"
+        msg["X-Mailer"] = "ShopBrain AI Invoicing"
+        msg["Message-ID"] = f"<invoice-{int(datetime.utcnow().timestamp())}@shopbrain.ai>"
         msg.set_content(text_body)
 
         raw_msg = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
@@ -4736,10 +4744,13 @@ async def get_shopify_pixel_status(request: Request):
         print(f"⚠️ Pixel check - Web Pixel API error: {e}")
 
     # 3. Check if we have received any pixel events in Supabase (last 30 days)
+    # Try multiple search strategies to catch events even with domain format mismatches
     try:
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
             sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
             cutoff = (datetime.utcnow() - timedelta(days=30)).isoformat()
+            
+            # Strategy 1: exact match on user_id + shop_domain
             result = sb.table("shopify_events") \
                 .select("id", count="exact") \
                 .eq("user_id", user_id) \
@@ -4748,6 +4759,38 @@ async def get_shopify_pixel_status(request: Request):
                 .limit(1) \
                 .execute()
             event_count = result.count if hasattr(result, 'count') and result.count else len(result.data or [])
+            
+            # Strategy 2: if no match, try by user_id only (in case shop_domain format differs)
+            if event_count == 0:
+                result2 = sb.table("shopify_events") \
+                    .select("id", count="exact") \
+                    .eq("user_id", user_id) \
+                    .gte("created_at", cutoff) \
+                    .limit(1) \
+                    .execute()
+                event_count = result2.count if hasattr(result2, 'count') and result2.count else len(result2.data or [])
+            
+            # Strategy 3: try by shop_domain only (in case user_id mapping changed)
+            if event_count == 0:
+                result3 = sb.table("shopify_events") \
+                    .select("id", count="exact") \
+                    .eq("shop_domain", shop_domain) \
+                    .gte("created_at", cutoff) \
+                    .limit(1) \
+                    .execute()
+                event_count = result3.count if hasattr(result3, 'count') and result3.count else len(result3.data or [])
+            
+            # Strategy 4: try with .myshopify.com stripped/added
+            if event_count == 0:
+                alt_domain = shop_domain.replace(".myshopify.com", "") if ".myshopify.com" in shop_domain else f"{shop_domain}.myshopify.com"
+                result4 = sb.table("shopify_events") \
+                    .select("id", count="exact") \
+                    .eq("shop_domain", alt_domain) \
+                    .gte("created_at", cutoff) \
+                    .limit(1) \
+                    .execute()
+                event_count = result4.count if hasattr(result4, 'count') and result4.count else len(result4.data or [])
+            
             has_events = event_count > 0
             if has_events:
                 pixel_active = True
@@ -5332,13 +5375,14 @@ def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
             return {}
 
         prompt = {
-            "task": "Audit existing ecommerce product images and give product-specific improvements.",
-            "language": "fr",
+            "task": "Expert ecommerce product image audit — analyze visual quality, design, and conversion potential.",
+            "language": "en",
             "constraints": [
                 "Do NOT browse the web.",
                 "Use ONLY the provided images + product context.",
-                "Be specific: describe background, lighting, crop, reflections, color cast, consistency.",
-                "Provide quick fixes + a concrete re-shoot plan linked to the product.",
+                "MANDATORY checks: (1) Background vs product color CONTRAST — does the product pop or blend into its background? (2) Image SHARPNESS — is the image crisp or blurry/pixelated? (3) LIGHTING quality — even, flattering, or harsh/uneven shadows? (4) COMPOSITION — is the product centered, well-cropped, with enough white space? (5) DESIGN attractiveness — would a shopper trust and desire this product from the photo? (6) COLOR accuracy — do colors look natural or washed out/over-saturated? (7) CONSISTENCY across images — do they look like they belong to the same brand/shoot?",
+                "Rate each check as: excellent / good / needs_improvement / poor.",
+                "Provide quick fixes with SPECIFIC instructions (e.g. 'increase contrast by 20%', 'crop to center product with 15% padding').",
                 "Return only valid JSON matching output_schema.",
             ],
             "output_schema": {
@@ -5347,10 +5391,20 @@ def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
                 "tone": "string",
                 "background": "string",
                 "color_palette": ["string"],
+                "quality_scores": {
+                    "overall": 0.0,
+                    "sharpness": "excellent|good|needs_improvement|poor",
+                    "lighting": "excellent|good|needs_improvement|poor",
+                    "background_contrast": "excellent|good|needs_improvement|poor",
+                    "composition": "excellent|good|needs_improvement|poor",
+                    "color_accuracy": "excellent|good|needs_improvement|poor",
+                    "design_appeal": "excellent|good|needs_improvement|poor",
+                    "brand_consistency": "excellent|good|needs_improvement|poor",
+                },
                 "audit": {
-                    "what_i_see": ["string"],
-                    "issues": ["string"],
-                    "quick_fixes": ["string"],
+                    "what_i_see": ["string — describe each image objectively"],
+                    "issues": ["string — specific problems found with severity"],
+                    "quick_fixes": ["string — actionable fix with exact instructions"],
                     "consistency_score": 0.0,
                 },
                 "action_plan": [{"step": 1, "title": "string", "do": ["string"]}],
@@ -5371,7 +5425,7 @@ def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
         }
 
         user_parts: list[dict] = [
-            {"type": "text", "text": "Réponds STRICTEMENT en JSON (output_schema).\n" + json.dumps(prompt, ensure_ascii=False)},
+            {"type": "text", "text": "Respond STRICTLY in JSON matching output_schema. Analyze EVERY quality dimension.\n" + json.dumps(prompt, ensure_ascii=False)},
         ]
         for u in urls:
             user_parts.append({"type": "image_url", "image_url": {"url": u}})
@@ -5381,7 +5435,7 @@ def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
             response = client.chat.completions.create(
                 model=OPENAI_VISION_MODEL,
                 messages=[
-                    {"role": "system", "content": "Tu es un directeur artistique e-commerce senior. Tu audites des images produits et proposes des corrections concrètes, spécifiques au produit."},
+                    {"role": "system", "content": "You are a senior ecommerce art director and image quality expert. You audit product photos for sharpness, lighting, color contrast, background quality, composition, and design appeal. You give specific, actionable feedback that a store owner can immediately apply. Always rate each quality dimension."},
                     {"role": "user", "content": user_parts},
                 ],
                 temperature=0.2,
@@ -5398,6 +5452,7 @@ def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
                     "tone": row.get("tone"),
                     "background": row.get("background"),
                     "color_palette": row.get("color_palette"),
+                    "quality_scores": row.get("quality_scores") if isinstance(row.get("quality_scores"), dict) else {},
                     "style_rules": row.get("style_rules"),
                     "notes": row.get("notes"),
                     "audit": row.get("audit") if isinstance(row.get("audit"), dict) else {},
@@ -5413,24 +5468,37 @@ def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
             print(f"⚠️ image assistance AI(vision:{pid}) error: {type(e).__name__}: {str(e)[:160]}")
             return {}
 
-    # Keep latency bounded.
+    # Keep latency bounded — aim for <10s total.
     started = time.time()
-    budget_s = 22
-    max_products = 6
+    budget_s = 10
+    max_products = 3
 
     # Prioritize: audit vision when photos exist; otherwise text.
     queue = (with_images + without_images)[:max_products]
-    for p in queue:
-        if (time.time() - started) > budget_s:
-            break
+
+    # Process in parallel using ThreadPoolExecutor for speed
+    import concurrent.futures
+
+    def _process_product(p):
         pid = str(p.get("product_id") or "")
-        if not pid or pid in out:
-            continue
+        if not pid:
+            return (pid, {})
         payload = {}
         if _normalize_image_urls(p.get("image_urls")):
             payload = _vision_for_product(p)
         if not payload:
             payload = _text_only_for_product(p)
+        return (pid, payload)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {executor.submit(_process_product, p): p for p in queue}
+        for future in concurrent.futures.as_completed(futures, timeout=budget_s):
+            try:
+                pid, payload = future.result(timeout=2)
+                if pid and payload:
+                    _merge(pid, payload)
+            except Exception:
+                pass
         if payload:
             _merge(pid, payload)
 
@@ -5540,8 +5608,8 @@ async def get_shopify_image_risks(request: Request, range: str = "30d", limit: i
             })
 
         items.sort(key=lambda x: (x.get("score", 0), x.get("views", 0)), reverse=True)
-        # Keep UI responsive: only return top items that the dashboard shows.
-        items = items[:8]
+        # Keep UI responsive: only return top items — limit to 3 for speed.
+        items = items[:3]
 
         use_ai = bool(int(ai or 0))
         if use_ai and not OPENAI_API_KEY:
@@ -5552,15 +5620,15 @@ async def get_shopify_image_risks(request: Request, range: str = "30d", limit: i
             # Fetch extra details for these specific products to make AI recommendations truly product-specific.
             details_by_id: dict[str, dict] = {}
             started = time.time()
-            for it in items:
+            for it in items[:3]:
                 pid = str(it.get("product_id") or "")
                 if not pid:
                     continue
-                if (time.time() - started) > 15:
+                if (time.time() - started) > 5:
                     break
                 try:
                     detail_url = f"https://{shop_domain}/admin/api/2024-10/products/{pid}.json?fields=id,title,body_html,product_type,vendor,tags,variants"
-                    dresp = requests.get(detail_url, headers=headers, timeout=10)
+                    dresp = requests.get(detail_url, headers=headers, timeout=5)
                     if dresp.status_code == 200:
                         prod = (dresp.json() or {}).get("product") or {}
                         details_by_id[pid] = prod
@@ -7396,20 +7464,26 @@ def get_ai_engine():
 
 def get_user_tier(user_id: str) -> str:
     """Resolve user's subscription tier from Supabase; default to standard."""
+    tier_map = {
+        'standard': 'standard', 'pro': 'pro', 'premium': 'premium',
+        'gold': 'premium', 'silver': 'pro', 'bronze': 'standard',
+        'basic': 'standard', 'business': 'pro', 'enterprise': 'premium',
+        '99': 'standard', '199': 'pro', '299': 'premium',
+    }
     try:
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
             supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
             sub_result = supabase.table("subscriptions").select("plan_tier,status,created_at").eq("user_id", user_id).in_("status", ["active", "trialing", "past_due", "incomplete"]).order("created_at", desc=True).limit(1).execute()
             if sub_result.data:
-                plan = (sub_result.data[0].get("plan_tier") or "standard").lower()
-                if plan in ["standard", "pro", "premium"]:
-                    return plan
+                raw = (sub_result.data[0].get("plan_tier") or "standard").lower()
+                plan = tier_map.get(raw, "standard")
+                return plan
 
             profile_result = supabase.table("user_profiles").select("subscription_plan,subscription_tier").eq("id", user_id).limit(1).execute()
             if profile_result.data:
-                plan = (profile_result.data[0].get("subscription_plan") or profile_result.data[0].get("subscription_tier") or "standard").lower()
-                if plan in ["standard", "pro", "premium"]:
-                    return plan
+                raw = (profile_result.data[0].get("subscription_plan") or profile_result.data[0].get("subscription_tier") or "standard").lower()
+                plan = tier_map.get(raw, "standard")
+                return plan
     except Exception as e:
         print(f"Tier resolve warning: {e}")
 
@@ -9103,6 +9177,13 @@ def _send_stock_alert_email(
         msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
         msg["To"] = to_email
         msg["Subject"] = subject
+        # Priority headers to help land in inbox instead of spam
+        msg["X-Priority"] = "1"
+        msg["X-MSMail-Priority"] = "High"
+        msg["Importance"] = "High"
+        msg["Precedence"] = "bulk"
+        msg["X-Mailer"] = "ShopBrain AI Notifications"
+        msg["Message-ID"] = f"<stock-alert-{int(datetime.utcnow().timestamp())}@shopbrain.ai>"
         msg.set_content(text_body)
         msg.add_alternative(html_body, subtype="html")
 

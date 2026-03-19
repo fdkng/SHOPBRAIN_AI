@@ -438,6 +438,26 @@ export default function Dashboard() {
     return message || fallback
   }
 
+  // 🧹 Strip HTML tags from AI-generated suggestions (show clean text to user)
+  const stripHtmlTags = (html) => {
+    if (!html || typeof html !== 'string') return html || ''
+    return html
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n\n')
+      .replace(/<\/li>/gi, '\n')
+      .replace(/<\/h[1-6]>/gi, '\n\n')
+      .replace(/<li[^>]*>/gi, '• ')
+      .replace(/<[^>]*>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+  }
+
   // 🔗 Format chat text: Markdown links [text](url), **bold**, raw URLs → clickable React elements
   const formatChatText = (text) => {
     if (!text || typeof text !== 'string') return text || ''
@@ -4420,7 +4440,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         <div className="text-sm text-gray-400 space-y-2">
                           <p><span className="text-gray-500">Titre:</span> {item.current_title || '—'}</p>
                           <div className="max-h-56 overflow-y-auto pr-2 text-base text-gray-300 whitespace-pre-wrap">
-                            {item.current_description || '—'}
+                            {stripHtmlTags(item.current_description) || '—'}
                           </div>
                         </div>
                       </div>
@@ -4428,10 +4448,10 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         <p className="text-sm font-semibold text-gray-300 mb-2">Suggestions IA</p>
                         <div className="text-sm text-gray-300 space-y-3">
                           {item.suggested_title ? (
-                            <p className="text-base"><span className="text-gray-500">Titre suggéré:</span> {item.suggested_title}</p>
+                            <p className="text-base"><span className="text-gray-500">Titre suggéré:</span> {stripHtmlTags(item.suggested_title)}</p>
                           ) : null}
                           <div className="max-h-72 overflow-y-auto pr-2 text-base text-gray-200 whitespace-pre-wrap">
-                            {item.suggested_description || '—'}
+                            {stripHtmlTags(item.suggested_description) || '—'}
                           </div>
                         </div>
                       </div>

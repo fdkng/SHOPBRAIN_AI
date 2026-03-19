@@ -5,7 +5,7 @@ const LanguageContext = createContext()
 
 export const LanguageProvider = ({ children }) => {
   const [language, setLanguageState] = useState(() => {
-    try { return localStorage.getItem('language') || 'fr' } catch { return 'fr' }
+    try { return localStorage.getItem('language') || 'en' } catch { return 'en' }
   })
 
   const setLanguage = useCallback((lang) => {

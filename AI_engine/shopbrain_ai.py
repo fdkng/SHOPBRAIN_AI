@@ -197,6 +197,30 @@ class ShopBrainAI:
             'optimizations': []
         }
         
+        # Calculate category averages for comparison
+        category_prices = {}
+        for p in products:
+            ptype = (p.get('product_type') or 'general').lower()
+            for v in p.get('variants', []):
+                try:
+                    price = float(v.get('price', 0))
+                    if price > 0:
+                        category_prices.setdefault(ptype, []).append(price)
+                except:
+                    pass
+        
+        all_prices = []
+        for p in products:
+            for v in p.get('variants', []):
+                try:
+                    price = float(v.get('price', 0))
+                    if price > 0:
+                        all_prices.append(price)
+                except:
+                    pass
+        
+        overall_avg = sum(all_prices) / len(all_prices) if all_prices else 0
+        
         # Analyse produit par produit (top 5)
         for p in products[:5]:
             product_name = p.get('title', 'Sans titre')
@@ -205,8 +229,40 @@ class ShopBrainAI:
             if variants:
                 current_price = float(variants[0].get('price', 0))
                 
-                # Suggestion d'optimisation
-                suggested_price = current_price * 1.25  # +25%
+                # Skip products with zero price
+                if current_price <= 0:
+                    continue
+                
+                ptype = (p.get('product_type') or 'general').lower()
+                cat_prices = category_prices.get(ptype, all_prices)
+                cat_avg = sum(cat_prices) / len(cat_prices) if cat_prices else overall_avg
+                
+                # Smart suggestion based on position relative to category average
+                if current_price < cat_avg * 0.7:
+                    # Price is significantly below average — suggest increase
+                    suggested_price = round(current_price * 1.20, 2)
+                    reason = (
+                        f'Your current price (${current_price:.2f}) is {round((1 - current_price/cat_avg) * 100)}% below the average for similar products (${cat_avg:.2f}). '
+                        f'An increase of 20% would bring you closer to market value while keeping you competitive. '
+                        f'Studies show that prices too low can reduce perceived quality and trust.'
+                    )
+                elif current_price > cat_avg * 1.3:
+                    # Price is significantly above average — suggest decrease
+                    suggested_price = round(current_price * 0.90, 2)
+                    reason = (
+                        f'Your current price (${current_price:.2f}) is {round((current_price/cat_avg - 1) * 100)}% above similar products (avg ${cat_avg:.2f}). '
+                        f'A small decrease of 10% could improve conversions. '
+                        f'Competitive positioning helps capture price-sensitive buyers without sacrificing margins significantly.'
+                    )
+                else:
+                    # Price is near average — test a modest increase
+                    suggested_price = round(current_price * 1.15, 2)
+                    reason = (
+                        f'Your price (${current_price:.2f}) is well-positioned vs similar products (avg ${cat_avg:.2f}). '
+                        f'A test increase of 15% would validate price elasticity — '
+                        f'e-commerce data shows that 15-25% increases rarely affect conversion rates for unique/quality products.'
+                    )
+                
                 potential_increase = suggested_price - current_price
                 
                 price_analysis['optimizations'].append({
@@ -214,8 +270,9 @@ class ShopBrainAI:
                     'current_price': round(current_price, 2),
                     'suggested_price': round(suggested_price, 2),
                     'increase': round(potential_increase, 2),
-                    'reason': 'Test d\'élasticité prix - Les études montrent qu\'une augmentation de 20-30% affecte rarement les ventes pour les produits uniques.',
-                    'expected_impact': f'+{round((potential_increase / current_price) * 100, 1)}% de revenus par unité vendue'
+                    'category_average': round(cat_avg, 2),
+                    'reason': reason,
+                    'expected_impact': f'+{round((potential_increase / current_price) * 100, 1)}% revenue per unit sold'
                 })
         
         # Opportunités générales
