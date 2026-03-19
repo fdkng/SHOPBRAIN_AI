@@ -725,6 +725,19 @@ export default function Dashboard() {
     }
   }, [settingsTab])
 
+  // Auto-load bundles when tab is opened (no button needed)
+  const bundlesAutoLoadedRef = useRef(false)
+  useEffect(() => {
+    if (activeTab === 'action-bundles' && !bundlesAutoLoadedRef.current && !insightsLoading && subscription?.has_subscription) {
+      // Only auto-load once per session, or if no data yet
+      const hasBundleData = Array.isArray(insightsData?.bundle_suggestions) && insightsData.bundle_suggestions.length > 0
+      if (!hasBundleData) {
+        bundlesAutoLoadedRef.current = true
+        loadBundlesAsync().catch(() => {})
+      }
+    }
+  }, [activeTab])
+
   // ⚡ Debounced sync timer ref
   const syncConvTimerRef = useRef(null)
 
@@ -4507,7 +4520,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 disabled={insightsLoading}
                 className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
               >
-                {insightsLoading ? t('analysisInProgress') : t('launchAIAnalysis')}
+                {insightsLoading ? t('analysisInProgress') : t('launchPriceOptimization')}
               </button>
             </div>
             {renderStatus('action-price')}
@@ -4582,7 +4595,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 disabled={insightsLoading}
                 className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
               >
-                {insightsLoading ? t('analysisInProgress') : t('launchAIAnalysis')}
+                {insightsLoading ? t('analysisInProgress') : t('analyzeImages')}
               </button>
             </div>
             {renderStatus('action-images')}
@@ -4761,14 +4774,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
               <p className="text-gray-400">Packs basés sur les commandes passées pour booster l’AOV.</p>
             </div>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <p className="text-sm text-gray-400">{getInsightCount(insightsData?.bundle_suggestions)} suggestions</p>
-              <button
-                onClick={loadBundlesAsync}
-                disabled={insightsLoading}
-                className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
-              >
-                {insightsLoading ? t('analysisInProgress') : t('analyze')}
-              </button>
+              <p className="text-sm text-gray-400">{insightsLoading ? t('analysisInProgress') : `${getInsightCount(insightsData?.bundle_suggestions)} suggestions`}</p>
               <button
                 onClick={loadBundlesHistory}
                 disabled={bundlesHistoryLoading}
@@ -4940,8 +4946,8 @@ analytics.subscribe("product_added_to_cart", (event) => {
         {activeTab === 'action-returns' && (
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 space-y-6">
             <div>
-              <h2 className="text-white text-xl font-bold mb-2">Anti-retours / chargebacks</h2>
-              <p className="text-gray-400">Détecte les produits à risque de retours ou litiges.</p>
+              <h2 className="text-white text-xl font-bold mb-2">Anti-retours</h2>
+              <p className="text-gray-400">Détecte les produits à risque de retours.</p>
             </div>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <p className="text-sm text-gray-400">{getInsightCount(insightsData?.return_risks)} alertes</p>
@@ -4950,7 +4956,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 disabled={insightsLoading}
                 className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
               >
-                {insightsLoading ? t('analysisInProgress') : t('launchAIAnalysis')}
+                {insightsLoading ? t('analysisInProgress') : t('analyzeProducts')}
               </button>
             </div>
             {renderStatus('action-returns')}
@@ -5812,15 +5818,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     </div>
                     <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
                       <h4 className="text-lg font-semibold text-white mb-4">{t('paymentMethod')}</h4>
-                      <div className="flex items-center gap-4 mb-4">
-                        <div className="bg-gray-700 p-3 rounded">
-                          <span className="text-2xl">💳</span>
-                        </div>
-                        <div>
-                          <p className="text-white font-semibold">Visa •••• 7427</p>
-                          <p className="text-sm text-gray-400">Expires 10/2028</p>
-                        </div>
-                      </div>
+                      <p className="text-sm text-gray-400 mb-4">Géré par Stripe. Cliquez ci-dessous pour mettre à jour.</p>
                       <button onClick={handleUpdatePaymentMethod} disabled={saveLoading} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold">
                         {saveLoading ? '...' : t('updatePaymentMethod')}
                       </button>

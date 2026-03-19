@@ -5492,15 +5492,19 @@ def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
         futures = {executor.submit(_process_product, p): p for p in queue}
-        for future in concurrent.futures.as_completed(futures, timeout=budget_s):
-            try:
-                pid, payload = future.result(timeout=2)
-                if pid and payload:
-                    _merge(pid, payload)
-            except Exception:
-                pass
-        if payload:
-            _merge(pid, payload)
+        try:
+            for future in concurrent.futures.as_completed(futures, timeout=budget_s):
+                try:
+                    pid, payload = future.result(timeout=3)
+                    if pid and payload:
+                        _merge(pid, payload)
+                except Exception:
+                    pass
+        except concurrent.futures.TimeoutError:
+            # Budget exceeded — cancel remaining futures gracefully
+            for f in futures:
+                f.cancel()
+            print(f"⚠️ image-assistance: budget {budget_s}s exceeded, returning partial results")
 
     return out
 
@@ -5665,7 +5669,12 @@ async def get_shopify_image_risks(request: Request, range: str = "30d", limit: i
                     "image_urls": it.get("image_urls") or [],
                 })
 
-            ai_payload = _ai_image_assistance_batch(enriched_for_ai)
+            ai_payload = {}
+            try:
+                ai_payload = _ai_image_assistance_batch(enriched_for_ai)
+            except Exception as e:
+                print(f"⚠️ image-risks AI batch error (non-fatal): {type(e).__name__}: {str(e)[:200]}")
+                ai_payload = {}
 
             for it in items:
                 pid = str(it.get("product_id") or "")
