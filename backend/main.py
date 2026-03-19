@@ -2703,12 +2703,30 @@ def _normalize_shopify_id(raw_id: str | int | None) -> str | None:
 
 
 def _get_user_id_by_shop_domain(shop_domain: str) -> str | None:
+    """Resolve a user_id from a shop_domain.
+    
+    Tries multiple domain format variants to handle mismatches between
+    what Shopify.shop returns (e.g. 'store.myshopify.com') and what might
+    be stored in the shopify_connections table.
+    """
     if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
         return None
     supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-    result = supabase.table("shopify_connections").select("user_id").eq("shop_domain", shop_domain).limit(1).execute()
-    if result.data:
-        return result.data[0].get("user_id")
+    
+    # Build domain variants to try
+    domain = (shop_domain or "").strip().lower()
+    variants = [domain]
+    bare = domain.replace(".myshopify.com", "")
+    if bare != domain:
+        variants.append(bare)
+    full = f"{bare}.myshopify.com"
+    if full != domain:
+        variants.append(full)
+    
+    for variant in variants:
+        result = supabase.table("shopify_connections").select("user_id").eq("shop_domain", variant).limit(1).execute()
+        if result.data:
+            return result.data[0].get("user_id")
     return None
 
 
@@ -4652,6 +4670,7 @@ def _fetch_shopify_event_counts(user_id: str, shop_domain: str, days: int) -> di
     supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
     start_date = (datetime.utcnow() - timedelta(days=days)).isoformat()
 
+    # Try exact domain match first, then fallback to user_id only
     response = (
         supabase.table("shopify_events")
         .select("product_id,event_type,created_at")
@@ -4662,6 +4681,17 @@ def _fetch_shopify_event_counts(user_id: str, shop_domain: str, days: int) -> di
     )
 
     rows = response.data or []
+    
+    # Fallback: if no rows with exact domain, try user_id only
+    if not rows:
+        response2 = (
+            supabase.table("shopify_events")
+            .select("product_id,event_type,created_at")
+            .eq("user_id", user_id)
+            .gte("created_at", start_date)
+            .execute()
+        )
+        rows = response2.data or []
     counts: dict[str, dict[str, int]] = {}
     view_events = {"view_item", "product_viewed"}
     atc_events = {"add_to_cart", "product_added_to_cart"}
@@ -4685,10 +4715,18 @@ def _fetch_shopify_event_counts(user_id: str, shop_domain: str, days: int) -> di
 # ---------------------------------------------------------------------------
 @app.get("/api/shopify/pixel-status")
 async def get_shopify_pixel_status(request: Request):
-    """Vérifie si le Shopify Pixel (custom pixel ou script tag) est installé et actif."""
+    """Vérifie si le Shopify Pixel (custom pixel ou script tag) est installé et actif.
+    
+    Detection methods (in order):
+    1. GraphQL webPixelSubscriptions — detects Custom Pixels created via
+       Settings > Customer events > Add custom pixel (the recommended method).
+    2. REST ScriptTag API — detects older script-tag based pixels.
+    3. Supabase shopify_events — detects if pixel events have actually been
+       received (proves the pixel is firing, regardless of how it was installed).
+    """
     user_id = get_user_id(request)
     shop_domain, access_token = _get_shopify_connection(user_id)
-    headers = {
+    rest_headers = {
         "X-Shopify-Access-Token": access_token,
         "Content-Type": "application/json",
     }
@@ -4698,100 +4736,159 @@ async def get_shopify_pixel_status(request: Request):
     pixel_type = None
     pixel_details = []
     has_events = False
+    debug_info = {}
 
-    # 1. Check ScriptTag API for any pixel scripts
+    # ── 1. GraphQL: webPixelSubscriptions (Custom Pixels) ──────────────
+    # Custom Pixels created via Settings > Customer events are ONLY accessible
+    # through the GraphQL Admin API — the REST /web_pixels.json does NOT exist.
+    try:
+        graphql_url = f"https://{shop_domain}/admin/api/2024-10/graphql.json"
+        graphql_query = """
+        {
+            webPixelSubscriptions(first: 10) {
+                edges {
+                    node {
+                        id
+                        settings
+                    }
+                }
+            }
+        }
+        """
+        gql_resp = requests.post(
+            graphql_url,
+            headers=rest_headers,
+            json={"query": graphql_query},
+            timeout=15,
+        )
+        debug_info["graphql_status"] = gql_resp.status_code
+        if gql_resp.status_code == 200:
+            gql_data = gql_resp.json()
+            edges = (
+                (gql_data.get("data") or {})
+                .get("webPixelSubscriptions", {})
+                .get("edges", [])
+            )
+            debug_info["graphql_pixels_found"] = len(edges)
+            for edge in edges:
+                node = edge.get("node", {})
+                pixel_installed = True
+                pixel_active = True  # If it exists in GraphQL, Shopify considers it active
+                pixel_type = pixel_type or "custom_pixel"
+                pixel_details.append({
+                    "id": node.get("id"),
+                    "type": "custom_pixel",
+                    "source": "graphql_webPixelSubscriptions",
+                })
+        else:
+            debug_info["graphql_error"] = gql_resp.text[:300]
+            # Fallback: try the simpler `currentAppInstallation.webPixel` query
+            # which works for app-owned pixels
+            try:
+                gql2_query = """
+                {
+                    currentAppInstallation {
+                        id
+                    }
+                    webPixel {
+                        id
+                        settings
+                    }
+                }
+                """
+                gql2_resp = requests.post(
+                    graphql_url,
+                    headers=rest_headers,
+                    json={"query": gql2_query},
+                    timeout=15,
+                )
+                if gql2_resp.status_code == 200:
+                    gql2_data = gql2_resp.json()
+                    wp = (gql2_data.get("data") or {}).get("webPixel")
+                    if wp and wp.get("id"):
+                        pixel_installed = True
+                        pixel_active = True
+                        pixel_type = pixel_type or "custom_pixel"
+                        pixel_details.append({
+                            "id": wp.get("id"),
+                            "type": "custom_pixel",
+                            "source": "graphql_webPixel",
+                        })
+                        debug_info["graphql_fallback_found"] = True
+            except Exception:
+                pass
+    except Exception as e:
+        print(f"⚠️ Pixel check - GraphQL error: {e}")
+        debug_info["graphql_exception"] = str(e)[:200]
+
+    # ── 2. REST: ScriptTag API (legacy pixels) ────────────────────────
     try:
         st_url = f"https://{shop_domain}/admin/api/2024-10/script_tags.json"
-        st_resp = requests.get(st_url, headers=headers, timeout=15)
+        st_resp = requests.get(st_url, headers=rest_headers, timeout=15)
+        debug_info["script_tags_status"] = st_resp.status_code
         if st_resp.status_code == 200:
             script_tags = (st_resp.json() or {}).get("script_tags", [])
+            debug_info["script_tags_count"] = len(script_tags)
             for tag in script_tags:
                 src = (tag.get("src") or "").lower()
                 event = tag.get("event", "")
                 if "pixel" in src or "shopbrain" in src or "tracking" in src or "analytics" in src:
                     pixel_installed = True
-                    pixel_type = "script_tag"
+                    pixel_type = pixel_type or "script_tag"
                     pixel_details.append({
                         "id": tag.get("id"),
                         "src": tag.get("src"),
                         "event": event,
                         "display_scope": tag.get("display_scope", "all"),
                         "created_at": tag.get("created_at"),
+                        "type": "script_tag",
                     })
     except Exception as e:
         print(f"⚠️ Pixel check - ScriptTag API error: {e}")
+        debug_info["script_tags_exception"] = str(e)[:200]
 
-    # 2. Check Web Pixel API (Shopify custom pixels - newer method)
-    try:
-        wp_url = f"https://{shop_domain}/admin/api/2024-10/web_pixels.json"
-        wp_resp = requests.get(wp_url, headers=headers, timeout=15)
-        if wp_resp.status_code == 200:
-            web_pixels = (wp_resp.json() or {}).get("web_pixels", [])
-            for wp in web_pixels:
-                pixel_installed = True
-                pixel_type = pixel_type or "web_pixel"
-                pixel_details.append({
-                    "id": wp.get("id"),
-                    "name": wp.get("name"),
-                    "status": wp.get("status"),
-                })
-                if wp.get("status") == "active":
-                    pixel_active = True
-        elif wp_resp.status_code == 404:
-            # Web Pixel API not available on this plan/version — not an error
-            pass
-    except Exception as e:
-        print(f"⚠️ Pixel check - Web Pixel API error: {e}")
-
-    # 3. Check if we have received any pixel events in Supabase (last 30 days)
-    # Try multiple search strategies to catch events even with domain format mismatches
+    # ── 3. Supabase: check for received pixel events (last 30 days) ───
+    # This is the most reliable check: if events exist, the pixel IS working.
     try:
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
             sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
             cutoff = (datetime.utcnow() - timedelta(days=30)).isoformat()
             
-            # Strategy 1: exact match on user_id + shop_domain
+            # Build all domain variants to check
+            domain_variants = {shop_domain}
+            bare = shop_domain.replace(".myshopify.com", "")
+            domain_variants.add(bare)
+            domain_variants.add(f"{bare}.myshopify.com")
+            
+            event_count = 0
+            
+            # Strategy 1: match by user_id (most reliable — covers all domain formats)
             result = sb.table("shopify_events") \
                 .select("id", count="exact") \
                 .eq("user_id", user_id) \
-                .eq("shop_domain", shop_domain) \
                 .gte("created_at", cutoff) \
                 .limit(1) \
                 .execute()
             event_count = result.count if hasattr(result, 'count') and result.count else len(result.data or [])
+            debug_info["events_by_user_id"] = event_count
             
-            # Strategy 2: if no match, try by user_id only (in case shop_domain format differs)
+            # Strategy 2: match by any domain variant
             if event_count == 0:
-                result2 = sb.table("shopify_events") \
-                    .select("id", count="exact") \
-                    .eq("user_id", user_id) \
-                    .gte("created_at", cutoff) \
-                    .limit(1) \
-                    .execute()
-                event_count = result2.count if hasattr(result2, 'count') and result2.count else len(result2.data or [])
-            
-            # Strategy 3: try by shop_domain only (in case user_id mapping changed)
-            if event_count == 0:
-                result3 = sb.table("shopify_events") \
-                    .select("id", count="exact") \
-                    .eq("shop_domain", shop_domain) \
-                    .gte("created_at", cutoff) \
-                    .limit(1) \
-                    .execute()
-                event_count = result3.count if hasattr(result3, 'count') and result3.count else len(result3.data or [])
-            
-            # Strategy 4: try with .myshopify.com stripped/added
-            if event_count == 0:
-                alt_domain = shop_domain.replace(".myshopify.com", "") if ".myshopify.com" in shop_domain else f"{shop_domain}.myshopify.com"
-                result4 = sb.table("shopify_events") \
-                    .select("id", count="exact") \
-                    .eq("shop_domain", alt_domain) \
-                    .gte("created_at", cutoff) \
-                    .limit(1) \
-                    .execute()
-                event_count = result4.count if hasattr(result4, 'count') and result4.count else len(result4.data or [])
+                for domain_var in domain_variants:
+                    result2 = sb.table("shopify_events") \
+                        .select("id", count="exact") \
+                        .eq("shop_domain", domain_var) \
+                        .gte("created_at", cutoff) \
+                        .limit(1) \
+                        .execute()
+                    cnt = result2.count if hasattr(result2, 'count') and result2.count else len(result2.data or [])
+                    if cnt > 0:
+                        event_count = cnt
+                        debug_info["events_matched_domain"] = domain_var
+                        break
             
             has_events = event_count > 0
+            debug_info["total_events_found"] = event_count
             if has_events:
                 pixel_active = True
                 if not pixel_installed:
@@ -4799,8 +4896,36 @@ async def get_shopify_pixel_status(request: Request):
                     pixel_type = pixel_type or "events_detected"
     except Exception as e:
         print(f"⚠️ Pixel check - Supabase events error: {e}")
+        debug_info["events_exception"] = str(e)[:200]
 
-    # Determine overall status
+    # ── 4. Storefront probe: try to detect pixel code on the live site ─
+    # As a last resort, check if the storefront HTML contains references to
+    # our pixel endpoint (shopbrain-backend). This catches custom pixels that
+    # the GraphQL API may not expose to custom apps.
+    if not pixel_installed:
+        try:
+            probe_url = f"https://{shop_domain}"
+            probe_resp = requests.get(probe_url, timeout=10, headers={
+                "User-Agent": "Mozilla/5.0 ShopBrain-PixelCheck/1.0"
+            })
+            debug_info["storefront_status"] = probe_resp.status_code
+            if probe_resp.status_code == 200:
+                body_lower = probe_resp.text[:50000].lower()
+                if "shopbrain" in body_lower or "pixel-event" in body_lower:
+                    pixel_installed = True
+                    pixel_active = True
+                    pixel_type = pixel_type or "storefront_detected"
+                    pixel_details.append({
+                        "type": "storefront_detected",
+                        "source": "storefront_html_probe",
+                    })
+                    debug_info["storefront_shopbrain_found"] = True
+                else:
+                    debug_info["storefront_shopbrain_found"] = False
+        except Exception as e:
+            debug_info["storefront_exception"] = str(e)[:200]
+
+    # ── Determine overall status ──────────────────────────────────────
     if pixel_installed and pixel_active:
         status = "active"
         status_label = "✅ Pixel installé et actif"
@@ -4821,6 +4946,7 @@ async def get_shopify_pixel_status(request: Request):
         "status_label": status_label,
         "has_recent_events": has_events,
         "details": pixel_details,
+        "debug": debug_info,
     }
 
 

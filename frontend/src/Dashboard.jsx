@@ -4148,6 +4148,14 @@ export default function Dashboard() {
                     ) : (
                       <span className="text-xs text-gray-500">—</span>
                     )}
+                    <button
+                      onClick={() => { setPixelStatus(null); loadPixelStatus() }}
+                      disabled={pixelLoading}
+                      className="ml-1 text-xs text-gray-500 hover:text-gray-300 transition"
+                      title="Refresh pixel status"
+                    >
+                      🔄
+                    </button>
                   </div>
                   <button
                     onClick={() => setShowPixelGuide(!showPixelGuide)}
@@ -4157,6 +4165,18 @@ export default function Dashboard() {
                     <span>Comment connecter le Shopify Pixel</span>
                   </button>
                 </div>
+
+                {/* Debug info for pixel detection */}
+                {pixelStatus?.debug && pixelStatus.status !== 'active' && (
+                  <div className="px-3 pb-2">
+                    <details className="text-xs text-gray-600">
+                      <summary className="cursor-pointer hover:text-gray-400">Debug info</summary>
+                      <pre className="mt-1 text-xs text-gray-500 bg-gray-950 p-2 rounded overflow-x-auto">
+                        {JSON.stringify(pixelStatus.debug, null, 2)}
+                      </pre>
+                    </details>
+                  </div>
+                )}
 
                 {pixelStatus?.has_recent_events && (
                   <div className="px-3 pb-2">
