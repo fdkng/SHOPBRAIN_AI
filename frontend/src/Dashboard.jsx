@@ -235,6 +235,7 @@ export default function Dashboard() {
     return localStorage.getItem('shopCurrencyCache') || ''
   })
   const [rewriteProductId, setRewriteProductId] = useState('')
+  const [imageProductId, setImageProductId] = useState('')
   const [rewriteInstructions, setRewriteInstructions] = useState('')
   const [blockersData, setBlockersData] = useState(null)
   const [blockersLoading, setBlockersLoading] = useState(false)
@@ -2847,7 +2848,8 @@ export default function Dashboard() {
           await warmupBackend(session.access_token)
 
           const rangeValue = analyticsRange
-          const { response, data } = await fetchJsonWithRetry(`${API_URL}/api/shopify/image-risks?range=${encodeURIComponent(rangeValue)}&limit=120&ai=1`, {
+          const productParam = options?.productId ? `&product_id=${encodeURIComponent(options.productId)}` : ''
+          const { response, data } = await fetchJsonWithRetry(`${API_URL}/api/shopify/image-risks?range=${encodeURIComponent(rangeValue)}&limit=120&ai=1${productParam}`, {
             method: 'GET',
             headers: {
               'Authorization': `Bearer ${session.access_token}`,
@@ -3325,6 +3327,9 @@ export default function Dashboard() {
       loadOrdersList()
     }
     if (activeTab === 'action-rewrite' && (!products || products.length === 0)) {
+      loadProducts()
+    }
+    if (activeTab === 'action-images' && (!products || products.length === 0)) {
       loadProducts()
     }
   }, [activeTab])
@@ -4577,7 +4582,10 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 <button
                   onClick={() => runActionAnalysis('action-rewrite', { productId: rewriteProductId, instructions: rewriteInstructions })}
                   disabled={insightsLoading || !rewriteProductId}
-                  className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
+                  className="font-bold py-3 px-6 rounded-lg disabled:opacity-50 transition-all duration-200 text-black"
+                  style={{ background: 'linear-gradient(135deg, #D4A843 0%, #F2D272 25%, #BF953F 50%, #FCF6BA 75%, #B38728 100%)', boxShadow: '0 2px 12px rgba(212, 168, 67, 0.3)' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.boxShadow = '0 4px 20px rgba(212, 168, 67, 0.6)'; e.currentTarget.style.transform = 'translateY(-1px)' }}
+                  onMouseLeave={(e) => { e.currentTarget.style.boxShadow = '0 2px 12px rgba(212, 168, 67, 0.3)'; e.currentTarget.style.transform = 'translateY(0)' }}
                 >
                   {insightsLoading ? t('analysisInProgress') : t('launchRewriteAnalysis')}
                 </button>
@@ -4714,7 +4722,10 @@ analytics.subscribe("product_added_to_cart", (event) => {
               <button
                 onClick={() => runActionAnalysis('action-price')}
                 disabled={insightsLoading}
-                className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
+                className="font-bold py-3 px-6 rounded-lg disabled:opacity-50 transition-all duration-200 text-black"
+                  style={{ background: 'linear-gradient(135deg, #D4A843 0%, #F2D272 25%, #BF953F 50%, #FCF6BA 75%, #B38728 100%)', boxShadow: '0 2px 12px rgba(212, 168, 67, 0.3)' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.boxShadow = '0 4px 20px rgba(212, 168, 67, 0.6)'; e.currentTarget.style.transform = 'translateY(-1px)' }}
+                  onMouseLeave={(e) => { e.currentTarget.style.boxShadow = '0 2px 12px rgba(212, 168, 67, 0.3)'; e.currentTarget.style.transform = 'translateY(0)' }}
               >
                 {insightsLoading ? t('analysisInProgress') : t('launchPriceOptimization')}
               </button>
@@ -4781,18 +4792,44 @@ analytics.subscribe("product_added_to_cart", (event) => {
         {activeTab === 'action-images' && (
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 space-y-6">
             <div>
-              <h2 className="text-white text-2xl font-bold mb-2">Assistance images</h2>
-              <p className="text-gray-300 text-base">Plan d’action ultra précis: combien d’images, quelles images produire, avec quel fond/ton/couleurs, et prompts prêts à utiliser.</p>
+              <h2 className="text-white text-2xl font-bold mb-2">📸 Assistance images — Expert IA</h2>
+              <p className="text-gray-300 text-base">Analyse de niveau photographe professionnel: direction artistique, psychologie des couleurs, composition, éclairage — basée sur des études de conversion réelles.</p>
             </div>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <p className="text-base text-gray-300">{getInsightCount(insightsData?.image_risks)} produits analysés</p>
-              <button
-                onClick={() => runActionAnalysis('action-images')}
-                disabled={insightsLoading}
-                className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
-              >
-                {insightsLoading ? t('analysisInProgress') : t('analyzeImages')}
-              </button>
+              <div className="flex flex-col sm:flex-row gap-3 flex-1">
+                <select
+                  value={imageProductId}
+                  onChange={(event) => setImageProductId(event.target.value)}
+                  className="bg-gray-900 border border-gray-700 text-sm text-white rounded-lg px-3 py-2 min-w-[260px] focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500 outline-none"
+                >
+                  <option value="">Tous les produits (auto-détection)</option>
+                  {(products || []).map((product) => (
+                    <option key={product.id} value={product.id}>
+                      {product.title || product.name || `Produit ${product.id}`}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => runActionAnalysis('action-images', { productId: imageProductId || undefined })}
+                  disabled={insightsLoading}
+                  className="font-bold py-3 px-6 rounded-lg disabled:opacity-50 transition-all duration-200 text-black"
+                  style={{
+                    background: 'linear-gradient(135deg, #D4A843 0%, #F2D272 25%, #BF953F 50%, #FCF6BA 75%, #B38728 100%)',
+                    boxShadow: '0 2px 12px rgba(212, 168, 67, 0.3)',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.boxShadow = '0 4px 20px rgba(212, 168, 67, 0.6)'
+                    e.currentTarget.style.transform = 'translateY(-1px)'
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.boxShadow = '0 2px 12px rgba(212, 168, 67, 0.3)'
+                    e.currentTarget.style.transform = 'translateY(0)'
+                  }}
+                >
+                  {insightsLoading ? '⏳ Analyse en cours...' : '🔍 Analyser les images'}
+                </button>
+              </div>
+              <p className="text-sm text-gray-400">{getInsightCount(insightsData?.image_risks)} produits analysés</p>
             </div>
             {renderStatus('action-images')}
             {Array.isArray(insightsData?.notes) && insightsData.notes.length > 0 ? (
@@ -4805,67 +4842,138 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
             <div className="space-y-3">
               {!insightsLoading && (!insightsData?.image_risks || insightsData.image_risks.length === 0) ? (
-                <p className="text-sm text-gray-500">Aucun signal détecté.</p>
+                <div className="text-center py-8">
+                  <p className="text-3xl mb-3">📸</p>
+                  <p className="text-sm text-gray-500">
+                    {imageProductId
+                      ? 'Clique sur "Analyser les images" pour lancer l\'expertise IA sur ce produit.'
+                      : 'Sélectionne un produit ou lance l\'analyse globale pour obtenir des recommandations d\'expert.'}
+                  </p>
+                </div>
               ) : (
                 insightsData?.image_risks?.slice(0, 8).map((item, index) => (
-                  <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
-                    <p className="text-white font-semibold text-lg">{item.title || `Produit #${item.product_id}`}</p>
-                    <p className="text-sm text-gray-400">
-                      {item.images_count} images{item.missing_alt ? ' • alt manquant' : ''}
-                      {item.view_to_cart_rate !== null && item.view_to_cart_rate !== undefined ? ` • v→panier ${Math.round(item.view_to_cart_rate * 100)}%` : ''}
-                    </p>
+                  <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-xl p-5 space-y-4">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <p className="text-white font-bold text-lg">{item.title || `Produit #${item.product_id}`}</p>
+                        <p className="text-sm text-gray-400 mt-1">
+                          {item.images_count} image{item.images_count !== 1 ? 's' : ''}{item.missing_alt ? ' • ⚠️ alt manquant' : ''}
+                          {item.view_to_cart_rate !== null && item.view_to_cart_rate !== undefined ? ` • vue→panier ${Math.round(item.view_to_cart_rate * 100)}%` : ''}
+                        </p>
+                      </div>
+                      {item.recommendations?.source === 'ai' && (
+                        <span className="text-xs px-2 py-1 rounded-full font-semibold text-black" style={{ background: 'linear-gradient(135deg, #D4A843, #F2D272, #BF953F)' }}>
+                          IA Expert
+                        </span>
+                      )}
+                    </div>
 
                     {item?.recommendations ? (
-                      <div className="mt-4 space-y-4">
+                      <div className="space-y-4">
                         <div className="text-base text-gray-200">
                           Cible: <span className="text-white font-semibold">{item.recommendations.target_total_images}</span> images
                           {Number.isFinite(Number(item.recommendations.recommended_new_images)) && item.recommendations.recommended_new_images > 0
                             ? <span className="text-gray-400"> • à produire: {item.recommendations.recommended_new_images}</span>
-                            : <span className="text-gray-400"> • OK sur la quantité</span>
+                            : <span className="text-gray-400"> • ✓ quantité OK</span>
                           }
                         </div>
 
                         {item.recommendations?.source === 'ai' && item.recommendations?.ai ? (
-                          <div className="text-sm text-gray-300 space-y-1">
-                            <div className="text-white font-semibold">Direction artistique (spécifique produit)</div>
-                            {item.recommendations.ai.tone ? <div>• Ton: <span className="text-white">{item.recommendations.ai.tone}</span></div> : null}
-                            {item.recommendations.ai.background ? <div>• Fond / background: <span className="text-white">{item.recommendations.ai.background}</span></div> : null}
+                          <div className="bg-gradient-to-br from-gray-800/80 to-gray-900/80 border border-yellow-700/30 rounded-xl p-4 space-y-3">
+                            <div className="text-white font-bold text-base flex items-center gap-2">
+                              🎨 Direction artistique
+                              <span className="text-xs text-gray-500 font-normal">(spécifique à ce produit)</span>
+                            </div>
+                            {item.recommendations.ai.tone ? (
+                              <div className="text-sm text-gray-300">
+                                <span className="text-gray-500">Ton visuel:</span> <span className="text-white">{item.recommendations.ai.tone}</span>
+                              </div>
+                            ) : null}
+                            {item.recommendations.ai.background ? (
+                              <div className="text-sm text-gray-300">
+                                <span className="text-gray-500">Fond recommandé:</span> <span className="text-white">{item.recommendations.ai.background}</span>
+                              </div>
+                            ) : null}
                             {Array.isArray(item.recommendations.ai.color_palette) && item.recommendations.ai.color_palette.length > 0 ? (
-                              <div>• Palette: <span className="text-white">{item.recommendations.ai.color_palette.slice(0, 6).join(', ')}</span></div>
+                              <div className="text-sm text-gray-300">
+                                <span className="text-gray-500">Palette chromatique:</span>
+                                <div className="flex flex-wrap gap-2 mt-1">
+                                  {item.recommendations.ai.color_palette.slice(0, 6).map((color, ci) => (
+                                    <span key={ci} className="inline-flex items-center gap-1.5 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-xs text-white">
+                                      {/^#[0-9a-fA-F]{3,8}$/.test(color) ? (
+                                        <span className="w-3 h-3 rounded-full border border-gray-600 inline-block" style={{ backgroundColor: color }}></span>
+                                      ) : null}
+                                      {color}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
                             ) : null}
                             {Array.isArray(item.recommendations.ai.product_facts_used) && item.recommendations.ai.product_facts_used.length > 0 ? (
-                              <div className="text-gray-400">
-                                • Détails pris en compte: <span className="text-white">{item.recommendations.ai.product_facts_used.slice(0, 6).join(' · ')}</span>
+                              <div className="text-sm text-gray-400 mt-2">
+                                <span className="text-gray-500">Éléments du produit pris en compte:</span>
+                                <div className="flex flex-wrap gap-1.5 mt-1">
+                                  {item.recommendations.ai.product_facts_used.slice(0, 6).map((fact, fi) => (
+                                    <span key={fi} className="bg-gray-800/80 border border-gray-700 text-gray-300 rounded px-2 py-0.5 text-xs">{fact}</span>
+                                  ))}
+                                </div>
                               </div>
                             ) : null}
                             {Array.isArray(item.recommendations.ai.notes) && item.recommendations.ai.notes.length > 0 ? (
-                              <div className="text-gray-400">• Note: {item.recommendations.ai.notes[0]}</div>
+                              <div className="text-xs text-gray-500 mt-1 italic">💡 {item.recommendations.ai.notes[0]}</div>
                             ) : null}
                           </div>
                         ) : null}
 
+                        {/* Quality Scores (vision audit) */}
+                        {item.recommendations?.source === 'ai' && item.recommendations?.ai?.quality_scores && Object.keys(item.recommendations.ai.quality_scores).length > 1 ? (
+                          <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4 space-y-3">
+                            <div className="text-white font-bold text-base">📊 Scores qualité</div>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                              {Object.entries(item.recommendations.ai.quality_scores).filter(([k]) => k !== 'overall').map(([key, val]) => {
+                                const labelMap = { sharpness: 'Netteté', lighting: 'Éclairage', background_contrast: 'Contraste fond', composition: 'Composition', color_accuracy: 'Couleurs', design_appeal: 'Design', brand_consistency: 'Cohérence' }
+                                const colorMap = { excellent: 'text-green-400 bg-green-900/30 border-green-700/40', good: 'text-blue-400 bg-blue-900/30 border-blue-700/40', needs_improvement: 'text-yellow-400 bg-yellow-900/30 border-yellow-700/40', poor: 'text-red-400 bg-red-900/30 border-red-700/40' }
+                                const displayVal = String(val || '').replace(/_/g, ' ')
+                                return (
+                                  <div key={key} className={`rounded-lg border px-3 py-2 text-center ${colorMap[val] || 'text-gray-400 bg-gray-800 border-gray-700'}`}>
+                                    <p className="text-[10px] uppercase tracking-wider opacity-70">{labelMap[key] || key}</p>
+                                    <p className="text-xs font-bold mt-0.5 capitalize">{displayVal}</p>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        ) : null}
+
                         {item.recommendations?.source === 'ai' && item.recommendations?.ai?.audit ? (
-                          <div className="text-sm text-gray-300 space-y-2">
-                            <div className="text-white font-semibold">Audit images existantes</div>
+                          <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4 space-y-3">
+                            <div className="text-white font-bold text-base">🔍 Audit images existantes</div>
+                            {Array.isArray(item.recommendations.ai.audit.what_i_see) && item.recommendations.ai.audit.what_i_see.length > 0 ? (
+                              <div className="space-y-1">
+                                <div className="text-xs text-gray-500 uppercase tracking-wider">Ce que je vois</div>
+                                {item.recommendations.ai.audit.what_i_see.slice(0, 4).map((line, idx) => (
+                                  <div key={idx} className="text-sm text-gray-300">• {line}</div>
+                                ))}
+                              </div>
+                            ) : null}
                             {Array.isArray(item.recommendations.ai.audit.issues) && item.recommendations.ai.audit.issues.length > 0 ? (
                               <div className="space-y-1">
-                                <div className="text-gray-400">Problèmes détectés</div>
+                                <div className="text-xs text-gray-500 uppercase tracking-wider">⚠️ Problèmes détectés</div>
                                 {item.recommendations.ai.audit.issues.slice(0, 5).map((line, idx) => (
-                                  <div key={idx}>• {line}</div>
+                                  <div key={idx} className="text-sm text-gray-300">• {line}</div>
                                 ))}
                               </div>
                             ) : null}
                             {Array.isArray(item.recommendations.ai.audit.quick_fixes) && item.recommendations.ai.audit.quick_fixes.length > 0 ? (
                               <div className="space-y-1">
-                                <div className="text-gray-400">Fix rapides (aujourd’hui)</div>
+                                <div className="text-xs text-gray-500 uppercase tracking-wider">⚡ Corrections rapides</div>
                                 {item.recommendations.ai.audit.quick_fixes.slice(0, 5).map((line, idx) => (
-                                  <div key={idx}>• {line}</div>
+                                  <div key={idx} className="text-sm text-green-300/90">✓ {line}</div>
                                 ))}
                               </div>
                             ) : null}
                           </div>
                         ) : null}
-
 
                         {item.recommendations?.source !== 'ai' && Array.isArray(item.recommendations.category_notes) && item.recommendations.category_notes.length > 0 ? (
                           <div className="text-sm text-gray-400 space-y-1">
@@ -4876,16 +4984,16 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         ) : null}
 
                         {Array.isArray(item.recommendations.action_plan) && item.recommendations.action_plan.length > 0 ? (
-                          <div className="bg-gray-800/60 border border-gray-700 rounded-lg p-4 space-y-2">
-                            <div className="text-white font-semibold text-base">Plan d’action (quoi faire, dans l’ordre)</div>
+                          <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4 space-y-2">
+                            <div className="text-white font-bold text-base">📋 Plan d'action</div>
                             <div className="space-y-2">
                               {item.recommendations.action_plan.slice(0, 7).map((stepObj, idx) => (
                                 <div key={idx} className="text-sm text-gray-300">
-                                  <div className="font-semibold text-white">{stepObj.step}. {stepObj.title}</div>
+                                  <div className="font-semibold text-white">Étape {stepObj.step}. {stepObj.title}</div>
                                   {Array.isArray(stepObj.do) ? (
-                                    <div className="mt-1 text-gray-300 space-y-1">
+                                    <div className="mt-1 text-gray-300 space-y-1 pl-4">
                                       {stepObj.do.slice(0, 4).map((line, lineIdx) => (
-                                        <div key={lineIdx}>- {line}</div>
+                                        <div key={lineIdx}>→ {line}</div>
                                       ))}
                                     </div>
                                   ) : null}
@@ -4896,21 +5004,25 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         ) : null}
 
                         {Array.isArray(item.recommendations.images_to_create) && item.recommendations.images_to_create.length > 0 ? (
-                          <div className="bg-gray-800/60 border border-gray-700 rounded-lg p-4 space-y-2">
-                            <div className="text-white font-semibold text-base">À créer (exactement)</div>
-                            <div className="space-y-3">
+                          <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4 space-y-3">
+                            <div className="text-white font-bold text-base">📸 Photos à réaliser</div>
+                            <div className="space-y-4">
                               {item.recommendations.images_to_create.slice(0, 8).map((img, idx) => (
-                                <div key={idx} className="text-sm text-gray-300">
-                                  <div className="font-semibold text-white">Image {img.index || (idx + 1)} — {img.name}</div>
-                                  <div className="text-gray-300">{img.what_to_shoot}</div>
+                                <div key={idx} className="bg-gray-900/50 border border-gray-700/60 rounded-lg p-3 space-y-2">
+                                  <div className="font-bold text-white text-sm">Image {img.index || (idx + 1)} — {img.name}</div>
+                                  <div className="text-sm text-gray-300">{img.what_to_shoot}</div>
+                                  {img.why ? <div className="text-xs text-yellow-400/80 italic">💡 {img.why}</div> : null}
                                   {Array.isArray(img.uses_facts) && img.uses_facts.length > 0 ? (
-                                    <div className="text-gray-400 mt-2">{t('whyAdapted')}: <span className="text-white">{img.uses_facts.slice(0, 3).join(' · ')}</span></div>
+                                    <div className="text-xs text-gray-500">Basé sur: <span className="text-gray-300">{img.uses_facts.slice(0, 3).join(' · ')}</span></div>
                                   ) : null}
-                                  <div className="text-gray-400 mt-1">
-                                    {t('background')}: {img.background} • Ton: {img.color_tone} • Props: {img.props}
+                                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+                                    {img.background ? <div className="bg-gray-800/80 rounded px-2 py-1"><span className="text-gray-500">Fond:</span> <span className="text-gray-300">{img.background}</span></div> : null}
+                                    {img.color_tone ? <div className="bg-gray-800/80 rounded px-2 py-1"><span className="text-gray-500">Ton:</span> <span className="text-gray-300">{img.color_tone}</span></div> : null}
+                                    {img.props ? <div className="bg-gray-800/80 rounded px-2 py-1"><span className="text-gray-500">Props:</span> <span className="text-gray-300">{img.props}</span></div> : null}
+                                    {img.camera ? <div className="bg-gray-800/80 rounded px-2 py-1"><span className="text-gray-500">Caméra:</span> <span className="text-gray-300">{img.camera}</span></div> : null}
+                                    {img.lighting ? <div className="bg-gray-800/80 rounded px-2 py-1"><span className="text-gray-500">Éclairage:</span> <span className="text-gray-300">{img.lighting}</span></div> : null}
                                   </div>
-                                  <div className="text-gray-400">{t('camera')}: {img.camera} • {t('lighting')}: {img.lighting}</div>
-                                  {img.editing_notes ? <div className="text-gray-500">{t('editing')}: {img.editing_notes}</div> : null}
+                                  {img.editing_notes ? <div className="text-xs text-gray-500">✏️ Post-production: {img.editing_notes}</div> : null}
                                 </div>
                               ))}
                             </div>
@@ -4919,7 +5031,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                         {Array.isArray(item.recommendations.recommended_order) && item.recommendations.recommended_order.length > 0 ? (
                           <div className="text-sm text-gray-300 space-y-1">
-                            <div className="text-white font-semibold">Ordre recommandé des images</div>
+                            <div className="text-white font-bold">🔢 Ordre recommandé dans la galerie</div>
                             {item.recommendations.recommended_order.slice(0, 8).map((o, idx) => (
                               <div key={idx}>#{o.position} — <span className="text-white">{o.shot}</span> <span className="text-gray-400">({o.goal})</span></div>
                             ))}
@@ -4928,29 +5040,9 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                         {Array.isArray(item.recommendations.style_guidelines) && item.recommendations.style_guidelines.length > 0 ? (
                           <div className="text-sm text-gray-400 space-y-1">
-                            <div className="text-white font-semibold">Style (fond, ton, background)</div>
+                            <div className="text-white font-bold">🎯 Règles de style</div>
                             {item.recommendations.style_guidelines.slice(0, 4).map((line, idx) => (
                               <div key={idx}>• {line}</div>
-                            ))}
-                          </div>
-                        ) : null}
-
-                        {Array.isArray(item.recommendations.prompt_blocks) && item.recommendations.prompt_blocks.length > 0 ? (
-                          <div className="space-y-2">
-                            <div className="text-white font-semibold">Prompts (génération d’images)</div>
-                            {item.recommendations.prompt_blocks.slice(0, 3).map((pb, idx) => (
-                              <div key={idx} className="bg-black/20 border border-gray-700 rounded-lg p-3 space-y-2">
-                                <div className="text-sm text-gray-200 font-semibold">{pb.shot}</div>
-                                {pb.outcome ? <div className="text-xs text-gray-400">Ce que tu obtiens: {pb.outcome}</div> : null}
-                                {Array.isArray(pb.prompts) ? pb.prompts.slice(0, 2).map((pr, prIdx) => (
-                                  <div key={prIdx} className="space-y-1">
-                                    <div className="text-xs text-gray-400">{pr.label}{pr.when_to_use ? ` — ${pr.when_to_use}` : ''}</div>
-                                    <div className="bg-black/30 border border-gray-700 rounded p-2 font-mono text-xs whitespace-pre-wrap break-words text-gray-200">
-                                      {pr.prompt}
-                                    </div>
-                                  </div>
-                                )) : null}
-                              </div>
                             ))}
                           </div>
                         ) : null}
@@ -4962,6 +5054,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
             </div>
           </div>
         )}
+
 
         {activeTab === 'action-bundles' && (
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 space-y-6">
@@ -5150,7 +5243,10 @@ analytics.subscribe("product_added_to_cart", (event) => {
               <button
                 onClick={() => runActionAnalysis('action-returns')}
                 disabled={insightsLoading}
-                className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
+                className="font-bold py-3 px-6 rounded-lg disabled:opacity-50 transition-all duration-200 text-black"
+                  style={{ background: 'linear-gradient(135deg, #D4A843 0%, #F2D272 25%, #BF953F 50%, #FCF6BA 75%, #B38728 100%)', boxShadow: '0 2px 12px rgba(212, 168, 67, 0.3)' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.boxShadow = '0 4px 20px rgba(212, 168, 67, 0.6)'; e.currentTarget.style.transform = 'translateY(-1px)' }}
+                  onMouseLeave={(e) => { e.currentTarget.style.boxShadow = '0 2px 12px rgba(212, 168, 67, 0.3)'; e.currentTarget.style.transform = 'translateY(0)' }}
               >
                 {insightsLoading ? t('analysisInProgress') : t('analyzeProducts')}
               </button>
@@ -5185,7 +5281,10 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 <button
                   onClick={analyzeProducts}
                   disabled={loading}
-                  className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
+                  className="font-bold py-3 px-6 rounded-lg disabled:opacity-50 transition-all duration-200 text-black"
+                  style={{ background: 'linear-gradient(135deg, #D4A843 0%, #F2D272 25%, #BF953F 50%, #FCF6BA 75%, #B38728 100%)', boxShadow: '0 2px 12px rgba(212, 168, 67, 0.3)' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.boxShadow = '0 4px 20px rgba(212, 168, 67, 0.6)'; e.currentTarget.style.transform = 'translateY(-1px)' }}
+                  onMouseLeave={(e) => { e.currentTarget.style.boxShadow = '0 2px 12px rgba(212, 168, 67, 0.3)'; e.currentTarget.style.transform = 'translateY(0)' }}
                 >
                   {loading ? t('analysisInProgress') : t('launchAIAnalysis')}
                 </button>

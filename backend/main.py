@@ -5613,12 +5613,11 @@ def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
                     "background": "string",
                     "color_tone": "string",
                     "props": "string",
-                    "camera": "string",
-                    "lighting": "string",
+                    "camera": "string (focal length, ex: 85mm f/1.8)",
+                    "lighting": "string (direction, diffusion, Kelvin temp)",
                     "editing_notes": "string",
-                    "why": "string",
+                    "why": "string (lié à un principe de conversion ou psychologie visuelle)",
                     "uses_facts": ["string"],
-                    "prompts": {"studio": "string", "premium": "string"},
                 }
             ],
             "style_rules": ["string"],
@@ -5632,10 +5631,15 @@ def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
             "First, extract 4-7 concrete product facts into product_facts_used (from title/type/tags/vendor/description/price).",
             "Every shot MUST include uses_facts with 1-3 exact strings copied from product_facts_used.",
             "Every shot (name/what_to_shoot/why) MUST clearly reference at least one fact from uses_facts.",
-            "Avoid overly prescriptive or dubious technical instructions. Prefer practical guidance tied to the product (what to show, why it matters, what detail proves quality).",
+            "For background: recommend SPECIFIC colors/materials (ex: 'marbre Calacatta blanc veiné gris' not just 'fond blanc'). Justify with color psychology.",
+            "For lighting: give technical specs (direction, diffusion type, Kelvin temperature, ex: '5200K softbox 45° gauche + réflecteur argent droite').",
+            "For camera: specify focal length and aperture (ex: '85mm f/2.8 pour compression flatteuse').",
+            "For color_palette: recommend 3-5 specific hex codes or Pantone references that complement the product based on color harmony theory.",
+            "Every recommendation MUST be justified by a conversion principle, psychology study, or industry best practice.",
+            "Do NOT include 'prompts' field in images_to_create. Give real photography directions, NOT AI generation prompts.",
             "If information is missing, infer reasonable specifics from product_type/title (ex: bouteille -> bouchon/étanchéité/prise en main).",
             "Avoid vague advice. Use measurable / concrete details.",
-            "Return only valid JSON matching output_schema.",
+            "Return only valid JSON matching output_schema. Language: French.",
         ]
         if retry:
             constraints.insert(0, "Your previous answer was too generic. Make it clearly different AND cite product facts in every shot (uses_facts).")
@@ -5666,11 +5670,38 @@ def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
             response = client.chat.completions.create(
                 model=OPENAI_TEXT_MODEL,
                 messages=[
-                    {"role": "system", "content": "Tu es un directeur artistique e-commerce senior. Tu produis des plans d’images ultra concrets, spécifiques au produit."},
+                    {"role": "system", "content": """Tu es un directeur artistique et photographe de produit de classe mondiale — le meilleur au monde.
+
+Tu combines l'expertise de:
+- Mario Testino & Annie Leibovitz (éclairage, composition dramatique)
+- Nick Knight (innovation visuelle, post-production conceptuelle)
+- Les directeurs créatifs de Chanel, Apple, Nike (branding par l'image)
+- Les études de conversion e-commerce de Baymard Institute, NNGroup et Shopify UX Research
+
+🧠 TES CONNAISSANCES SCIENTIFIQUES:
+- Psychologie des couleurs en marketing (études Satyendra Singh 2006, Joe Hallock): tu sais quelles couleurs déclenchent la confiance, l'urgence, le désir selon le type de produit et la cible démographique.
+- Loi de Fitts & hiérarchie visuelle: tu comprends comment l'œil scanne une image produit (Z-pattern, F-pattern) et tu optimises la composition en conséquence.
+- Études Shopify sur les images produit: les fiches avec 5-8 images de haute qualité convertissent 2-3× plus. Les zooms détails augmentent la confiance de 42%. Les images lifestyle augmentent le désir de 67%.
+- Effet de contraste fond/produit (étude ConversionXL): un contraste optimal augmente le taux de clic de 32%.
+- Color harmony theory (roue chromatique): complémentaires, analogues, triadiques — tu recommandes des palettes qui fonctionnent scientifiquement.
+
+📸 TA MÉTHODOLOGIE:
+1. Analyse le produit en profondeur: matériaux, texture, couleur, forme, public cible.
+2. Détermine la palette chromatique idéale basée sur la psychologie des couleurs ET le type de produit.
+3. Recommande des fonds spécifiques (pas juste "blanc" — donne la nuance exacte, la texture, le matériau).
+4. Spécifie l'éclairage avec précision technique (direction, diffusion, température de couleur en Kelvin).
+5. Décris chaque shot avec des termes techniques de photographie (focal length, depth of field, angle).
+6. Chaque recommandation est liée à un objectif de conversion mesurable.
+
+⚠️ RÈGLES ABSOLUES:
+- JAMAIS de recommandations génériques. Chaque conseil est SPÉCIFIQUE au produit analysé.
+- TOUJOURS justifier tes choix par des principes de psychologie visuelle ou des études.
+- Parler en français, ton professionnel mais accessible.
+- Tu ne donnes PAS de prompts de génération d'images IA. Tu donnes des directives de photographie réelle."""},
                     {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
                 ],
                 temperature=0.25,
-                max_tokens=1500,
+                max_tokens=2000,
                 response_format={"type": "json_object"},
             )
             row = json.loads(response.choices[0].message.content or "{}")
@@ -5771,11 +5802,36 @@ def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
             response = client.chat.completions.create(
                 model=OPENAI_VISION_MODEL,
                 messages=[
-                    {"role": "system", "content": "You are a senior ecommerce art director and image quality expert. You audit product photos for sharpness, lighting, color contrast, background quality, composition, and design appeal. You give specific, actionable feedback that a store owner can immediately apply. Always rate each quality dimension."},
+                    {"role": "system", "content": """Tu es le meilleur photographe produit et directeur artistique e-commerce au monde.
+
+Tu combines l'œil de Mario Testino, l'expertise technique d'Annie Leibovitz, et les connaissances en conversion de Baymard Institute.
+
+🔬 TES ANALYSES SONT BASÉES SUR:
+- Psychologie des couleurs (Satyendra Singh 2006): impact des couleurs sur les décisions d'achat.
+- Études Baymard Institute: 56% des abandons sont liés à des images produit insuffisantes.
+- Recherche ConversionXL: le contraste fond/produit augmente les clics de 32%.
+- NNGroup eye-tracking: comment l'œil scanne les images produit.
+- Shopify UX Research: les images haute qualité augmentent la conversion de 2-3×.
+
+📸 TON AUDIT COUVRE:
+1. NETTETÉ & RÉSOLUTION: analyse technique de la qualité pixel.
+2. ÉCLAIRAGE: direction, diffusion, température, ombres — avec recommandations précises (ex: "passer de 5500K à 4800K pour plus de chaleur").
+3. CONTRASTE FOND/PRODUIT: le produit se détache-t-il suffisamment? Quelle couleur de fond serait optimale selon la psychologie des couleurs pour CE type de produit?
+4. COMPOSITION: règle des tiers, espace négatif, cadrage — avec corrections spécifiques en cm/% .
+5. PALETTE CHROMATIQUE: les couleurs véhiculent-elles le bon message pour le public cible?
+6. ATTRAIT DESIGN: cette image donne-t-elle envie d'acheter? Pourquoi, basé sur quels principes?
+7. COHÉRENCE MARQUE: les images forment-elles un ensemble professionnel?
+
+⚠️ RÈGLES:
+- CHAQUE problème détecté DOIT avoir une solution concrète et mesurable.
+- Cite les études/principes derrière tes recommandations.
+- Sois direct et professionnel — pas de flatterie inutile.
+- Langue: français.
+- Ne donne PAS de prompts IA. Donne des directives de photographie réelle."""},
                     {"role": "user", "content": user_parts},
                 ],
                 temperature=0.2,
-                max_tokens=1200,
+                max_tokens=1800,
                 response_format={"type": "json_object"},
             )
             row = json.loads(response.choices[0].message.content or "{}")
@@ -5845,12 +5901,13 @@ def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
     return out
 
 @app.get("/api/shopify/image-risks")
-async def get_shopify_image_risks(request: Request, range: str = "30d", limit: int = 50, ai: int = 1):
+async def get_shopify_image_risks(request: Request, range: str = "30d", limit: int = 50, ai: int = 1, product_id: str | None = None):
     """🖼️ Analyse rapide des images produits (signaux de conversion visuels).
 
     - Nombre d'images faible
     - Alt manquant
     - (si pixel) taux vue→panier faible
+    - product_id: si fourni, analyse uniquement ce produit
     """
     user_id = get_user_id(request)
     tier = get_user_tier(user_id)
@@ -5873,17 +5930,33 @@ async def get_shopify_image_risks(request: Request, range: str = "30d", limit: i
     }
 
     try:
-        products_url = (
-            f"https://{shop_domain}/admin/api/2024-10/products.json"
-            f"?limit={effective_limit}&fields=id,title,images,product_type,vendor,tags"
-        )
-        resp = requests.get(products_url, headers=headers, timeout=20)
-        if resp.status_code == 401:
-            raise HTTPException(status_code=401, detail="Token Shopify expiré ou invalide. Reconnectez-vous.")
-        if resp.status_code != 200:
-            raise HTTPException(status_code=resp.status_code, detail=f"Erreur Shopify: {resp.text[:300]}")
+        # If a specific product_id is requested, fetch only that product
+        if product_id:
+            products_url = (
+                f"https://{shop_domain}/admin/api/2024-10/products/{product_id}.json"
+                f"?fields=id,title,images,product_type,vendor,tags"
+            )
+            resp = requests.get(products_url, headers=headers, timeout=20)
+            if resp.status_code == 401:
+                raise HTTPException(status_code=401, detail="Token Shopify expiré ou invalide. Reconnectez-vous.")
+            if resp.status_code == 404:
+                raise HTTPException(status_code=404, detail=f"Produit {product_id} non trouvé.")
+            if resp.status_code != 200:
+                raise HTTPException(status_code=resp.status_code, detail=f"Erreur Shopify: {resp.text[:300]}")
+            product_data = (resp.json() or {}).get("product")
+            products = [product_data] if product_data else []
+        else:
+            products_url = (
+                f"https://{shop_domain}/admin/api/2024-10/products.json"
+                f"?limit={effective_limit}&fields=id,title,images,product_type,vendor,tags"
+            )
+            resp = requests.get(products_url, headers=headers, timeout=20)
+            if resp.status_code == 401:
+                raise HTTPException(status_code=401, detail="Token Shopify expiré ou invalide. Reconnectez-vous.")
+            if resp.status_code != 200:
+                raise HTTPException(status_code=resp.status_code, detail=f"Erreur Shopify: {resp.text[:300]}")
+            products = (resp.json() or {}).get("products", [])
 
-        products = (resp.json() or {}).get("products", [])
         if not products:
             return {
                 "success": True,
@@ -5915,7 +5988,8 @@ async def get_shopify_image_risks(request: Request, range: str = "30d", limit: i
 
             # Risk heuristics: very few images OR missing alt OR low view→cart when we have pixel data.
             is_risky = images_count <= 1 or missing_alt or (view_to_cart is not None and views >= 10 and view_to_cart < 0.02)
-            if not is_risky:
+            # If a specific product_id was requested, always analyze it regardless of risk score
+            if not is_risky and not product_id:
                 continue
 
             score = 0
