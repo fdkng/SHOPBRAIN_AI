@@ -212,6 +212,9 @@ export default function Dashboard() {
   const [analyticsData, setAnalyticsData] = useState(null)
   const [analyticsLoading, setAnalyticsLoading] = useState(false)
   const [analyticsError, setAnalyticsError] = useState('')
+  const [topProductsData, setTopProductsData] = useState(null)
+  const [topProductsLoading, setTopProductsLoading] = useState(false)
+  const [topProductsRange, setTopProductsRange] = useState('1d')
   const [insightsData, setInsightsData] = useState(null)
   const [insightsLoading, setInsightsLoading] = useState(false)
   const [insightsError, setInsightsError] = useState('')
@@ -2158,6 +2161,38 @@ export default function Dashboard() {
     }
   }
 
+  const loadTopProducts = async (rangeOverride) => {
+    try {
+      const rangeValue = rangeOverride || topProductsRange
+      setTopProductsLoading(true)
+      const session = await getCachedSession()
+      if (!session) return
+
+      const response = await fetch(`${API_URL}/api/shopify/top-products?range=${rangeValue}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        }
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        console.error('Top products error:', errorData)
+        return
+      }
+
+      const data = await response.json()
+      if (data.success) {
+        setTopProductsData(data)
+      }
+    } catch (err) {
+      console.error('Error loading top products:', err)
+    } finally {
+      setTopProductsLoading(false)
+    }
+  }
+
   const fetchJsonWithRetry = async (url, options = {}, config = {}) => {
     const retries = config.retries ?? 2
     const retryDelayMs = config.retryDelayMs ?? 1200
@@ -3261,6 +3296,7 @@ export default function Dashboard() {
     if (activeTab === 'overview') {
       if (!analyticsData) loadAnalytics(analyticsRange)
       else if (analyticsRange !== '30d') loadAnalytics(analyticsRange)
+      if (!topProductsData) loadTopProducts(topProductsRange)
     }
     if (activeTab === 'underperforming') {
       if (!analyticsData) loadAnalytics(analyticsRange)
@@ -3271,6 +3307,12 @@ export default function Dashboard() {
       if (!pixelStatus) loadPixelStatus()
     }
   }, [activeTab, analyticsRange])
+
+  useEffect(() => {
+    if (activeTab === 'overview') {
+      loadTopProducts(topProductsRange)
+    }
+  }, [topProductsRange])
 
   useEffect(() => {
     if (activeTab === 'invoices' && customers.length === 0) {
@@ -3784,6 +3826,126 @@ export default function Dashboard() {
                 </div>
               </div>
             </div>
+
+            {/* ── Produits Phares (Pixel-based top products) ────────────────── */}
+            <div className="bg-gradient-to-br from-gray-800 via-gray-900 to-black border border-yellow-700/40 rounded-2xl p-4 md:p-6">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.3em] text-yellow-300/70">⭐ Shopify Pixel</p>
+                  <h3 className="text-xl font-bold text-white mt-1">Produits Phares</h3>
+                  <p className="text-xs text-gray-400 mt-1">Classement basé sur les vues, ajouts au panier et achats réels</p>
+                </div>
+                <div className="flex items-center gap-1 bg-gray-800/70 border border-gray-700 rounded-full px-1.5 py-1">
+                  {[
+                    { key: '1d', label: "Aujourd'hui" },
+                    { key: '7d', label: '7 jours' },
+                    { key: '30d', label: '30 jours' }
+                  ].map((r) => (
+                    <button
+                      key={r.key}
+                      onClick={() => setTopProductsRange(r.key)}
+                      className={`px-3 py-1.5 rounded-full text-xs font-semibold transition ${topProductsRange === r.key ? 'bg-yellow-600 text-black' : 'text-gray-300 hover:text-white'}`}
+                    >
+                      {r.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {topProductsLoading ? (
+                <div className="flex items-center justify-center py-10">
+                  <div className="w-6 h-6 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin"></div>
+                  <span className="ml-3 text-sm text-gray-400">Analyse des données pixel...</span>
+                </div>
+              ) : !topProductsData?.products?.length ? (
+                <div className="text-center py-8">
+                  <p className="text-3xl mb-3">📊</p>
+                  <p className="text-gray-400 text-sm">
+                    {shopifyUrl
+                      ? "Aucune donnée pixel pour cette période. Les produits phares apparaîtront quand le pixel recevra des événements."
+                      : "Connecte Shopify et installe le pixel pour voir tes produits phares."
+                    }
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {topProductsData.products.map((product, index) => {
+                    const rankIcon = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `#${index + 1}`;
+                    const changeIcon = product.rank_change === 'up' ? '↑' : product.rank_change === 'down' ? '↓' : product.rank_change === 'new' ? '🆕' : '';
+                    const changeColor = product.rank_change === 'up' ? 'text-green-400' : product.rank_change === 'down' ? 'text-red-400' : product.rank_change === 'new' ? 'text-blue-400' : 'text-gray-500';
+                    const maxScore = topProductsData.products[0]?.score || 1;
+                    const barWidth = Math.max(8, Math.round((product.score / maxScore) * 100));
+
+                    return (
+                      <div key={product.product_id} className="group bg-gray-900/60 hover:bg-gray-900/90 border border-gray-700/60 hover:border-yellow-600/40 rounded-xl p-3 transition-all duration-200">
+                        <div className="flex items-center gap-3">
+                          {/* Rank */}
+                          <div className="flex-shrink-0 w-10 text-center">
+                            <span className="text-lg">{rankIcon}</span>
+                            {changeIcon && (
+                              <p className={`text-[10px] font-bold ${changeColor}`}>{changeIcon}</p>
+                            )}
+                          </div>
+
+                          {/* Product Image */}
+                          <div className="flex-shrink-0 w-12 h-12 rounded-lg bg-gray-800 border border-gray-700 overflow-hidden">
+                            {product.image_url ? (
+                              <img
+                                src={product.image_url}
+                                alt={product.title}
+                                className="w-full h-full object-cover"
+                                loading="lazy"
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-gray-600 text-lg">📦</div>
+                            )}
+                          </div>
+
+                          {/* Product Info */}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-white text-sm font-semibold truncate">{product.title}</p>
+                            <div className="flex items-center gap-3 mt-1 text-[11px] text-gray-400">
+                              <span title="Vues (pixel)">👁 {product.views}</span>
+                              <span title="Ajouts au panier (pixel)">🛒 {product.add_to_cart}</span>
+                              <span title="Achats confirmés">💰 {product.purchases}</span>
+                              {product.price && (
+                                <span className="text-gray-500">{parseFloat(product.price).toFixed(2)} $</span>
+                              )}
+                            </div>
+                            {/* Score bar */}
+                            <div className="mt-1.5 h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-gradient-to-r from-yellow-500 to-yellow-300 rounded-full transition-all duration-700"
+                                style={{ width: `${barWidth}%` }}
+                              />
+                            </div>
+                          </div>
+
+                          {/* Score */}
+                          <div className="flex-shrink-0 text-right">
+                            <p className="text-yellow-400 text-sm font-bold">{product.score}</p>
+                            <p className="text-[10px] text-gray-500">pts</p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {/* Score explanation */}
+                  <div className="mt-3 pt-3 border-t border-gray-700/50">
+                    <p className="text-[10px] text-gray-500 text-center">
+                      Score = Vues ×1 + Ajouts panier ×5 + Achats ×15 · Données Shopify Pixel en temps réel
+                    </p>
+                    {topProductsData.total_scored > 5 && (
+                      <p className="text-[10px] text-gray-500 text-center mt-1">
+                        {topProductsData.total_scored} produits avec activité · Top 5 affiché
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
               <h3 className="text-gray-400 text-sm uppercase mb-2">Plan Actif</h3>

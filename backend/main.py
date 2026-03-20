@@ -3098,6 +3098,188 @@ async def get_shopify_analytics(request: Request, range: str = "30d"):
     }
 
 
+# ---------------------------------------------------------------------------
+# PRODUITS PHARES — classement dynamique basé sur les données Shopify Pixel
+# ---------------------------------------------------------------------------
+@app.get("/api/shopify/top-products")
+async def get_shopify_top_products(request: Request, range: str = "1d"):
+    """🌟 Produits phares basés sur les données réelles du Shopify Pixel.
+
+    Scoring composite:
+      - view_item / product_viewed  → +1 pt
+      - add_to_cart / product_added_to_cart → +5 pts
+      - Achat réel (line_item dans une commande) → +15 pts
+
+    Returns top 5 products enriched with title, image, price from Shopify API.
+    Supports range: 1d (today), 7d, 30d.
+    """
+    user_id = get_user_id(request)
+    shop_domain, access_token = _get_shopify_connection(user_id)
+
+    range_map = {"1d": 1, "7d": 7, "30d": 30}
+    days = range_map.get(range, 1)
+
+    # ── 1. Fetch pixel events from Supabase ───────────────────────────
+    pixel_counts = _fetch_shopify_event_counts(user_id, shop_domain, days)
+    # pixel_counts = { product_id: { views: N, add_to_cart: N } }
+
+    # ── 2. Fetch orders for purchase data ─────────────────────────────
+    orders = _fetch_shopify_orders(shop_domain, access_token, days)
+    purchase_counts: dict[str, int] = {}
+    purchase_revenue: dict[str, float] = {}
+    for order in orders:
+        for item in order.get("line_items", []):
+            pid = str(item.get("product_id") or "")
+            if not pid:
+                continue
+            qty = int(item.get("quantity") or 0)
+            price = float(item.get("price") or 0)
+            purchase_counts[pid] = purchase_counts.get(pid, 0) + qty
+            purchase_revenue[pid] = purchase_revenue.get(pid, 0.0) + price * qty
+
+    # ── 3. Merge all product IDs and compute score ────────────────────
+    all_product_ids = set(pixel_counts.keys()) | set(purchase_counts.keys())
+
+    scored_products = []
+    for pid in all_product_ids:
+        views = pixel_counts.get(pid, {}).get("views", 0)
+        add_to_cart = pixel_counts.get(pid, {}).get("add_to_cart", 0)
+        purchases = purchase_counts.get(pid, 0)
+        revenue = purchase_revenue.get(pid, 0.0)
+        score = views * 1 + add_to_cart * 5 + purchases * 15
+        if score > 0:
+            scored_products.append({
+                "product_id": pid,
+                "views": views,
+                "add_to_cart": add_to_cart,
+                "purchases": purchases,
+                "revenue": round(revenue, 2),
+                "score": score,
+            })
+
+    scored_products.sort(key=lambda x: x["score"], reverse=True)
+    top5 = scored_products[:5]
+
+    if not top5:
+        return {
+            "success": True,
+            "shop": shop_domain,
+            "range": range,
+            "products": [],
+            "message": "Aucune donnée pixel pour cette période. Le pixel doit d'abord recevoir des événements."
+        }
+
+    # ── 4. Enrich with Shopify product details (title, image, price) ──
+    headers = {
+        "X-Shopify-Access-Token": access_token,
+        "Content-Type": "application/json",
+    }
+    enriched = []
+    for item in top5:
+        pid = item["product_id"]
+        title = f"Produit #{pid}"
+        image_url = None
+        price = None
+        handle = None
+        try:
+            resp = requests.get(
+                f"https://{shop_domain}/admin/api/2024-10/products/{pid}.json?fields=id,title,handle,images,variants",
+                headers=headers,
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                product = resp.json().get("product", {})
+                title = product.get("title") or title
+                handle = product.get("handle")
+                imgs = product.get("images", [])
+                if imgs:
+                    image_url = imgs[0].get("src")
+                variants = product.get("variants", [])
+                if variants:
+                    price = variants[0].get("price")
+        except Exception as e:
+            print(f"⚠️ Top products enrich error for {pid}: {e}")
+
+        enriched.append({
+            **item,
+            "title": title,
+            "image_url": image_url,
+            "price": price,
+            "handle": handle,
+        })
+
+    # ── 5. Compute rank changes vs yesterday (simple heuristic) ───────
+    # If range is 1d, also fetch yesterday's data for comparison
+    rank_changes = {}
+    if range == "1d" and days == 1:
+        try:
+            yesterday_start = (datetime.utcnow() - timedelta(days=2)).isoformat()
+            yesterday_end = (datetime.utcnow() - timedelta(days=1)).isoformat()
+            if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+                supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+                yest_resp = (
+                    supabase.table("shopify_events")
+                    .select("product_id,event_type")
+                    .eq("user_id", user_id)
+                    .gte("created_at", yesterday_start)
+                    .lte("created_at", yesterday_end)
+                    .execute()
+                )
+                yest_scores: dict[str, int] = {}
+                view_events = {"view_item", "product_viewed"}
+                atc_events = {"add_to_cart", "product_added_to_cart"}
+                for row in (yest_resp.data or []):
+                    rpid = str(row.get("product_id") or "")
+                    if not rpid:
+                        continue
+                    evt = (row.get("event_type") or "").lower()
+                    sc = yest_scores.get(rpid, 0)
+                    if evt in view_events:
+                        sc += 1
+                    elif evt in atc_events:
+                        sc += 5
+                    yest_scores[rpid] = sc
+                # Add purchase scores from yesterday orders
+                yest_orders = _fetch_shopify_orders(shop_domain, access_token, 2)
+                for o in yest_orders:
+                    created = o.get("created_at", "")
+                    if created < yesterday_end and created >= yesterday_start:
+                        for li in o.get("line_items", []):
+                            lpid = str(li.get("product_id") or "")
+                            qty = int(li.get("quantity") or 0)
+                            if lpid:
+                                yest_scores[lpid] = yest_scores.get(lpid, 0) + qty * 15
+
+                yest_ranked = sorted(yest_scores.items(), key=lambda x: x[1], reverse=True)
+                yest_rank_map = {pid: idx + 1 for idx, (pid, _) in enumerate(yest_ranked)}
+
+                for idx, item in enumerate(enriched):
+                    today_rank = idx + 1
+                    yest_rank = yest_rank_map.get(item["product_id"])
+                    if yest_rank is None:
+                        rank_changes[item["product_id"]] = "new"
+                    elif yest_rank > today_rank:
+                        rank_changes[item["product_id"]] = "up"
+                    elif yest_rank < today_rank:
+                        rank_changes[item["product_id"]] = "down"
+                    else:
+                        rank_changes[item["product_id"]] = "stable"
+        except Exception as e:
+            print(f"⚠️ Rank changes error: {e}")
+
+    # Add rank_change to each product
+    for item in enriched:
+        item["rank_change"] = rank_changes.get(item["product_id"], "stable")
+
+    return {
+        "success": True,
+        "shop": shop_domain,
+        "range": range,
+        "products": enriched,
+        "total_scored": len(scored_products),
+    }
+
+
 @app.get("/api/shopify/insights")
 async def get_shopify_insights(
     request: Request,
