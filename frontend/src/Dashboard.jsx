@@ -3493,7 +3493,7 @@ export default function Dashboard() {
     }
   }
 
-  const handleApplyRecommendation = async (productId, recommendationType) => {
+  const handleApplyRecommendation = async (productId, recommendationType, extraData = {}) => {
     if (!['pro', 'premium'].includes(subscription?.plan)) {
       setStatus(`rec-${productId}-${recommendationType}`, 'warning', t('featureReservedProPremium'))
       return
@@ -3510,7 +3510,8 @@ export default function Dashboard() {
         },
         body: JSON.stringify({
           product_id: productId,
-          recommendation_type: recommendationType
+          recommendation_type: recommendationType,
+          ...extraData
         })
       })
       const data = await response.json()
@@ -4771,7 +4772,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                       </div>
                       <div className="flex flex-col items-start md:items-end gap-2">
                         <button
-                          onClick={() => handleApplyRecommendation(item.product_id, 'Prix')}
+                          onClick={() => handleApplyRecommendation(item.product_id, 'Prix', { suggested_price: item.suggested_price })}
                           disabled={!item.product_id || applyingRecommendationId === `${item.product_id}-Prix`}
                           className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold px-3 py-2 rounded"
                         >

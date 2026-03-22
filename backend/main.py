@@ -8466,6 +8466,7 @@ async def execute_actions_endpoint(req: ExecuteActionsRequest, request: Request)
 class ApplyRecommendationRequest(BaseModel):
     product_id: str
     recommendation_type: str
+    suggested_price: float | None = None
 
 
 @app.post("/api/ai/apply-recommendation")
@@ -8530,7 +8531,12 @@ async def apply_recommendation_endpoint(req: ApplyRecommendationRequest, request
             current_price = float(variants[0].get("price", 0))
             if current_price <= 0:
                 raise HTTPException(status_code=400, detail="Prix actuel invalide")
-            new_price = round(current_price * 1.2, 2)
+            # Use the AI-suggested price from the frontend if provided,
+            # otherwise fall back to a conservative 10% adjustment
+            if req.suggested_price and req.suggested_price > 0:
+                new_price = round(req.suggested_price, 2)
+            else:
+                new_price = round(current_price * 0.9, 2)
             result = action_engine.apply_price_change(req.product_id, new_price)
             if not result.get("success"):
                 raise HTTPException(status_code=400, detail=result.get("error", "Échec modification prix"))
