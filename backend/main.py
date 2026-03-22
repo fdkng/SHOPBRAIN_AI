@@ -899,9 +899,15 @@ def _ai_market_price_estimates(items: list[dict], products_by_id: dict[str, dict
         return {}
 
 
-def _aggressive_web_price_search(product_title: str, product_type: str, vendor: str, user_instructions: str, currency: str = "CAD") -> dict:
-    """Aggressive web search: generate targeted queries from user instructions,
+def _aggressive_web_price_search(product_title: str, product_type: str, vendor: str,
+                                  user_instructions: str = "", currency: str = "CAD",
+                                  description: str = "", tags: str = "") -> dict:
+    """Aggressive web search: generate targeted queries from product data + user instructions,
     run them via SERP API, aggregate all prices found.
+
+    Works WITH or WITHOUT user instructions:
+    - With instructions: uses brands/keywords from instructions + product category
+    - Without instructions: auto-generates smart queries from product title, description, tags, type
 
     Optimized for speed: no GPT call for query generation, max 6 queries, parallel execution.
     """
@@ -942,10 +948,24 @@ def _aggressive_web_price_search(product_title: str, product_type: str, vendor: 
         if not ptype:
             ptype = product_category
 
-        print(f"🏷️ Product category detected: '{product_category}' (ptype='{ptype}', detected='{detected_category}')")
+        # Extract color/material/style attributes from title + description
+        color_keywords = [
+            "noir", "black", "blanc", "white", "gris", "grey", "gray", "bleu", "blue",
+            "rouge", "red", "vert", "green", "jaune", "yellow", "rose", "pink",
+            "orange", "beige", "brun", "brown", "marine", "navy",
+        ]
+        material_keywords = [
+            "coton", "cotton", "polyester", "lin", "linen", "soie", "silk",
+            "cuir", "leather", "laine", "wool", "denim", "nylon", "velours", "velvet",
+        ]
+        all_text_lower = f"{title_lower} {(description or '').lower()}"
+        detected_color = next((c for c in color_keywords if c in all_text_lower), "")
+        detected_material = next((m for m in material_keywords if m in all_text_lower), "")
 
-        # Extract brand names from user instructions
-        instruction_lower = user_instructions.lower()
+        print(f"🏷️ Product: category='{product_category}', color='{detected_color}', material='{detected_material}', ptype='{ptype}'")
+
+        # Extract brand names from user instructions (if provided)
+        instruction_lower = (user_instructions or "").lower()
         luxury_brands = [
             "louis vuitton", "gucci", "balenciaga", "prada", "dior", "chanel",
             "versace", "burberry", "fendi", "hermès", "hermes", "givenchy", "valentino",
@@ -953,31 +973,57 @@ def _aggressive_web_price_search(product_title: str, product_type: str, vendor: 
             "ralph lauren", "tommy hilfiger", "calvin klein", "lacoste", "hugo boss",
             "nike", "adidas", "zara", "h&m", "uniqlo", "gap", "lululemon",
         ]
-        mentioned_brands = [b for b in luxury_brands if b in instruction_lower]
+        mentioned_brands = [b for b in luxury_brands if b in instruction_lower] if instruction_lower else []
 
         # Also try to extract custom brand names (Capitalized words from instructions)
-        if not mentioned_brands:
+        if not mentioned_brands and user_instructions:
             custom = _re.findall(r'\b[A-Z][a-zà-ü]+(?:\s+[A-Z][a-zà-ü]+)*\b', user_instructions)
             mentioned_brands = [b for b in custom if len(b) > 2 and b.lower() not in ("le", "la", "les", "des", "une", "mon")][:3]
 
         # Also check for keywords like "luxe", "premium", "haut de gamme"
-        is_luxury = any(w in instruction_lower for w in ["luxe", "luxury", "premium", "haut de gamme", "haute", "designer"])
+        is_luxury = any(w in instruction_lower for w in ["luxe", "luxury", "premium", "haut de gamme", "haute", "designer"]) if instruction_lower else False
 
         # Build targeted queries — max 6
         # CRITICAL: Every query MUST include the product category to avoid irrelevant results
-        # e.g. "louis vuitton t-shirt" not just "louis vuitton" (which returns handbags)
         queries = []
-        for brand in mentioned_brands[:3]:
-            queries.append(f"{brand} {product_category} price")
-            queries.append(f"{brand} {product_category}")
-        if is_luxury and not mentioned_brands:
+
+        if mentioned_brands:
+            # User specified brands to compare with
+            for brand in mentioned_brands[:3]:
+                queries.append(f"{brand} {product_category} price")
+                queries.append(f"{brand} {product_category}")
+        elif is_luxury:
             queries.append(f"luxury {product_category} price")
             queries.append(f"{product_category} designer brand price")
             queries.append(f"{product_category} premium brand")
-        # Always include a general product query
+
+        # ── AUTO-GENERATED SMART QUERIES (always, especially when no instructions) ──
+        # These use the actual product attributes to find SIMILAR products
         queries.append(f"{clean_title} price")
-        if product_category and product_category.lower() not in clean_title.lower():
+
+        # Color + category query (e.g. "grey t-shirt price")
+        if detected_color and product_category:
+            queries.append(f"{detected_color} {product_category} price")
+
+        # Material + category query (e.g. "cotton t-shirt price")
+        if detected_material and product_category:
+            queries.append(f"{detected_material} {product_category} price")
+
+        # Product type + region (e.g. "t-shirt price Canada")
+        if product_category:
             queries.append(f"{product_category} price Canada")
+
+        # Tags-based query: Shopify tags often have useful descriptors
+        if tags:
+            tag_list = [t.strip() for t in str(tags).split(",") if t.strip()]
+            # Use first 2-3 meaningful tags + category
+            meaningful_tags = [t for t in tag_list if len(t) > 2 and t.lower() not in ("sale", "new", "featured", "solde", "nouveau")][:2]
+            if meaningful_tags and product_category:
+                queries.append(f"{' '.join(meaningful_tags)} {product_category} price")
+
+        # Vendor + category (if vendor is a known brand, not the shop name)
+        if vendor and vendor.lower() not in ("shopify", "default", "") and product_category:
+            queries.append(f"{vendor} {product_category} price")
 
         # Deduplicate and limit to 6
         seen_q = set()
@@ -1042,8 +1088,13 @@ def _aggressive_web_price_search(product_title: str, product_type: str, vendor: 
 
 
 def _ai_analyze_search_results(product_title: str, current_price: float, search_results: dict,
-                                user_instructions: str, currency: str = "CAD") -> dict:
-    """Use AI to analyze aggregated search results and make a pricing recommendation."""
+                                user_instructions: str = "", currency: str = "CAD",
+                                description: str = "", image_url: str = "") -> dict:
+    """Use AI to analyze aggregated search results and make a pricing recommendation.
+    
+    When image_url is provided, uses GPT-4o vision to understand the product visually.
+    When description is provided, includes it for better product understanding.
+    """
     if not OPENAI_API_KEY:
         return None
 
@@ -1076,48 +1127,81 @@ def _ai_analyze_search_results(product_title: str, current_price: float, search_
             category_hint = kw
             break
 
+    # Build description context
+    desc_block = ""
+    if description and description.strip():
+        desc_block = f"DESCRIPTION DU PRODUIT: {description[:400]}\n\n"
+
+    # Instruction block — adapt depending on whether user gave instructions
+    if user_instructions and user_instructions.strip():
+        instruction_block = f"INSTRUCTIONS DE L'UTILISATEUR: \"{user_instructions}\"\n\n"
+    else:
+        instruction_block = (
+            "MODE AUTO: L'utilisateur n'a donné aucune instruction spécifique.\n"
+            "Analyse le produit en te basant sur son titre, sa description et sa photo "
+            "pour trouver les produits les plus SIMILAIRES dans les résultats de recherche.\n\n"
+        )
+
     try:
         client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
+
+        system_content = (
+            "Tu es un expert en pricing e-commerce. Tu analyses des données de marché RÉELLES "
+            "trouvées sur le web et tu fais des recommandations de prix. "
+            f"Tous les prix sont en {currency}. Sois précis et factuel. Retourne du JSON.\n\n"
+            "RÈGLE CRITIQUE DE FILTRAGE:\n"
+            "Tu DOIS comparer uniquement des produits du MÊME TYPE/CATÉGORIE.\n"
+            f"Le produit analysé est un: {category_hint.upper() or 'voir titre et image'}.\n"
+            "- Un t-shirt se compare UNIQUEMENT avec d'autres t-shirts.\n"
+            "- Un polo se compare UNIQUEMENT avec d'autres polos.\n"
+            "- IGNORE COMPLÈTEMENT les sacs à main, parfums, montres, chaussures, "
+            "ou tout autre produit qui n'est PAS de la même catégorie.\n"
+            "- Si une offre trouvée est d'une catégorie différente (ex: sac Louis Vuitton "
+            "alors que le produit est un t-shirt), NE L'INCLUS PAS dans comparable_products "
+            "et NE L'UTILISE PAS pour calculer le prix suggéré.\n"
+            "- Dans ton analyse, mentionne combien d'offres tu as ignorées car hors catégorie."
+        )
+
+        user_text = (
+            f"PRODUIT: {product_title}\n"
+            f"CATÉGORIE DU PRODUIT: {category_hint or 'à déduire du titre et de la photo'}\n"
+            f"Prix actuel: {current_price}$ {currency}\n\n"
+            f"{desc_block}"
+            f"{instruction_block}"
+            f"DONNÉES MARCHÉ:\n{prices_summary}\n\n"
+            f"OFFRES TROUVÉES SUR LE WEB:\n{refs_text}\n\n"
+            f"RAPPEL: Garde UNIQUEMENT les offres qui sont des {category_hint or 'produits du même type que celui montré'}.\n"
+            f"Ignore les produits d'une catégorie différente.\n\n"
+            f"Retourne en JSON:\n"
+            f"- suggested_price: prix recommandé basé UNIQUEMENT sur des produits comparables de même catégorie\n"
+            f"- positioning: 'low'/'mid'/'high' (prix actuel vs marché des produits comparables)\n"
+            f"- confidence: nombre d'offres PERTINENTES (même catégorie seulement)\n"
+            f"- comparable_products: les 3-5 produits les plus pertinents DE MÊME CATÉGORIE [{{'title':'...','price':0}}]\n"
+            f"- analysis: explication en français (2-3 phrases, mentionne le filtrage par catégorie)\n"
+            f"- market_range_min: prix min du marché (même catégorie seulement)\n"
+            f"- market_range_max: prix max du marché (même catégorie seulement)\n\n"
+            f"IMPORTANT: Si les instructions demandent de comparer avec des marques de luxe, "
+            f"le prix suggéré DOIT refléter le positionnement vs ces marques MAIS uniquement "
+            f"pour des produits de même type ({category_hint or 'même catégorie'})."
+        )
+
+        # Use GPT-4o with vision when image is available for better product understanding
+        if image_url and image_url.strip():
+            print(f"🖼️ Using GPT-4o vision for product analysis (image: {image_url[:80]}...)")
+            user_content = [
+                {"type": "text", "text": user_text},
+                {"type": "image_url", "image_url": {"url": image_url, "detail": "low"}},
+            ]
+            model = "gpt-4o"
+        else:
+            user_content = user_text
+            model = "gpt-4o-mini"
+
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=model,
             messages=[
-                {"role": "system", "content": (
-                    "Tu es un expert en pricing e-commerce. Tu analyses des données de marché RÉELLES "
-                    "trouvées sur le web et tu fais des recommandations de prix. "
-                    f"Tous les prix sont en {currency}. Sois précis et factuel. Retourne du JSON.\n\n"
-                    "RÈGLE CRITIQUE DE FILTRAGE:\n"
-                    "Tu DOIS comparer uniquement des produits du MÊME TYPE/CATÉGORIE.\n"
-                    f"Le produit analysé est un: {category_hint.upper() or 'voir titre'}.\n"
-                    "- Un t-shirt se compare UNIQUEMENT avec d'autres t-shirts.\n"
-                    "- Un polo se compare UNIQUEMENT avec d'autres polos.\n"
-                    "- IGNORE COMPLÈTEMENT les sacs à main, parfums, montres, chaussures, "
-                    "ou tout autre produit qui n'est PAS de la même catégorie.\n"
-                    "- Si une offre trouvée est d'une catégorie différente (ex: sac Louis Vuitton "
-                    "alors que le produit est un t-shirt), NE L'INCLUS PAS dans comparable_products "
-                    "et NE L'UTILISE PAS pour calculer le prix suggéré.\n"
-                    "- Dans ton analyse, mentionne combien d'offres tu as ignorées car hors catégorie."
-                )},
-                {"role": "user", "content": (
-                    f"PRODUIT: {product_title}\n"
-                    f"CATÉGORIE DU PRODUIT: {category_hint or 'à déduire du titre'}\n"
-                    f"Prix actuel: {current_price}$ {currency}\n\n"
-                    f"INSTRUCTIONS DE L'UTILISATEUR: \"{user_instructions}\"\n\n"
-                    f"DONNÉES MARCHÉ:\n{prices_summary}\n\n"
-                    f"OFFRES TROUVÉES SUR LE WEB:\n{refs_text}\n\n"
-                    f"RAPPEL: Garde UNIQUEMENT les offres qui sont des {category_hint or 'produits similaires'}.\n"
-                    f"Ignore les sacs, parfums, montres, etc. s'ils ne correspondent pas au type du produit.\n\n"
-                    f"Retourne en JSON:\n"
-                    f"- suggested_price: prix recommandé basé UNIQUEMENT sur des produits comparables de même catégorie\n"
-                    f"- positioning: 'low'/'mid'/'high' (prix actuel vs marché des produits comparables)\n"
-                    f"- confidence: nombre d'offres PERTINENTES (même catégorie seulement)\n"
-                    f"- comparable_products: les 3-5 produits les plus pertinents DE MÊME CATÉGORIE [{{'title':'...','price':0}}]\n"
-                    f"- analysis: explication en français (2-3 phrases, mentionne le filtrage par catégorie)\n"
-                    f"- market_range_min: prix min du marché (même catégorie seulement)\n"
-                    f"- market_range_max: prix max du marché (même catégorie seulement)\n\n"
-                    f"IMPORTANT: Si les instructions demandent de comparer avec des marques de luxe, "
-                    f"le prix suggéré DOIT refléter le positionnement vs ces marques MAIS uniquement "
-                    f"pour des produits de même type ({category_hint or 'même catégorie'})."
-                )},
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": user_content},
             ],
             temperature=0.2,
             max_tokens=700,
@@ -8226,7 +8310,7 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
         # Fetch only the fields we need to keep the payload small and reliable.
         products_url = (
             f"https://{shop_domain}/admin/api/2024-10/products.json"
-            f"?limit=250&fields=id,title,body_html,vendor,product_type,tags,variants"
+            f"?limit=250&fields=id,title,body_html,vendor,product_type,tags,variants,images"
         )
         resp = requests.get(products_url, headers=headers, timeout=25)
         if resp.status_code == 401:
@@ -8271,6 +8355,9 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
 
             desc = _strip_html(p.get("body_html") or "")
             desc_kw = _keywords_from_text(desc, max_words=10)
+            # Get the first product image URL for AI vision analysis
+            images = p.get("images") or []
+            image_url = images[0].get("src", "") if images else ""
             candidates.append(
                 {
                     "product_id": str(p.get("id") or ""),
@@ -8279,6 +8366,8 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
                     "product_type": p.get("product_type") or "",
                     "tags": p.get("tags") or "",
                     "desc_kw": desc_kw,
+                    "description": desc[:500],
+                    "image_url": image_url,
                     "current_price": round(current_price, 2),
                 }
             )
@@ -8286,14 +8375,18 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
         opportunities = []
 
         # ══════════════════════════════════════════════════════════════════
-        # NEW: When user provides instructions, use aggressive web search
-        # (Patina-AI style: many searches, aggregate, then AI analysis)
+        # SMART SEARCH: Always use aggressive web search + AI analysis
+        # With instructions: uses user-specified brands/keywords
+        # Without instructions: auto-generates queries from product data
+        # (title, description, image, tags, color, material)
         # ══════════════════════════════════════════════════════════════════
-        if instructions and instructions.strip() and (SERPAPI_KEY or OPENAI_API_KEY):
-            print(f"🚀 Aggressive search mode: instructions='{instructions[:80]}', {len(candidates)} candidates")
+        if SERPAPI_KEY or OPENAI_API_KEY:
+            has_instructions = bool(instructions and instructions.strip())
+            mode_label = f"instructions='{instructions[:80]}'" if has_instructions else "auto-analysis from product data"
+            print(f"🚀 Smart search mode: {mode_label}, {len(candidates)} candidates")
 
             # Limit to 1 candidate when a specific product is selected, otherwise top 2
-            analysis_candidates = candidates[:1] if product_id else candidates[:2]
+            analysis_candidates = candidates[:1] if product_id else candidates[:3]
 
             for item in analysis_candidates:
                 try:
@@ -8302,14 +8395,19 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
                     current_price = float(item["current_price"])
                     ptype = item.get("product_type", "")
                     vendor_name = item.get("vendor", "")
+                    item_desc = item.get("description", "")
+                    item_tags = item.get("tags", "")
+                    item_image = item.get("image_url", "")
 
                     # Step 1: Aggressive web search (multiple SERP queries)
                     search_results = _aggressive_web_price_search(
                         product_title=title,
                         product_type=ptype,
                         vendor=vendor_name,
-                        user_instructions=instructions,
+                        user_instructions=instructions or "",
                         currency=shop_currency or "CAD",
+                        description=item_desc,
+                        tags=item_tags,
                     )
 
                     # Step 2: AI analysis of the search results
@@ -8317,8 +8415,10 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
                         product_title=title,
                         current_price=current_price,
                         search_results=search_results,
-                        user_instructions=instructions,
+                        user_instructions=instructions or "",
                         currency=shop_currency or "CAD",
+                        description=item_desc,
+                        image_url=item_image,
                     )
 
                     if not ai_result:
@@ -8397,11 +8497,11 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
                 "price_opportunities": opportunities,
                 "market_comparison": market_status,
                 "currency_code": shop_currency,
-                "search_mode": "aggressive",
+                "search_mode": "aggressive" if has_instructions else "smart_auto",
             }
 
         # ══════════════════════════════════════════════════════════════════
-        # ORIGINAL: Standard SERP comparison (no instructions)
+        # FALLBACK: Standard SERP comparison (only if no SERP key AND no OpenAI key)
         # ══════════════════════════════════════════════════════════════════
         # If SERP API is configured, do real market comparison.
         if SERPAPI_KEY:

@@ -2726,7 +2726,6 @@ export default function Dashboard() {
           try {
             const instructionsParam = userInstructions ? `&instructions=${encodeURIComponent(userInstructions)}` : ''
             const productParam = priceProductId ? `&product_id=${encodeURIComponent(priceProductId)}` : ''
-            const hasInstr = userInstructions && userInstructions.trim().length > 0
             const { response, data: payload } = await fetchJsonWithRetry(`${API_URL}/api/ai/price-opportunities?limit=50${instructionsParam}${productParam}`, {
               method: 'GET',
               headers: {
@@ -2736,7 +2735,7 @@ export default function Dashboard() {
             }, {
               retries: 1,
               retryDelayMs: 1500,
-              timeoutMs: hasInstr ? 120000 : 45000,
+              timeoutMs: 120000,
               retryStatuses: [429, 500, 502, 503, 504]
             })
 
@@ -2957,7 +2956,7 @@ export default function Dashboard() {
           if (hasInstructions) {
             setStatus(actionKey, 'info', '🔍 Recherche web agressive en cours... (8-12 requêtes, ~20-30 sec)')
           } else {
-            setStatus(actionKey, 'info', t('aiPriceGeneration'))
+            setStatus(actionKey, 'info', '🔍 Analyse intelligente du produit en cours... (photo, titre, description → recherche web ~15-25 sec)')
           }
           const aiResult = await loadAiPriceInsights(priceInstructions)
           const aiPriceItems = aiResult?.items || []
