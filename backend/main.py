@@ -913,9 +913,36 @@ def _aggressive_web_price_search(product_title: str, product_type: str, vendor: 
 
         clean_title = _clean_query_text(product_title, shop_brand=vendor)
         ptype = product_type.strip() if product_type else ""
-        # If no product type, extract a generic category word from the title
-        if not ptype and clean_title:
-            ptype = clean_title.split()[0]
+
+        # Extract a meaningful product category from the title
+        # This ensures we always search for the right KIND of product
+        title_lower = product_title.lower()
+        category_keywords = [
+            "t-shirt", "tshirt", "t shirt", "polo", "chemise", "shirt", "hoodie",
+            "sweater", "chandail", "veste", "jacket", "manteau", "coat", "blazer",
+            "pantalon", "pants", "jeans", "jean", "shorts", "short",
+            "robe", "dress", "jupe", "skirt", "legging", "leggings",
+            "chaussure", "shoes", "sneaker", "sneakers", "botte", "boots", "sandal", "sandals",
+            "sac", "bag", "handbag", "backpack", "tote",
+            "chapeau", "hat", "cap", "casquette", "tuque", "beanie",
+            "montre", "watch", "bijou", "jewelry", "bracelet", "collier", "necklace",
+            "lunettes", "sunglasses", "glasses",
+            "parfum", "perfume", "fragrance",
+            "ceinture", "belt", "foulard", "scarf", "écharpe",
+        ]
+        detected_category = ""
+        for kw in category_keywords:
+            if kw in title_lower:
+                detected_category = kw
+                break
+
+        # Use the most specific category available:
+        # 1. Detected from title (most specific), 2. product_type from Shopify, 3. first word of title
+        product_category = detected_category or ptype or (clean_title.split()[0] if clean_title else "")
+        if not ptype:
+            ptype = product_category
+
+        print(f"🏷️ Product category detected: '{product_category}' (ptype='{ptype}', detected='{detected_category}')")
 
         # Extract brand names from user instructions
         instruction_lower = user_instructions.lower()
@@ -937,18 +964,20 @@ def _aggressive_web_price_search(product_title: str, product_type: str, vendor: 
         is_luxury = any(w in instruction_lower for w in ["luxe", "luxury", "premium", "haut de gamme", "haute", "designer"])
 
         # Build targeted queries — max 6
+        # CRITICAL: Every query MUST include the product category to avoid irrelevant results
+        # e.g. "louis vuitton t-shirt" not just "louis vuitton" (which returns handbags)
         queries = []
         for brand in mentioned_brands[:3]:
-            queries.append(f"{brand} {ptype} price")
-            queries.append(f"{brand} {ptype}")
+            queries.append(f"{brand} {product_category} price")
+            queries.append(f"{brand} {product_category}")
         if is_luxury and not mentioned_brands:
-            queries.append(f"luxury {ptype} price")
-            queries.append(f"{ptype} designer brand price")
-            queries.append(f"{ptype} premium brand")
+            queries.append(f"luxury {product_category} price")
+            queries.append(f"{product_category} designer brand price")
+            queries.append(f"{product_category} premium brand")
         # Always include a general product query
         queries.append(f"{clean_title} price")
-        if ptype and ptype != clean_title:
-            queries.append(f"{ptype} price Canada")
+        if product_category and product_category.lower() not in clean_title.lower():
+            queries.append(f"{product_category} price Canada")
 
         # Deduplicate and limit to 6
         seen_q = set()
@@ -1019,7 +1048,7 @@ def _ai_analyze_search_results(product_title: str, current_price: float, search_
         return None
 
     refs_text = ""
-    for ref in search_results.get("refs", [])[:10]:
+    for ref in search_results.get("refs", [])[:15]:
         refs_text += f"  - {ref.get('title', '?')}: {ref.get('price', '?')}$ ({ref.get('source', '?')})\n"
 
     prices = search_results.get("prices", [])
@@ -1035,6 +1064,18 @@ def _ai_analyze_search_results(product_title: str, current_price: float, search_
     else:
         prices_summary = "Aucun prix trouvé via recherche web."
 
+    # Detect product category for filtering
+    title_lower = product_title.lower()
+    category_hint = ""
+    for kw in ["t-shirt", "tshirt", "polo", "chemise", "shirt", "hoodie", "sweater",
+               "veste", "jacket", "manteau", "pantalon", "pants", "jeans", "shorts",
+               "robe", "dress", "jupe", "skirt", "chaussure", "shoes", "sneaker",
+               "sac", "bag", "chapeau", "hat", "montre", "watch", "parfum", "perfume",
+               "ceinture", "belt", "lunettes", "sunglasses", "bijou", "jewelry"]:
+        if kw in title_lower:
+            category_hint = kw
+            break
+
     try:
         client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
         response = client.chat.completions.create(
@@ -1043,28 +1084,43 @@ def _ai_analyze_search_results(product_title: str, current_price: float, search_
                 {"role": "system", "content": (
                     "Tu es un expert en pricing e-commerce. Tu analyses des données de marché RÉELLES "
                     "trouvées sur le web et tu fais des recommandations de prix. "
-                    f"Tous les prix sont en {currency}. Sois précis et factuel. Retourne du JSON."
+                    f"Tous les prix sont en {currency}. Sois précis et factuel. Retourne du JSON.\n\n"
+                    "RÈGLE CRITIQUE DE FILTRAGE:\n"
+                    "Tu DOIS comparer uniquement des produits du MÊME TYPE/CATÉGORIE.\n"
+                    f"Le produit analysé est un: {category_hint.upper() or 'voir titre'}.\n"
+                    "- Un t-shirt se compare UNIQUEMENT avec d'autres t-shirts.\n"
+                    "- Un polo se compare UNIQUEMENT avec d'autres polos.\n"
+                    "- IGNORE COMPLÈTEMENT les sacs à main, parfums, montres, chaussures, "
+                    "ou tout autre produit qui n'est PAS de la même catégorie.\n"
+                    "- Si une offre trouvée est d'une catégorie différente (ex: sac Louis Vuitton "
+                    "alors que le produit est un t-shirt), NE L'INCLUS PAS dans comparable_products "
+                    "et NE L'UTILISE PAS pour calculer le prix suggéré.\n"
+                    "- Dans ton analyse, mentionne combien d'offres tu as ignorées car hors catégorie."
                 )},
                 {"role": "user", "content": (
                     f"PRODUIT: {product_title}\n"
+                    f"CATÉGORIE DU PRODUIT: {category_hint or 'à déduire du titre'}\n"
                     f"Prix actuel: {current_price}$ {currency}\n\n"
-                    f"INSTRUCTIONS: \"{user_instructions}\"\n\n"
+                    f"INSTRUCTIONS DE L'UTILISATEUR: \"{user_instructions}\"\n\n"
                     f"DONNÉES MARCHÉ:\n{prices_summary}\n\n"
-                    f"OFFRES TROUVÉES:\n{refs_text}\n\n"
+                    f"OFFRES TROUVÉES SUR LE WEB:\n{refs_text}\n\n"
+                    f"RAPPEL: Garde UNIQUEMENT les offres qui sont des {category_hint or 'produits similaires'}.\n"
+                    f"Ignore les sacs, parfums, montres, etc. s'ils ne correspondent pas au type du produit.\n\n"
                     f"Retourne en JSON:\n"
-                    f"- suggested_price: prix recommandé basé sur le marché et les instructions\n"
-                    f"- positioning: 'low'/'mid'/'high' (prix actuel vs marché)\n"
-                    f"- confidence: nombre d'offres pertinentes\n"
-                    f"- comparable_products: les 3-5 produits les plus pertinents [{{'title':'...','price':0}}]\n"
-                    f"- analysis: explication en français (2-3 phrases)\n"
-                    f"- market_range_min: prix min du marché\n"
-                    f"- market_range_max: prix max du marché\n\n"
+                    f"- suggested_price: prix recommandé basé UNIQUEMENT sur des produits comparables de même catégorie\n"
+                    f"- positioning: 'low'/'mid'/'high' (prix actuel vs marché des produits comparables)\n"
+                    f"- confidence: nombre d'offres PERTINENTES (même catégorie seulement)\n"
+                    f"- comparable_products: les 3-5 produits les plus pertinents DE MÊME CATÉGORIE [{{'title':'...','price':0}}]\n"
+                    f"- analysis: explication en français (2-3 phrases, mentionne le filtrage par catégorie)\n"
+                    f"- market_range_min: prix min du marché (même catégorie seulement)\n"
+                    f"- market_range_max: prix max du marché (même catégorie seulement)\n\n"
                     f"IMPORTANT: Si les instructions demandent de comparer avec des marques de luxe, "
-                    f"le prix suggéré DOIT refléter le positionnement vs ces marques."
+                    f"le prix suggéré DOIT refléter le positionnement vs ces marques MAIS uniquement "
+                    f"pour des produits de même type ({category_hint or 'même catégorie'})."
                 )},
             ],
             temperature=0.2,
-            max_tokens=600,
+            max_tokens=700,
             response_format={"type": "json_object"},
         )
 
