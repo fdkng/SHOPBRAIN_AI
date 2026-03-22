@@ -4827,9 +4827,47 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           </div>
                         ) : null}
                         {item.search_stats ? (
-                          <p className="text-xs text-blue-400 mt-1">
-                            🔍 {item.search_stats.queries_run?.length || 0} recherches · {item.search_stats.total_prices_found || 0} prix trouvés
-                          </p>
+                          <div className="mt-1">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                const panel = e.currentTarget.nextElementSibling
+                                if (panel) panel.classList.toggle('hidden')
+                              }}
+                              className="text-xs text-blue-400 hover:text-blue-300 underline cursor-pointer bg-transparent border-none p-0"
+                            >
+                              🔍 {item.search_stats.queries_run?.length || 0} recherches · {item.search_stats.total_prices_found || 0} prix trouvés — Voir les résultats ▾
+                            </button>
+                            <div className="hidden mt-2 bg-gray-800/70 border border-gray-600 rounded-lg p-3 max-h-[300px] overflow-y-auto">
+                              <p className="text-xs text-gray-400 font-semibold mb-2">🌐 Requêtes effectuées:</p>
+                              <div className="flex flex-wrap gap-1 mb-3">
+                                {(item.search_stats.queries_run || []).map((q, qi) => (
+                                  <span key={qi} className="text-[10px] bg-gray-700 text-gray-300 px-2 py-0.5 rounded-full">{q}</span>
+                                ))}
+                              </div>
+                              <p className="text-xs text-gray-400 font-semibold mb-2">🛒 {item.search_stats.refs?.length || 0} produits trouvés sur le web:</p>
+                              <div className="space-y-1.5">
+                                {(item.search_stats.refs || []).map((ref, ri) => (
+                                  <div key={ri} className="flex items-start justify-between gap-2 text-xs">
+                                    <div className="flex-1 min-w-0">
+                                      {ref.link ? (
+                                        <a href={ref.link} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 hover:underline truncate block">
+                                          {ref.title || 'Produit'}
+                                        </a>
+                                      ) : (
+                                        <span className="text-gray-300 truncate block">{ref.title || 'Produit'}</span>
+                                      )}
+                                      <span className="text-gray-500">{ref.source || ''}</span>
+                                    </div>
+                                    <span className="text-green-400 font-semibold whitespace-nowrap">{ref.price}$ {ref.currency_code || ''}</span>
+                                  </div>
+                                ))}
+                              </div>
+                              {(!item.search_stats.refs || item.search_stats.refs.length === 0) ? (
+                                <p className="text-xs text-gray-500 italic">Aucun lien de produit disponible.</p>
+                              ) : null}
+                            </div>
+                          </div>
                         ) : null}
                       </div>
                       <div className="flex flex-col items-start md:items-end gap-2">

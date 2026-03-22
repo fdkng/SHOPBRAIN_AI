@@ -8326,6 +8326,7 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
                             "queries_run": search_results.get("queries_run", []),
                             "total_prices_found": search_results.get("count", 0),
                             "total_refs": len(search_results.get("refs", [])),
+                            "refs": search_results.get("refs", []),
                         },
                     })
                     print(f"✅ {title}: {current_price}$ → {suggested_price}$ ({delta_pct:+.1f}%)")
