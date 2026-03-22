@@ -218,6 +218,7 @@ export default function Dashboard() {
   const [insightsData, setInsightsData] = useState(null)
   const [insightsLoading, setInsightsLoading] = useState(false)
   const [insightsError, setInsightsError] = useState('')
+  const [priceInstructions, setPriceInstructions] = useState('')
   const [bundlesHistory, setBundlesHistory] = useState([])
   const [bundlesDiagnostics, setBundlesDiagnostics] = useState(null)
   const [bundlesJobStatus, setBundlesJobStatus] = useState('idle')
@@ -2711,10 +2712,10 @@ export default function Dashboard() {
         return
       }
 
-      const loadAiPriceInsights = async () => {
+      const loadAiPriceInsights = async (userInstructions) => {
         try {
           const session = await getCachedSession()
-          if (!session) return []
+          if (!session) return { items: [], market_comparison: null, currency_code: null }
 
           // Reduce cold-start failures before calling an authenticated endpoint.
           await waitForBackendReady({ retries: 8, retryDelayMs: 2000, timeoutMs: 22000 })
@@ -2722,7 +2723,8 @@ export default function Dashboard() {
 
           // Preferred: lightweight endpoint (if deployed).
           try {
-            const { response, data: payload } = await fetchJsonWithRetry(`${API_URL}/api/ai/price-opportunities?limit=50`, {
+            const instructionsParam = userInstructions ? `&instructions=${encodeURIComponent(userInstructions)}` : ''
+            const { response, data: payload } = await fetchJsonWithRetry(`${API_URL}/api/ai/price-opportunities?limit=50${instructionsParam}`, {
               method: 'GET',
               headers: {
                 'Authorization': `Bearer ${session.access_token}`,
@@ -2743,7 +2745,11 @@ export default function Dashboard() {
                 }))
               }
               const items = Array.isArray(payload?.price_opportunities) ? payload.price_opportunities : []
-              return items.slice(0, 10)
+              return {
+                items: items.slice(0, 10),
+                market_comparison: payload?.market_comparison || null,
+                currency_code: payload?.currency_code || null
+              }
             }
 
             // If endpoint isn't available yet (404), fall back.
@@ -2808,7 +2814,8 @@ export default function Dashboard() {
           if (!Array.isArray(optimizations) || optimizations.length === 0) return []
 
           const byTitle = new Map(slimProducts.map((p) => [String(p?.title || '').trim().toLowerCase(), p]))
-          return optimizations.slice(0, 10).map((opt, index) => {
+            return {
+              items: optimizations.slice(0, 10).map((opt, index) => {
             const title = String(opt?.product || '').trim()
             const match = byTitle.get(title.toLowerCase())
             const currentPrice = Number(opt?.current_price)
@@ -2827,10 +2834,13 @@ export default function Dashboard() {
               reason: opt?.expected_impact || opt?.reason || t('opportunityDetected'),
               source: 'ai_analyze_store'
             }
-          })
+          }),
+              market_comparison: null,
+              currency_code: null
+            }
         } catch (err) {
           console.warn('AI price fallback failed:', err)
-          return []
+          return { items: [], market_comparison: null, currency_code: null }
         }
       }
 
@@ -2941,10 +2951,13 @@ export default function Dashboard() {
         // For pricing, generate AI opportunities first to avoid blocking on slow Shopify insights.
         if (actionKey === 'action-price') {
           setStatus(actionKey, 'info', t('aiPriceGeneration'))
-          const aiPriceItems = await loadAiPriceInsights()
+          const aiResult = await loadAiPriceInsights(priceInstructions)
+          const aiPriceItems = aiResult?.items || []
+          const aiMarketComparison = aiResult?.market_comparison || null
           if (Array.isArray(aiPriceItems) && aiPriceItems.length > 0) {
+            const marketFromApi = aiMarketComparison
             const healthSaysOpenAI = backendHealth?.services?.openai === 'configured'
-            const inferredMarket = healthSaysOpenAI ? { enabled: true, provider: 'openai', source: 'openai', inferred: true } : null
+            const inferredMarket = marketFromApi || (healthSaysOpenAI ? { enabled: true, provider: 'openai', source: 'openai', mode: 'ai_estimate', inferred: true } : null)
             const enriched = {
               success: true,
               price_opportunities: aiPriceItems,
@@ -2993,7 +3006,8 @@ export default function Dashboard() {
 
         if (actionKey === 'action-price' && priceItems.length === 0) {
           setStatus(actionKey, 'info', t('priceAnalysisInProgress'))
-          const aiPriceItems = await loadAiPriceInsights()
+          const aiResult = await loadAiPriceInsights(priceInstructions)
+          const aiPriceItems = aiResult?.items || []
           if (Array.isArray(aiPriceItems) && aiPriceItems.length > 0) {
             enrichedData = {
               ...data,
@@ -4731,6 +4745,19 @@ analytics.subscribe("product_added_to_cart", (event) => {
               >
                 {insightsLoading ? t('analysisInProgress') : t('launchPriceOptimization')}
               </button>
+            </div>
+
+            {/* Custom instructions for the AI */}
+            <div className="bg-gray-900/50 border border-gray-700 rounded-lg p-4">
+              <label className="block text-sm text-gray-300 font-medium mb-2">💡 Instructions pour l'IA (optionnel)</label>
+              <textarea
+                value={priceInstructions}
+                onChange={(e) => setPriceInstructions(e.target.value)}
+                placeholder="Ex: Mon chandail est un produit de luxe premium, compare avec des marques haut de gamme comme Gucci, Balenciaga... / Ignore les produits en solde / Focus sur le marché canadien..."
+                className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500 outline-none resize-none"
+                rows={2}
+              />
+              <p className="text-xs text-gray-500 mt-1">Donne du contexte à l'IA pour des résultats plus précis. Relance l'analyse après avoir modifié.</p>
             </div>
             {renderStatus('action-price')}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

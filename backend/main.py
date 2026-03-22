@@ -800,7 +800,7 @@ def _get_market_comparison_status() -> dict:
     }
 
 
-def _ai_market_price_estimates(items: list[dict], products_by_id: dict[str, dict]) -> dict[str, dict]:
+def _ai_market_price_estimates(items: list[dict], products_by_id: dict[str, dict], user_instructions: str = "") -> dict[str, dict]:
     """Return market price range estimates keyed by product_id.
 
     Note: This is an AI estimation (no live web). It is used as a lightweight
@@ -837,6 +837,9 @@ def _ai_market_price_estimates(items: list[dict], products_by_id: dict[str, dict
             "Base estimates on general market knowledge and the provided product context.",
             "Return numeric prices in the provided currency.",
         ],
+        **({
+            "user_instructions": f"The store owner provided these instructions to guide your analysis: {user_instructions}"
+        } if user_instructions else {}),
         "output": {
             "items": [
                 {
@@ -3623,7 +3626,7 @@ async def get_shopify_insights(
         })
 
     if include_ai and market_comparison.get("enabled") and market_comparison.get("provider") == "openai" and OPENAI_API_KEY:
-        estimates = _ai_market_price_estimates(price_analysis_items, products_by_id)
+        estimates = _ai_market_price_estimates(price_analysis_items, products_by_id, "")
         if estimates:
             for row in price_analysis_items:
                 pid = str(row.get("product_id") or "")
@@ -7926,7 +7929,7 @@ class AnalyzeStoreRequest(BaseModel):
 
 
 @app.get("/api/ai/price-opportunities")
-async def price_opportunities_endpoint(request: Request, limit: int = 50):
+async def price_opportunities_endpoint(request: Request, limit: int = 50, instructions: str = ""):
     """💰 Retourne des opportunités de prix (léger, sans gros payload).
 
     Objectif: éviter que le frontend doive POST une liste complète de produits
@@ -8052,6 +8055,9 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50):
                     parts.append(str(item.get("product_type")).strip())
                 if item.get("desc_kw"):
                     parts.append(str(item.get("desc_kw")).strip())
+                # Add user instruction keywords to refine search
+                if instructions:
+                    parts.append(instructions[:80])
                 return " ".join([p for p in parts if p])
 
             def _query_fallback(item: dict) -> str:
@@ -8169,24 +8175,72 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50):
                 **({"note": note} if note else {}),
             }
 
-        # Fallback when SERP API isn't configured.
-        for item in candidates[: min(len(candidates), 10)]:
-            current_price = float(item["current_price"])
-            suggested_price = round(current_price * 1.25, 2)
-            target_delta_pct = round(((suggested_price - current_price) / current_price) * 100, 2)
-            opportunities.append(
-                {
-                    "product_id": item["product_id"] or f"shopify-{len(opportunities)+1}",
+        # Fallback when SERP API isn't configured — use AI if OpenAI is available.
+        if OPENAI_API_KEY:
+            # Build a products_by_id dict for the AI estimator
+            ai_items = []
+            ai_products_map = {}
+            for item in candidates[:min(len(candidates), 10)]:
+                pid = item["product_id"]
+                ai_items.append(item)
+                ai_products_map[pid] = {
+                    "title": item.get("title"),
+                    "vendor": item.get("vendor"),
+                    "product_type": item.get("product_type"),
+                }
+            estimates = _ai_market_price_estimates(ai_items, ai_products_map, instructions)
+            for item in ai_items:
+                pid = item["product_id"]
+                current_price = float(item["current_price"])
+                est = estimates.get(pid)
+                if est and est.get("market_min") and est.get("market_max"):
+                    market_mid = (est["market_min"] + est["market_max"]) / 2
+                    suggested_price = round(market_mid, 2)
+                    target_delta_pct = round(((suggested_price - current_price) / current_price) * 100, 2)
+                    positioning = est.get("positioning", "mid")
+                    notes = est.get("notes", "")
+                    if abs(target_delta_pct) < 1.0:
+                        suggestion = "Prix aligné au marché"
+                    elif target_delta_pct > 0:
+                        suggestion = "Prix en dessous du marché"
+                    else:
+                        suggestion = "Prix au-dessus du marché"
+                    reason = f"Sur {est.get('confidence', '?')} offres similaires ({item.get('currency_code', 'CAD')}), fourchette estimée: {est['market_min']:.2f}$ – {est['market_max']:.2f}$. {notes}"
+                else:
+                    suggested_price = round(current_price, 2)
+                    target_delta_pct = 0.0
+                    suggestion = "Prix aligné au marché"
+                    reason = "Aucun changement recommandé."
+                opportunities.append({
+                    "product_id": pid or f"shopify-{len(opportunities)+1}",
                     "title": item["title"],
-                    "suggestion": "Ajustement recommandé (heuristique)",
+                    "suggestion": suggestion,
                     "current_price": round(current_price, 2),
                     "suggested_price": suggested_price,
                     "target_delta_pct": target_delta_pct,
-                    "reason": "SERP API non configurée: suggestion heuristique (+25%).",
-                    "source": "heuristic",
+                    "reason": reason,
+                    "market_estimate": est,
+                    "source": "ai_estimate",
                     "currency_code": shop_currency,
-                }
-            )
+                })
+        else:
+            for item in candidates[: min(len(candidates), 10)]:
+                current_price = float(item["current_price"])
+                suggested_price = round(current_price * 1.25, 2)
+                target_delta_pct = round(((suggested_price - current_price) / current_price) * 100, 2)
+                opportunities.append(
+                    {
+                        "product_id": item["product_id"] or f"shopify-{len(opportunities)+1}",
+                        "title": item["title"],
+                        "suggestion": "Ajustement recommandé (heuristique)",
+                        "current_price": round(current_price, 2),
+                        "suggested_price": suggested_price,
+                        "target_delta_pct": target_delta_pct,
+                        "reason": "SERP API non configurée: suggestion heuristique (+25%).",
+                        "source": "heuristic",
+                        "currency_code": shop_currency,
+                    }
+                )
 
         return {
             "success": True,
