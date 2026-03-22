@@ -800,11 +800,11 @@ def _get_market_comparison_status() -> dict:
     }
 
 
-def _ai_market_price_estimates(items: list[dict], products_by_id: dict[str, dict], user_instructions: str = "") -> dict[str, dict]:
+def _ai_market_price_estimates(items: list[dict], products_by_id: dict[str, dict], user_instructions: str = "", currency: str = "CAD") -> dict[str, dict]:
     """Return market price range estimates keyed by product_id.
 
-    Note: This is an AI estimation (no live web). It is used as a lightweight
-    'market comparison' signal when OpenAI is configured.
+    Uses OpenAI to estimate realistic market prices based on product context
+    and optional user instructions (e.g. 'compare to luxury brands like LV').
     """
     if not OPENAI_API_KEY or not items:
         return {}
@@ -819,52 +819,58 @@ def _ai_market_price_estimates(items: list[dict], products_by_id: dict[str, dict
         sample.append({
             "product_id": pid,
             "title": item.get("title") or product.get("title") or "",
-            "product_type": product.get("product_type") or "",
-            "vendor": product.get("vendor") or "",
+            "product_type": product.get("product_type") or item.get("product_type") or "",
+            "vendor": product.get("vendor") or item.get("vendor") or "",
             "tags": product.get("tags") or "",
             "current_price": item.get("current_price"),
-            "suggested_price": item.get("suggested_price"),
-            "currency": "EUR",
+            "currency": currency or "CAD",
         })
 
     if not sample:
         return {}
 
-    prompt = {
-        "task": "Estimate plausible market price ranges for similar products.",
-        "constraints": [
-            "Do NOT browse the web.",
-            "Base estimates on general market knowledge and the provided product context.",
-            "Return numeric prices in the provided currency.",
-        ],
-        **({
-            "user_instructions": f"The store owner provided these instructions to guide your analysis: {user_instructions}"
-        } if user_instructions else {}),
-        "output": {
-            "items": [
-                {
-                    "product_id": "string",
-                    "market_min": 0.0,
-                    "market_max": 0.0,
-                    "positioning": "low|mid|high",
-                    "confidence": 0,
-                    "notes": "string"
-                }
-            ]
-        },
-        "products": sample,
-    }
+    # Build a strong, actionable prompt
+    system_msg = (
+        "Tu es un expert en pricing e-commerce et en analyse de marché. "
+        "Tu as une connaissance approfondie des prix de détail pour toutes les catégories de produits, "
+        "incluant le luxe, la mode, l'électronique, etc. "
+        "Tu DOIS fournir des fourchettes de prix réalistes basées sur des produits comparables RÉELS du marché. "
+        f"Tous les prix doivent être en {currency or 'CAD'} (dollars canadiens)."
+    )
+
+    user_context = ""
+    if user_instructions:
+        user_context = (
+            f"\n\n⚠️ INSTRUCTIONS IMPORTANTES DU PROPRIÉTAIRE DE LA BOUTIQUE:\n"
+            f"\"{user_instructions}\"\n"
+            f"Tu DOIS tenir compte de ces instructions. Par exemple, si le propriétaire dit "
+            f"'compare avec Louis Vuitton', tu dois baser tes estimations sur les prix de "
+            f"produits similaires chez Louis Vuitton et marques équivalentes."
+        )
+
+    task_msg = (
+        f"Analyse ces produits et estime la fourchette de prix du marché pour des produits similaires/comparables.{user_context}\n\n"
+        f"Produits à analyser:\n{json.dumps(sample, ensure_ascii=False, indent=2)}\n\n"
+        f"Pour CHAQUE produit, retourne:\n"
+        f"- market_min: prix minimum observé pour des produits comparables sur le marché\n"
+        f"- market_max: prix maximum observé pour des produits comparables\n"
+        f"- positioning: 'low' si le prix actuel est en dessous du marché, 'mid' si aligné, 'high' si au-dessus\n"
+        f"- confidence: nombre estimé d'offres comparables que tu connais (ex: 10, 25, 50)\n"
+        f"- notes: explique brièvement QUELS produits/marques tu as comparés et pourquoi\n\n"
+        f"Réponds en JSON strict avec cette structure:\n"
+        f'{{"items": [{{"product_id": "...", "market_min": 0.0, "market_max": 0.0, "positioning": "low|mid|high", "confidence": 0, "notes": "..."}}]}}'
+    )
 
     try:
         client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "Tu es un analyste pricing e-commerce. Tu fournis des estimations prudentes et chiffrées."},
-                {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": task_msg},
             ],
-            temperature=0.2,
-            max_tokens=650,
+            temperature=0.3,
+            max_tokens=1200,
             response_format={"type": "json_object"},
         )
 
@@ -3295,6 +3301,19 @@ async def get_shopify_insights(
     tier = get_user_tier(user_id)
     shop_domain, access_token = _get_shopify_connection(user_id)
 
+    # Fetch shop currency
+    shop_currency = "CAD"
+    try:
+        shop_resp = httpx.get(
+            f"https://{shop_domain}/admin/api/2024-01/shop.json",
+            headers={"X-Shopify-Access-Token": access_token},
+            timeout=8,
+        )
+        if shop_resp.status_code == 200:
+            shop_currency = ((shop_resp.json() or {}).get("shop") or {}).get("currency") or "CAD"
+    except Exception:
+        pass
+
     range_map = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}
     days = range_map.get(range, 30)
 
@@ -3626,7 +3645,7 @@ async def get_shopify_insights(
         })
 
     if include_ai and market_comparison.get("enabled") and market_comparison.get("provider") == "openai" and OPENAI_API_KEY:
-        estimates = _ai_market_price_estimates(price_analysis_items, products_by_id, "")
+        estimates = _ai_market_price_estimates(price_analysis_items, products_by_id, "", currency=shop_currency)
         if estimates:
             for row in price_analysis_items:
                 pid = str(row.get("product_id") or "")
@@ -7974,7 +7993,7 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
         # Fetch only the fields we need to keep the payload small and reliable.
         products_url = (
             f"https://{shop_domain}/admin/api/2024-10/products.json"
-            f"?limit=250&fields=id,title,body_html,vendor,product_type,variants"
+            f"?limit=250&fields=id,title,body_html,vendor,product_type,tags,variants"
         )
         resp = requests.get(products_url, headers=headers, timeout=25)
         if resp.status_code == 401:
@@ -8022,6 +8041,7 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
                     "title": p.get("title") or "Produit",
                     "vendor": p.get("vendor") or "",
                     "product_type": p.get("product_type") or "",
+                    "tags": p.get("tags") or "",
                     "desc_kw": desc_kw,
                     "current_price": round(current_price, 2),
                 }
@@ -8177,6 +8197,7 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
 
         # Fallback when SERP API isn't configured — use AI if OpenAI is available.
         if OPENAI_API_KEY:
+            print(f"🧠 AI price analysis: {len(candidates)} candidates, instructions={repr(instructions[:100]) if instructions else 'none'}, currency={shop_currency}")
             # Build a products_by_id dict for the AI estimator
             ai_items = []
             ai_products_map = {}
@@ -8187,8 +8208,9 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
                     "title": item.get("title"),
                     "vendor": item.get("vendor"),
                     "product_type": item.get("product_type"),
+                    "tags": item.get("tags", ""),
                 }
-            estimates = _ai_market_price_estimates(ai_items, ai_products_map, instructions)
+            estimates = _ai_market_price_estimates(ai_items, ai_products_map, instructions, currency=shop_currency)
             for item in ai_items:
                 pid = item["product_id"]
                 current_price = float(item["current_price"])
@@ -8205,7 +8227,7 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
                         suggestion = "Prix en dessous du marché"
                     else:
                         suggestion = "Prix au-dessus du marché"
-                    reason = f"Sur {est.get('confidence', '?')} offres similaires ({item.get('currency_code', 'CAD')}), fourchette estimée: {est['market_min']:.2f}$ – {est['market_max']:.2f}$. {notes}"
+                    reason = f"Sur {est.get('confidence', '?')} offres similaires ({shop_currency or 'CAD'}), fourchette estimée: {est['market_min']:.2f}$ – {est['market_max']:.2f}$. {notes}"
                 else:
                     suggested_price = round(current_price, 2)
                     target_delta_pct = 0.0
