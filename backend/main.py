@@ -912,13 +912,15 @@ def _vision_describe_product(image_url: str, product_title: str, description: st
     if not OPENAI_API_KEY or not image_url:
         return {}
 
+    import time as _time
+    start = _time.time()
     try:
         client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
         
-        desc_hint = f"\nProduct description: {description[:200]}" if description else ""
+        desc_hint = f"\nProduct description: {description[:150]}" if description else ""
         
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": (
                     "You are a product identification expert. You look at product photos and generate "
@@ -957,10 +959,12 @@ def _vision_describe_product(image_url: str, product_title: str, description: st
         )
         
         result = json.loads(response.choices[0].message.content or "{}")
-        print(f"👁️ Vision analysis: {result}")
+        elapsed = round(_time.time() - start, 1)
+        print(f"👁️ Vision analysis ({elapsed}s): {result}")
         return result
     except Exception as e:
-        print(f"⚠️ Vision describe error: {e}")
+        elapsed = round(_time.time() - start, 1)
+        print(f"⚠️ Vision describe error ({elapsed}s): {e}")
         return {}
 
 
@@ -1269,23 +1273,13 @@ def _ai_analyze_search_results(product_title: str, current_price: float, search_
             f"pour des produits de même type ({category_hint or 'même catégorie'})."
         )
 
-        # Use GPT-4o with vision when image is available for better product understanding
-        if image_url and image_url.strip():
-            print(f"🖼️ Using GPT-4o vision for product analysis (image: {image_url[:80]}...)")
-            user_content = [
-                {"type": "text", "text": user_text},
-                {"type": "image_url", "image_url": {"url": image_url, "detail": "low"}},
-            ]
-            model = "gpt-4o"
-        else:
-            user_content = user_text
-            model = "gpt-4o-mini"
-
+        # Always use gpt-4o-mini for analysis (vision already ran in _vision_describe_product)
+        # This avoids a duplicate expensive GPT-4o vision call
         response = client.chat.completions.create(
-            model=model,
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_content},
-                {"role": "user", "content": user_content},
+                {"role": "user", "content": user_text},
             ],
             temperature=0.2,
             max_tokens=700,
@@ -8469,10 +8463,19 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
             mode_label = f"instructions='{instructions[:80]}'" if has_instructions else "auto-analysis from product data"
             print(f"🚀 Smart search mode: {mode_label}, {len(candidates)} candidates")
 
+            import time as _time
+            search_start = _time.time()
+
             # Limit to 1 candidate when a specific product is selected, otherwise top 2
-            analysis_candidates = candidates[:1] if product_id else candidates[:3]
+            analysis_candidates = candidates[:1] if product_id else candidates[:2]
 
             for item in analysis_candidates:
+                # Time guard: bail if we've been running too long (Render 30s timeout)
+                elapsed = _time.time() - search_start
+                if elapsed > 22:
+                    print(f"⏱️ Time guard: {elapsed:.1f}s elapsed, skipping remaining candidates")
+                    break
+
                 try:
                     pid = item["product_id"]
                     title = item.get("title", "")
