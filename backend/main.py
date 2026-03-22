@@ -899,9 +899,75 @@ def _ai_market_price_estimates(items: list[dict], products_by_id: dict[str, dict
         return {}
 
 
+def _vision_describe_product(image_url: str, product_title: str, description: str = "") -> dict:
+    """Use GPT-4o vision to analyze the product image and return a precise description
+    for generating accurate search queries.
+    
+    Returns: {
+        "search_query": "plain grey crewneck men t-shirt cotton basic",
+        "category": "t-shirt",
+        "attributes": "grey, plain, crewneck, men, basic, cotton"
+    }
+    """
+    if not OPENAI_API_KEY or not image_url:
+        return {}
+
+    try:
+        client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
+        
+        desc_hint = f"\nProduct description: {description[:200]}" if description else ""
+        
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": (
+                    "You are a product identification expert. You look at product photos and generate "
+                    "precise search queries to find THE EXACT SAME TYPE of product on Google Shopping.\n\n"
+                    "Rules:\n"
+                    "- Be VERY specific about what you see: color, style, fit, pattern, neckline, material\n"
+                    "- A plain grey t-shirt is NOT the same as a graphic tee or a Muay Thai shirt\n"
+                    "- Focus on the EXACT visual characteristics: plain/graphic, color, fit (slim/regular/oversized)\n"
+                    "- Return a Google Shopping search query that would find IDENTICAL products\n"
+                    "- Return JSON only"
+                )},
+                {"role": "user", "content": [
+                    {"type": "text", "text": (
+                        f"Product title: {product_title}{desc_hint}\n\n"
+                        "Look at this product photo and tell me EXACTLY what this product is.\n"
+                        "Return JSON with:\n"
+                        "- search_query: the best Google Shopping search query to find this EXACT same product "
+                        "(include: color, style, fit, pattern, type, gender). Max 6-8 words.\n"
+                        "- search_query_broad: a slightly broader query for more results. Max 5 words.\n"
+                        "- category: the product category (e.g. 't-shirt', 'polo', 'hoodie', 'jeans')\n"
+                        "- attributes: comma-separated visual attributes (color, pattern, style, fit, neckline, material)\n"
+                        "- gender: 'men', 'women', or 'unisex'\n\n"
+                        "Example for a plain grey t-shirt:\n"
+                        '{"search_query": "plain grey crewneck t-shirt men", '
+                        '"search_query_broad": "grey basic t-shirt men", '
+                        '"category": "t-shirt", '
+                        '"attributes": "grey, plain, crewneck, regular fit, cotton", '
+                        '"gender": "men"}'
+                    )},
+                    {"type": "image_url", "image_url": {"url": image_url, "detail": "low"}},
+                ]},
+            ],
+            temperature=0.1,
+            max_tokens=200,
+            response_format={"type": "json_object"},
+        )
+        
+        result = json.loads(response.choices[0].message.content or "{}")
+        print(f"👁️ Vision analysis: {result}")
+        return result
+    except Exception as e:
+        print(f"⚠️ Vision describe error: {e}")
+        return {}
+
+
 def _aggressive_web_price_search(product_title: str, product_type: str, vendor: str,
                                   user_instructions: str = "", currency: str = "CAD",
-                                  description: str = "", tags: str = "") -> dict:
+                                  description: str = "", tags: str = "",
+                                  image_url: str = "") -> dict:
     """Aggressive web search: generate targeted queries from product data + user instructions,
     run them via SERP API, aggregate all prices found.
 
@@ -964,6 +1030,16 @@ def _aggressive_web_price_search(product_title: str, product_type: str, vendor: 
 
         print(f"🏷️ Product: category='{product_category}', color='{detected_color}', material='{detected_material}', ptype='{ptype}'")
 
+        # ── STEP 0: Vision-based product description (when image available) ──
+        # GPT-4o looks at the actual photo and generates PRECISE search queries
+        # e.g. "plain grey crewneck t-shirt men" instead of just "t-shirt"
+        vision_data = {}
+        if image_url and OPENAI_API_KEY:
+            vision_data = _vision_describe_product(image_url, product_title, description)
+            # Update category/color from vision if we got better data
+            if vision_data.get("category"):
+                product_category = vision_data["category"]
+
         # Extract brand names from user instructions (if provided)
         instruction_lower = (user_instructions or "").lower()
         luxury_brands = [
@@ -984,46 +1060,46 @@ def _aggressive_web_price_search(product_title: str, product_type: str, vendor: 
         is_luxury = any(w in instruction_lower for w in ["luxe", "luxury", "premium", "haut de gamme", "haute", "designer"]) if instruction_lower else False
 
         # Build targeted queries — max 6
-        # CRITICAL: Every query MUST include the product category to avoid irrelevant results
+        # PRIORITY: Use vision-generated queries (most precise), then instruction-based, then auto-generated
         queries = []
 
+        # 1. Vision-generated queries (highest priority — based on what the product actually looks like)
+        vision_query = vision_data.get("search_query", "")
+        vision_query_broad = vision_data.get("search_query_broad", "")
+        if vision_query:
+            queries.append(f"{vision_query} price")
+            queries.append(vision_query)
+        if vision_query_broad and vision_query_broad != vision_query:
+            queries.append(f"{vision_query_broad} price")
+
+        # 2. Instruction-based queries (when user specifies brands to compare)
         if mentioned_brands:
-            # User specified brands to compare with
+            vision_cat = vision_data.get("category", product_category)
             for brand in mentioned_brands[:3]:
-                queries.append(f"{brand} {product_category} price")
-                queries.append(f"{brand} {product_category}")
+                queries.append(f"{brand} {vision_cat} price")
+                queries.append(f"{brand} {vision_cat}")
         elif is_luxury:
-            queries.append(f"luxury {product_category} price")
-            queries.append(f"{product_category} designer brand price")
-            queries.append(f"{product_category} premium brand")
+            vision_cat = vision_data.get("category", product_category)
+            queries.append(f"luxury {vision_cat} price")
+            queries.append(f"{vision_cat} designer brand price")
 
-        # ── AUTO-GENERATED SMART QUERIES (always, especially when no instructions) ──
-        # These use the actual product attributes to find SIMILAR products
-        queries.append(f"{clean_title} price")
-
-        # Color + category query (e.g. "grey t-shirt price")
-        if detected_color and product_category:
-            queries.append(f"{detected_color} {product_category} price")
-
-        # Material + category query (e.g. "cotton t-shirt price")
-        if detected_material and product_category:
-            queries.append(f"{detected_material} {product_category} price")
-
-        # Product type + region (e.g. "t-shirt price Canada")
-        if product_category:
-            queries.append(f"{product_category} price Canada")
+        # 3. Fallback auto-generated queries (if vision didn't work or for more results)
+        if not vision_query:
+            # No vision data — fall back to keyword-based queries
+            queries.append(f"{clean_title} price")
+            if detected_color and product_category:
+                queries.append(f"{detected_color} {product_category} price")
+            if detected_material and product_category:
+                queries.append(f"{detected_material} {product_category} price")
+            if product_category:
+                queries.append(f"{product_category} price Canada")
 
         # Tags-based query: Shopify tags often have useful descriptors
-        if tags:
+        if tags and not vision_query:
             tag_list = [t.strip() for t in str(tags).split(",") if t.strip()]
-            # Use first 2-3 meaningful tags + category
             meaningful_tags = [t for t in tag_list if len(t) > 2 and t.lower() not in ("sale", "new", "featured", "solde", "nouveau")][:2]
             if meaningful_tags and product_category:
                 queries.append(f"{' '.join(meaningful_tags)} {product_category} price")
-
-        # Vendor + category (if vendor is a known brand, not the shop name)
-        if vendor and vendor.lower() not in ("shopify", "default", "") and product_category:
-            queries.append(f"{vendor} {product_category} price")
 
         # Deduplicate and limit to 6
         seen_q = set()
@@ -1073,6 +1149,14 @@ def _aggressive_web_price_search(product_title: str, product_type: str, vendor: 
             "queries_run": queries,
             "search_count": len(queries),
         }
+        # Include vision analysis data if available
+        if vision_data:
+            result["vision"] = {
+                "search_query": vision_data.get("search_query", ""),
+                "category": vision_data.get("category", ""),
+                "attributes": vision_data.get("attributes", ""),
+                "gender": vision_data.get("gender", ""),
+            }
         if all_prices:
             mid = len(all_prices) // 2
             result["min"] = all_prices[0]
@@ -8408,6 +8492,7 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
                         currency=shop_currency or "CAD",
                         description=item_desc,
                         tags=item_tags,
+                        image_url=item_image,
                     )
 
                     # Step 2: AI analysis of the search results
@@ -8483,6 +8568,7 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
                             "total_prices_found": search_results.get("count", 0),
                             "total_refs": len(search_results.get("refs", [])),
                             "refs": search_results.get("refs", []),
+                            "vision": search_results.get("vision", {}),
                         },
                     })
                     print(f"✅ {title}: {current_price}$ → {suggested_price}$ ({delta_pct:+.1f}%)")

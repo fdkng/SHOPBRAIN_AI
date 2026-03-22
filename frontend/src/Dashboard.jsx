@@ -4838,6 +4838,19 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               🔍 {item.search_stats.queries_run?.length || 0} recherches · {item.search_stats.total_prices_found || 0} prix trouvés — Voir les résultats ▾
                             </button>
                             <div className="hidden mt-2 bg-gray-800/70 border border-gray-600 rounded-lg p-3 max-h-[300px] overflow-y-auto">
+                              {item.search_stats.vision?.search_query ? (
+                                <div className="mb-3 bg-purple-900/30 border border-purple-700/50 rounded-lg p-2">
+                                  <p className="text-xs text-purple-300 font-semibold mb-1">👁️ Analyse visuelle du produit:</p>
+                                  <p className="text-xs text-gray-300">
+                                    <span className="text-purple-400">Recherche:</span> {item.search_stats.vision.search_query}
+                                  </p>
+                                  {item.search_stats.vision.attributes ? (
+                                    <p className="text-xs text-gray-400 mt-0.5">
+                                      <span className="text-purple-400">Attributs:</span> {item.search_stats.vision.attributes}
+                                    </p>
+                                  ) : null}
+                                </div>
+                              ) : null}
                               <p className="text-xs text-gray-400 font-semibold mb-2">🌐 Requêtes effectuées:</p>
                               <div className="flex flex-wrap gap-1 mb-3">
                                 {(item.search_stats.queries_run || []).map((q, qi) => (
