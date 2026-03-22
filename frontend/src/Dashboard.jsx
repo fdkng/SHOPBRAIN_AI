@@ -219,6 +219,7 @@ export default function Dashboard() {
   const [insightsLoading, setInsightsLoading] = useState(false)
   const [insightsError, setInsightsError] = useState('')
   const [priceInstructions, setPriceInstructions] = useState('')
+  const [priceProductId, setPriceProductId] = useState('')
   const [bundlesHistory, setBundlesHistory] = useState([])
   const [bundlesDiagnostics, setBundlesDiagnostics] = useState(null)
   const [bundlesJobStatus, setBundlesJobStatus] = useState('idle')
@@ -2724,7 +2725,8 @@ export default function Dashboard() {
           // Preferred: lightweight endpoint (if deployed).
           try {
             const instructionsParam = userInstructions ? `&instructions=${encodeURIComponent(userInstructions)}` : ''
-            const { response, data: payload } = await fetchJsonWithRetry(`${API_URL}/api/ai/price-opportunities?limit=50${instructionsParam}`, {
+            const productParam = priceProductId ? `&product_id=${encodeURIComponent(priceProductId)}` : ''
+            const { response, data: payload } = await fetchJsonWithRetry(`${API_URL}/api/ai/price-opportunities?limit=50${instructionsParam}${productParam}`, {
               method: 'GET',
               headers: {
                 'Authorization': `Bearer ${session.access_token}`,
@@ -4735,6 +4737,18 @@ analytics.subscribe("product_added_to_cart", (event) => {
                   <p className="text-xs text-gray-500">{t('priceAnalysisNote')}</p>
                 ) : null}
               </div>
+              <select
+                value={priceProductId}
+                onChange={(e) => setPriceProductId(e.target.value)}
+                className="bg-gray-900 border border-gray-700 text-sm text-white rounded-lg px-3 py-2 min-w-[260px] focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500 outline-none"
+              >
+                <option value="">Tous les produits</option>
+                {(products || []).map((product) => (
+                  <option key={product.id} value={product.id}>
+                    {product.title || product.name || `Produit ${product.id}`}
+                  </option>
+                ))}
+              </select>
               <button
                 onClick={() => runActionAnalysis('action-price')}
                 disabled={insightsLoading}

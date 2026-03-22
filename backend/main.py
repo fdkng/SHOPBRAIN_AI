@@ -7948,7 +7948,7 @@ class AnalyzeStoreRequest(BaseModel):
 
 
 @app.get("/api/ai/price-opportunities")
-async def price_opportunities_endpoint(request: Request, limit: int = 50, instructions: str = ""):
+async def price_opportunities_endpoint(request: Request, limit: int = 50, instructions: str = "", product_id: str = ""):
     """💰 Retourne des opportunités de prix (léger, sans gros payload).
 
     Objectif: éviter que le frontend doive POST une liste complète de produits
@@ -8023,6 +8023,9 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
         for p in products:
             if len(candidates) >= effective_limit:
                 break
+            # If a specific product_id was requested, filter to only that product.
+            if product_id and str(p.get("id") or "") != str(product_id):
+                continue
             variants = p.get("variants") or []
             if not variants:
                 continue
@@ -8184,6 +8187,51 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
             note = None
             if effective_limit > SERP_MAX_PRODUCTS:
                 note = f"Comparaison SERP limitée à {SERP_MAX_PRODUCTS} produits par analyse (configurable via SERP_MAX_PRODUCTS)."
+
+            # ── When the user provided custom instructions, run AI estimation on top ──
+            # SERP alone can't compare "against Louis Vuitton t-shirts" etc.
+            # The AI estimator will re-evaluate pricing with the user's comparison context.
+            if instructions and OPENAI_API_KEY:
+                print(f"🧠 AI re-evaluation with instructions on {len(opportunities)} SERP results: {repr(instructions[:100])}")
+                ai_items_for_reeval = []
+                ai_map_for_reeval = {}
+                for opp in opportunities:
+                    pid = opp["product_id"]
+                    ai_items_for_reeval.append({
+                        "product_id": pid,
+                        "title": opp.get("title", ""),
+                        "vendor": "",
+                        "product_type": "",
+                        "tags": "",
+                        "current_price": opp.get("current_price", 0),
+                    })
+                    ai_map_for_reeval[pid] = {"title": opp.get("title", "")}
+
+                ai_estimates = _ai_market_price_estimates(ai_items_for_reeval, ai_map_for_reeval, instructions, currency=shop_currency)
+                if ai_estimates:
+                    for opp in opportunities:
+                        pid = opp["product_id"]
+                        est = ai_estimates.get(pid)
+                        if not est or not est.get("market_min") or not est.get("market_max"):
+                            continue
+                        current_price = float(opp["current_price"])
+                        market_mid = (est["market_min"] + est["market_max"]) / 2
+                        new_suggested = round(market_mid, 2)
+                        new_delta_pct = round(((new_suggested - current_price) / current_price) * 100, 2) if current_price > 0 else 0.0
+                        notes = est.get("notes", "")
+
+                        if abs(new_delta_pct) < 1.0:
+                            opp["suggestion"] = "Prix aligné au marché"
+                        elif new_delta_pct > 0:
+                            opp["suggestion"] = "Prix en dessous du marché"
+                        else:
+                            opp["suggestion"] = "Prix au-dessus du marché"
+
+                        opp["suggested_price"] = new_suggested
+                        opp["target_delta_pct"] = new_delta_pct
+                        opp["reason"] = f"🧠 Analyse IA ({shop_currency or 'CAD'}): fourchette {est['market_min']:.2f}$ – {est['market_max']:.2f}$. {notes}"
+                        opp["market_estimate"] = est
+                        opp["source"] = "serpapi+ai"
 
             return {
                 "success": True,
