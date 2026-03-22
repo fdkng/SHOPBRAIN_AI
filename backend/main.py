@@ -898,6 +898,225 @@ def _ai_market_price_estimates(items: list[dict], products_by_id: dict[str, dict
         print(f"⚠️ market estimate AI error: {type(e).__name__}: {str(e)[:140]}")
         return {}
 
+
+def _aggressive_web_price_search(product_title: str, product_type: str, vendor: str, user_instructions: str, currency: str = "CAD") -> dict:
+    """Patina-AI-style aggressive web search: generate many queries, search the web
+    repeatedly, aggregate ALL prices found, then use AI to analyze.
+
+    Returns: {
+        prices: [float],
+        refs: [{title, source, price, link, currency_code}],
+        queries_run: [str],
+        search_count: int,
+        min: float, max: float, median: float, count: int
+    }
+    """
+    if not SERPAPI_KEY:
+        return {"count": 0, "refs": [], "prices": [], "queries_run": [], "search_count": 0}
+
+    # Step 1: Use GPT-4 to generate smart search queries based on the product + instructions
+    queries = []
+    if OPENAI_API_KEY:
+        try:
+            client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
+            gen_resp = client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "Tu génères des requêtes de recherche Google Shopping pour trouver des produits comparables. Retourne UNIQUEMENT un JSON."},
+                    {"role": "user", "content": (
+                        f"Produit: {product_title}\n"
+                        f"Type: {product_type}\n"
+                        f"Marque actuelle: {vendor}\n"
+                        f"Instructions du propriétaire: {user_instructions}\n"
+                        f"Devise: {currency}\n\n"
+                        f"Génère 8 à 12 requêtes de recherche Google Shopping DIFFÉRENTES pour trouver des produits "
+                        f"comparables selon les instructions. Varie les approches:\n"
+                        f"- Requêtes avec les marques mentionnées dans les instructions\n"
+                        f"- Requêtes par catégorie de produit + gamme de prix\n"
+                        f"- Requêtes en français ET en anglais\n"
+                        f"- Requêtes larges et requêtes spécifiques\n\n"
+                        f"Réponds en JSON: {{\"queries\": [\"requête 1\", \"requête 2\", ...]}}"
+                    )},
+                ],
+                temperature=0.7,
+                max_tokens=500,
+                response_format={"type": "json_object"},
+            )
+            q_payload = json.loads(gen_resp.choices[0].message.content or "{}")
+            queries = q_payload.get("queries", [])
+            if not isinstance(queries, list):
+                queries = []
+        except Exception as e:
+            print(f"⚠️ Query generation error: {e}")
+
+    # Fallback: generate queries manually if AI didn't produce any
+    if len(queries) < 3:
+        clean_title = _clean_query_text(product_title, shop_brand=vendor)
+        base_queries = [
+            f"{clean_title} price",
+            f"{clean_title} {currency}",
+            f"{product_type} luxury brand price" if product_type else f"{clean_title} luxury",
+        ]
+        # Extract brand names from instructions
+        import re as _re
+        instruction_words = user_instructions.lower()
+        luxury_brands = ["louis vuitton", "lv", "gucci", "balenciaga", "prada", "dior", "chanel",
+                         "versace", "burberry", "fendi", "hermès", "hermes", "givenchy", "valentino",
+                         "saint laurent", "ysl", "armani", "dolce gabbana", "bottega veneta", "celine"]
+        mentioned_brands = [b for b in luxury_brands if b in instruction_words]
+        if not mentioned_brands:
+            # Extract any capitalized words or quoted terms as potential brands
+            mentioned_brands = _re.findall(r'[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*', user_instructions)
+            mentioned_brands = [b for b in mentioned_brands if len(b) > 2][:3]
+
+        for brand in mentioned_brands[:4]:
+            ptype = product_type or clean_title.split()[0] if clean_title else "clothing"
+            base_queries.extend([
+                f"{brand} {ptype} price",
+                f"{brand} {ptype} prix Canada",
+                f"{brand} {ptype} buy online",
+            ])
+        queries = base_queries
+
+    # Deduplicate and limit
+    seen_q = set()
+    unique_queries = []
+    for q in queries:
+        q_clean = str(q).strip()
+        if q_clean and q_clean.lower() not in seen_q:
+            seen_q.add(q_clean.lower())
+            unique_queries.append(q_clean)
+    queries = unique_queries[:12]
+
+    print(f"🔍 Aggressive search: {len(queries)} queries for '{product_title}': {queries}")
+
+    # Step 2: Run ALL queries in parallel via SERP API
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    all_refs = []
+    all_prices = []
+    gl = _gl_for_currency(currency)
+
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        futures = {}
+        for q in queries:
+            futures[ex.submit(_serpapi_price_snapshot, q, gl, "fr", currency)] = q
+            # Also search in English for broader coverage
+            if not any(eng_word in q.lower() for eng_word in ["price", "buy", "shop", "online"]):
+                futures[ex.submit(_serpapi_price_snapshot, q, gl, "en", currency)] = f"{q} (en)"
+
+        for fut in as_completed(futures):
+            q_label = futures[fut]
+            try:
+                snapshot = fut.result() or {"count": 0, "refs": [], "prices": []}
+                found_prices = snapshot.get("prices", [])
+                found_refs = snapshot.get("refs", [])
+                all_prices.extend(found_prices)
+                all_refs.extend(found_refs)
+                print(f"  🔎 '{q_label}': {snapshot.get('count', 0)} prices found")
+            except Exception as e:
+                print(f"  ❌ '{q_label}': {e}")
+
+    # Deduplicate refs by title+price
+    seen_refs = set()
+    unique_refs = []
+    for ref in all_refs:
+        key = f"{ref.get('title', '')[:50]}|{ref.get('price', 0)}"
+        if key not in seen_refs:
+            seen_refs.add(key)
+            unique_refs.append(ref)
+
+    # Sort prices
+    all_prices = sorted(set(round(p, 2) for p in all_prices if isinstance(p, (int, float)) and p > 0))
+
+    result = {
+        "count": len(all_prices),
+        "refs": unique_refs[:20],
+        "prices": all_prices[:50],
+        "queries_run": queries,
+        "search_count": len(queries),
+    }
+
+    if all_prices:
+        mid = len(all_prices) // 2
+        result["min"] = all_prices[0]
+        result["max"] = all_prices[-1]
+        result["median"] = all_prices[mid] if len(all_prices) % 2 == 1 else (all_prices[mid - 1] + all_prices[mid]) / 2
+
+    print(f"🔍 Aggressive search results: {len(all_prices)} total prices, range: {result.get('min', 'N/A')} - {result.get('max', 'N/A')}")
+    return result
+
+
+def _ai_analyze_search_results(product_title: str, current_price: float, search_results: dict,
+                                user_instructions: str, currency: str = "CAD") -> dict:
+    """Use GPT-4 to analyze aggregated search results and make a pricing recommendation.
+
+    Returns: {suggested_price, delta_pct, suggestion, reason, market_estimate}
+    """
+    if not OPENAI_API_KEY:
+        return None
+
+    refs_text = ""
+    for ref in search_results.get("refs", [])[:15]:
+        refs_text += f"  - {ref.get('title', '?')}: {ref.get('price', '?')}$ ({ref.get('source', '?')})\n"
+
+    prices = search_results.get("prices", [])
+    prices_summary = ""
+    if prices:
+        prices_summary = (
+            f"Prix trouvés: {len(prices)} offres\n"
+            f"Min: {search_results.get('min', 'N/A')}$ | "
+            f"Médiane: {search_results.get('median', 'N/A')}$ | "
+            f"Max: {search_results.get('max', 'N/A')}$\n"
+            f"Distribution: {prices[:20]}"
+        )
+
+    queries_text = ", ".join(search_results.get("queries_run", []))
+
+    try:
+        client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": (
+                    "Tu es un expert en pricing e-commerce. Tu analyses des données de marché RÉELLES "
+                    "trouvées sur le web et tu fais des recommandations de prix basées sur ces données. "
+                    f"Tous les prix sont en {currency}. Sois précis et factuel."
+                )},
+                {"role": "user", "content": (
+                    f"PRODUIT ANALYSÉ:\n"
+                    f"Titre: {product_title}\n"
+                    f"Prix actuel: {current_price}$ {currency}\n\n"
+                    f"INSTRUCTIONS DU PROPRIÉTAIRE:\n"
+                    f"\"{user_instructions}\"\n\n"
+                    f"RECHERCHES EFFECTUÉES ({search_results.get('search_count', 0)} requêtes):\n"
+                    f"{queries_text}\n\n"
+                    f"RÉSULTATS DU MARCHÉ:\n"
+                    f"{prices_summary}\n\n"
+                    f"OFFRES COMPARABLES TROUVÉES:\n"
+                    f"{refs_text}\n\n"
+                    f"Analyse ces données et retourne en JSON:\n"
+                    f"- suggested_price: le prix que tu recommandes basé sur les données du marché et les instructions\n"
+                    f"- positioning: 'low' si le prix actuel est bas vs marché, 'mid' si aligné, 'high' si au-dessus\n"
+                    f"- confidence: nombre d'offres comparables trouvées\n"
+                    f"- comparable_products: liste des 3-5 produits les plus pertinents trouvés (titre + prix)\n"
+                    f"- analysis: explication détaillée de ta recommandation (2-3 phrases, en français)\n"
+                    f"- market_range_min: prix minimum du marché comparable\n"
+                    f"- market_range_max: prix maximum du marché comparable\n\n"
+                    f"IMPORTANT: Base ta recommandation sur les VRAIS prix trouvés, pas sur des estimations."
+                )},
+            ],
+            temperature=0.2,
+            max_tokens=800,
+            response_format={"type": "json_object"},
+        )
+
+        result = json.loads(response.choices[0].message.content or "{}")
+        return result
+    except Exception as e:
+        print(f"⚠️ AI analysis error: {e}")
+        return None
+
+
 # Shopify OAuth credentials
 SHOPIFY_API_KEY = os.getenv("SHOPIFY_API_KEY")
 SHOPIFY_API_SECRET = os.getenv("SHOPIFY_API_SECRET")
@@ -8052,6 +8271,134 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
 
         opportunities = []
 
+        # ══════════════════════════════════════════════════════════════════
+        # NEW: When user provides instructions, use aggressive web search
+        # (Patina-AI style: many searches, aggregate, then AI analysis)
+        # ══════════════════════════════════════════════════════════════════
+        if instructions and instructions.strip() and (SERPAPI_KEY or OPENAI_API_KEY):
+            print(f"🚀 Aggressive search mode activated: instructions='{instructions[:80]}', {len(candidates)} candidates")
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            def _search_and_analyze(item: dict) -> dict | None:
+                """Run aggressive search for a single product."""
+                pid = item["product_id"]
+                title = item.get("title", "")
+                current_price = float(item["current_price"])
+                product_type = item.get("product_type", "")
+                vendor_name = item.get("vendor", "")
+
+                # Step 1: Aggressive web search (many queries)
+                search_results = _aggressive_web_price_search(
+                    product_title=title,
+                    product_type=product_type,
+                    vendor=vendor_name,
+                    user_instructions=instructions,
+                    currency=shop_currency or "CAD",
+                )
+
+                if search_results.get("count", 0) == 0 and OPENAI_API_KEY:
+                    # Even with 0 SERP results, let AI estimate based on instructions
+                    search_results["refs"] = []
+                    search_results["prices"] = []
+
+                # Step 2: AI analysis of the search results
+                ai_result = _ai_analyze_search_results(
+                    product_title=title,
+                    current_price=current_price,
+                    search_results=search_results,
+                    user_instructions=instructions,
+                    currency=shop_currency or "CAD",
+                )
+
+                if not ai_result:
+                    return None
+
+                suggested_price = float(ai_result.get("suggested_price", current_price))
+                delta_pct = round(((suggested_price - current_price) / current_price) * 100, 2) if current_price > 0 else 0.0
+
+                if abs(delta_pct) < 1.0:
+                    suggestion = "Prix aligné au marché"
+                elif delta_pct > 0:
+                    suggestion = "Prix en dessous du marché"
+                else:
+                    suggestion = "Prix au-dessus du marché"
+
+                # Build rich reason text with comparable products
+                comparable_text = ""
+                comparable_products = ai_result.get("comparable_products", [])
+                if isinstance(comparable_products, list) and comparable_products:
+                    parts = []
+                    for cp in comparable_products[:5]:
+                        if isinstance(cp, dict):
+                            parts.append(f"{cp.get('title', '?')}: {cp.get('price', '?')}$")
+                        elif isinstance(cp, str):
+                            parts.append(cp)
+                    if parts:
+                        comparable_text = " | Comparables: " + " · ".join(parts)
+
+                analysis = ai_result.get("analysis", "")
+                market_min = ai_result.get("market_range_min", search_results.get("min"))
+                market_max = ai_result.get("market_range_max", search_results.get("max"))
+                confidence = ai_result.get("confidence", search_results.get("count", 0))
+
+                reason = (
+                    f"🔍 {search_results.get('search_count', 0)} recherches web · "
+                    f"{search_results.get('count', 0)} prix trouvés · "
+                    f"Fourchette: {market_min}$ – {market_max}$ ({shop_currency or 'CAD'}). "
+                    f"{analysis}{comparable_text}"
+                )
+
+                return {
+                    "product_id": pid,
+                    "title": title,
+                    "suggestion": suggestion,
+                    "current_price": round(current_price, 2),
+                    "suggested_price": round(suggested_price, 2),
+                    "target_delta_pct": delta_pct,
+                    "reason": reason,
+                    "market_estimate": {
+                        "market_min": market_min,
+                        "market_max": market_max,
+                        "positioning": ai_result.get("positioning", "mid"),
+                        "confidence": confidence,
+                        "notes": analysis,
+                        "comparable_products": comparable_products,
+                    },
+                    "source": "aggressive_search",
+                    "currency_code": shop_currency,
+                    "search_stats": {
+                        "queries_run": search_results.get("queries_run", []),
+                        "total_prices_found": search_results.get("count", 0),
+                        "total_refs": len(search_results.get("refs", [])),
+                    },
+                }
+
+            # Run searches for each candidate (limit to 3 for speed + cost)
+            analysis_candidates = candidates[:3]
+            with ThreadPoolExecutor(max_workers=2) as ex:
+                futures = {ex.submit(_search_and_analyze, item): item for item in analysis_candidates}
+                for fut in as_completed(futures):
+                    try:
+                        result = fut.result()
+                        if result:
+                            opportunities.append(result)
+                    except Exception as e:
+                        item = futures[fut]
+                        print(f"❌ Aggressive search failed for {item.get('title', '?')}: {e}")
+
+            return {
+                "success": True,
+                "tier": tier,
+                "products_analyzed": len(analysis_candidates),
+                "price_opportunities": opportunities,
+                "market_comparison": market_status,
+                "currency_code": shop_currency,
+                "search_mode": "aggressive",
+            }
+
+        # ══════════════════════════════════════════════════════════════════
+        # ORIGINAL: Standard SERP comparison (no instructions)
+        # ══════════════════════════════════════════════════════════════════
         # If SERP API is configured, do real market comparison.
         if SERPAPI_KEY:
             max_market = max(1, min(len(candidates), SERP_MAX_PRODUCTS))

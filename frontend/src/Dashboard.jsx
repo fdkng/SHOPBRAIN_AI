@@ -2726,6 +2726,7 @@ export default function Dashboard() {
           try {
             const instructionsParam = userInstructions ? `&instructions=${encodeURIComponent(userInstructions)}` : ''
             const productParam = priceProductId ? `&product_id=${encodeURIComponent(priceProductId)}` : ''
+            const hasInstr = userInstructions && userInstructions.trim().length > 0
             const { response, data: payload } = await fetchJsonWithRetry(`${API_URL}/api/ai/price-opportunities?limit=50${instructionsParam}${productParam}`, {
               method: 'GET',
               headers: {
@@ -2735,7 +2736,7 @@ export default function Dashboard() {
             }, {
               retries: 1,
               retryDelayMs: 1500,
-              timeoutMs: 45000,
+              timeoutMs: hasInstr ? 120000 : 45000,
               retryStatuses: [429, 500, 502, 503, 504]
             })
 
@@ -2952,7 +2953,12 @@ export default function Dashboard() {
 
         // For pricing, generate AI opportunities first to avoid blocking on slow Shopify insights.
         if (actionKey === 'action-price') {
-          setStatus(actionKey, 'info', t('aiPriceGeneration'))
+          const hasInstructions = priceInstructions && priceInstructions.trim().length > 0
+          if (hasInstructions) {
+            setStatus(actionKey, 'info', '🔍 Recherche web agressive en cours... (8-12 requêtes, ~20-30 sec)')
+          } else {
+            setStatus(actionKey, 'info', t('aiPriceGeneration'))
+          }
           const aiResult = await loadAiPriceInsights(priceInstructions)
           const aiPriceItems = aiResult?.items || []
           const aiMarketComparison = aiResult?.market_comparison || null
@@ -4810,6 +4816,21 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           </p>
                         ) : null}
                         {item.reason ? <p className="text-xs text-gray-500 mt-1">{item.reason}</p> : null}
+                        {item.market_estimate?.comparable_products?.length > 0 ? (
+                          <div className="mt-2 bg-gray-800/50 rounded p-2">
+                            <p className="text-xs text-yellow-400 font-semibold mb-1">📊 Produits comparables trouvés:</p>
+                            {item.market_estimate.comparable_products.slice(0, 5).map((cp, i) => (
+                              <p key={i} className="text-xs text-gray-400">
+                                • {typeof cp === 'string' ? cp : `${cp?.title || '?'}: ${cp?.price || '?'}$`}
+                              </p>
+                            ))}
+                          </div>
+                        ) : null}
+                        {item.search_stats ? (
+                          <p className="text-xs text-blue-400 mt-1">
+                            🔍 {item.search_stats.queries_run?.length || 0} recherches · {item.search_stats.total_prices_found || 0} prix trouvés
+                          </p>
+                        ) : null}
                       </div>
                       <div className="flex flex-col items-start md:items-end gap-2">
                         <button
