@@ -1066,6 +1066,7 @@ export default function Dashboard() {
   }
 
   const handleLogout = async () => {
+    sessionStorage.removeItem('sb_authenticated')
     await supabase.auth.signOut()
     window.location.hash = '#/'
   }

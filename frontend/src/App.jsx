@@ -102,6 +102,31 @@ export default function App() {
   const [user, setUser] = useState(null)
   const [hasSubscription, setHasSubscription] = useState(false)
 
+  // 🔒 Force explicit login on every fresh browser visit
+  // Uses sessionStorage (cleared when tab/browser closes) to distinguish
+  // a fresh visit from in-session navigation (e.g. payment redirect)
+  const [authReady, setAuthReady] = useState(false)
+  useEffect(() => {
+    const isActiveSession = sessionStorage.getItem('sb_authenticated')
+    // Preserve session if returning from Stripe payment redirect or OAuth redirect
+    const urlParams = new URLSearchParams(window.location.search)
+    const hashParams = window.location.hash
+    const isPaymentReturn = urlParams.get('payment') === 'success' || urlParams.has('session_id') || urlParams.get('checkout') === 'success'
+    const isOAuthReturn = hashParams.includes('access_token') || hashParams.includes('refresh_token') || urlParams.has('code')
+    
+    if (!isActiveSession && !isPaymentReturn && !isOAuthReturn) {
+      // Fresh visit — sign out any persisted Supabase session so user must log in
+      supabase.auth.signOut().then(() => {
+        setUser(null)
+        setAuthReady(true)
+      })
+    } else {
+      // Active session or redirect return — keep session alive
+      if (isPaymentReturn || isOAuthReturn) sessionStorage.setItem('sb_authenticated', 'true')
+      setAuthReady(true)
+    }
+  }, [])
+
   // ⚡ Prefetch Dashboard chunk in background after landing page loads
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -210,10 +235,12 @@ export default function App() {
     // Listen for auth changes
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_IN' && session) {
+        sessionStorage.setItem('sb_authenticated', 'true')
         setUser(session.user)
         checkSubscription()
         setShowAuthModal(false)
       } else if (event === 'SIGNED_OUT') {
+        sessionStorage.removeItem('sb_authenticated')
         setUser(null)
         setHasSubscription(false)
         setCurrentView('landing')
@@ -231,6 +258,8 @@ export default function App() {
   // The dashboard is only shown when the user explicitly navigates via the button/hash
 
   const checkUser = async () => {
+    // Only restore session if this is an active session (not a fresh visit)
+    if (!sessionStorage.getItem('sb_authenticated')) return
     const { data: { session } } = await supabase.auth.getSession()
     if (session) {
       setUser(session.user)
@@ -327,6 +356,7 @@ export default function App() {
       }
       
       if (data?.session && data?.user) {
+        sessionStorage.setItem('sb_authenticated', 'true')
         setUser(data.user)
         setShowAuthModal(false)
         setAuthMessage('')
@@ -364,6 +394,7 @@ export default function App() {
         return
       }
       
+      sessionStorage.setItem('sb_authenticated', 'true')
       setUser(data.user)
       setShowAuthModal(false)
       setAuthMessage('')
@@ -563,6 +594,7 @@ export default function App() {
                 {renderLandingStatus('dashboardNav')}
                 <button
                   onClick={async () => {
+                    sessionStorage.removeItem('sb_authenticated')
                     await supabase.auth.signOut()
                     setUser(null)
                     setCurrentView('landing')
