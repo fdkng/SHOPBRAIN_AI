@@ -915,7 +915,7 @@ def _vision_describe_product(image_url: str, product_title: str, description: st
     import time as _time
     start = _time.time()
     try:
-        client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
+        client = (OpenAI(api_key=OPENAI_API_KEY, timeout=4) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY, timeout=4))
         
         desc_hint = f"\nProduct description: {description[:150]}" if description else ""
         
@@ -1044,7 +1044,7 @@ def _aggressive_web_price_search(product_title: str, product_type: str, vendor: 
             try:
                 with ThreadPoolExecutor(max_workers=1) as vex:
                     vfut = vex.submit(_vision_describe_product, image_url, product_title, description)
-                    vision_data = vfut.result(timeout=8) or {}
+                    vision_data = vfut.result(timeout=5) or {}
             except (FuturesTimeout, Exception) as ve:
                 print(f"⚠️ Vision skipped (timeout/error): {ve}")
                 vision_data = {}
@@ -1133,10 +1133,10 @@ def _aggressive_web_price_search(product_title: str, product_type: str, vendor: 
 
         with ThreadPoolExecutor(max_workers=4) as ex:
             futures = {ex.submit(_serpapi_price_snapshot, q, gl, "fr", currency): q for q in queries}
-            for fut in as_completed(futures, timeout=15):
+            for fut in as_completed(futures, timeout=10):
                 q_label = futures[fut]
                 try:
-                    snapshot = fut.result(timeout=10) or {}
+                    snapshot = fut.result(timeout=7) or {}
                     all_prices.extend(snapshot.get("prices", []))
                     all_refs.extend(snapshot.get("refs", []))
                     print(f"  🔎 '{q_label}': {snapshot.get('count', 0)} prices")
@@ -1239,7 +1239,7 @@ def _ai_analyze_search_results(product_title: str, current_price: float, search_
         )
 
     try:
-        client = (OpenAI(api_key=OPENAI_API_KEY) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY))
+        client = (OpenAI(api_key=OPENAI_API_KEY, timeout=5) if OpenAI else openai.OpenAI(api_key=OPENAI_API_KEY, timeout=5))
 
         system_content = (
             "Tu es un expert en pricing e-commerce. Tu analyses des données de marché RÉELLES "
@@ -8386,7 +8386,7 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
             shop_resp = requests.get(
                 f"https://{shop_domain}/admin/api/2024-10/shop.json",
                 headers=headers,
-                timeout=20,
+                timeout=8,
             )
             if shop_resp.status_code == 200:
                 shop_currency = ((shop_resp.json() or {}).get("shop") or {}).get("currency")
@@ -8399,7 +8399,7 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
             f"https://{shop_domain}/admin/api/2024-10/products.json"
             f"?limit=250&fields=id,title,body_html,vendor,product_type,tags,variants,image"
         )
-        resp = requests.get(products_url, headers=headers, timeout=25)
+        resp = requests.get(products_url, headers=headers, timeout=10)
         if resp.status_code == 401:
             raise HTTPException(status_code=401, detail="Token Shopify expiré ou invalide. Reconnectez-vous.")
         if resp.status_code != 200:
@@ -8475,6 +8475,9 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
 
             import time as _time
             search_start = _time.time()
+            # Hard deadline: Render free tier kills requests at 30s.
+            # We must return a response BEFORE that, so use 24s as our own deadline.
+            HARD_DEADLINE_S = 24
 
             # Limit to 1 candidate to stay within Render 30s timeout
             # Vision (~3s) + SERP (~5s) + AI (~2s) = ~10s per product
@@ -8483,7 +8486,7 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
             for item in analysis_candidates:
                 # Time guard: bail if we've been running too long (Render 30s timeout)
                 elapsed = _time.time() - search_start
-                if elapsed > 22:
+                if elapsed > HARD_DEADLINE_S - 6:
                     print(f"⏱️ Time guard: {elapsed:.1f}s elapsed, skipping remaining candidates")
                     break
 
@@ -8497,6 +8500,12 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
                     item_tags = item.get("tags", "")
                     item_image = item.get("image_url", "")
 
+                    # Check deadline before starting heavy work
+                    pre_search_elapsed = _time.time() - search_start
+                    if pre_search_elapsed > HARD_DEADLINE_S - 5:
+                        print(f"⏱️ Deadline approaching ({pre_search_elapsed:.1f}s), skipping search+AI")
+                        continue
+
                     # Step 1: Aggressive web search (multiple SERP queries)
                     search_results = _aggressive_web_price_search(
                         product_title=title,
@@ -8508,6 +8517,12 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
                         tags=item_tags,
                         image_url=item_image,
                     )
+
+                    # Check deadline before AI analysis
+                    post_search_elapsed = _time.time() - search_start
+                    if post_search_elapsed > HARD_DEADLINE_S - 3:
+                        print(f"⏱️ Deadline approaching ({post_search_elapsed:.1f}s), skipping AI analysis")
+                        continue
 
                     # Step 2: AI analysis of the search results
                     ai_result = _ai_analyze_search_results(

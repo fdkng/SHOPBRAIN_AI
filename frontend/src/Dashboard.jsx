@@ -428,11 +428,22 @@ export default function Dashboard() {
     if (err?.name === 'AbortError') {
       return t('analysisTimeout')
     }
+    // HTTP errors from the server (502/504 = Render timeout, 500 = server error)
+    const httpMatch = raw.match(/HTTP\s*(\d+)/i)
+    if (httpMatch) {
+      const code = parseInt(httpMatch[1], 10)
+      if (code === 502 || code === 504) {
+        return '⏱️ L\'analyse a pris trop de temps. Réessaie avec un seul produit ou des instructions plus simples.'
+      }
+      if (code === 401) return t('sessionExpiredReconnect')
+      return `Erreur serveur (${code}). Réessaie dans quelques secondes.`
+    }
     const isNetwork = /Failed to fetch|NetworkError|Load failed|fetch/i.test(raw)
     if (isNetwork) {
-      const freshHealth = backendHealth && backendHealthTs && (Date.now() - backendHealthTs < 2 * 60 * 1000)
+      // Check if backend was recently confirmed alive
+      const freshHealth = backendHealth && backendHealthTs && (Date.now() - backendHealthTs < 5 * 60 * 1000)
       if (freshHealth && backendHealth?.status === 'ok') {
-        return t('networkErrorHealthy')
+        return '⏱️ L\'analyse a pris trop de temps. Réessaie dans quelques secondes.'
       }
       return t('backendWaking')
     }
@@ -2718,9 +2729,8 @@ export default function Dashboard() {
           const session = await getCachedSession()
           if (!session) return { items: [], market_comparison: null, currency_code: null }
 
-          // Reduce cold-start failures before calling an authenticated endpoint.
-          await waitForBackendReady({ retries: 8, retryDelayMs: 2000, timeoutMs: 22000 })
-          await warmupBackend(session.access_token)
+          // Skip warmup: backend is already confirmed alive from dashboard init.
+          // waitForBackendReady + warmupBackend were wasting 10-20s for no reason.
 
           // Preferred: lightweight endpoint (if deployed).
           try {
@@ -2733,10 +2743,10 @@ export default function Dashboard() {
                 'Content-Type': 'application/json'
               }
             }, {
-              retries: 1,
-              retryDelayMs: 1500,
-              timeoutMs: 120000,
-              retryStatuses: [429, 500, 502, 503, 504]
+              retries: 0,
+              retryDelayMs: 0,
+              timeoutMs: 55000,
+              retryStatuses: [429]
             })
 
             if (response?.ok && payload?.success) {
