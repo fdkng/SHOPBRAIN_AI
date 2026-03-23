@@ -134,7 +134,7 @@ export default function Dashboard() {
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [darkMode] = useState(true)
-  const { t: tCtx, language, setLanguage, LANGUAGES } = useTranslation()
+  const { t, language, setLanguage, LANGUAGES } = useTranslation()
   // Language is now managed by LanguageContext
   const [notifications, setNotifications] = useState({
     email_notifications: true,
@@ -212,14 +212,9 @@ export default function Dashboard() {
   const [analyticsData, setAnalyticsData] = useState(null)
   const [analyticsLoading, setAnalyticsLoading] = useState(false)
   const [analyticsError, setAnalyticsError] = useState('')
-  const [topProductsData, setTopProductsData] = useState(null)
-  const [topProductsLoading, setTopProductsLoading] = useState(false)
-  const [topProductsRange, setTopProductsRange] = useState('1d')
   const [insightsData, setInsightsData] = useState(null)
   const [insightsLoading, setInsightsLoading] = useState(false)
   const [insightsError, setInsightsError] = useState('')
-  const [priceInstructions, setPriceInstructions] = useState('')
-  const [priceProductId, setPriceProductId] = useState('')
   const [bundlesHistory, setBundlesHistory] = useState([])
   const [bundlesDiagnostics, setBundlesDiagnostics] = useState(null)
   const [bundlesJobStatus, setBundlesJobStatus] = useState('idle')
@@ -237,7 +232,6 @@ export default function Dashboard() {
     return localStorage.getItem('shopCurrencyCache') || ''
   })
   const [rewriteProductId, setRewriteProductId] = useState('')
-  const [imageProductId, setImageProductId] = useState('')
   const [rewriteInstructions, setRewriteInstructions] = useState('')
   const [blockersData, setBlockersData] = useState(null)
   const [blockersLoading, setBlockersLoading] = useState(false)
@@ -428,22 +422,11 @@ export default function Dashboard() {
     if (err?.name === 'AbortError') {
       return t('analysisTimeout')
     }
-    // HTTP errors from the server (502/504 = Render timeout, 500 = server error)
-    const httpMatch = raw.match(/HTTP\s*(\d+)/i)
-    if (httpMatch) {
-      const code = parseInt(httpMatch[1], 10)
-      if (code === 502 || code === 504) {
-        return '⏱️ L\'analyse a pris trop de temps. Réessaie avec un seul produit ou des instructions plus simples.'
-      }
-      if (code === 401) return t('sessionExpiredReconnect')
-      return `Erreur serveur (${code}). Réessaie dans quelques secondes.`
-    }
     const isNetwork = /Failed to fetch|NetworkError|Load failed|fetch/i.test(raw)
     if (isNetwork) {
-      // Check if backend was recently confirmed alive
-      const freshHealth = backendHealth && backendHealthTs && (Date.now() - backendHealthTs < 5 * 60 * 1000)
+      const freshHealth = backendHealth && backendHealthTs && (Date.now() - backendHealthTs < 2 * 60 * 1000)
       if (freshHealth && backendHealth?.status === 'ok') {
-        return '⏱️ L\'analyse a pris trop de temps. Réessaie dans quelques secondes.'
+        return t('networkErrorHealthy')
       }
       return t('backendWaking')
     }
@@ -542,7 +525,6 @@ export default function Dashboard() {
   }
 
   // Translations are now managed by LanguageContext
-  const t = tCtx
 
   const verifyPaymentSession = async (sessionId) => {
     try {
@@ -940,6 +922,12 @@ export default function Dashboard() {
     }
   }, [showChatPanel, activeConversationId])
 
+  // ⚡ Warmup: ping backend immediately so cold start happens in parallel
+  useEffect(() => {
+    fetch(`${API_URL}/health`, { signal: AbortSignal.timeout(120000) }).catch(() => {})
+  }, [])
+
+  const initRetryRef = useRef(0)
   const initializeUser = async () => {
     try {
       const initStart = performance.now()
@@ -1021,14 +1009,24 @@ export default function Dashboard() {
         const subData = initData.subscription
         if (subData && subData.has_subscription) {
           setSubscription({ success: true, ...subData })
+          setSubscriptionMissing(false)
+          initRetryRef.current = 0
           console.log(`⚡ Subscription: ${subData.plan} — loading products + analytics in parallel...`)
           // Load products and analytics IN PARALLEL
           Promise.all([
             loadProducts(),
             loadAnalytics(analyticsRange)
           ])
-        } else {
+        } else if (!subscription) {
+          // Only mark as missing if we have NO cached subscription
           setSubscriptionMissing(true)
+          // Auto-retry up to 5 times with increasing delay
+          if (initRetryRef.current < 5) {
+            initRetryRef.current++
+            const delay = Math.min(3000 * initRetryRef.current, 15000)
+            console.log(`🔄 No subscription found, retrying in ${delay/1000}s (attempt ${initRetryRef.current}/5)...`)
+            setTimeout(() => initializeUser(), delay)
+          }
         }
       } else {
         // Fallback to old method if /api/init fails
@@ -1065,21 +1063,43 @@ export default function Dashboard() {
         const data = subResp.ok ? await subResp.json() : null
         if (data && data.success && data.has_subscription) {
           setSubscription(data)
+          setSubscriptionMissing(false)
+          initRetryRef.current = 0
           Promise.all([loadProducts(), loadAnalytics(analyticsRange)])
-        } else {
+        } else if (!subscription) {
           setSubscriptionMissing(true)
+          // Auto-retry
+          if (initRetryRef.current < 5) {
+            initRetryRef.current++
+            const delay = Math.min(3000 * initRetryRef.current, 15000)
+            console.log(`🔄 Fallback: no subscription, retrying in ${delay/1000}s...`)
+            setTimeout(() => initializeUser(), delay)
+          }
         }
       }
       console.log(`⚡ Total init time: ${Math.round(performance.now() - initStart)}ms`)
     } catch (err) {
       console.error('Error:', err)
+      // If we have a cached subscription, don't block — just show dashboard
+      if (subscription) {
+        console.log('⚡ Init failed but cached subscription exists — showing dashboard')
+        setLoading(false)
+        setSubscriptionMissing(false)
+        return
+      }
       setError(t('authError'))
       setLoading(false)
+      // Auto-retry on network errors
+      if (initRetryRef.current < 5) {
+        initRetryRef.current++
+        const delay = Math.min(3000 * initRetryRef.current, 15000)
+        console.log(`🔄 Init error, retrying in ${delay/1000}s...`)
+        setTimeout(() => initializeUser(), delay)
+      }
     }
   }
 
   const handleLogout = async () => {
-    sessionStorage.removeItem('sb_authenticated')
     await supabase.auth.signOut()
     window.location.hash = '#/'
   }
@@ -1988,16 +2008,8 @@ export default function Dashboard() {
       return
     }
     
-    // Normalize: lowercase, strip protocol, strip trailing slashes
-    let cleanUrl = shopifyUrl.trim().toLowerCase().replace(/\/+$/, '')
-    if (cleanUrl.startsWith('https://')) cleanUrl = cleanUrl.slice(8)
-    if (cleanUrl.startsWith('http://')) cleanUrl = cleanUrl.slice(7)
-    // If user typed just the store name, append .myshopify.com
-    if (!cleanUrl.includes('.')) cleanUrl = cleanUrl + '.myshopify.com'
-    setShopifyUrl(cleanUrl)
-    
     // Valider le format de l'URL
-    if (!cleanUrl.endsWith('.myshopify.com')) {
+    if (!shopifyUrl.endsWith('.myshopify.com')) {
       setStatus('shopify', 'warning', t('invalidUrlFormat'))
       return
     }
@@ -2023,7 +2035,7 @@ export default function Dashboard() {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          shopify_shop_url: cleanUrl,
+          shopify_shop_url: shopifyUrl,
           shopify_access_token: shopifyToken
         })
       })
@@ -2051,7 +2063,7 @@ export default function Dashboard() {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          shopify_shop_url: cleanUrl,
+          shopify_shop_url: shopifyUrl,
           shopify_access_token: shopifyToken
         })
       })
@@ -2173,38 +2185,6 @@ export default function Dashboard() {
       setAnalyticsError(formatUserFacingError(err, t('errorAnalytics')))
     } finally {
       setAnalyticsLoading(false)
-    }
-  }
-
-  const loadTopProducts = async (rangeOverride) => {
-    try {
-      const rangeValue = rangeOverride || topProductsRange
-      setTopProductsLoading(true)
-      const session = await getCachedSession()
-      if (!session) return
-
-      const response = await fetch(`${API_URL}/api/shopify/top-products?range=${rangeValue}`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json'
-        }
-      })
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        console.error('Top products error:', errorData)
-        return
-      }
-
-      const data = await response.json()
-      if (data.success) {
-        setTopProductsData(data)
-      }
-    } catch (err) {
-      console.error('Error loading top products:', err)
-    } finally {
-      setTopProductsLoading(false)
     }
   }
 
@@ -2724,29 +2704,28 @@ export default function Dashboard() {
         return
       }
 
-      const loadAiPriceInsights = async (userInstructions) => {
+      const loadAiPriceInsights = async () => {
         try {
           const session = await getCachedSession()
-          if (!session) return { items: [], market_comparison: null, currency_code: null }
+          if (!session) return []
 
-          // Skip warmup: backend is already confirmed alive from dashboard init.
-          // waitForBackendReady + warmupBackend were wasting 10-20s for no reason.
+          // Reduce cold-start failures before calling an authenticated endpoint.
+          await waitForBackendReady({ retries: 8, retryDelayMs: 2000, timeoutMs: 22000 })
+          await warmupBackend(session.access_token)
 
           // Preferred: lightweight endpoint (if deployed).
           try {
-            const instructionsParam = userInstructions ? `&instructions=${encodeURIComponent(userInstructions)}` : ''
-            const productParam = priceProductId ? `&product_id=${encodeURIComponent(priceProductId)}` : ''
-            const { response, data: payload } = await fetchJsonWithRetry(`${API_URL}/api/ai/price-opportunities?limit=50${instructionsParam}${productParam}`, {
+            const { response, data: payload } = await fetchJsonWithRetry(`${API_URL}/api/ai/price-opportunities?limit=50`, {
               method: 'GET',
               headers: {
                 'Authorization': `Bearer ${session.access_token}`,
                 'Content-Type': 'application/json'
               }
             }, {
-              retries: 0,
-              retryDelayMs: 0,
-              timeoutMs: 55000,
-              retryStatuses: [429]
+              retries: 1,
+              retryDelayMs: 1500,
+              timeoutMs: 45000,
+              retryStatuses: [429, 500, 502, 503, 504]
             })
 
             if (response?.ok && payload?.success) {
@@ -2757,11 +2736,7 @@ export default function Dashboard() {
                 }))
               }
               const items = Array.isArray(payload?.price_opportunities) ? payload.price_opportunities : []
-              return {
-                items: items.slice(0, 10),
-                market_comparison: payload?.market_comparison || null,
-                currency_code: payload?.currency_code || null
-              }
+              return items.slice(0, 10)
             }
 
             // If endpoint isn't available yet (404), fall back.
@@ -2826,8 +2801,7 @@ export default function Dashboard() {
           if (!Array.isArray(optimizations) || optimizations.length === 0) return []
 
           const byTitle = new Map(slimProducts.map((p) => [String(p?.title || '').trim().toLowerCase(), p]))
-            return {
-              items: optimizations.slice(0, 10).map((opt, index) => {
+          return optimizations.slice(0, 10).map((opt, index) => {
             const title = String(opt?.product || '').trim()
             const match = byTitle.get(title.toLowerCase())
             const currentPrice = Number(opt?.current_price)
@@ -2846,13 +2820,10 @@ export default function Dashboard() {
               reason: opt?.expected_impact || opt?.reason || t('opportunityDetected'),
               source: 'ai_analyze_store'
             }
-          }),
-              market_comparison: null,
-              currency_code: null
-            }
+          })
         } catch (err) {
           console.warn('AI price fallback failed:', err)
-          return { items: [], market_comparison: null, currency_code: null }
+          return []
         }
       }
 
@@ -2871,8 +2842,7 @@ export default function Dashboard() {
           await warmupBackend(session.access_token)
 
           const rangeValue = analyticsRange
-          const productParam = options?.productId ? `&product_id=${encodeURIComponent(options.productId)}` : ''
-          const { response, data } = await fetchJsonWithRetry(`${API_URL}/api/shopify/image-risks?range=${encodeURIComponent(rangeValue)}&limit=120&ai=1${productParam}`, {
+          const { response, data } = await fetchJsonWithRetry(`${API_URL}/api/shopify/image-risks?range=${encodeURIComponent(rangeValue)}&limit=120&ai=1`, {
             method: 'GET',
             headers: {
               'Authorization': `Bearer ${session.access_token}`,
@@ -2962,19 +2932,11 @@ export default function Dashboard() {
 
         // For pricing, generate AI opportunities first to avoid blocking on slow Shopify insights.
         if (actionKey === 'action-price') {
-          const hasInstructions = priceInstructions && priceInstructions.trim().length > 0
-          if (hasInstructions) {
-            setStatus(actionKey, 'info', '🔍 Recherche web agressive en cours... (8-12 requêtes, ~20-30 sec)')
-          } else {
-            setStatus(actionKey, 'info', '🔍 Analyse intelligente du produit en cours... (photo, titre, description → recherche web ~15-25 sec)')
-          }
-          const aiResult = await loadAiPriceInsights(priceInstructions)
-          const aiPriceItems = aiResult?.items || []
-          const aiMarketComparison = aiResult?.market_comparison || null
+          setStatus(actionKey, 'info', t('aiPriceGeneration'))
+          const aiPriceItems = await loadAiPriceInsights()
           if (Array.isArray(aiPriceItems) && aiPriceItems.length > 0) {
-            const marketFromApi = aiMarketComparison
             const healthSaysOpenAI = backendHealth?.services?.openai === 'configured'
-            const inferredMarket = marketFromApi || (healthSaysOpenAI ? { enabled: true, provider: 'openai', source: 'openai', mode: 'ai_estimate', inferred: true } : null)
+            const inferredMarket = healthSaysOpenAI ? { enabled: true, provider: 'openai', source: 'openai', inferred: true } : null
             const enriched = {
               success: true,
               price_opportunities: aiPriceItems,
@@ -3023,8 +2985,7 @@ export default function Dashboard() {
 
         if (actionKey === 'action-price' && priceItems.length === 0) {
           setStatus(actionKey, 'info', t('priceAnalysisInProgress'))
-          const aiResult = await loadAiPriceInsights(priceInstructions)
-          const aiPriceItems = aiResult?.items || []
+          const aiPriceItems = await loadAiPriceInsights()
           if (Array.isArray(aiPriceItems) && aiPriceItems.length > 0) {
             enrichedData = {
               ...data,
@@ -3330,7 +3291,6 @@ export default function Dashboard() {
     if (activeTab === 'overview') {
       if (!analyticsData) loadAnalytics(analyticsRange)
       else if (analyticsRange !== '30d') loadAnalytics(analyticsRange)
-      if (!topProductsData) loadTopProducts(topProductsRange)
     }
     if (activeTab === 'underperforming') {
       if (!analyticsData) loadAnalytics(analyticsRange)
@@ -3343,12 +3303,6 @@ export default function Dashboard() {
   }, [activeTab, analyticsRange])
 
   useEffect(() => {
-    if (activeTab === 'overview') {
-      loadTopProducts(topProductsRange)
-    }
-  }, [topProductsRange])
-
-  useEffect(() => {
     if (activeTab === 'invoices' && customers.length === 0) {
       loadCustomers()
     }
@@ -3359,9 +3313,6 @@ export default function Dashboard() {
       loadOrdersList()
     }
     if (activeTab === 'action-rewrite' && (!products || products.length === 0)) {
-      loadProducts()
-    }
-    if (activeTab === 'action-images' && (!products || products.length === 0)) {
       loadProducts()
     }
   }, [activeTab])
@@ -3524,7 +3475,7 @@ export default function Dashboard() {
     }
   }
 
-  const handleApplyRecommendation = async (productId, recommendationType, extraData = {}) => {
+  const handleApplyRecommendation = async (productId, recommendationType) => {
     if (!['pro', 'premium'].includes(subscription?.plan)) {
       setStatus(`rec-${productId}-${recommendationType}`, 'warning', t('featureReservedProPremium'))
       return
@@ -3541,8 +3492,7 @@ export default function Dashboard() {
         },
         body: JSON.stringify({
           product_id: productId,
-          recommendation_type: recommendationType,
-          ...extraData
+          recommendation_type: recommendationType
         })
       })
       const data = await response.json()
@@ -3586,12 +3536,19 @@ export default function Dashboard() {
   if (!user || (!subscription && subscriptionMissing)) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
-        <div className="text-center text-white">
+        <div className="text-center text-white max-w-md px-6">
+          <div className="w-10 h-10 border-2 border-gray-600 border-t-yellow-500 rounded-full animate-spin mx-auto mb-4"></div>
           <div className="text-xl mb-2">{t('subscriptionSync')}</div>
-          <div className="text-gray-300 text-sm mb-4">{t('paymentDelay')}</div>
-          <div className="flex gap-3 justify-center">
-            <button onClick={initializeUser} className="bg-yellow-600 hover:bg-yellow-700 px-5 py-2 rounded-lg text-white text-sm font-medium transition-colors">{t('retry')}</button>
-            <button onClick={() => { window.location.hash = '#stripe-pricing' }} className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-white">{t('viewPlans')}</button>
+          <div className="text-gray-300 text-sm mb-2">{t('paymentDelay')}</div>
+          {initRetryRef.current > 0 && (
+            <div className="text-gray-500 text-xs mb-4">
+              {t('retry')} {initRetryRef.current}/5...
+            </div>
+          )}
+          <div className="flex gap-3 justify-center mt-4">
+            <button onClick={() => { initRetryRef.current = 0; initializeUser() }} className="bg-yellow-600 hover:bg-yellow-700 px-5 py-2 rounded-lg text-white text-sm font-medium transition-colors">{t('retry')}</button>
+            <button onClick={() => { window.location.hash = '#stripe-pricing' }} className="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-white text-sm">{t('viewPlans')}</button>
+            <button onClick={() => { window.location.hash = '#/' }} className="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-lg text-gray-400 text-sm">{t('backToHome')}</button>
           </div>
         </div>
       </div>
@@ -3864,126 +3821,6 @@ export default function Dashboard() {
                 </div>
               </div>
             </div>
-
-            {/* ── Produits Phares (Pixel-based top products) ────────────────── */}
-            <div className="bg-gradient-to-br from-gray-800 via-gray-900 to-black border border-yellow-700/40 rounded-2xl p-4 md:p-6">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.3em] text-yellow-300/70">⭐ Shopify Pixel</p>
-                  <h3 className="text-xl font-bold text-white mt-1">Produits Phares</h3>
-                  <p className="text-xs text-gray-400 mt-1">Classement basé sur les vues, ajouts au panier et achats réels</p>
-                </div>
-                <div className="flex items-center gap-1 bg-gray-800/70 border border-gray-700 rounded-full px-1.5 py-1">
-                  {[
-                    { key: '1d', label: "Aujourd'hui" },
-                    { key: '7d', label: '7 jours' },
-                    { key: '30d', label: '30 jours' }
-                  ].map((r) => (
-                    <button
-                      key={r.key}
-                      onClick={() => setTopProductsRange(r.key)}
-                      className={`px-3 py-1.5 rounded-full text-xs font-semibold transition ${topProductsRange === r.key ? 'bg-yellow-600 text-black' : 'text-gray-300 hover:text-white'}`}
-                    >
-                      {r.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {topProductsLoading ? (
-                <div className="flex items-center justify-center py-10">
-                  <div className="w-6 h-6 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin"></div>
-                  <span className="ml-3 text-sm text-gray-400">Analyse des données pixel...</span>
-                </div>
-              ) : !topProductsData?.products?.length ? (
-                <div className="text-center py-8">
-                  <p className="text-3xl mb-3">📊</p>
-                  <p className="text-gray-400 text-sm">
-                    {shopifyUrl
-                      ? "Aucune donnée pixel pour cette période. Les produits phares apparaîtront quand le pixel recevra des événements."
-                      : "Connecte Shopify et installe le pixel pour voir tes produits phares."
-                    }
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {topProductsData.products.map((product, index) => {
-                    const rankIcon = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `#${index + 1}`;
-                    const changeIcon = product.rank_change === 'up' ? '↑' : product.rank_change === 'down' ? '↓' : product.rank_change === 'new' ? '🆕' : '';
-                    const changeColor = product.rank_change === 'up' ? 'text-green-400' : product.rank_change === 'down' ? 'text-red-400' : product.rank_change === 'new' ? 'text-blue-400' : 'text-gray-500';
-                    const maxScore = topProductsData.products[0]?.score || 1;
-                    const barWidth = Math.max(8, Math.round((product.score / maxScore) * 100));
-
-                    return (
-                      <div key={product.product_id} className="group bg-gray-900/60 hover:bg-gray-900/90 border border-gray-700/60 hover:border-yellow-600/40 rounded-xl p-3 transition-all duration-200">
-                        <div className="flex items-center gap-3">
-                          {/* Rank */}
-                          <div className="flex-shrink-0 w-10 text-center">
-                            <span className="text-lg">{rankIcon}</span>
-                            {changeIcon && (
-                              <p className={`text-[10px] font-bold ${changeColor}`}>{changeIcon}</p>
-                            )}
-                          </div>
-
-                          {/* Product Image */}
-                          <div className="flex-shrink-0 w-12 h-12 rounded-lg bg-gray-800 border border-gray-700 overflow-hidden">
-                            {product.image_url ? (
-                              <img
-                                src={product.image_url}
-                                alt={product.title}
-                                className="w-full h-full object-cover"
-                                loading="lazy"
-                              />
-                            ) : (
-                              <div className="w-full h-full flex items-center justify-center text-gray-600 text-lg">📦</div>
-                            )}
-                          </div>
-
-                          {/* Product Info */}
-                          <div className="flex-1 min-w-0">
-                            <p className="text-white text-sm font-semibold truncate">{product.title}</p>
-                            <div className="flex items-center gap-3 mt-1 text-[11px] text-gray-400">
-                              <span title="Vues (pixel)">👁 {product.views}</span>
-                              <span title="Ajouts au panier (pixel)">🛒 {product.add_to_cart}</span>
-                              <span title="Achats confirmés">💰 {product.purchases}</span>
-                              {product.price && (
-                                <span className="text-gray-500">{parseFloat(product.price).toFixed(2)} $</span>
-                              )}
-                            </div>
-                            {/* Score bar */}
-                            <div className="mt-1.5 h-1.5 bg-gray-800 rounded-full overflow-hidden">
-                              <div
-                                className="h-full bg-gradient-to-r from-yellow-500 to-yellow-300 rounded-full transition-all duration-700"
-                                style={{ width: `${barWidth}%` }}
-                              />
-                            </div>
-                          </div>
-
-                          {/* Score */}
-                          <div className="flex-shrink-0 text-right">
-                            <p className="text-yellow-400 text-sm font-bold">{product.score}</p>
-                            <p className="text-[10px] text-gray-500">pts</p>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-
-                  {/* Score explanation */}
-                  <div className="mt-3 pt-3 border-t border-gray-700/50">
-                    <p className="text-[10px] text-gray-500 text-center">
-                      Score = Vues ×1 + Ajouts panier ×5 + Achats ×15 · Données Shopify Pixel en temps réel
-                    </p>
-                    {topProductsData.total_scored > 5 && (
-                      <p className="text-[10px] text-gray-500 text-center mt-1">
-                        {topProductsData.total_scored} produits avec activité · Top 5 affiché
-                      </p>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="bg-gray-800 rounded-lg p-5 border border-gray-700">
               <h3 className="text-gray-400 text-sm uppercase mb-2">Plan Actif</h3>
@@ -4356,14 +4193,6 @@ export default function Dashboard() {
                     ) : (
                       <span className="text-xs text-gray-500">—</span>
                     )}
-                    <button
-                      onClick={() => { setPixelStatus(null); loadPixelStatus() }}
-                      disabled={pixelLoading}
-                      className="ml-1 text-xs text-gray-500 hover:text-gray-300 transition"
-                      title="Refresh pixel status"
-                    >
-                      🔄
-                    </button>
                   </div>
                   <button
                     onClick={() => setShowPixelGuide(!showPixelGuide)}
@@ -4373,18 +4202,6 @@ export default function Dashboard() {
                     <span>Comment connecter le Shopify Pixel</span>
                   </button>
                 </div>
-
-                {/* Debug info for pixel detection */}
-                {pixelStatus?.debug && pixelStatus.status !== 'active' && (
-                  <div className="px-3 pb-2">
-                    <details className="text-xs text-gray-600">
-                      <summary className="cursor-pointer hover:text-gray-400">Debug info</summary>
-                      <pre className="mt-1 text-xs text-gray-500 bg-gray-950 p-2 rounded overflow-x-auto">
-                        {JSON.stringify(pixelStatus.debug, null, 2)}
-                      </pre>
-                    </details>
-                  </div>
-                )}
 
                 {pixelStatus?.has_recent_events && (
                   <div className="px-3 pb-2">
@@ -4476,9 +4293,6 @@ function sendEvent(eventType, productId) {
   } catch (e) {}
 }
 
-// Auto-register: tells ShopBrain this pixel is installed
-sendEvent("pixel_installed", null);
-
 analytics.subscribe("product_viewed", (event) => {
   const productId = event?.data?.product?.id;
   sendEvent("view_item", productId);
@@ -4516,9 +4330,6 @@ function sendEvent(eventType, productId) {
     }).catch(() => {});
   } catch (e) {}
 }
-
-// Auto-register: tells ShopBrain this pixel is installed
-sendEvent("pixel_installed", null);
 
 analytics.subscribe("product_viewed", (event) => {
   const productId = event?.data?.product?.id;
@@ -4615,10 +4426,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 <button
                   onClick={() => runActionAnalysis('action-rewrite', { productId: rewriteProductId, instructions: rewriteInstructions })}
                   disabled={insightsLoading || !rewriteProductId}
-                  className="font-bold py-3 px-6 rounded-lg disabled:opacity-50 transition-all duration-200 text-black"
-                  style={{ background: 'linear-gradient(135deg, #D4A843 0%, #F2D272 25%, #BF953F 50%, #FCF6BA 75%, #B38728 100%)', boxShadow: '0 2px 12px rgba(212, 168, 67, 0.3)' }}
-                  onMouseEnter={(e) => { e.currentTarget.style.boxShadow = '0 4px 20px rgba(212, 168, 67, 0.6)'; e.currentTarget.style.transform = 'translateY(-1px)' }}
-                  onMouseLeave={(e) => { e.currentTarget.style.boxShadow = '0 2px 12px rgba(212, 168, 67, 0.3)'; e.currentTarget.style.transform = 'translateY(0)' }}
+                  className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
                 >
                   {insightsLoading ? t('analysisInProgress') : t('launchRewriteAnalysis')}
                 </button>
@@ -4752,41 +4560,13 @@ analytics.subscribe("product_added_to_cart", (event) => {
                   <p className="text-xs text-gray-500">{t('priceAnalysisNote')}</p>
                 ) : null}
               </div>
-              <select
-                value={priceProductId}
-                onChange={(e) => setPriceProductId(e.target.value)}
-                className="bg-gray-900 border border-gray-700 text-sm text-white rounded-lg px-3 py-2 min-w-[260px] focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500 outline-none"
-              >
-                <option value="">Tous les produits</option>
-                {(products || []).map((product) => (
-                  <option key={product.id} value={product.id}>
-                    {product.title || product.name || `Produit ${product.id}`}
-                  </option>
-                ))}
-              </select>
               <button
                 onClick={() => runActionAnalysis('action-price')}
                 disabled={insightsLoading}
-                className="font-bold py-3 px-6 rounded-lg disabled:opacity-50 transition-all duration-200 text-black"
-                  style={{ background: 'linear-gradient(135deg, #D4A843 0%, #F2D272 25%, #BF953F 50%, #FCF6BA 75%, #B38728 100%)', boxShadow: '0 2px 12px rgba(212, 168, 67, 0.3)' }}
-                  onMouseEnter={(e) => { e.currentTarget.style.boxShadow = '0 4px 20px rgba(212, 168, 67, 0.6)'; e.currentTarget.style.transform = 'translateY(-1px)' }}
-                  onMouseLeave={(e) => { e.currentTarget.style.boxShadow = '0 2px 12px rgba(212, 168, 67, 0.3)'; e.currentTarget.style.transform = 'translateY(0)' }}
+                className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
               >
                 {insightsLoading ? t('analysisInProgress') : t('launchPriceOptimization')}
               </button>
-            </div>
-
-            {/* Custom instructions for the AI */}
-            <div className="bg-gray-900/50 border border-gray-700 rounded-lg p-4">
-              <label className="block text-sm text-gray-300 font-medium mb-2">💡 Instructions pour l'IA (optionnel)</label>
-              <textarea
-                value={priceInstructions}
-                onChange={(e) => setPriceInstructions(e.target.value)}
-                placeholder="Ex: Mon chandail est un produit de luxe premium, compare avec des marques haut de gamme comme Gucci, Balenciaga... / Ignore les produits en solde / Focus sur le marché canadien..."
-                className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500 outline-none resize-none"
-                rows={2}
-              />
-              <p className="text-xs text-gray-500 mt-1">Donne du contexte à l'IA pour des résultats plus précis. Relance l'analyse après avoir modifié.</p>
             </div>
             {renderStatus('action-price')}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -4825,76 +4605,10 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           </p>
                         ) : null}
                         {item.reason ? <p className="text-xs text-gray-500 mt-1">{item.reason}</p> : null}
-                        {item.market_estimate?.comparable_products?.length > 0 ? (
-                          <div className="mt-2 bg-gray-800/50 rounded p-2">
-                            <p className="text-xs text-yellow-400 font-semibold mb-1">📊 Produits comparables trouvés:</p>
-                            {item.market_estimate.comparable_products.slice(0, 5).map((cp, i) => (
-                              <p key={i} className="text-xs text-gray-400">
-                                • {typeof cp === 'string' ? cp : `${cp?.title || '?'}: ${cp?.price || '?'}$`}
-                              </p>
-                            ))}
-                          </div>
-                        ) : null}
-                        {item.search_stats ? (
-                          <div className="mt-1">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                const panel = e.currentTarget.nextElementSibling
-                                if (panel) panel.classList.toggle('hidden')
-                              }}
-                              className="text-xs text-blue-400 hover:text-blue-300 underline cursor-pointer bg-transparent border-none p-0"
-                            >
-                              🔍 {item.search_stats.queries_run?.length || 0} recherches · {item.search_stats.total_prices_found || 0} prix trouvés — Voir les résultats ▾
-                            </button>
-                            <div className="hidden mt-2 bg-gray-800/70 border border-gray-600 rounded-lg p-3 max-h-[300px] overflow-y-auto">
-                              {item.search_stats.vision?.search_query ? (
-                                <div className="mb-3 bg-purple-900/30 border border-purple-700/50 rounded-lg p-2">
-                                  <p className="text-xs text-purple-300 font-semibold mb-1">👁️ Analyse visuelle du produit:</p>
-                                  <p className="text-xs text-gray-300">
-                                    <span className="text-purple-400">Recherche:</span> {item.search_stats.vision.search_query}
-                                  </p>
-                                  {item.search_stats.vision.attributes ? (
-                                    <p className="text-xs text-gray-400 mt-0.5">
-                                      <span className="text-purple-400">Attributs:</span> {item.search_stats.vision.attributes}
-                                    </p>
-                                  ) : null}
-                                </div>
-                              ) : null}
-                              <p className="text-xs text-gray-400 font-semibold mb-2">🌐 Requêtes effectuées:</p>
-                              <div className="flex flex-wrap gap-1 mb-3">
-                                {(item.search_stats.queries_run || []).map((q, qi) => (
-                                  <span key={qi} className="text-[10px] bg-gray-700 text-gray-300 px-2 py-0.5 rounded-full">{q}</span>
-                                ))}
-                              </div>
-                              <p className="text-xs text-gray-400 font-semibold mb-2">🛒 {item.search_stats.refs?.length || 0} produits trouvés sur le web:</p>
-                              <div className="space-y-1.5">
-                                {(item.search_stats.refs || []).map((ref, ri) => (
-                                  <div key={ri} className="flex items-start justify-between gap-2 text-xs">
-                                    <div className="flex-1 min-w-0">
-                                      {ref.link ? (
-                                        <a href={ref.link} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 hover:underline truncate block">
-                                          {ref.title || 'Produit'}
-                                        </a>
-                                      ) : (
-                                        <span className="text-gray-300 truncate block">{ref.title || 'Produit'}</span>
-                                      )}
-                                      <span className="text-gray-500">{ref.source || ''}</span>
-                                    </div>
-                                    <span className="text-green-400 font-semibold whitespace-nowrap">{ref.price}$ {ref.currency_code || ''}</span>
-                                  </div>
-                                ))}
-                              </div>
-                              {(!item.search_stats.refs || item.search_stats.refs.length === 0) ? (
-                                <p className="text-xs text-gray-500 italic">Aucun lien de produit disponible.</p>
-                              ) : null}
-                            </div>
-                          </div>
-                        ) : null}
                       </div>
                       <div className="flex flex-col items-start md:items-end gap-2">
                         <button
-                          onClick={() => handleApplyRecommendation(item.product_id, 'Prix', { suggested_price: item.suggested_price })}
+                          onClick={() => handleApplyRecommendation(item.product_id, 'Prix')}
                           disabled={!item.product_id || applyingRecommendationId === `${item.product_id}-Prix`}
                           className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold px-3 py-2 rounded"
                         >
@@ -4916,44 +4630,18 @@ analytics.subscribe("product_added_to_cart", (event) => {
         {activeTab === 'action-images' && (
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 space-y-6">
             <div>
-              <h2 className="text-white text-2xl font-bold mb-2">📸 Assistance images — Expert IA</h2>
-              <p className="text-gray-300 text-base">Analyse de niveau photographe professionnel: direction artistique, psychologie des couleurs, composition, éclairage — basée sur des études de conversion réelles.</p>
+              <h2 className="text-white text-2xl font-bold mb-2">Assistance images</h2>
+              <p className="text-gray-300 text-base">Plan d’action ultra précis: combien d’images, quelles images produire, avec quel fond/ton/couleurs, et prompts prêts à utiliser.</p>
             </div>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <div className="flex flex-col sm:flex-row gap-3 flex-1">
-                <select
-                  value={imageProductId}
-                  onChange={(event) => setImageProductId(event.target.value)}
-                  className="bg-gray-900 border border-gray-700 text-sm text-white rounded-lg px-3 py-2 min-w-[260px] focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500 outline-none"
-                >
-                  <option value="">Tous les produits (auto-détection)</option>
-                  {(products || []).map((product) => (
-                    <option key={product.id} value={product.id}>
-                      {product.title || product.name || `Produit ${product.id}`}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  onClick={() => runActionAnalysis('action-images', { productId: imageProductId || undefined })}
-                  disabled={insightsLoading}
-                  className="font-bold py-3 px-6 rounded-lg disabled:opacity-50 transition-all duration-200 text-black"
-                  style={{
-                    background: 'linear-gradient(135deg, #D4A843 0%, #F2D272 25%, #BF953F 50%, #FCF6BA 75%, #B38728 100%)',
-                    boxShadow: '0 2px 12px rgba(212, 168, 67, 0.3)',
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.boxShadow = '0 4px 20px rgba(212, 168, 67, 0.6)'
-                    e.currentTarget.style.transform = 'translateY(-1px)'
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.boxShadow = '0 2px 12px rgba(212, 168, 67, 0.3)'
-                    e.currentTarget.style.transform = 'translateY(0)'
-                  }}
-                >
-                  {insightsLoading ? '⏳ Analyse en cours...' : '🔍 Analyser les images'}
-                </button>
-              </div>
-              <p className="text-sm text-gray-400">{getInsightCount(insightsData?.image_risks)} produits analysés</p>
+              <p className="text-base text-gray-300">{getInsightCount(insightsData?.image_risks)} produits analysés</p>
+              <button
+                onClick={() => runActionAnalysis('action-images')}
+                disabled={insightsLoading}
+                className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
+              >
+                {insightsLoading ? t('analysisInProgress') : t('analyzeImages')}
+              </button>
             </div>
             {renderStatus('action-images')}
             {Array.isArray(insightsData?.notes) && insightsData.notes.length > 0 ? (
@@ -4966,138 +4654,67 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
             <div className="space-y-3">
               {!insightsLoading && (!insightsData?.image_risks || insightsData.image_risks.length === 0) ? (
-                <div className="text-center py-8">
-                  <p className="text-3xl mb-3">📸</p>
-                  <p className="text-sm text-gray-500">
-                    {imageProductId
-                      ? 'Clique sur "Analyser les images" pour lancer l\'expertise IA sur ce produit.'
-                      : 'Sélectionne un produit ou lance l\'analyse globale pour obtenir des recommandations d\'expert.'}
-                  </p>
-                </div>
+                <p className="text-sm text-gray-500">Aucun signal détecté.</p>
               ) : (
                 insightsData?.image_risks?.slice(0, 8).map((item, index) => (
-                  <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-xl p-5 space-y-4">
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <p className="text-white font-bold text-lg">{item.title || `Produit #${item.product_id}`}</p>
-                        <p className="text-sm text-gray-400 mt-1">
-                          {item.images_count} image{item.images_count !== 1 ? 's' : ''}{item.missing_alt ? ' • ⚠️ alt manquant' : ''}
-                          {item.view_to_cart_rate !== null && item.view_to_cart_rate !== undefined ? ` • vue→panier ${Math.round(item.view_to_cart_rate * 100)}%` : ''}
-                        </p>
-                      </div>
-                      {item.recommendations?.source === 'ai' && (
-                        <span className="text-xs px-2 py-1 rounded-full font-semibold text-black" style={{ background: 'linear-gradient(135deg, #D4A843, #F2D272, #BF953F)' }}>
-                          IA Expert
-                        </span>
-                      )}
-                    </div>
+                  <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
+                    <p className="text-white font-semibold text-lg">{item.title || `Produit #${item.product_id}`}</p>
+                    <p className="text-sm text-gray-400">
+                      {item.images_count} images{item.missing_alt ? ' • alt manquant' : ''}
+                      {item.view_to_cart_rate !== null && item.view_to_cart_rate !== undefined ? ` • v→panier ${Math.round(item.view_to_cart_rate * 100)}%` : ''}
+                    </p>
 
                     {item?.recommendations ? (
-                      <div className="space-y-4">
+                      <div className="mt-4 space-y-4">
                         <div className="text-base text-gray-200">
                           Cible: <span className="text-white font-semibold">{item.recommendations.target_total_images}</span> images
                           {Number.isFinite(Number(item.recommendations.recommended_new_images)) && item.recommendations.recommended_new_images > 0
                             ? <span className="text-gray-400"> • à produire: {item.recommendations.recommended_new_images}</span>
-                            : <span className="text-gray-400"> • ✓ quantité OK</span>
+                            : <span className="text-gray-400"> • OK sur la quantité</span>
                           }
                         </div>
 
                         {item.recommendations?.source === 'ai' && item.recommendations?.ai ? (
-                          <div className="bg-gradient-to-br from-gray-800/80 to-gray-900/80 border border-yellow-700/30 rounded-xl p-4 space-y-3">
-                            <div className="text-white font-bold text-base flex items-center gap-2">
-                              🎨 Direction artistique
-                              <span className="text-xs text-gray-500 font-normal">(spécifique à ce produit)</span>
-                            </div>
-                            {item.recommendations.ai.tone ? (
-                              <div className="text-sm text-gray-300">
-                                <span className="text-gray-500">Ton visuel:</span> <span className="text-white">{item.recommendations.ai.tone}</span>
-                              </div>
-                            ) : null}
-                            {item.recommendations.ai.background ? (
-                              <div className="text-sm text-gray-300">
-                                <span className="text-gray-500">Fond recommandé:</span> <span className="text-white">{item.recommendations.ai.background}</span>
-                              </div>
-                            ) : null}
+                          <div className="text-sm text-gray-300 space-y-1">
+                            <div className="text-white font-semibold">Direction artistique (spécifique produit)</div>
+                            {item.recommendations.ai.tone ? <div>• Ton: <span className="text-white">{item.recommendations.ai.tone}</span></div> : null}
+                            {item.recommendations.ai.background ? <div>• Fond / background: <span className="text-white">{item.recommendations.ai.background}</span></div> : null}
                             {Array.isArray(item.recommendations.ai.color_palette) && item.recommendations.ai.color_palette.length > 0 ? (
-                              <div className="text-sm text-gray-300">
-                                <span className="text-gray-500">Palette chromatique:</span>
-                                <div className="flex flex-wrap gap-2 mt-1">
-                                  {item.recommendations.ai.color_palette.slice(0, 6).map((color, ci) => (
-                                    <span key={ci} className="inline-flex items-center gap-1.5 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-xs text-white">
-                                      {/^#[0-9a-fA-F]{3,8}$/.test(color) ? (
-                                        <span className="w-3 h-3 rounded-full border border-gray-600 inline-block" style={{ backgroundColor: color }}></span>
-                                      ) : null}
-                                      {color}
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
+                              <div>• Palette: <span className="text-white">{item.recommendations.ai.color_palette.slice(0, 6).join(', ')}</span></div>
                             ) : null}
                             {Array.isArray(item.recommendations.ai.product_facts_used) && item.recommendations.ai.product_facts_used.length > 0 ? (
-                              <div className="text-sm text-gray-400 mt-2">
-                                <span className="text-gray-500">Éléments du produit pris en compte:</span>
-                                <div className="flex flex-wrap gap-1.5 mt-1">
-                                  {item.recommendations.ai.product_facts_used.slice(0, 6).map((fact, fi) => (
-                                    <span key={fi} className="bg-gray-800/80 border border-gray-700 text-gray-300 rounded px-2 py-0.5 text-xs">{fact}</span>
-                                  ))}
-                                </div>
+                              <div className="text-gray-400">
+                                • Détails pris en compte: <span className="text-white">{item.recommendations.ai.product_facts_used.slice(0, 6).join(' · ')}</span>
                               </div>
                             ) : null}
                             {Array.isArray(item.recommendations.ai.notes) && item.recommendations.ai.notes.length > 0 ? (
-                              <div className="text-xs text-gray-500 mt-1 italic">💡 {item.recommendations.ai.notes[0]}</div>
+                              <div className="text-gray-400">• Note: {item.recommendations.ai.notes[0]}</div>
                             ) : null}
-                          </div>
-                        ) : null}
-
-                        {/* Quality Scores (vision audit) */}
-                        {item.recommendations?.source === 'ai' && item.recommendations?.ai?.quality_scores && Object.keys(item.recommendations.ai.quality_scores).length > 1 ? (
-                          <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4 space-y-3">
-                            <div className="text-white font-bold text-base">📊 Scores qualité</div>
-                            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-                              {Object.entries(item.recommendations.ai.quality_scores).filter(([k]) => k !== 'overall').map(([key, val]) => {
-                                const labelMap = { sharpness: 'Netteté', lighting: 'Éclairage', background_contrast: 'Contraste fond', composition: 'Composition', color_accuracy: 'Couleurs', design_appeal: 'Design', brand_consistency: 'Cohérence' }
-                                const colorMap = { excellent: 'text-green-400 bg-green-900/30 border-green-700/40', good: 'text-blue-400 bg-blue-900/30 border-blue-700/40', needs_improvement: 'text-yellow-400 bg-yellow-900/30 border-yellow-700/40', poor: 'text-red-400 bg-red-900/30 border-red-700/40' }
-                                const displayVal = String(val || '').replace(/_/g, ' ')
-                                return (
-                                  <div key={key} className={`rounded-lg border px-3 py-2 text-center ${colorMap[val] || 'text-gray-400 bg-gray-800 border-gray-700'}`}>
-                                    <p className="text-[10px] uppercase tracking-wider opacity-70">{labelMap[key] || key}</p>
-                                    <p className="text-xs font-bold mt-0.5 capitalize">{displayVal}</p>
-                                  </div>
-                                )
-                              })}
-                            </div>
                           </div>
                         ) : null}
 
                         {item.recommendations?.source === 'ai' && item.recommendations?.ai?.audit ? (
-                          <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4 space-y-3">
-                            <div className="text-white font-bold text-base">🔍 Audit images existantes</div>
-                            {Array.isArray(item.recommendations.ai.audit.what_i_see) && item.recommendations.ai.audit.what_i_see.length > 0 ? (
-                              <div className="space-y-1">
-                                <div className="text-xs text-gray-500 uppercase tracking-wider">Ce que je vois</div>
-                                {item.recommendations.ai.audit.what_i_see.slice(0, 4).map((line, idx) => (
-                                  <div key={idx} className="text-sm text-gray-300">• {line}</div>
-                                ))}
-                              </div>
-                            ) : null}
+                          <div className="text-sm text-gray-300 space-y-2">
+                            <div className="text-white font-semibold">Audit images existantes</div>
                             {Array.isArray(item.recommendations.ai.audit.issues) && item.recommendations.ai.audit.issues.length > 0 ? (
                               <div className="space-y-1">
-                                <div className="text-xs text-gray-500 uppercase tracking-wider">⚠️ Problèmes détectés</div>
+                                <div className="text-gray-400">Problèmes détectés</div>
                                 {item.recommendations.ai.audit.issues.slice(0, 5).map((line, idx) => (
-                                  <div key={idx} className="text-sm text-gray-300">• {line}</div>
+                                  <div key={idx}>• {line}</div>
                                 ))}
                               </div>
                             ) : null}
                             {Array.isArray(item.recommendations.ai.audit.quick_fixes) && item.recommendations.ai.audit.quick_fixes.length > 0 ? (
                               <div className="space-y-1">
-                                <div className="text-xs text-gray-500 uppercase tracking-wider">⚡ Corrections rapides</div>
+                                <div className="text-gray-400">Fix rapides (aujourd’hui)</div>
                                 {item.recommendations.ai.audit.quick_fixes.slice(0, 5).map((line, idx) => (
-                                  <div key={idx} className="text-sm text-green-300/90">✓ {line}</div>
+                                  <div key={idx}>• {line}</div>
                                 ))}
                               </div>
                             ) : null}
                           </div>
                         ) : null}
+
 
                         {item.recommendations?.source !== 'ai' && Array.isArray(item.recommendations.category_notes) && item.recommendations.category_notes.length > 0 ? (
                           <div className="text-sm text-gray-400 space-y-1">
@@ -5108,16 +4725,16 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         ) : null}
 
                         {Array.isArray(item.recommendations.action_plan) && item.recommendations.action_plan.length > 0 ? (
-                          <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4 space-y-2">
-                            <div className="text-white font-bold text-base">📋 Plan d'action</div>
+                          <div className="bg-gray-800/60 border border-gray-700 rounded-lg p-4 space-y-2">
+                            <div className="text-white font-semibold text-base">Plan d’action (quoi faire, dans l’ordre)</div>
                             <div className="space-y-2">
                               {item.recommendations.action_plan.slice(0, 7).map((stepObj, idx) => (
                                 <div key={idx} className="text-sm text-gray-300">
-                                  <div className="font-semibold text-white">Étape {stepObj.step}. {stepObj.title}</div>
+                                  <div className="font-semibold text-white">{stepObj.step}. {stepObj.title}</div>
                                   {Array.isArray(stepObj.do) ? (
-                                    <div className="mt-1 text-gray-300 space-y-1 pl-4">
+                                    <div className="mt-1 text-gray-300 space-y-1">
                                       {stepObj.do.slice(0, 4).map((line, lineIdx) => (
-                                        <div key={lineIdx}>→ {line}</div>
+                                        <div key={lineIdx}>- {line}</div>
                                       ))}
                                     </div>
                                   ) : null}
@@ -5128,25 +4745,21 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         ) : null}
 
                         {Array.isArray(item.recommendations.images_to_create) && item.recommendations.images_to_create.length > 0 ? (
-                          <div className="bg-gray-800/60 border border-gray-700 rounded-xl p-4 space-y-3">
-                            <div className="text-white font-bold text-base">📸 Photos à réaliser</div>
-                            <div className="space-y-4">
+                          <div className="bg-gray-800/60 border border-gray-700 rounded-lg p-4 space-y-2">
+                            <div className="text-white font-semibold text-base">À créer (exactement)</div>
+                            <div className="space-y-3">
                               {item.recommendations.images_to_create.slice(0, 8).map((img, idx) => (
-                                <div key={idx} className="bg-gray-900/50 border border-gray-700/60 rounded-lg p-3 space-y-2">
-                                  <div className="font-bold text-white text-sm">Image {img.index || (idx + 1)} — {img.name}</div>
-                                  <div className="text-sm text-gray-300">{img.what_to_shoot}</div>
-                                  {img.why ? <div className="text-xs text-yellow-400/80 italic">💡 {img.why}</div> : null}
+                                <div key={idx} className="text-sm text-gray-300">
+                                  <div className="font-semibold text-white">Image {img.index || (idx + 1)} — {img.name}</div>
+                                  <div className="text-gray-300">{img.what_to_shoot}</div>
                                   {Array.isArray(img.uses_facts) && img.uses_facts.length > 0 ? (
-                                    <div className="text-xs text-gray-500">Basé sur: <span className="text-gray-300">{img.uses_facts.slice(0, 3).join(' · ')}</span></div>
+                                    <div className="text-gray-400 mt-2">{t('whyAdapted')}: <span className="text-white">{img.uses_facts.slice(0, 3).join(' · ')}</span></div>
                                   ) : null}
-                                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
-                                    {img.background ? <div className="bg-gray-800/80 rounded px-2 py-1"><span className="text-gray-500">Fond:</span> <span className="text-gray-300">{img.background}</span></div> : null}
-                                    {img.color_tone ? <div className="bg-gray-800/80 rounded px-2 py-1"><span className="text-gray-500">Ton:</span> <span className="text-gray-300">{img.color_tone}</span></div> : null}
-                                    {img.props ? <div className="bg-gray-800/80 rounded px-2 py-1"><span className="text-gray-500">Props:</span> <span className="text-gray-300">{img.props}</span></div> : null}
-                                    {img.camera ? <div className="bg-gray-800/80 rounded px-2 py-1"><span className="text-gray-500">Caméra:</span> <span className="text-gray-300">{img.camera}</span></div> : null}
-                                    {img.lighting ? <div className="bg-gray-800/80 rounded px-2 py-1"><span className="text-gray-500">Éclairage:</span> <span className="text-gray-300">{img.lighting}</span></div> : null}
+                                  <div className="text-gray-400 mt-1">
+                                    {t('background')}: {img.background} • Ton: {img.color_tone} • Props: {img.props}
                                   </div>
-                                  {img.editing_notes ? <div className="text-xs text-gray-500">✏️ Post-production: {img.editing_notes}</div> : null}
+                                  <div className="text-gray-400">{t('camera')}: {img.camera} • {t('lighting')}: {img.lighting}</div>
+                                  {img.editing_notes ? <div className="text-gray-500">{t('editing')}: {img.editing_notes}</div> : null}
                                 </div>
                               ))}
                             </div>
@@ -5155,7 +4768,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                         {Array.isArray(item.recommendations.recommended_order) && item.recommendations.recommended_order.length > 0 ? (
                           <div className="text-sm text-gray-300 space-y-1">
-                            <div className="text-white font-bold">🔢 Ordre recommandé dans la galerie</div>
+                            <div className="text-white font-semibold">Ordre recommandé des images</div>
                             {item.recommendations.recommended_order.slice(0, 8).map((o, idx) => (
                               <div key={idx}>#{o.position} — <span className="text-white">{o.shot}</span> <span className="text-gray-400">({o.goal})</span></div>
                             ))}
@@ -5164,9 +4777,29 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                         {Array.isArray(item.recommendations.style_guidelines) && item.recommendations.style_guidelines.length > 0 ? (
                           <div className="text-sm text-gray-400 space-y-1">
-                            <div className="text-white font-bold">🎯 Règles de style</div>
+                            <div className="text-white font-semibold">Style (fond, ton, background)</div>
                             {item.recommendations.style_guidelines.slice(0, 4).map((line, idx) => (
                               <div key={idx}>• {line}</div>
+                            ))}
+                          </div>
+                        ) : null}
+
+                        {Array.isArray(item.recommendations.prompt_blocks) && item.recommendations.prompt_blocks.length > 0 ? (
+                          <div className="space-y-2">
+                            <div className="text-white font-semibold">Prompts (génération d’images)</div>
+                            {item.recommendations.prompt_blocks.slice(0, 3).map((pb, idx) => (
+                              <div key={idx} className="bg-black/20 border border-gray-700 rounded-lg p-3 space-y-2">
+                                <div className="text-sm text-gray-200 font-semibold">{pb.shot}</div>
+                                {pb.outcome ? <div className="text-xs text-gray-400">Ce que tu obtiens: {pb.outcome}</div> : null}
+                                {Array.isArray(pb.prompts) ? pb.prompts.slice(0, 2).map((pr, prIdx) => (
+                                  <div key={prIdx} className="space-y-1">
+                                    <div className="text-xs text-gray-400">{pr.label}{pr.when_to_use ? ` — ${pr.when_to_use}` : ''}</div>
+                                    <div className="bg-black/30 border border-gray-700 rounded p-2 font-mono text-xs whitespace-pre-wrap break-words text-gray-200">
+                                      {pr.prompt}
+                                    </div>
+                                  </div>
+                                )) : null}
+                              </div>
                             ))}
                           </div>
                         ) : null}
@@ -5178,7 +4811,6 @@ analytics.subscribe("product_added_to_cart", (event) => {
             </div>
           </div>
         )}
-
 
         {activeTab === 'action-bundles' && (
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 space-y-6">
@@ -5367,10 +4999,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
               <button
                 onClick={() => runActionAnalysis('action-returns')}
                 disabled={insightsLoading}
-                className="font-bold py-3 px-6 rounded-lg disabled:opacity-50 transition-all duration-200 text-black"
-                  style={{ background: 'linear-gradient(135deg, #D4A843 0%, #F2D272 25%, #BF953F 50%, #FCF6BA 75%, #B38728 100%)', boxShadow: '0 2px 12px rgba(212, 168, 67, 0.3)' }}
-                  onMouseEnter={(e) => { e.currentTarget.style.boxShadow = '0 4px 20px rgba(212, 168, 67, 0.6)'; e.currentTarget.style.transform = 'translateY(-1px)' }}
-                  onMouseLeave={(e) => { e.currentTarget.style.boxShadow = '0 2px 12px rgba(212, 168, 67, 0.3)'; e.currentTarget.style.transform = 'translateY(0)' }}
+                className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
               >
                 {insightsLoading ? t('analysisInProgress') : t('analyzeProducts')}
               </button>
@@ -5405,10 +5034,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 <button
                   onClick={analyzeProducts}
                   disabled={loading}
-                  className="font-bold py-3 px-6 rounded-lg disabled:opacity-50 transition-all duration-200 text-black"
-                  style={{ background: 'linear-gradient(135deg, #D4A843 0%, #F2D272 25%, #BF953F 50%, #FCF6BA 75%, #B38728 100%)', boxShadow: '0 2px 12px rgba(212, 168, 67, 0.3)' }}
-                  onMouseEnter={(e) => { e.currentTarget.style.boxShadow = '0 4px 20px rgba(212, 168, 67, 0.6)'; e.currentTarget.style.transform = 'translateY(-1px)' }}
-                  onMouseLeave={(e) => { e.currentTarget.style.boxShadow = '0 2px 12px rgba(212, 168, 67, 0.3)'; e.currentTarget.style.transform = 'translateY(0)' }}
+                  className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
                 >
                   {loading ? t('analysisInProgress') : t('launchAIAnalysis')}
                 </button>
