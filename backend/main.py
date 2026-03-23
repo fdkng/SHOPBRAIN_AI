@@ -5891,11 +5891,12 @@ def _build_image_recommendations(title: str, images_count: int, missing_alt: boo
     }
 
 
-def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
+def _ai_image_assistance_batch(products: list[dict], user_instructions: str | None = None) -> dict[str, dict]:
     """Hybrid image assistance:
 
     - If product has image URLs -> vision audit of existing images (background/tone/consistency) + concrete fixes.
     - If product has no images -> text-only plan for what to shoot.
+    - user_instructions: optional custom user instructions for the AI.
 
     Returns: {product_id: {target_total_images, images_to_create, prompt_blocks, ai{...}}}
     """
@@ -6068,6 +6069,8 @@ def _ai_image_assistance_batch(products: list[dict]) -> dict[str, dict]:
         ]
         if retry:
             constraints.insert(0, "Your previous answer was too generic. Make it clearly different AND cite product facts in every shot (uses_facts).")
+        if user_instructions:
+            constraints.append(f"IMPORTANT — The user has provided custom instructions. Follow them closely: \"{user_instructions}\"")
 
         prompt = {
             "task": "Create extremely concrete, product-specific image recommendations for an ecommerce product page.",
@@ -6166,17 +6169,21 @@ Tu combines l'expertise de:
         if not pid or not urls:
             return {}
 
-        prompt = {
-            "task": "Expert ecommerce product image audit — analyze visual quality, design, and conversion potential.",
-            "language": "en",
-            "constraints": [
+        vision_constraints = [
                 "Do NOT browse the web.",
                 "Use ONLY the provided images + product context.",
                 "MANDATORY checks: (1) Background vs product color CONTRAST — does the product pop or blend into its background? (2) Image SHARPNESS — is the image crisp or blurry/pixelated? (3) LIGHTING quality — even, flattering, or harsh/uneven shadows? (4) COMPOSITION — is the product centered, well-cropped, with enough white space? (5) DESIGN attractiveness — would a shopper trust and desire this product from the photo? (6) COLOR accuracy — do colors look natural or washed out/over-saturated? (7) CONSISTENCY across images — do they look like they belong to the same brand/shoot?",
                 "Rate each check as: excellent / good / needs_improvement / poor.",
                 "Provide quick fixes with SPECIFIC instructions (e.g. 'increase contrast by 20%', 'crop to center product with 15% padding').",
                 "Return only valid JSON matching output_schema.",
-            ],
+            ]
+        if user_instructions:
+            vision_constraints.append(f"IMPORTANT — The user has provided custom instructions. Follow them closely: \"{user_instructions}\"")
+
+        prompt = {
+            "task": "Expert ecommerce product image audit — analyze visual quality, design, and conversion potential.",
+            "language": "en",
+            "constraints": vision_constraints,
             "output_schema": {
                 "product_id": "string",
                 "product_facts_used": ["string"],
@@ -6326,13 +6333,14 @@ Tu combines l'œil de Mario Testino, l'expertise technique d'Annie Leibovitz, et
     return out
 
 @app.get("/api/shopify/image-risks")
-async def get_shopify_image_risks(request: Request, range: str = "30d", limit: int = 50, ai: int = 1, product_id: str | None = None):
+async def get_shopify_image_risks(request: Request, range: str = "30d", limit: int = 50, ai: int = 1, product_id: str | None = None, instructions: str | None = None):
     """🖼️ Analyse rapide des images produits (signaux de conversion visuels).
 
     - Nombre d'images faible
     - Alt manquant
     - (si pixel) taux vue→panier faible
     - product_id: si fourni, analyse uniquement ce produit
+    - instructions: instructions personnalisées de l'utilisateur pour l'IA
     """
     user_id = get_user_id(request)
     tier = get_user_tier(user_id)
@@ -6506,7 +6514,7 @@ async def get_shopify_image_risks(request: Request, range: str = "30d", limit: i
 
             ai_payload = {}
             try:
-                ai_payload = _ai_image_assistance_batch(enriched_for_ai)
+                ai_payload = _ai_image_assistance_batch(enriched_for_ai, user_instructions=instructions)
             except Exception as e:
                 print(f"⚠️ image-risks AI batch error (non-fatal): {type(e).__name__}: {str(e)[:200]}")
                 ai_payload = {}
