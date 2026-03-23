@@ -215,6 +215,8 @@ export default function Dashboard() {
   const [insightsData, setInsightsData] = useState(null)
   const [insightsLoading, setInsightsLoading] = useState(false)
   const [insightsError, setInsightsError] = useState('')
+  const [priceInstructions, setPriceInstructions] = useState('')
+  const [priceProductId, setPriceProductId] = useState('')
   const [bundlesHistory, setBundlesHistory] = useState([])
   const [bundlesDiagnostics, setBundlesDiagnostics] = useState(null)
   const [bundlesJobStatus, setBundlesJobStatus] = useState('idle')
@@ -2704,7 +2706,7 @@ export default function Dashboard() {
         return
       }
 
-      const loadAiPriceInsights = async () => {
+      const loadAiPriceInsights = async (userInstructions) => {
         try {
           const session = await getCachedSession()
           if (!session) return []
@@ -2715,7 +2717,9 @@ export default function Dashboard() {
 
           // Preferred: lightweight endpoint (if deployed).
           try {
-            const { response, data: payload } = await fetchJsonWithRetry(`${API_URL}/api/ai/price-opportunities?limit=50`, {
+            const instructionsParam = userInstructions ? `&instructions=${encodeURIComponent(userInstructions)}` : ''
+            const productParam = priceProductId ? `&product_id=${encodeURIComponent(priceProductId)}` : ''
+            const { response, data: payload } = await fetchJsonWithRetry(`${API_URL}/api/ai/price-opportunities?limit=50${instructionsParam}${productParam}`, {
               method: 'GET',
               headers: {
                 'Authorization': `Bearer ${session.access_token}`,
@@ -2933,7 +2937,7 @@ export default function Dashboard() {
         // For pricing, generate AI opportunities first to avoid blocking on slow Shopify insights.
         if (actionKey === 'action-price') {
           setStatus(actionKey, 'info', t('aiPriceGeneration'))
-          const aiPriceItems = await loadAiPriceInsights()
+          const aiPriceItems = await loadAiPriceInsights(priceInstructions)
           if (Array.isArray(aiPriceItems) && aiPriceItems.length > 0) {
             const healthSaysOpenAI = backendHealth?.services?.openai === 'configured'
             const inferredMarket = healthSaysOpenAI ? { enabled: true, provider: 'openai', source: 'openai', inferred: true } : null
@@ -2985,7 +2989,7 @@ export default function Dashboard() {
 
         if (actionKey === 'action-price' && priceItems.length === 0) {
           setStatus(actionKey, 'info', t('priceAnalysisInProgress'))
-          const aiPriceItems = await loadAiPriceInsights()
+          const aiPriceItems = await loadAiPriceInsights(priceInstructions)
           if (Array.isArray(aiPriceItems) && aiPriceItems.length > 0) {
             enrichedData = {
               ...data,
@@ -4540,12 +4544,12 @@ analytics.subscribe("product_added_to_cart", (event) => {
               return (
                 <>
             <div>
-              <h2 className="text-white text-xl font-bold mb-2">Optimisation dynamique des prix</h2>
+              <h2 className="text-white text-xl font-bold mb-2">{t('dynamicPriceOptimization')}</h2>
               <p className="text-gray-400">{t('priceAnalysisDesc')}</p>
             </div>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <div className="space-y-1">
-                <p className="text-sm text-gray-400">{getInsightCount(priceItems)} opportunités</p>
+                <p className="text-sm text-gray-400">{getInsightCount(priceItems)} {t('opportunities')}</p>
                 <p className={`text-xs ${marketStatus?.enabled ? 'text-green-400' : 'text-gray-400'}`}>
                   {t('marketComparison')}: {marketStatus?.enabled ? t('enabled') : t('notConfigured')}
                   {marketStatus?.provider
@@ -4560,59 +4564,153 @@ analytics.subscribe("product_added_to_cart", (event) => {
                   <p className="text-xs text-gray-500">{t('priceAnalysisNote')}</p>
                 ) : null}
               </div>
+              <select
+                value={priceProductId}
+                onChange={(e) => setPriceProductId(e.target.value)}
+                className="bg-gray-900 border border-gray-700 text-sm text-white rounded-lg px-3 py-2 min-w-[260px] focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500 outline-none"
+              >
+                <option value="">{t('allProducts')}</option>
+                {(products || []).map((product) => (
+                  <option key={product.id} value={product.id}>
+                    {product.title || product.name || `Produit ${product.id}`}
+                  </option>
+                ))}
+              </select>
               <button
                 onClick={() => runActionAnalysis('action-price')}
                 disabled={insightsLoading}
-                className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
+                className="font-bold py-3 px-6 rounded-lg disabled:opacity-50 transition-all duration-200 text-black"
+                style={{ background: 'linear-gradient(135deg, #D4A843 0%, #F2D272 25%, #BF953F 50%, #FCF6BA 75%, #B38728 100%)', boxShadow: '0 2px 12px rgba(212, 168, 67, 0.3)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.boxShadow = '0 4px 20px rgba(212, 168, 67, 0.6)'; e.currentTarget.style.transform = 'translateY(-1px)' }}
+                onMouseLeave={(e) => { e.currentTarget.style.boxShadow = '0 2px 12px rgba(212, 168, 67, 0.3)'; e.currentTarget.style.transform = 'translateY(0)' }}
               >
                 {insightsLoading ? t('analysisInProgress') : t('launchPriceOptimization')}
               </button>
             </div>
+
+            {/* Custom instructions for the AI */}
+            <div className="bg-gray-900/50 border border-gray-700 rounded-lg p-4">
+              <label className="block text-sm text-gray-300 font-medium mb-2">{t('aiInstructionsLabel')}</label>
+              <textarea
+                value={priceInstructions}
+                onChange={(e) => setPriceInstructions(e.target.value)}
+                placeholder={t('aiInstructionsPlaceholder')}
+                className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500 outline-none resize-none"
+                rows={2}
+              />
+              <p className="text-xs text-gray-500 mt-1">{t('aiInstructionsHint')}</p>
+            </div>
             {renderStatus('action-price')}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
-                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Produits analysés</p>
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">{t('productsAnalyzed')}</p>
                 <p className="text-2xl text-white font-bold mt-2">{formatCompactNumber(insightsData?.products_analyzed ?? (products?.length || 0))}</p>
               </div>
               <div className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
-                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Opportunités prix</p>
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">{t('priceOpportunities')}</p>
                 <p className="text-2xl text-white font-bold mt-2">{formatCompactNumber(priceItems.length)}</p>
               </div>
               <div className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
-                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">Ajustement moyen</p>
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-500">{t('averageAdjustment')}</p>
                 <p className="text-2xl text-white font-bold mt-2">{avgDelta === null ? '—' : `${avgDelta > 0 ? '+' : ''}${avgDelta.toFixed(1)}%`}</p>
               </div>
             </div>
             <div className="space-y-3">
               {!insightsLoading && priceItems.length === 0 ? (
-                <p className="text-sm text-gray-500">Aucune opportunité détectée.</p>
+                <p className="text-sm text-gray-500">{t('noOpportunityDetected')}</p>
               ) : (
                 priceItems.slice(0, 8).map((item, index) => (
                   <div key={item.product_id || index} className="bg-gray-900/70 border border-gray-700 rounded-lg p-4">
                     <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
                       <div className="space-y-1">
                         <p className="text-white font-semibold">{item.title || item.product_id}</p>
-                        <p className="text-xs text-gray-500">{item.suggestion || 'Ajuster le prix'}</p>
+                        <p className="text-xs text-gray-500">{item.suggestion || t('adjustPrice')}</p>
                         {(item.current_price !== undefined && item.current_price !== null) ? (
                           <p className="text-xs text-gray-400 mt-1">
-                            Prix actuel: {formatCurrency(item.current_price, item.currency_code)}
-                            {item.suggested_price !== undefined && item.suggested_price !== null ? ` • Prix suggéré: ${formatCurrency(item.suggested_price, item.currency_code)}` : ''}
+                            {t('currentPrice')}: {formatCurrency(item.current_price, item.currency_code)}
+                            {item.suggested_price !== undefined && item.suggested_price !== null ? ` • ${t('suggestedPrice')}: ${formatCurrency(item.suggested_price, item.currency_code)}` : ''}
                           </p>
                         ) : null}
                         {Number.isFinite(Number(item.target_delta_pct)) ? (
                           <p className={`text-xs font-semibold ${Number(item.target_delta_pct) > 0 ? 'text-green-400' : 'text-yellow-300'}`}>
-                            Variation cible: {Number(item.target_delta_pct) > 0 ? '+' : ''}{Number(item.target_delta_pct).toFixed(1)}%
+                            {t('targetVariation')}: {Number(item.target_delta_pct) > 0 ? '+' : ''}{Number(item.target_delta_pct).toFixed(1)}%
                           </p>
                         ) : null}
                         {item.reason ? <p className="text-xs text-gray-500 mt-1">{item.reason}</p> : null}
+                        {item.market_estimate?.comparable_products?.length > 0 ? (
+                          <div className="mt-2 bg-gray-800/50 rounded p-2">
+                            <p className="text-xs text-yellow-400 font-semibold mb-1">📊 {t('comparableProductsFound')}:</p>
+                            {item.market_estimate.comparable_products.slice(0, 5).map((cp, i) => (
+                              <p key={i} className="text-xs text-gray-400">
+                                • {typeof cp === 'string' ? cp : `${cp?.title || '?'}: ${cp?.price || '?'}$`}
+                              </p>
+                            ))}
+                          </div>
+                        ) : null}
+                        {item.search_stats ? (
+                          <div className="mt-1">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                const panel = e.currentTarget.nextElementSibling
+                                if (panel) panel.classList.toggle('hidden')
+                              }}
+                              className="text-xs text-blue-400 hover:text-blue-300 underline cursor-pointer bg-transparent border-none p-0"
+                            >
+                              🔍 {item.search_stats.queries_run?.length || 0} {t('searches')} · {item.search_stats.total_prices_found || 0} {t('pricesFound')} — {t('viewResults')} ▾
+                            </button>
+                            <div className="hidden mt-2 bg-gray-800/70 border border-gray-600 rounded-lg p-3 max-h-[300px] overflow-y-auto">
+                              {item.search_stats.vision?.search_query ? (
+                                <div className="mb-3 bg-purple-900/30 border border-purple-700/50 rounded-lg p-2">
+                                  <p className="text-xs text-purple-300 font-semibold mb-1">👁️ {t('visualAnalysis')}:</p>
+                                  <p className="text-xs text-gray-300">
+                                    <span className="text-purple-400">{t('searchQuery')}:</span> {item.search_stats.vision.search_query}
+                                  </p>
+                                  {item.search_stats.vision.attributes ? (
+                                    <p className="text-xs text-gray-400 mt-0.5">
+                                      <span className="text-purple-400">{t('attributes')}:</span> {item.search_stats.vision.attributes}
+                                    </p>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                              <p className="text-xs text-gray-400 font-semibold mb-2">🌐 {t('queriesPerformed')}:</p>
+                              <div className="flex flex-wrap gap-1 mb-3">
+                                {(item.search_stats.queries_run || []).map((q, qi) => (
+                                  <span key={qi} className="text-[10px] bg-gray-700 text-gray-300 px-2 py-0.5 rounded-full">{q}</span>
+                                ))}
+                              </div>
+                              <p className="text-xs text-gray-400 font-semibold mb-2">🛒 {item.search_stats.refs?.length || 0} {t('productsFoundOnWeb')}:</p>
+                              <div className="space-y-1.5">
+                                {(item.search_stats.refs || []).map((ref, ri) => (
+                                  <div key={ri} className="flex items-start justify-between gap-2 text-xs">
+                                    <div className="flex-1 min-w-0">
+                                      {ref.link ? (
+                                        <a href={ref.link} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 hover:underline truncate block">
+                                          {ref.title || 'Produit'}
+                                        </a>
+                                      ) : (
+                                        <span className="text-gray-300 truncate block">{ref.title || 'Produit'}</span>
+                                      )}
+                                      <span className="text-gray-500">{ref.source || ''}</span>
+                                    </div>
+                                    <span className="text-green-400 font-semibold whitespace-nowrap">{ref.price}$ {ref.currency_code || ''}</span>
+                                  </div>
+                                ))}
+                              </div>
+                              {(!item.search_stats.refs || item.search_stats.refs.length === 0) ? (
+                                <p className="text-xs text-gray-500 italic">{t('noProductLinks')}</p>
+                              ) : null}
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
                       <div className="flex flex-col items-start md:items-end gap-2">
                         <button
-                          onClick={() => handleApplyRecommendation(item.product_id, 'Prix')}
+                          onClick={() => handleApplyRecommendation(item.product_id, 'Prix', { suggested_price: item.suggested_price })}
                           disabled={!item.product_id || applyingRecommendationId === `${item.product_id}-Prix`}
                           className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold px-3 py-2 rounded"
                         >
-                          {applyingRecommendationId === `${item.product_id}-Prix` ? 'Application...' : 'Appliquer prix'}
+                          {applyingRecommendationId === `${item.product_id}-Prix` ? t('applying') : t('applyPrice')}
                         </button>
                         {renderStatus(`rec-${item.product_id}-Prix`)}
                       </div>
