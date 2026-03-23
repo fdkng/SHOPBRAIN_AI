@@ -1035,11 +1035,19 @@ def _aggressive_web_price_search(product_title: str, product_type: str, vendor: 
         print(f"🏷️ Product: category='{product_category}', color='{detected_color}', material='{detected_material}', ptype='{ptype}'")
 
         # ── STEP 0: Vision-based product description (when image available) ──
-        # GPT-4o looks at the actual photo and generates PRECISE search queries
+        # gpt-4o-mini looks at the actual photo and generates PRECISE search queries
         # e.g. "plain grey crewneck t-shirt men" instead of just "t-shirt"
+        # Wrapped in a tight timeout to prevent blocking the whole pipeline
         vision_data = {}
         if image_url and OPENAI_API_KEY:
-            vision_data = _vision_describe_product(image_url, product_title, description)
+            from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+            try:
+                with ThreadPoolExecutor(max_workers=1) as vex:
+                    vfut = vex.submit(_vision_describe_product, image_url, product_title, description)
+                    vision_data = vfut.result(timeout=8) or {}
+            except (FuturesTimeout, Exception) as ve:
+                print(f"⚠️ Vision skipped (timeout/error): {ve}")
+                vision_data = {}
             # Update category/color from vision if we got better data
             if vision_data.get("category"):
                 product_category = vision_data["category"]
@@ -1125,10 +1133,10 @@ def _aggressive_web_price_search(product_title: str, product_type: str, vendor: 
 
         with ThreadPoolExecutor(max_workers=4) as ex:
             futures = {ex.submit(_serpapi_price_snapshot, q, gl, "fr", currency): q for q in queries}
-            for fut in as_completed(futures, timeout=25):
+            for fut in as_completed(futures, timeout=15):
                 q_label = futures[fut]
                 try:
-                    snapshot = fut.result(timeout=15) or {}
+                    snapshot = fut.result(timeout=10) or {}
                     all_prices.extend(snapshot.get("prices", []))
                     all_refs.extend(snapshot.get("refs", []))
                     print(f"  🔎 '{q_label}': {snapshot.get('count', 0)} prices")
@@ -8386,9 +8394,10 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
             shop_currency = None
 
         # Fetch only the fields we need to keep the payload small and reliable.
+        # Use 'image' (singular) for just the featured image — much lighter than 'images' (all images)
         products_url = (
             f"https://{shop_domain}/admin/api/2024-10/products.json"
-            f"?limit=250&fields=id,title,body_html,vendor,product_type,tags,variants,images"
+            f"?limit=250&fields=id,title,body_html,vendor,product_type,tags,variants,image"
         )
         resp = requests.get(products_url, headers=headers, timeout=25)
         if resp.status_code == 401:
@@ -8433,9 +8442,10 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
 
             desc = _strip_html(p.get("body_html") or "")
             desc_kw = _keywords_from_text(desc, max_words=10)
-            # Get the first product image URL for AI vision analysis
-            images = p.get("images") or []
-            image_url = images[0].get("src", "") if images else ""
+            # Get the featured product image URL for AI vision analysis
+            # 'image' (singular) returns just the primary/featured image — lighter than 'images'
+            featured_image = p.get("image") or {}
+            image_url = featured_image.get("src", "") if isinstance(featured_image, dict) else ""
             candidates.append(
                 {
                     "product_id": str(p.get("id") or ""),
@@ -8466,8 +8476,9 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
             import time as _time
             search_start = _time.time()
 
-            # Limit to 1 candidate when a specific product is selected, otherwise top 2
-            analysis_candidates = candidates[:1] if product_id else candidates[:2]
+            # Limit to 1 candidate to stay within Render 30s timeout
+            # Vision (~3s) + SERP (~5s) + AI (~2s) = ~10s per product
+            analysis_candidates = candidates[:1]
 
             for item in analysis_candidates:
                 # Time guard: bail if we've been running too long (Render 30s timeout)
