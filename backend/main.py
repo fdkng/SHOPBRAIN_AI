@@ -9921,27 +9921,18 @@ async def get_user_profile(request: Request):
 print(f"✅ All endpoints registered successfully")
 print(f"========== BACKEND READY ==========\n")
 
-@app.on_event("startup")
-async def startup_event():
-    """Log when the app starts + launch background stock monitor + ensure tables exist."""
-    startup_time = datetime.utcnow().isoformat()
-    print(f"\n🟢 APP STARTUP at {startup_time}")
-    print(f"STRIPE_SECRET_KEY={'present' if STRIPE_SECRET_KEY else 'MISSING'}")
-    print(f"SUPABASE_URL={'present' if SUPABASE_URL else 'MISSING'}")
-    sys.stdout.flush()
-    sys.stderr.flush()
-
+def _deferred_startup_tasks():
+    """Run non-critical startup tasks in background thread so uvicorn binds the port FAST."""
+    time.sleep(5)  # let the server fully bind first
     # ⚡ Auto-create chat_conversations table if it doesn't exist
     if SUPABASE_URL and SUPABASE_SERVICE_KEY:
         try:
             sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-            # Try a simple query — if table doesn't exist, we'll create it via REST
             try:
                 sb.table("chat_conversations").select("id").limit(1).execute()
                 print("✅ chat_conversations table exists")
             except Exception:
                 print("⚠️ chat_conversations table not found — creating via Supabase REST...")
-                # Use Supabase SQL via postgrest RPC or direct REST
                 import requests as req2
                 sql = """
                 CREATE TABLE IF NOT EXISTS chat_conversations (
@@ -9970,13 +9961,31 @@ async def startup_event():
                 if resp.status_code < 300:
                     print("✅ chat_conversations table created successfully")
                 else:
-                    print(f"⚠️ Could not auto-create table (status={resp.status_code}). Run the SQL manually: backend/supabase_chat_conversations.sql")
+                    print(f"⚠️ Could not auto-create table (status={resp.status_code}).")
         except Exception as e:
-            print(f"⚠️ Table check failed: {e}. Conversations will use localStorage only until table exists.")
+            print(f"⚠️ Table check failed: {e}. Conversations will use localStorage only.")
+    sys.stdout.flush()
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Log when the app starts + launch background threads.
+    CRITICAL: This must return FAST so uvicorn can bind the port and pass Render health checks."""
+    startup_time = datetime.utcnow().isoformat()
+    print(f"\n🟢 APP STARTUP at {startup_time}")
+    print(f"STRIPE_SECRET_KEY={'present' if STRIPE_SECRET_KEY else 'MISSING'}")
+    print(f"SUPABASE_URL={'present' if SUPABASE_URL else 'MISSING'}")
+    sys.stdout.flush()
+    sys.stderr.flush()
+
+    # Move Supabase table checks to background thread (non-blocking)
+    threading.Thread(target=_deferred_startup_tasks, daemon=True).start()
 
     # Lancer le thread de surveillance stock 24/7
     threading.Thread(target=_stock_monitor_loop, daemon=True).start()
     print("📦 Stock monitor démarré (toutes les 5 minutes)")
+    print("🟢 Startup event completed — server ready for health checks")
+    sys.stdout.flush()
 
 
 # ---------------------------------------------------------------------------
