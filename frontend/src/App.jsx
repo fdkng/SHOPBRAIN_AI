@@ -593,7 +593,7 @@ export default function App() {
                   onClick={() => { setAuthMode('signup'); setShowAuthModal(true) }}
                   className="px-5 py-2 bg-[#1A1A2E] text-white text-sm font-medium rounded-full hover:bg-[#2A2A42] transition-all hover:shadow-md"
                 >
-                  {t("login")} →
+                  {t("signup")} →
                 </button>
               </div>
             )}
@@ -853,54 +853,73 @@ export default function App() {
             </p>
           </div>
 
-          {/* Kinso-style floating notification cards */}
+          {/* Kinso-style floating notification cards — animated */}
           <div className="hidden lg:block relative mt-16 h-[320px]">
-            {/* Card 1 — Analysis result */}
-            <div className="absolute left-[5%] top-4 animate-popIn stagger-1">
-              <div className="bg-white border border-[#E8E8EE] rounded-2xl p-5 shadow-[var(--shadow-lg)] w-72">
+            {/* Card 1 — AI Analysis (floats gently) */}
+            <div className="absolute left-[5%] top-4 animate-popIn stagger-1" style={{animation: 'popIn 0.6s cubic-bezier(0.34,1.56,0.64,1) forwards, floatSlow 6s ease-in-out 1s infinite'}}>
+              <div className="bg-white border border-[#E8E8EE] rounded-2xl p-5 shadow-[var(--shadow-lg)] w-72 hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-default">
                 <div className="flex items-center gap-3 mb-3">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#2DD4BF] to-[#0D9488] flex items-center justify-center text-white text-lg">🤖</div>
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#2DD4BF] to-[#0D9488] flex items-center justify-center text-white text-lg animate-pulse-soft">🤖</div>
                   <div>
                     <p className="text-sm font-semibold text-[#1A1A2E]">ShopBrain AI</p>
-                    <p className="text-[11px] text-[#8A8AA3]">2 min ago</p>
+                    <p className="text-[11px] text-[#8A8AA3]">à l'instant</p>
                   </div>
+                  <div className="ml-auto w-2 h-2 bg-[#2DD4BF] rounded-full animate-ping-slow" />
                 </div>
                 <p className="text-sm text-[#4A4A68] leading-relaxed">
-                  <span className="typing-cursor">Titre optimisé : « Bouteille Premium Inox 750ml — Isolée 24h »</span>
+                  <span className="typewriter-text">Titre optimisé : « Bouteille Premium Inox 750ml — Isolée 24h »</span>
                 </p>
               </div>
             </div>
 
-            {/* Card 2 — Price alert */}
-            <div className="absolute right-[5%] top-0 animate-popIn stagger-3">
-              <div className="bg-white border border-[#FF6B35]/20 rounded-2xl p-5 shadow-[var(--shadow-lg)] w-64">
+            {/* Card 2 — Price opportunity (floats opposite) */}
+            <div className="absolute right-[5%] top-0 animate-popIn stagger-3" style={{animation: 'popIn 0.6s cubic-bezier(0.34,1.56,0.64,1) 0.3s forwards, floatSlow 7s ease-in-out 1.5s infinite reverse'}}>
+              <div className="bg-white border border-[#FF6B35]/20 rounded-2xl p-5 shadow-[var(--shadow-lg)] w-64 hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-default">
                 <div className="flex items-center gap-2 mb-2">
                   <span className="text-[#FF6B35] text-lg">📊</span>
                   <p className="text-sm font-semibold text-[#1A1A2E]">Opportunité prix</p>
                 </div>
-                <p className="text-sm text-[#4A4A68]">T-shirt Chic → <span className="font-bold text-[#0D9488]">+18% marge</span></p>
+                <p className="text-sm text-[#4A4A68]">
+                  T-shirt Chic → <span className="font-bold text-[#0D9488] count-up">+18% marge</span>
+                </p>
                 <div className="mt-3 h-1.5 bg-[#EFF1F5] rounded-full overflow-hidden">
-                  <div className="h-full w-3/4 bg-gradient-to-r from-[#2DD4BF] to-[#FF6B35] rounded-full" />
+                  <div className="h-full bg-gradient-to-r from-[#2DD4BF] to-[#FF6B35] rounded-full progress-fill" />
+                </div>
+                <div className="flex justify-between mt-2">
+                  <span className="text-[10px] text-[#8A8AA3]">Score confiance</span>
+                  <span className="text-[10px] font-semibold text-[#0D9488]">92%</span>
                 </div>
               </div>
             </div>
 
-            {/* Card 3 — Stock alert (center bottom) */}
-            <div className="absolute left-1/2 -translate-x-1/2 bottom-0 animate-popIn stagger-5">
-              <div className="bg-white border border-[#E8E8EE] rounded-2xl p-5 shadow-[var(--shadow-lg)] w-80">
+            {/* Card 3 — Actions recommandées (floats center) */}
+            <div className="absolute left-1/2 -translate-x-1/2 bottom-0 animate-popIn stagger-5" style={{animation: 'popIn 0.6s cubic-bezier(0.34,1.56,0.64,1) 0.6s forwards, floatSlow 5s ease-in-out 2s infinite'}}>
+              <div className="bg-white border border-[#E8E8EE] rounded-2xl p-5 shadow-[var(--shadow-lg)] w-80 hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-default">
                 <div className="flex items-center gap-3 mb-3">
                   <div className="w-10 h-10 rounded-xl bg-[#FFF4F0] flex items-center justify-center text-lg">⚡</div>
                   <div className="flex-1">
                     <p className="text-sm font-semibold text-[#1A1A2E]">Actions recommandées</p>
                     <p className="text-[11px] text-[#8A8AA3]">3 actions en attente</p>
                   </div>
-                  <span className="bg-[#FF6B35] text-white text-[11px] font-bold px-2 py-0.5 rounded-full">3</span>
+                  <span className="bg-[#FF6B35] text-white text-[11px] font-bold px-2 py-0.5 rounded-full animate-bounce-soft">3</span>
                 </div>
                 <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-sm text-[#4A4A68]"><span className="w-1.5 h-1.5 bg-[#FF6B35] rounded-full" />Réécrire 2 descriptions</div>
-                  <div className="flex items-center gap-2 text-sm text-[#4A4A68]"><span className="w-1.5 h-1.5 bg-[#2DD4BF] rounded-full" />Optimiser 1 prix</div>
-                  <div className="flex items-center gap-2 text-sm text-[#4A4A68]"><span className="w-1.5 h-1.5 bg-[#F59E0B] rounded-full" />Alerte stock bas</div>
+                  <div className="flex items-center gap-2 text-sm text-[#4A4A68] action-row stagger-1"><span className="w-1.5 h-1.5 bg-[#FF6B35] rounded-full animate-pulse" />Réécrire 2 descriptions</div>
+                  <div className="flex items-center gap-2 text-sm text-[#4A4A68] action-row stagger-2"><span className="w-1.5 h-1.5 bg-[#2DD4BF] rounded-full animate-pulse" style={{animationDelay:'0.5s'}} />Optimiser 1 prix</div>
+                  <div className="flex items-center gap-2 text-sm text-[#4A4A68] action-row stagger-3"><span className="w-1.5 h-1.5 bg-[#F59E0B] rounded-full animate-pulse" style={{animationDelay:'1s'}} />Alerte stock bas</div>
                 </div>
+              </div>
+            </div>
+
+            {/* Card 4 — Revenue mini-card (new, top center) */}
+            <div className="absolute left-[38%] top-0 animate-popIn stagger-2" style={{animation: 'popIn 0.6s cubic-bezier(0.34,1.56,0.64,1) 0.9s forwards, floatSlow 8s ease-in-out 0.5s infinite'}}>
+              <div className="bg-white border border-[#2DD4BF]/20 rounded-2xl px-4 py-3 shadow-[var(--shadow-lg)] hover:shadow-xl transition-all duration-300 cursor-default">
+                <div className="flex items-center gap-2">
+                  <span className="text-[#0D9488]">💰</span>
+                  <span className="text-xs font-medium text-[#8A8AA3]">Revenus 30j</span>
+                </div>
+                <p className="text-lg font-bold text-[#1A1A2E] mt-1">12 480 <span className="text-xs font-normal text-[#8A8AA3]">CAD</span></p>
+                <span className="text-[10px] font-semibold text-[#0D9488] bg-teal-50 px-1.5 py-0.5 rounded">↑ 24%</span>
               </div>
             </div>
           </div>

@@ -147,6 +147,76 @@ aside, nav, .sidebar { will-change: transform; transform: translateZ(0); backfac
   content: '|'; animation: blink 1s step-end infinite; color: var(--accent);
 }
 
+/* === Landing page card animations === */
+
+/* Gentle floating (different from main float) */
+@keyframes floatSlow {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-8px); }
+}
+
+/* Typewriter reveal */
+.typewriter-text {
+  display: inline;
+  overflow: hidden;
+  border-right: 2px solid var(--accent);
+  white-space: normal;
+  animation: typewriterBlink 0.8s step-end infinite;
+}
+@keyframes typewriterBlink {
+  0%, 50% { border-color: var(--accent); }
+  51%, 100% { border-color: transparent; }
+}
+
+/* Soft pulse (avatar glow) */
+.animate-pulse-soft {
+  animation: pulseSoft 3s ease-in-out infinite;
+}
+@keyframes pulseSoft {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(45, 212, 191, 0.3); }
+  50% { box-shadow: 0 0 0 8px rgba(45, 212, 191, 0); }
+}
+
+/* Soft bounce (badge) */
+.animate-bounce-soft {
+  animation: bounceSoft 2s ease-in-out infinite;
+}
+@keyframes bounceSoft {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.15); }
+}
+
+/* Slow ping (online dot) */
+.animate-ping-slow {
+  animation: pingSlow 3s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+@keyframes pingSlow {
+  0% { transform: scale(1); opacity: 1; }
+  75%, 100% { transform: scale(2.5); opacity: 0; }
+}
+
+/* Progress bar fill animation */
+.progress-fill {
+  width: 0%;
+  animation: fillBar 2s ease-out 1.5s forwards;
+}
+@keyframes fillBar {
+  to { width: 75%; }
+}
+
+/* Action rows slide in */
+.action-row {
+  opacity: 0;
+  transform: translateX(-10px);
+  animation: slideInAction 0.4s ease-out forwards;
+}
+.action-row.stagger-1 { animation-delay: 1.2s; }
+.action-row.stagger-2 { animation-delay: 1.5s; }
+.action-row.stagger-3 { animation-delay: 1.8s; }
+@keyframes slideInAction {
+  to { opacity: 1; transform: translateX(0); }
+}
+
 /* Teal-orange gradient text */
 .gradient-text {
   background: linear-gradient(135deg, var(--teal) 0%, var(--accent) 100%);
