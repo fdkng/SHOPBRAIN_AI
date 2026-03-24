@@ -3540,7 +3540,7 @@ export default function Dashboard() {
   if (isProcessingPayment) {
     return (
       <div className="min-h-screen bg-[#F7F8FA] flex items-center justify-center">
-        <div className="text-center text-white">
+        <div className="text-center text-[#1A1A2E]">
           <div className="w-12 h-12 border-2 border-[#D8D8E2] border-t-[#FF6B35] rounded-full animate-spin mx-auto mb-6"></div>
           <h2 className="text-2xl font-bold mb-3">{t('paymentProcessing')}</h2>
           <p className="text-[#6A6A85] mb-6">{t('paymentRegistering')}</p>
@@ -3553,7 +3553,7 @@ export default function Dashboard() {
   if (!user || (!subscription && subscriptionMissing)) {
     return (
       <div className="min-h-screen bg-[#F7F8FA] flex items-center justify-center">
-        <div className="text-center text-white max-w-md px-6">
+        <div className="text-center text-[#1A1A2E] max-w-md px-6">
           <div className="w-10 h-10 border-2 border-[#D8D8E2] border-t-[#FF6B35] rounded-full animate-spin mx-auto mb-4"></div>
           <div className="text-xl mb-2">{t('subscriptionSync')}</div>
           <div className="text-[#4A4A68] text-sm mb-2">{t('paymentDelay')}</div>
@@ -3564,7 +3564,7 @@ export default function Dashboard() {
           )}
           <div className="flex gap-3 justify-center mt-4">
             <button onClick={() => { initRetryRef.current = 0; initializeUser() }} className="bg-[#FF6B35] hover:bg-[#E85A28] px-5 py-2 rounded-lg text-white text-sm font-medium transition-colors">{t('retry')}</button>
-            <button onClick={() => { window.location.hash = '#stripe-pricing' }} className="bg-[#EFF1F5] hover:bg-[#E8E8EE] px-4 py-2 rounded-lg text-white text-sm">{t('viewPlans')}</button>
+            <button onClick={() => { window.location.hash = '#stripe-pricing' }} className="bg-[#EFF1F5] hover:bg-[#E8E8EE] px-4 py-2 rounded-lg text-[#1A1A2E] text-sm">{t('viewPlans')}</button>
             <button onClick={() => { window.location.hash = '#/' }} className="bg-white hover:bg-[#EFF1F5] px-4 py-2 rounded-lg text-[#6A6A85] text-sm">{t('backToHome')}</button>
           </div>
         </div>
@@ -3576,7 +3576,7 @@ export default function Dashboard() {
     <div className="min-h-screen bg-[#F7F8FA]">
       {/* Mobile header with hamburger */}
       <div className="md:hidden flex items-center justify-between bg-white border-b border-[#E8E8EE] px-4 py-3 sticky top-0 z-40">
-        <button onClick={() => setMobileSidebarOpen(true)} className="text-white p-1">
+        <button onClick={() => setMobileSidebarOpen(true)} className="text-[#1A1A2E] p-1">
           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
         </button>
         <span className="text-[#1A1A2E] font-semibold text-sm">ShopBrain AI</span>
@@ -3609,7 +3609,7 @@ export default function Dashboard() {
                 )}
               </div>
               <div className="text-left">
-                <div className="font-semibold text-sm text-white">{profile?.full_name || user?.email}</div>
+                <div className="font-semibold text-sm text-[#1A1A2E]">{profile?.full_name || user?.email}</div>
                 <div className="text-xs text-[#6A6A85]">@{profile?.username || 'user'}</div>
               </div>
             </button>
@@ -3617,7 +3617,7 @@ export default function Dashboard() {
             {showProfileMenu && (
               <div className="absolute top-full left-0 mt-2 w-60 bg-white border border-[#E8E8EE] rounded-lg shadow-2xl z-50">
                 <div className="p-4 border-b border-[#E8E8EE]">
-                  <div className="font-semibold text-white">{profile?.full_name || user?.email}</div>
+                  <div className="font-semibold text-[#1A1A2E]">{profile?.full_name || user?.email}</div>
                   <div className="text-sm text-[#6A6A85]">{user?.email}</div>
                   <div className="mt-2 px-2 py-1 bg-[#FF6B35]/20 text-[#FF6B35] text-xs rounded inline-block">
                     {formatPlan(subscription?.plan)}
@@ -3626,13 +3626,13 @@ export default function Dashboard() {
                 <div className="p-2">
                   <button
                     onClick={() => { setShowProfileMenu(false); setShowSettingsModal(true); setSettingsTab('profile') }}
-                    className="w-full text-left px-3 py-2 rounded hover:bg-[#EFF1F5] flex items-center gap-2 text-sm text-white"
+                    className="w-full text-left px-3 py-2 rounded hover:bg-[#EFF1F5] flex items-center gap-2 text-sm text-[#1A1A2E]"
                   >
                     {t('accountSettings')}
                   </button>
                   <button
                     onClick={() => { setShowProfileMenu(false); setShowPlanMenu(true) }}
-                    className="w-full text-left px-3 py-2 rounded hover:bg-[#EFF1F5] flex items-center gap-2 text-sm text-white"
+                    className="w-full text-left px-3 py-2 rounded hover:bg-[#EFF1F5] flex items-center gap-2 text-sm text-[#1A1A2E]"
                   >
                     Subscription & Billing
                   </button>
@@ -3673,7 +3673,7 @@ export default function Dashboard() {
                 onClick={() => { setActiveTab(item.key); setMobileSidebarOpen(false) }}
                 className={`text-left px-3 py-2 rounded-lg text-sm font-semibold transition ${
                   activeTab === item.key
-                    ? 'bg-[#EFF1F5] text-white'
+                    ? 'bg-[#FF6B35]/10 text-[#FF6B35] border-l-2 border-[#FF6B35]'
                     : 'text-[#6A6A85] hover:text-[#1A1A2E] hover:bg-[#EFF1F5]'
                 }`}
               >
@@ -3696,14 +3696,14 @@ export default function Dashboard() {
                 <>
                   <button
                     onClick={() => handleChangePlan('pro')}
-                    className="w-full text-left px-4 py-3 rounded-lg bg-[#EFF1F5] hover:bg-[#E8E8EE] text-white"
+                    className="w-full text-left px-4 py-3 rounded-lg bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E]"
                   >
                     <div className="font-semibold">PRO - $199/mois</div>
                     <div className="text-sm text-[#6A6A85]">500 produits/mois + rapports</div>
                   </button>
                   <button
                     onClick={() => handleChangePlan('premium')}
-                    className="w-full text-left px-4 py-3 rounded-lg bg-[#EFF1F5] hover:bg-[#E8E8EE] text-white"
+                    className="w-full text-left px-4 py-3 rounded-lg bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E]"
                   >
                     <div className="font-semibold">PREMIUM - $299/mois</div>
                     <div className="text-sm text-[#6A6A85]">{t('unlimitedAutoActions')}</div>
@@ -3713,7 +3713,7 @@ export default function Dashboard() {
               {subscription?.plan === 'pro' && (
                 <button
                   onClick={() => handleChangePlan('premium')}
-                  className="w-full text-left px-4 py-3 rounded-lg bg-[#EFF1F5] hover:bg-[#E8E8EE] text-white"
+                  className="w-full text-left px-4 py-3 rounded-lg bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E]"
                 >
                   <div className="font-semibold">PREMIUM - $299/mois</div>
                   <div className="text-sm text-[#6A6A85]">{t('unlimitedAutoActions')}</div>
@@ -3813,7 +3813,7 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              <div className="mt-6 bg-[#F7F8FA]/60 border border-gray-800 rounded-2xl p-4">
+              <div className="mt-6 bg-[#F7F8FA] border border-[#E8E8EE] rounded-2xl p-4">
                 <div className="flex items-center justify-between">
                   <p className="text-xs uppercase tracking-[0.2em] text-[#8A8AA3]">Ventes dans le temps</p>
                   {analyticsError && <p className="text-xs text-[#FF6B35]">{analyticsError}</p>}
@@ -4021,7 +4021,7 @@ export default function Dashboard() {
                 </div>
                 <button
                   onClick={loadOrdersList}
-                  className="px-4 py-2 rounded-lg bg-[#EFF1F5] text-white hover:bg-[#E8E8EE] text-sm"
+                  className="px-4 py-2 rounded-lg bg-[#EFF1F5] text-[#1A1A2E] hover:bg-[#E8E8EE] text-sm"
                 >
                   {ordersListLoading ? t('loadingDots') : t('refresh')}
                 </button>
@@ -4085,7 +4085,7 @@ export default function Dashboard() {
 
                       {/* Desktop layout */}
                       <div className="hidden md:grid grid-cols-12 gap-3 items-center">
-                        <div className="col-span-3 text-white text-sm truncate" title={row.email}>
+                        <div className="col-span-3 text-[#1A1A2E] text-sm truncate" title={row.email}>
                           {row.email || <span className="text-[#8A8AA3] italic">Pas d'email</span>}
                         </div>
                         <div className="col-span-3 text-[#4A4A68] text-sm truncate" title={row.product_title}>
@@ -4431,7 +4431,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 <select
                   value={rewriteProductId}
                   onChange={(event) => setRewriteProductId(event.target.value)}
-                  className="bg-[#F7F8FA] border border-[#E8E8EE] text-sm text-white rounded-lg px-3 py-2 min-w-[240px]"
+                  className="bg-[#F7F8FA] border border-[#E8E8EE] text-sm text-[#1A1A2E] rounded-lg px-3 py-2 min-w-[240px]"
                 >
                   <option value="">{t("selectProduct")}</option>
                   {(products || []).map((product) => (
@@ -4455,7 +4455,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 value={rewriteInstructions}
                 onChange={(e) => setRewriteInstructions(e.target.value)}
                 placeholder="Ex: Ton humoristique, mentionne la livraison gratuite, cibler les jeunes mamans, utiliser un vocabulaire luxe..."
-                className="w-full bg-[#F7F8FA] border border-[#E8E8EE] text-white text-sm rounded-lg px-3 py-2 min-h-[80px] resize-y placeholder-gray-600 focus:border-green-500 focus:ring-1 focus:ring-green-500 outline-none"
+                className="w-full bg-[#F7F8FA] border border-[#E8E8EE] text-[#1A1A2E] text-sm rounded-lg px-3 py-2 min-h-[80px] resize-y placeholder-gray-600 focus:border-green-500 focus:ring-1 focus:ring-green-500 outline-none"
                 rows={3}
               />
               <p className="text-xs text-gray-600 mt-1">L'IA prendra ces instructions en compte pour générer le titre et la description.</p>
@@ -4510,7 +4510,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     </div>
 
                     <div className="grid md:grid-cols-2 gap-4">
-                      <div className="bg-[#1A1A2E]/60 border border-gray-800 rounded-lg p-4">
+                      <div className="bg-[#F7F8FA] border border-[#E8E8EE] rounded-lg p-4">
                         <p className="text-sm font-semibold text-[#4A4A68] mb-2">Contenu actuel</p>
                         <div className="text-sm text-[#6A6A85] space-y-2">
                           <p><span className="text-[#8A8AA3]">Titre:</span> {item.current_title || '—'}</p>
@@ -4519,7 +4519,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           </div>
                         </div>
                       </div>
-                      <div className="bg-[#1A1A2E]/60 border border-gray-800 rounded-lg p-4">
+                      <div className="bg-[#F7F8FA] border border-[#E8E8EE] rounded-lg p-4">
                         <p className="text-sm font-semibold text-[#4A4A68] mb-2">Suggestions IA</p>
                         <div className="text-sm text-[#4A4A68] space-y-3">
                           {item.suggested_title ? (
@@ -4580,7 +4580,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
               <select
                 value={priceProductId}
                 onChange={(e) => setPriceProductId(e.target.value)}
-                className="bg-[#F7F8FA] border border-[#E8E8EE] text-sm text-white rounded-lg px-3 py-2 min-w-[260px] focus:border-[#FF6B35] focus:ring-1 focus:ring-yellow-500 outline-none"
+                className="bg-[#F7F8FA] border border-[#E8E8EE] text-sm text-[#1A1A2E] rounded-lg px-3 py-2 min-w-[260px] focus:border-[#FF6B35] focus:ring-1 focus:ring-yellow-500 outline-none"
               >
                 <option value="">{t('allProducts')}</option>
                 {(products || []).map((product) => (
@@ -4608,7 +4608,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 value={priceInstructions}
                 onChange={(e) => setPriceInstructions(e.target.value)}
                 placeholder={t('aiInstructionsPlaceholder')}
-                className="w-full bg-white border border-[#D8D8E2] rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-[#FF6B35] focus:ring-1 focus:ring-yellow-500 outline-none resize-none"
+                className="w-full bg-white border border-[#D8D8E2] rounded-lg px-3 py-2 text-sm text-[#1A1A2E] placeholder-gray-500 focus:border-[#FF6B35] focus:ring-1 focus:ring-yellow-500 outline-none resize-none"
                 rows={2}
               />
               <p className="text-xs text-[#8A8AA3] mt-1">{t('aiInstructionsHint')}</p>
@@ -4761,7 +4761,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 <select
                   value={imageProductId}
                   onChange={(e) => setImageProductId(e.target.value)}
-                  className="w-full bg-[#F7F8FA] border border-[#E8E8EE] text-sm text-white rounded-lg px-3 py-2.5 focus:border-[#FF6B35] focus:ring-1 focus:ring-yellow-500 outline-none"
+                  className="w-full bg-[#F7F8FA] border border-[#E8E8EE] text-sm text-[#1A1A2E] rounded-lg px-3 py-2.5 focus:border-[#FF6B35] focus:ring-1 focus:ring-yellow-500 outline-none"
                 >
                   <option value="">{t('imgAllProducts')}</option>
                   {(products || []).map((product) => (
@@ -4790,7 +4790,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 value={imageInstructions}
                 onChange={(e) => setImageInstructions(e.target.value)}
                 placeholder={t('imgInstructionsPlaceholder')}
-                className="w-full bg-white border border-[#D8D8E2] rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-[#FF6B35] focus:ring-1 focus:ring-yellow-500 outline-none resize-none"
+                className="w-full bg-white border border-[#D8D8E2] rounded-lg px-3 py-2 text-sm text-[#1A1A2E] placeholder-gray-500 focus:border-[#FF6B35] focus:ring-1 focus:ring-yellow-500 outline-none resize-none"
                 rows={2}
               />
               <p className="text-xs text-gray-600 mt-1">{t('imgInstructionsHint')}</p>
@@ -4936,13 +4936,13 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               {item.recommendations.ai.tone ? (
                                 <div className="bg-[#F7F8FA]/60 rounded-lg p-3">
                                   <div className="text-xs text-[#8A8AA3] mb-1">{t('toneLabel')}</div>
-                                  <div className="text-white">{item.recommendations.ai.tone}</div>
+                                  <div className="text-[#1A1A2E]">{item.recommendations.ai.tone}</div>
                                 </div>
                               ) : null}
                               {item.recommendations.ai.background ? (
                                 <div className="bg-[#F7F8FA]/60 rounded-lg p-3">
                                   <div className="text-xs text-[#8A8AA3] mb-1">{t('backgroundLabel')}</div>
-                                  <div className="text-white">{item.recommendations.ai.background}</div>
+                                  <div className="text-[#1A1A2E]">{item.recommendations.ai.background}</div>
                                 </div>
                               ) : null}
                             </div>
@@ -5020,7 +5020,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                                 <div key={idx} className="flex gap-3 text-sm">
                                   <div className="w-7 h-7 rounded-full bg-purple-50 text-purple-400 flex items-center justify-center flex-shrink-0 text-xs font-bold">{stepObj.step}</div>
                                   <div>
-                                    <div className="font-semibold text-white">{stepObj.title}</div>
+                                    <div className="font-semibold text-[#1A1A2E]">{stepObj.title}</div>
                                     {Array.isArray(stepObj.do) ? (
                                       <div className="mt-1 text-[#6A6A85] space-y-0.5">
                                         {stepObj.do.slice(0, 4).map((line, lineIdx) => (
@@ -5043,18 +5043,18 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               {item.recommendations.images_to_create.slice(0, 8).map((img, idx) => (
                                 <div key={idx} className="bg-[#F7F8FA]/60 border border-[#E8E8EE] rounded-lg p-4 space-y-2">
                                   <div className="flex items-center gap-2">
-                                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#FF6B35]/30 to-[#E85A28]/30 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">{img.index || (idx + 1)}</div>
-                                    <div className="font-semibold text-white">{img.name}</div>
+                                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#FF6B35]/30 to-[#E85A28]/30 flex items-center justify-center text-[#FF6B35] text-xs font-bold flex-shrink-0">{img.index || (idx + 1)}</div>
+                                    <div className="font-semibold text-[#1A1A2E]">{img.name}</div>
                                   </div>
                                   <div className="text-sm text-[#4A4A68] pl-10">{img.what_to_shoot}</div>
                                   {Array.isArray(img.uses_facts) && img.uses_facts.length > 0 ? (
                                     <div className="text-xs text-purple-400 pl-10">💡 {t('whyItFits')}: {img.uses_facts.slice(0, 3).join(' · ')}</div>
                                   ) : null}
                                   <div className="grid grid-cols-2 md:grid-cols-4 gap-2 pl-10 text-xs">
-                                    {img.background ? <div className="bg-white rounded px-2 py-1"><span className="text-[#8A8AA3]">{t('backgroundLabel')}:</span> <span className="text-white">{img.background}</span></div> : null}
-                                    {img.color_tone ? <div className="bg-white rounded px-2 py-1"><span className="text-[#8A8AA3]">{t('toneLabel')}:</span> <span className="text-white">{img.color_tone}</span></div> : null}
-                                    {img.camera ? <div className="bg-white rounded px-2 py-1"><span className="text-[#8A8AA3]">{t('cameraLabel')}:</span> <span className="text-white">{img.camera}</span></div> : null}
-                                    {img.lighting ? <div className="bg-white rounded px-2 py-1"><span className="text-[#8A8AA3]">{t('lightingLabel')}:</span> <span className="text-white">{img.lighting}</span></div> : null}
+                                    {img.background ? <div className="bg-white rounded px-2 py-1"><span className="text-[#8A8AA3]">{t('backgroundLabel')}:</span> <span className="text-[#1A1A2E]">{img.background}</span></div> : null}
+                                    {img.color_tone ? <div className="bg-white rounded px-2 py-1"><span className="text-[#8A8AA3]">{t('toneLabel')}:</span> <span className="text-[#1A1A2E]">{img.color_tone}</span></div> : null}
+                                    {img.camera ? <div className="bg-white rounded px-2 py-1"><span className="text-[#8A8AA3]">{t('cameraLabel')}:</span> <span className="text-[#1A1A2E]">{img.camera}</span></div> : null}
+                                    {img.lighting ? <div className="bg-white rounded px-2 py-1"><span className="text-[#8A8AA3]">{t('lightingLabel')}:</span> <span className="text-[#1A1A2E]">{img.lighting}</span></div> : null}
                                   </div>
                                   {img.props ? <div className="text-xs text-[#8A8AA3] pl-10">🎬 Props: {img.props}</div> : null}
                                   {img.editing_notes ? <div className="text-xs text-[#8A8AA3] pl-10">✏️ {t('retouchLabel')}: {img.editing_notes}</div> : null}
@@ -5072,7 +5072,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               {item.recommendations.recommended_order.slice(0, 8).map((o, idx) => (
                                 <div key={idx} className="flex items-center gap-3 text-sm">
                                   <span className="w-6 h-6 rounded-full bg-[#EFF1F5] text-[#4A4A68] flex items-center justify-center text-xs font-bold flex-shrink-0">{o.position}</span>
-                                  <span className="text-white">{o.shot}</span>
+                                  <span className="text-[#1A1A2E]">{o.shot}</span>
                                   <span className="text-[#8A8AA3]">— {o.goal}</span>
                                 </div>
                               ))}
@@ -5210,7 +5210,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           {job.finished_at || job.started_at || job.created_at || '—'} • {job.status || 'unknown'}
                         </span>
                         {(job.result?.bundle_suggestions || job.bundle_suggestions) && (
-                          <span className="text-sm text-white">{(job.result?.bundle_suggestions || job.bundle_suggestions || []).length} suggestions</span>
+                          <span className="text-sm text-[#1A1A2E]">{(job.result?.bundle_suggestions || job.bundle_suggestions || []).length} suggestions</span>
                         )}
                         <button
                           onClick={() => applyBundlesHistoryJob(job)}
@@ -5718,7 +5718,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                                   ) : (
                                     <button
                                       disabled
-                                      className="bg-[#E8E8EE] text-white text-xs font-semibold px-3 py-1 rounded opacity-70"
+                                      className="bg-[#E8E8EE] text-[#6A6A85] text-xs font-semibold px-3 py-1 rounded opacity-70"
                                     >
                                       {t('modificationUnavailable')}
                                     </button>
@@ -5770,7 +5770,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
           <div className="bg-[#F7F8FA] rounded-xl max-w-3xl w-full max-h-[80vh] overflow-hidden border border-green-500 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             {/* Header */}
             <div className="bg-blue-900 p-6 flex justify-between items-center">
-              <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+              <h2 className="text-2xl font-bold text-[#1A1A2E] flex items-center gap-2">
                 <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
@@ -5779,7 +5779,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
               <button
                 onClick={() => !applyingActions && setShowApplyModal(false)}
                 disabled={applyingActions}
-                className="text-white hover:bg-white/20 p-2 rounded-lg disabled:opacity-50"
+                className="text-[#6A6A85] hover:bg-[#EFF1F5] p-2 rounded-lg disabled:opacity-50"
               >
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -5812,7 +5812,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           <>
                             <p className="text-[#4A4A68] text-sm mb-2">{action.reason}</p>
                             <div className="flex items-center gap-4 text-sm">
-                              <span className="text-white">Prix actuel: {action.current}$</span>
+                              <span className="text-[#1A1A2E]">Prix actuel: {action.current}$</span>
                               <span className="text-[#8A8AA3]">→</span>
                               <span className="text-green-500 font-bold">{t('newPrice')}: {action.new}$</span>
                             </div>
@@ -5886,9 +5886,9 @@ analytics.subscribe("product_added_to_cart", (event) => {
         <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={() => setShowSettingsModal(false)}>
           <div className="bg-[#F7F8FA] rounded-xl max-w-4xl w-full max-h-[90vh] overflow-hidden border border-[#E8E8EE] shadow-2xl" onClick={(e) => e.stopPropagation()}>
             {/* Header */}
-            <div className="bg-blue-900 p-6 flex justify-between items-center">
-              <h2 className="text-2xl font-bold text-white">{t('accountSettings')}</h2>
-              <button onClick={() => setShowSettingsModal(false)} className="text-white hover:bg-white/20 p-2 rounded-lg">
+            <div className="bg-white border-b border-[#E8E8EE] p-6 flex justify-between items-center">
+              <h2 className="text-2xl font-bold text-[#1A1A2E]">{t('accountSettings')}</h2>
+              <button onClick={() => setShowSettingsModal(false)} className="text-[#6A6A85] hover:bg-[#EFF1F5] p-2 rounded-lg">
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
@@ -5943,7 +5943,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         <button
                           onClick={() => avatarInputRef.current?.click()}
                           disabled={avatarUploading}
-                          className="bg-blue-500 hover:bg-blue-700 disabled:opacity-50 px-4 py-2 rounded-lg text-[#1A1A2E] font-semibold"
+                          className="bg-blue-500 hover:bg-blue-700 disabled:opacity-50 px-4 py-2 rounded-lg text-white font-semibold"
                         >
                           {avatarUploading ? t('saving') : t('uploadPhoto')}
                         </button>
@@ -5952,11 +5952,11 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         <div className="grid grid-cols-2 gap-4">
                           <div>
                             <label className="block text-sm text-[#6A6A85] mb-2">{t('firstName')}</label>
-                            <input type="text" value={profileFirstName} onChange={(e) => setProfileFirstName(e.target.value)} className="w-full bg-white border border-[#E8E8EE] rounded-lg px-4 py-2 text-white" />
+                            <input type="text" value={profileFirstName} onChange={(e) => setProfileFirstName(e.target.value)} className="w-full bg-white border border-[#E8E8EE] rounded-lg px-4 py-2 text-[#1A1A2E]" />
                           </div>
                           <div>
                             <label className="block text-sm text-[#6A6A85] mb-2">{t('lastName')}</label>
-                            <input type="text" value={profileLastName} onChange={(e) => setProfileLastName(e.target.value)} className="w-full bg-white border border-[#E8E8EE] rounded-lg px-4 py-2 text-white" />
+                            <input type="text" value={profileLastName} onChange={(e) => setProfileLastName(e.target.value)} className="w-full bg-white border border-[#E8E8EE] rounded-lg px-4 py-2 text-[#1A1A2E]" />
                           </div>
                         </div>
                         <div>
@@ -5968,7 +5968,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           <label className="block text-sm text-[#6A6A85] mb-2">{t('email')}</label>
                           <input type="email" defaultValue={user?.email} disabled className="w-full bg-[#EFF1F5] border border-[#D8D8E2] rounded-lg px-4 py-2 text-[#6A6A85] cursor-not-allowed" />
                         </div>
-                        <button onClick={handleSaveProfile} disabled={saveLoading} className="bg-blue-500 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-[#1A1A2E] font-semibold">
+                        <button onClick={handleSaveProfile} disabled={saveLoading} className="bg-blue-500 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold">
                           {saveLoading ? t('saving') : t('saveChanges')}
                         </button>
                         {renderStatus('profile')}
@@ -5985,17 +5985,17 @@ analytics.subscribe("product_added_to_cart", (event) => {
                       <div className="space-y-4">
                         <div>
                           <label className="block text-sm text-[#6A6A85] mb-2">{t('currentPassword')}</label>
-                          <input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} className="w-full bg-[#EFF1F5] border border-[#D8D8E2] rounded-lg px-4 py-2 text-white" />
+                          <input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} className="w-full bg-[#EFF1F5] border border-[#D8D8E2] rounded-lg px-4 py-2 text-[#1A1A2E]" />
                         </div>
                         <div>
                           <label className="block text-sm text-[#6A6A85] mb-2">{t('newPassword')}</label>
-                          <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="w-full bg-[#EFF1F5] border border-[#D8D8E2] rounded-lg px-4 py-2 text-white" />
+                          <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="w-full bg-[#EFF1F5] border border-[#D8D8E2] rounded-lg px-4 py-2 text-[#1A1A2E]" />
                         </div>
                         <div>
                           <label className="block text-sm text-[#6A6A85] mb-2">{t('confirmNewPassword')}</label>
-                          <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} className="w-full bg-[#EFF1F5] border border-[#D8D8E2] rounded-lg px-4 py-2 text-white" />
+                          <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} className="w-full bg-[#EFF1F5] border border-[#D8D8E2] rounded-lg px-4 py-2 text-[#1A1A2E]" />
                         </div>
-                        <button onClick={handleUpdatePassword} disabled={saveLoading} className="bg-blue-500 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-[#1A1A2E] font-semibold">
+                        <button onClick={handleUpdatePassword} disabled={saveLoading} className="bg-blue-500 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold">
                           {saveLoading ? t('updating') : t('updatePassword')}
                         </button>
                         {renderStatus('password')}
@@ -6019,7 +6019,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     <div className="space-y-4">
                       <div className="bg-white rounded-lg p-4 border border-[#E8E8EE]">
                         <h4 className="text-[#1A1A2E] font-semibold mb-2">{t('language')}</h4>
-                        <select value={language} onChange={(e) => setLanguage(e.target.value)} className="w-full bg-[#EFF1F5] border border-[#D8D8E2] rounded-lg px-4 py-2 text-white">
+                        <select value={language} onChange={(e) => setLanguage(e.target.value)} className="w-full bg-[#EFF1F5] border border-[#D8D8E2] rounded-lg px-4 py-2 text-[#1A1A2E]">
                           {LANGUAGES.map(l => (
                             <option key={l.code} value={l.code}>{l.flag} {l.name}</option>
                           ))}
@@ -6054,7 +6054,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             placeholder="ma-boutique.myshopify.com"
                             value={shopifyUrl}
                             onChange={(e) => setShopifyUrl(e.target.value)}
-                            className="w-full bg-[#EFF1F5] text-white px-4 py-2 rounded-lg border border-[#D8D8E2]"
+                            className="w-full bg-[#EFF1F5] text-[#1A1A2E] px-4 py-2 rounded-lg border border-[#D8D8E2]"
                           />
                         </div>
 
@@ -6066,7 +6066,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               placeholder="shpat_..."
                               value={shopifyToken}
                               onChange={(e) => setShopifyToken(e.target.value)}
-                              className="w-full bg-[#EFF1F5] text-white px-4 py-2 rounded-lg border border-[#D8D8E2]"
+                              className="w-full bg-[#EFF1F5] text-[#1A1A2E] px-4 py-2 rounded-lg border border-[#D8D8E2]"
                             />
                             <p className="text-xs text-[#8A8AA3] mt-2">Scopes requis: read_products, write_products, read_orders, read_customers, read_analytics.</p>
                           </div>
@@ -6089,7 +6089,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               placeholder="shpat_..."
                               value={shopifyToken}
                               onChange={(e) => setShopifyToken(e.target.value)}
-                              className="w-full bg-[#EFF1F5] text-white px-4 py-2 rounded-lg border border-[#D8D8E2]"
+                              className="w-full bg-[#EFF1F5] text-[#1A1A2E] px-4 py-2 rounded-lg border border-[#D8D8E2]"
                             />
                             <p className="text-xs text-[#8A8AA3] mt-2">Scopes requis: read_products, write_products, read_orders, read_customers, read_analytics.</p>
                           </div>
@@ -6129,7 +6129,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         { key: 'billing_updates', label: t('billingUpdates') }
                       ].map(item => (
                         <div key={item.key} className="bg-white rounded-lg p-4 border border-[#E8E8EE] flex justify-between items-center">
-                          <span className="text-white">{item.label}</span>
+                          <span className="text-[#1A1A2E]">{item.label}</span>
                           <button onClick={() => setNotifications(prev => ({...prev, [item.key]: !prev[item.key]}))} className={`${notifications[item.key] ? 'bg-blue-500' : 'bg-[#E8E8EE]'} w-12 h-6 rounded-full p-1 cursor-pointer transition`}>
                             <div className={`${notifications[item.key] ? 'bg-white ml-auto' : 'bg-white'} w-4 h-4 rounded-full transition`}></div>
                           </button>
@@ -6149,7 +6149,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     <div className="bg-white rounded-lg p-6 border border-[#E8E8EE]">
                       <div className="flex justify-between items-center mb-4">
                         <div>
-                          <h4 className="text-xl font-bold text-white">{subscription?.plan?.toUpperCase()} Plan</h4>
+                          <h4 className="text-xl font-bold text-[#1A1A2E]">{subscription?.plan?.toUpperCase()} Plan</h4>
                           <p className="text-[#6A6A85]">{t('activeSince')} {new Date(subscription?.started_at).toLocaleDateString()}</p>
                         </div>
                         <div className="text-right">
@@ -6171,7 +6171,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     <div className="bg-white rounded-lg p-6 border border-[#E8E8EE]">
                       <h4 className="text-lg font-semibold text-[#1A1A2E] mb-4">{t('paymentMethod')}</h4>
                       <p className="text-sm text-[#6A6A85] mb-4">Géré par Stripe. Cliquez ci-dessous pour mettre à jour.</p>
-                      <button onClick={handleUpdatePaymentMethod} disabled={saveLoading} className="bg-blue-500 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-[#1A1A2E] font-semibold">
+                      <button onClick={handleUpdatePaymentMethod} disabled={saveLoading} className="bg-blue-500 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold">
                         {saveLoading ? '...' : t('updatePaymentMethod')}
                       </button>
                       {renderStatus('billing-payment')}
@@ -6200,7 +6200,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             <button
                               onClick={() => handleRevokeApiKey(keyItem.id)}
                               disabled={keyItem.revoked || apiLoading}
-                              className="bg-[#EFF1F5] hover:bg-[#E8E8EE] disabled:opacity-50 px-4 py-2 rounded-lg text-white text-sm"
+                              className="bg-[#EFF1F5] hover:bg-[#E8E8EE] disabled:opacity-50 px-4 py-2 rounded-lg text-[#1A1A2E] text-sm"
                             >
                               {keyItem.revoked ? 'Révoquée' : t('revoke')}
                             </button>
@@ -6210,13 +6210,13 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               <button
                                 onClick={() => handleRevokeApiKey(keyItem.id)}
                                 disabled={apiLoading}
-                                className="bg-[#EFF1F5] hover:bg-[#E8E8EE] disabled:opacity-50 px-4 py-2 rounded-lg text-white text-sm"
+                                className="bg-[#EFF1F5] hover:bg-[#E8E8EE] disabled:opacity-50 px-4 py-2 rounded-lg text-[#1A1A2E] text-sm"
                               >
                                 Confirmer
                               </button>
                               <button
                                 onClick={() => setPendingRevokeKeyId(null)}
-                                className="bg-[#EFF1F5] hover:bg-[#E8E8EE] px-4 py-2 rounded-lg text-white text-sm"
+                                className="bg-[#EFF1F5] hover:bg-[#E8E8EE] px-4 py-2 rounded-lg text-[#1A1A2E] text-sm"
                               >
                                 Annuler
                               </button>
@@ -6231,7 +6231,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     <button
                       onClick={handleGenerateApiKey}
                       disabled={apiLoading}
-                      className="bg-blue-500 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-[#1A1A2E] font-semibold"
+                      className="bg-blue-500 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold"
                     >
                       {t('generateKey')}
                     </button>
@@ -6266,7 +6266,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 <circle cx="8" cy="8" r="1.5" fill="#facc15" opacity="0.7"/>
                 <circle cx="24" cy="8" r="1.5" fill="#facc15" opacity="0.7"/>
               </svg>
-              <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-green-500 rounded-full border-2 border-gray-900"></span>
+              <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-green-500 rounded-full border-2 border-white"></span>
             </div>
           </button>
 
@@ -6281,15 +6281,15 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 />
               )}
               <div
-                className={`fixed z-50 flex flex-col bg-[#0f1117] border-l border-[#E8E8EE]/60 shadow-2xl transition-all duration-300 ease-in-out ${
+                className={`fixed z-50 flex flex-col bg-white border-l border-[#E8E8EE] shadow-2xl transition-all duration-300 ease-in-out ${
                   chatExpanded
                     ? 'inset-0 rounded-none'
                     : 'top-0 right-0 bottom-0 w-full sm:w-[420px] md:w-[460px] rounded-l-2xl'
                 }`}
-                style={{ fontFamily: 'DM Sans, sans-serif' }}
+                style={{ fontFamily: 'Inter, sans-serif' }}
               >
                 {/* ── Header ── */}
-                <div className="flex items-center justify-between px-4 py-3 border-b border-[#E8E8EE]/50">
+                <div className="flex items-center justify-between px-4 py-3 border-b border-[#E8E8EE]">
                   <div className="relative" ref={conversationMenuRef}>
                     <button
                       onClick={() => setShowConversationMenu(!showConversationMenu)}
@@ -6303,7 +6303,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                     {/* ── Dropdown conversations ── */}
                     {showConversationMenu && (
-                      <div className="absolute top-full left-0 mt-2 w-72 bg-[#1a1d27] border border-[#E8E8EE]/60 rounded-xl shadow-2xl z-[60] overflow-hidden">
+                      <div className="absolute top-full left-0 mt-2 w-72 bg-white border border-[#E8E8EE] rounded-xl shadow-2xl z-[60] overflow-hidden">
                         <div className="p-3 border-b border-[#E8E8EE]/40">
                           <div className="relative">
                             <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-[#8A8AA3]" width="14" height="14" viewBox="0 0 16 16" fill="none">
@@ -6315,7 +6315,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               placeholder="Rechercher des conversations..."
                               value={conversationSearch}
                               onChange={(e) => setConversationSearch(e.target.value)}
-                              className="w-full bg-[#0f1117] text-sm text-[#4A4A68] pl-9 pr-8 py-2 rounded-lg border border-[#E8E8EE]/50 focus:border-[#FF6B35]/50 focus:outline-none placeholder:text-gray-600"
+                              className="w-full bg-[#F7F8FA] text-sm text-[#1A1A2E] pl-9 pr-8 py-2 rounded-lg border border-[#E8E8EE]/50 focus:border-[#FF6B35]/50 focus:outline-none placeholder:text-gray-600"
                             />
                             {conversationSearch && (
                               <button onClick={() => setConversationSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8A8AA3] hover:text-[#4A4A68]">
@@ -6456,7 +6456,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           <div className={`max-w-[80%] px-4 py-2.5 rounded-2xl whitespace-pre-wrap break-words text-sm leading-relaxed ${
                             msg.role === 'user'
                               ? 'bg-[#FF6B35] text-black rounded-br-md'
-                              : 'bg-[#1a1d27] text-[#2A2A42] rounded-bl-md border border-[#E8E8EE]/40'
+                              : 'bg-[#F7F8FA] text-[#2A2A42] rounded-bl-md border border-[#E8E8EE]'
                           }`}>
                             {/* Product mention badge */}
                             {msg.mentionedProduct && (
@@ -6497,7 +6497,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               <path d="M11 17 Q16 21 21 17" stroke="#facc15" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
                             </svg>
                           </div>
-                          <div className="bg-[#1a1d27] border border-[#E8E8EE]/40 rounded-2xl rounded-bl-md px-4 py-3 flex items-center gap-1.5">
+                          <div className="bg-[#F7F8FA] border border-[#E8E8EE] rounded-2xl rounded-bl-md px-4 py-3 flex items-center gap-1.5">
                             <span className="w-2 h-2 bg-[#FF6B35] rounded-full animate-bounce" style={{ animationDelay: '0ms', animationDuration: '0.8s' }}></span>
                             <span className="w-2 h-2 bg-[#FF6B35] rounded-full animate-bounce" style={{ animationDelay: '150ms', animationDuration: '0.8s' }}></span>
                             <span className="w-2 h-2 bg-[#FF6B35] rounded-full animate-bounce" style={{ animationDelay: '300ms', animationDuration: '0.8s' }}></span>
@@ -6510,11 +6510,11 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 </div>
 
                 {/* ── Input area ── */}
-                <div className="border-t border-[#E8E8EE]/50 px-4 py-3">
+                <div className="border-t border-[#E8E8EE] px-4 py-3">
                   {/* Product Picker Modal */}
                   {showProductPicker && (
-                    <div className="mb-3 bg-[#1a1d27] border border-[#FF6B35]/30 rounded-xl overflow-hidden" ref={productPickerRef}>
-                      <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#E8E8EE]/50">
+                    <div className="mb-3 bg-white border border-[#FF6B35]/30 rounded-xl overflow-hidden" ref={productPickerRef}>
+                      <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#E8E8EE]">
                         <span className="text-sm font-semibold text-[#FF6B35]">🛍️ Mentionner un produit</span>
                         <button onClick={() => { setShowProductPicker(false); setProductPickerSearch('') }} className="text-[#6A6A85] hover:text-[#1A1A2E] text-lg">✕</button>
                       </div>
@@ -6524,7 +6524,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           value={productPickerSearch}
                           onChange={(e) => setProductPickerSearch(e.target.value)}
                           placeholder="Rechercher un produit..."
-                          className="w-full bg-white text-white px-3 py-2 rounded-lg border border-[#E8E8EE] text-sm placeholder:text-[#8A8AA3] outline-none focus:border-[#FF6B35]/40"
+                          className="w-full bg-white text-[#1A1A2E] px-3 py-2 rounded-lg border border-[#E8E8EE] text-sm placeholder:text-[#8A8AA3] outline-none focus:border-[#FF6B35]/40"
                           autoFocus
                         />
                       </div>
@@ -6551,7 +6551,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                                 <div className="w-9 h-9 rounded-lg bg-[#EFF1F5] flex items-center justify-center text-[#8A8AA3] text-xs">📦</div>
                               )}
                               <div className="flex-1 min-w-0">
-                                <p className="text-sm text-white truncate">{product.title}</p>
+                                <p className="text-sm text-[#1A1A2E] truncate">{product.title}</p>
                                 <p className="text-xs text-[#8A8AA3]">{product.variants?.[0]?.price || '—'} {product.variants?.[0]?.currency || 'CAD'}</p>
                               </div>
                             </button>
@@ -6602,7 +6602,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                   {chatAttachments.length > 0 && (
                     <div className="flex flex-wrap gap-2 mb-2">
                       {chatAttachments.map((att, i) => (
-                        <div key={i} className="relative group bg-[#1a1d27] border border-[#E8E8EE]/50 rounded-lg p-1.5 flex items-center gap-2 text-xs text-[#6A6A85] max-w-[180px]">
+                        <div key={i} className="relative group bg-[#F7F8FA] border border-[#E8E8EE] rounded-lg p-1.5 flex items-center gap-2 text-xs text-[#6A6A85] max-w-[180px]">
                           {att.preview ? (
                             <img src={att.preview} alt="" className="w-8 h-8 rounded object-cover" />
                           ) : (
@@ -6617,7 +6617,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     </div>
                   )}
 
-                  <div className={`flex items-end gap-2 bg-[#1a1d27] border border-[#E8E8EE]/50 rounded-xl px-3 py-2 transition-colors ${
+                  <div className={`flex items-end gap-2 bg-[#F7F8FA] border border-[#E8E8EE] rounded-xl px-3 py-2 transition-colors ${
                     voiceDictationMode ? 'border-[#E8E8EE]/50' : 'focus-within:border-[#FF6B35]/40'
                   }`}>
                     {/* Left buttons: + (always visible) */}
@@ -6640,7 +6640,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           </button>
 
                           {showAttachMenu && (
-                            <div className="absolute bottom-full left-0 mb-2 w-60 bg-[#1e2130] border border-[#E8E8EE]/60 rounded-xl shadow-2xl z-[60] overflow-hidden py-1">
+                            <div className="absolute bottom-full left-0 mb-2 w-60 bg-white border border-[#E8E8EE] rounded-xl shadow-2xl z-[60] overflow-hidden py-1">
                               <button onClick={() => { fileInputRef.current?.click() }} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#4A4A68] hover:bg-[#EFF1F5]/60 transition-colors">
                                 <svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-[#6A6A85]"><path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" stroke="currentColor" strokeWidth="1.5"/></svg>
                                 Fichiers

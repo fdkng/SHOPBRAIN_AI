@@ -819,14 +819,17 @@ export default function App() {
       )}
 
       {/* ═══════════════════ HERO SECTION ═══════════════════ */}
-      <section className="pt-28 md:pt-36 pb-16 md:pb-28 px-4 md:px-6 bg-white">
-        <div className="max-w-6xl mx-auto">
+      <section className="pt-28 md:pt-36 pb-16 md:pb-28 px-4 md:px-6 bg-white relative overflow-hidden">
+        {/* Subtle teal-orange gradient bg */}
+        <div className="absolute inset-0 gradient-bg opacity-40 pointer-events-none" />
+        <div className="max-w-6xl mx-auto relative">
           <div className="text-center animate-fadeInUp">
             <div className="inline-block mb-6 md:mb-8">
-              <span className="section-label px-4 py-2 bg-[#FFF4F0] text-[#FF6B35] border border-[#FF6B35]/10 rounded-full text-xs font-semibold uppercase tracking-[0.15em]">{t("heroBadge")}</span>
+              <span className="section-label px-4 py-2 bg-[#CCFBF1] text-[#0D9488] border border-[#0D9488]/10 rounded-full text-xs font-semibold uppercase tracking-[0.15em]">{t("heroBadge")}</span>
             </div>
             <h1 className="font-serif text-4xl md:text-7xl lg:text-8xl text-[#1A1A2E] tracking-tight leading-[1.05] mb-5 md:mb-6">
-              {t('heroTitle')}
+              {t('heroTitle').split(' ').slice(0, -1).join(' ')}{' '}
+              <span className="gradient-text">{t('heroTitle').split(' ').slice(-1)}</span>
             </h1>
             <p className="text-base md:text-xl text-[#4A4A68] mb-10 md:mb-14 max-w-3xl mx-auto leading-relaxed font-light">
               {t('heroSubtitle')}
@@ -834,9 +837,9 @@ export default function App() {
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3 md:gap-4 mb-8">
               <button
                 onClick={() => window.location.hash = '#stripe-pricing'}
-                className="w-full sm:w-auto px-8 md:px-10 py-4 bg-[#1A1A2E] text-white text-sm md:text-base font-medium rounded-full hover:bg-[#2A2A42] transition-all hover:shadow-lg"
+                className="w-full sm:w-auto px-8 md:px-10 py-4 bg-[#1A1A2E] text-white text-sm md:text-base font-medium rounded-full hover:bg-[#2A2A42] transition-all hover:shadow-lg group"
               >
-                {t("viewAllPlans")} →
+                {t("viewAllPlans")} <span className="inline-block transition-transform group-hover:translate-x-1">→</span>
               </button>
               <button
                 onClick={() => setShowAuthModal(true)}
@@ -848,6 +851,58 @@ export default function App() {
             <p className="text-xs md:text-sm text-[#8A8AA3]">
               {t('heroDisclaimer')}
             </p>
+          </div>
+
+          {/* Kinso-style floating notification cards */}
+          <div className="hidden lg:block relative mt-16 h-[320px]">
+            {/* Card 1 — Analysis result */}
+            <div className="absolute left-[5%] top-4 animate-popIn stagger-1">
+              <div className="bg-white border border-[#E8E8EE] rounded-2xl p-5 shadow-[var(--shadow-lg)] w-72">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#2DD4BF] to-[#0D9488] flex items-center justify-center text-white text-lg">🤖</div>
+                  <div>
+                    <p className="text-sm font-semibold text-[#1A1A2E]">ShopBrain AI</p>
+                    <p className="text-[11px] text-[#8A8AA3]">2 min ago</p>
+                  </div>
+                </div>
+                <p className="text-sm text-[#4A4A68] leading-relaxed">
+                  <span className="typing-cursor">Titre optimisé : « Bouteille Premium Inox 750ml — Isolée 24h »</span>
+                </p>
+              </div>
+            </div>
+
+            {/* Card 2 — Price alert */}
+            <div className="absolute right-[5%] top-0 animate-popIn stagger-3">
+              <div className="bg-white border border-[#FF6B35]/20 rounded-2xl p-5 shadow-[var(--shadow-lg)] w-64">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-[#FF6B35] text-lg">📊</span>
+                  <p className="text-sm font-semibold text-[#1A1A2E]">Opportunité prix</p>
+                </div>
+                <p className="text-sm text-[#4A4A68]">T-shirt Chic → <span className="font-bold text-[#0D9488]">+18% marge</span></p>
+                <div className="mt-3 h-1.5 bg-[#EFF1F5] rounded-full overflow-hidden">
+                  <div className="h-full w-3/4 bg-gradient-to-r from-[#2DD4BF] to-[#FF6B35] rounded-full" />
+                </div>
+              </div>
+            </div>
+
+            {/* Card 3 — Stock alert (center bottom) */}
+            <div className="absolute left-1/2 -translate-x-1/2 bottom-0 animate-popIn stagger-5">
+              <div className="bg-white border border-[#E8E8EE] rounded-2xl p-5 shadow-[var(--shadow-lg)] w-80">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-10 h-10 rounded-xl bg-[#FFF4F0] flex items-center justify-center text-lg">⚡</div>
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-[#1A1A2E]">Actions recommandées</p>
+                    <p className="text-[11px] text-[#8A8AA3]">3 actions en attente</p>
+                  </div>
+                  <span className="bg-[#FF6B35] text-white text-[11px] font-bold px-2 py-0.5 rounded-full">3</span>
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm text-[#4A4A68]"><span className="w-1.5 h-1.5 bg-[#FF6B35] rounded-full" />Réécrire 2 descriptions</div>
+                  <div className="flex items-center gap-2 text-sm text-[#4A4A68]"><span className="w-1.5 h-1.5 bg-[#2DD4BF] rounded-full" />Optimiser 1 prix</div>
+                  <div className="flex items-center gap-2 text-sm text-[#4A4A68]"><span className="w-1.5 h-1.5 bg-[#F59E0B] rounded-full" />Alerte stock bas</div>
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* Dashboard Button */}
@@ -940,9 +995,9 @@ export default function App() {
               { title: 'Command Center', desc: t('ecosystemCommandDesc') },
               { title: 'Automation Hub', desc: t('ecosystemAutomationDesc') }
             ].map((card, idx) => (
-              <div key={idx} className="kinso-card p-7 md:p-8 animate-fadeInUp" style={{ animationDelay: `${idx * 0.1}s` }}>
-                <div className="w-10 h-10 bg-[#FFF4F0] rounded-xl flex items-center justify-center mb-5">
-                  <span className="text-[#FF6B35] text-sm font-bold">{String(idx + 1).padStart(2, '0')}</span>
+              <div key={idx} className="kinso-card p-7 md:p-8 animate-popIn" style={{ animationDelay: `${idx * 0.12}s` }}>
+                <div className="w-10 h-10 bg-[#CCFBF1] rounded-xl flex items-center justify-center mb-5">
+                  <span className="text-[#0D9488] text-sm font-bold">{String(idx + 1).padStart(2, '0')}</span>
                 </div>
                 <h3 className="text-[#1A1A2E] text-xl font-semibold mb-3">{card.title}</h3>
                 <p className="text-[#4A4A68] text-sm leading-relaxed">{card.desc}</p>
@@ -1014,16 +1069,16 @@ export default function App() {
                 <li className="flex items-start gap-3"><span className="text-red-300 mt-0.5">—</span>{t('withoutItem4')}</li>
               </ul>
             </div>
-            <div className="kinso-card p-7 md:p-8 border-[#FF6B35]/20">
-              <div className="w-10 h-10 bg-[#FFF4F0] rounded-xl flex items-center justify-center mb-5">
-                <span className="text-[#FF6B35] text-lg">✓</span>
+            <div className="kinso-card p-7 md:p-8 border-[#2DD4BF]/30">
+              <div className="w-10 h-10 bg-[#CCFBF1] rounded-xl flex items-center justify-center mb-5">
+                <span className="text-[#0D9488] text-lg">✓</span>
               </div>
               <h3 className="text-[#1A1A2E] text-xl font-semibold mb-5">{t('withShopBrain')}</h3>
               <ul className="space-y-3 text-sm text-[#4A4A68]">
-                <li className="flex items-start gap-3"><span className="text-[#FF6B35] mt-0.5">✓</span>{t('withItem1')}</li>
-                <li className="flex items-start gap-3"><span className="text-[#FF6B35] mt-0.5">✓</span>{t('withItem2')}</li>
-                <li className="flex items-start gap-3"><span className="text-[#FF6B35] mt-0.5">✓</span>{t('withItem3')}</li>
-                <li className="flex items-start gap-3"><span className="text-[#FF6B35] mt-0.5">✓</span>{t('withItem4')}</li>
+                <li className="flex items-start gap-3"><span className="text-[#0D9488] mt-0.5">✓</span>{t('withItem1')}</li>
+                <li className="flex items-start gap-3"><span className="text-[#0D9488] mt-0.5">✓</span>{t('withItem2')}</li>
+                <li className="flex items-start gap-3"><span className="text-[#0D9488] mt-0.5">✓</span>{t('withItem3')}</li>
+                <li className="flex items-start gap-3"><span className="text-[#0D9488] mt-0.5">✓</span>{t('withItem4')}</li>
               </ul>
             </div>
           </div>
@@ -1048,9 +1103,9 @@ export default function App() {
               { title: t('benefitTrackedSalesTitle'), desc: t('benefitTrackedSalesDesc') },
               { title: t('benefitShopifyConnectedTitle'), desc: t('benefitShopifyConnectedDesc') }
             ].map((b, idx) => (
-              <div key={idx} className="kinso-card p-6 md:p-7 animate-fadeInUp" style={{ animationDelay: `${idx * 0.1}s` }}>
-                <div className="w-10 h-10 bg-[#FFF4F0] rounded-xl flex items-center justify-center mb-4">
-                  <span className="text-[#FF6B35] text-sm font-bold">{String(idx + 1).padStart(2, '0')}</span>
+              <div key={idx} className="kinso-card p-6 md:p-7 animate-popIn" style={{ animationDelay: `${idx * 0.1}s` }}>
+                <div className={`w-10 h-10 ${idx % 2 === 0 ? 'bg-[#CCFBF1]' : 'bg-[#FFF4F0]'} rounded-xl flex items-center justify-center mb-4`}>
+                  <span className={`${idx % 2 === 0 ? 'text-[#0D9488]' : 'text-[#FF6B35]'} text-sm font-bold`}>{String(idx + 1).padStart(2, '0')}</span>
                 </div>
                 <h3 className="text-[#1A1A2E] text-base font-semibold mb-2">{b.title}</h3>
                 <p className="text-[#4A4A68] text-sm leading-relaxed">{b.desc}</p>
@@ -1060,19 +1115,25 @@ export default function App() {
         </div>
       </section>
 
-      {/* ═══════════════════ SOCIAL PROOF ═══════════════════ */}
+      {/* ═══════════════════ INTEGRATIONS MARQUEE (Kinso-style) ═══════════════════ */}
       <section className="py-10 md:py-14 px-4 md:px-6 bg-white border-y border-[#E8E8EE]">
         <div className="max-w-6xl mx-auto">
-          <p className="text-center section-label mb-8">{t('theyTrustUs')}</p>
-          <div className="flex flex-wrap justify-center items-center gap-8 md:gap-14">
-            {['Stripe', 'OpenAI', 'Supabase', 'Shopify'].map((brand) => (
-              <span
-                key={brand}
-                className="text-sm md:text-base font-semibold uppercase tracking-[0.25em] text-[#8A8AA3]/60"
-              >
-                {brand}
-              </span>
-            ))}
+          <div className="flex items-center justify-center mb-8">
+            <div className="h-px flex-1 bg-gradient-to-r from-transparent to-[#E8E8EE]" />
+            <span className="px-4 text-xs font-semibold uppercase tracking-[0.2em] text-[#8A8AA3] border border-[#E8E8EE] rounded-full py-1.5">INTEGRATIONS</span>
+            <div className="h-px flex-1 bg-gradient-to-l from-transparent to-[#E8E8EE]" />
+          </div>
+          <div className="marquee-container">
+            <div className="marquee-track">
+              {['Shopify', 'OpenAI', 'Stripe', 'Supabase', 'GPT-4', 'Shopify', 'OpenAI', 'Stripe', 'Supabase', 'GPT-4', 'Shopify', 'OpenAI', 'Stripe', 'Supabase', 'GPT-4'].map((brand, idx) => (
+                <span
+                  key={idx}
+                  className="text-base md:text-lg font-semibold uppercase tracking-[0.2em] text-[#8A8AA3]/50 whitespace-nowrap select-none hover:text-[#1A1A2E] transition-colors duration-300"
+                >
+                  {brand}
+                </span>
+              ))}
+            </div>
           </div>
         </div>
       </section>
@@ -1083,7 +1144,7 @@ export default function App() {
           <div className="text-center mb-14 md:mb-20">
             <p className="section-label mb-4">FEATURES</p>
             <h2 className="font-serif text-3xl md:text-6xl text-[#1A1A2E] mb-4">
-              {t("featuresSectionTitle")}<br /><span className="italic">{t('featuresSectionTitleSuffix')}</span>
+              {t("featuresSectionTitle")}<br /><span className="gradient-text italic">{t('featuresSectionTitleSuffix')}</span>
             </h2>
             <p className="text-base md:text-xl text-[#4A4A68] max-w-2xl mx-auto">
               {t('featuresSectionSubtitle')}
@@ -1095,41 +1156,41 @@ export default function App() {
             {[
               {
                 icon: '🤖',
-                color: 'bg-orange-50 text-orange-500',
+                color: 'bg-[#CCFBF1] text-[#0D9488]',
                 title: t('featureRealtimeTitle'),
                 desc: t('featureRealtimeDesc'),
                 stat: t('featureRealtimeStat')
               },
               {
                 icon: '⚡',
-                color: 'bg-yellow-50 text-yellow-600',
+                color: 'bg-[#FFF4F0] text-[#FF6B35]',
                 title: t('featureAutoOptTitle'),
                 desc: t('featureAutoOptDesc'),
                 stat: t('featureAutoOptStat')
               },
               {
                 icon: '📊',
-                color: 'bg-green-50 text-green-600',
+                color: 'bg-[#CCFBF1] text-[#0D9488]',
                 title: t('featureAnalyticsTitle'),
                 desc: t('featureAnalyticsDesc'),
                 stat: t('featureAnalyticsStat')
               },
               {
                 icon: '🛍',
-                color: 'bg-blue-50 text-blue-600',
+                color: 'bg-[#FFF4F0] text-[#FF6B35]',
                 title: t('featureShopifyTitle'),
                 desc: t('featureShopifyDesc'),
                 stat: t('featureShopifyStat')
               }
             ].map((feature, idx) => (
-              <div key={idx} className="kinso-card p-7 md:p-9 group animate-fadeInUp" style={{ animationDelay: `${idx * 0.1}s` }}>
+              <div key={idx} className="kinso-card p-7 md:p-9 group animate-popIn" style={{ animationDelay: `${idx * 0.12}s` }}>
                 <div className={`inline-flex items-center justify-center w-14 h-14 ${feature.color.split(' ')[0]} rounded-2xl text-2xl mb-6`}>
                   {feature.icon}
                 </div>
                 <h3 className="text-xl md:text-2xl font-semibold text-[#1A1A2E] mb-3">{feature.title}</h3>
                 <p className="text-[#4A4A68] leading-relaxed mb-5">{feature.desc}</p>
                 <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-[#F7F8FA] border border-[#EFF1F5] rounded-full text-sm text-[#4A4A68]">
-                  <span className="w-2 h-2 bg-green-400 rounded-full"></span>
+                  <span className="w-2 h-2 bg-[#2DD4BF] rounded-full"></span>
                   {feature.stat}
                 </div>
               </div>
@@ -1185,7 +1246,7 @@ export default function App() {
             <p className="section-label mb-4">PRICING</p>
             <h2 className="font-serif text-3xl md:text-6xl text-[#1A1A2E] mb-5">
               {t("pricingTitleLine1")}<br />
-              <span className="text-[#FF6B35] italic">{t('pricingTitleLine2')}</span>
+              <span className="gradient-text italic">{t('pricingTitleLine2')}</span>
             </h2>
             <p className="text-base md:text-xl text-[#4A4A68] mb-2 max-w-2xl mx-auto">
               {t('pricingSubtitle')}
@@ -1288,7 +1349,7 @@ export default function App() {
       </section>
 
       {/* ═══════════════════ CTA ═══════════════════ */}
-      <section className="py-20 md:py-28 px-4 md:px-6 bg-[#1A1A2E]">
+      <section className="py-20 md:py-28 px-4 md:px-6 bg-gradient-to-br from-[#1A1A2E] via-[#1A1A2E] to-[#0D3B3B]">
         <div className="max-w-4xl mx-auto text-center">
           <h2 className="font-serif text-3xl md:text-5xl text-white mb-5 md:mb-6">
             {t('ctaTitle')}
