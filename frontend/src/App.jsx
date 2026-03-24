@@ -593,7 +593,7 @@ export default function App() {
                   onClick={() => { setAuthMode('signup'); setShowAuthModal(true) }}
                   className="px-5 py-2 bg-[#1A1A2E] text-white text-sm font-medium rounded-full hover:bg-[#2A2A42] transition-all hover:shadow-md"
                 >
-                  {t("signup")} →
+                  {t("signupTab")} →
                 </button>
               </div>
             )}
