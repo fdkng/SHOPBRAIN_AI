@@ -576,27 +576,36 @@ export default function Dashboard() {
       setIsProcessingPayment(true)
       verifyPaymentSession(sessionId || hashSessionId)
       
-      // Cleanup URL after a moment
+      // Poll aggressively for subscription to appear (webhook may be delayed)
+      let pollCount = 0
+      const pollInterval = setInterval(() => {
+        pollCount++
+        initializeUser()
+        if (pollCount >= 10 || subscription) clearInterval(pollInterval)
+      }, 1500)
+      
+      // Cleanup URL and stop processing indicator
       setTimeout(() => {
         const baseUrl = window.location.href.split('?')[0].split('#')[0]
         window.history.replaceState({}, document.title, baseUrl)
         setIsProcessingPayment(false)
-      }, 1000)
+        clearInterval(pollInterval)
+      }, 3000)
     } else if (hasHashSuccess) {
       // Fallback for hash-based success detection
       setIsProcessingPayment(true)
       initializeUser()
       
-      // Poll for subscription update from webhook
+      // Poll aggressively for subscription update from webhook
       const checkInterval = setInterval(() => {
         initializeUser()
-      }, 2000)
+      }, 1500)
       
       setTimeout(() => {
         clearInterval(checkInterval)
         setIsProcessingPayment(false)
         window.location.hash = window.location.hash.replace('success=true', '')
-      }, 10000)
+      }, 8000)
     } else {
       // Normal initialization
       initializeUser()
@@ -1025,10 +1034,10 @@ export default function Dashboard() {
           // Only mark as missing if we have NO cached subscription
           setSubscriptionMissing(true)
           // Auto-retry up to 5 times with increasing delay
-          if (initRetryRef.current < 5) {
+          if (initRetryRef.current < 8) {
             initRetryRef.current++
-            const delay = Math.min(3000 * initRetryRef.current, 15000)
-            console.log(`🔄 No subscription found, retrying in ${delay/1000}s (attempt ${initRetryRef.current}/5)...`)
+            const delay = Math.min(1500 * initRetryRef.current, 8000)
+            console.log(`🔄 No subscription found, retrying in ${delay/1000}s (attempt ${initRetryRef.current}/8)...`)
             setTimeout(() => initializeUser(), delay)
           }
         }
@@ -1073,9 +1082,9 @@ export default function Dashboard() {
         } else if (!subscription) {
           setSubscriptionMissing(true)
           // Auto-retry
-          if (initRetryRef.current < 5) {
+          if (initRetryRef.current < 8) {
             initRetryRef.current++
-            const delay = Math.min(3000 * initRetryRef.current, 15000)
+            const delay = Math.min(1500 * initRetryRef.current, 8000)
             console.log(`🔄 Fallback: no subscription, retrying in ${delay/1000}s...`)
             setTimeout(() => initializeUser(), delay)
           }
@@ -1094,9 +1103,9 @@ export default function Dashboard() {
       setError(t('authError'))
       setLoading(false)
       // Auto-retry on network errors
-      if (initRetryRef.current < 5) {
+      if (initRetryRef.current < 8) {
         initRetryRef.current++
-        const delay = Math.min(3000 * initRetryRef.current, 15000)
+        const delay = Math.min(1500 * initRetryRef.current, 8000)
         console.log(`🔄 Init error, retrying in ${delay/1000}s...`)
         setTimeout(() => initializeUser(), delay)
       }
@@ -3522,7 +3531,7 @@ export default function Dashboard() {
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <div className="w-10 h-10 border-2 border-gray-600 border-t-yellow-500 rounded-full animate-spin"></div>
-          <p className="text-gray-400 text-sm">Chargement...</p>
+          <p className="text-gray-400 text-sm">{t('loading')}</p>
         </div>
       </div>
     )
@@ -3533,7 +3542,7 @@ export default function Dashboard() {
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
         <div className="text-center text-white">
           <div className="w-12 h-12 border-2 border-gray-600 border-t-yellow-500 rounded-full animate-spin mx-auto mb-6"></div>
-          <h2 className="text-2xl font-bold mb-3">Paiement en cours de traitement...</h2>
+          <h2 className="text-2xl font-bold mb-3">{t('paymentProcessing')}</h2>
           <p className="text-gray-400 mb-6">{t('paymentRegistering')}</p>
           <p className="text-xs text-gray-500">{t('autoRedirect')}</p>
         </div>
@@ -3550,7 +3559,7 @@ export default function Dashboard() {
           <div className="text-gray-300 text-sm mb-2">{t('paymentDelay')}</div>
           {initRetryRef.current > 0 && (
             <div className="text-gray-500 text-xs mb-4">
-              {t('retry')} {initRetryRef.current}/5...
+              {t('retry')} {initRetryRef.current}/8...
             </div>
           )}
           <div className="flex gap-3 justify-center mt-4">
@@ -4733,7 +4742,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
           <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 space-y-6">
             {/* Header with expert badge */}
             <div className="flex items-start gap-4">
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-2xl flex-shrink-0 shadow-lg shadow-purple-500/20">📸</div>
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-yellow-500 to-amber-600 flex items-center justify-center text-2xl flex-shrink-0 shadow-lg shadow-yellow-500/20">📸</div>
               <div className="flex-1">
                 <h2 className="text-white text-2xl font-bold mb-1">{t('imgAssistTitle')}</h2>
                 <p className="text-gray-300 text-base">{t('imgAssistDesc')}</p>
@@ -4752,7 +4761,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 <select
                   value={imageProductId}
                   onChange={(e) => setImageProductId(e.target.value)}
-                  className="w-full bg-gray-900 border border-gray-700 text-sm text-white rounded-lg px-3 py-2.5 focus:border-purple-500 focus:ring-1 focus:ring-purple-500 outline-none"
+                  className="w-full bg-gray-900 border border-gray-700 text-sm text-white rounded-lg px-3 py-2.5 focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500 outline-none"
                 >
                   <option value="">{t('imgAllProducts')}</option>
                   {(products || []).map((product) => (
@@ -4766,9 +4775,9 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 onClick={() => runActionAnalysis('action-images')}
                 disabled={insightsLoading}
                 className="font-bold py-2.5 px-6 rounded-lg disabled:opacity-50 transition-all duration-200 text-white whitespace-nowrap"
-                style={{ background: 'linear-gradient(135deg, #8B5CF6 0%, #EC4899 50%, #8B5CF6 100%)', boxShadow: '0 2px 12px rgba(139, 92, 246, 0.3)' }}
-                onMouseEnter={(e) => { e.currentTarget.style.boxShadow = '0 4px 20px rgba(139, 92, 246, 0.6)'; e.currentTarget.style.transform = 'translateY(-1px)' }}
-                onMouseLeave={(e) => { e.currentTarget.style.boxShadow = '0 2px 12px rgba(139, 92, 246, 0.3)'; e.currentTarget.style.transform = 'translateY(0)' }}
+                style={{ background: 'linear-gradient(135deg, #D97706 0%, #F59E0B 50%, #D97706 100%)', boxShadow: '0 2px 12px rgba(217, 119, 6, 0.3)' }}
+                onMouseEnter={(e) => { e.currentTarget.style.boxShadow = '0 4px 20px rgba(217, 119, 6, 0.6)'; e.currentTarget.style.transform = 'translateY(-1px)' }}
+                onMouseLeave={(e) => { e.currentTarget.style.boxShadow = '0 2px 12px rgba(217, 119, 6, 0.3)'; e.currentTarget.style.transform = 'translateY(0)' }}
               >
                 {insightsLoading ? t('analysisInProgress') : (imageProductId ? t('imgAnalyzeThisProduct') : t('imgAnalyzeAll'))}
               </button>
@@ -4781,7 +4790,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 value={imageInstructions}
                 onChange={(e) => setImageInstructions(e.target.value)}
                 placeholder={t('imgInstructionsPlaceholder')}
-                className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-purple-500 focus:ring-1 focus:ring-purple-500 outline-none resize-none"
+                className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500 outline-none resize-none"
                 rows={2}
               />
               <p className="text-xs text-gray-600 mt-1">{t('imgInstructionsHint')}</p>
@@ -5034,7 +5043,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               {item.recommendations.images_to_create.slice(0, 8).map((img, idx) => (
                                 <div key={idx} className="bg-gray-900/60 border border-gray-700 rounded-lg p-4 space-y-2">
                                   <div className="flex items-center gap-2">
-                                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500/30 to-pink-500/30 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">{img.index || (idx + 1)}</div>
+                                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-yellow-500/30 to-amber-600/30 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">{img.index || (idx + 1)}</div>
                                     <div className="font-semibold text-white">{img.name}</div>
                                   </div>
                                   <div className="text-sm text-gray-300 pl-10">{img.what_to_shoot}</div>
