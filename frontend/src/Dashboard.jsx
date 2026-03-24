@@ -514,9 +514,9 @@ export default function Dashboard() {
     if (!status?.message) return null
 
     const styles = status.type === 'success'
-      ? 'bg-green-900 border-green-700 text-green-200'
+      ? 'bg-teal-50 border-teal-300 text-teal-700'
       : status.type === 'warning'
-        ? 'bg-yellow-900 border-[#E85A28] text-[#FF8B60]'
+        ? 'bg-orange-50 border-[#FF6B35] text-[#E85A28]'
         : status.type === 'error'
           ? 'bg-white border-[#E85A28] text-[#FF8B60]'
           : 'bg-white border-[#E8E8EE] text-[#2A2A42]'
@@ -3725,7 +3725,7 @@ export default function Dashboard() {
               <div className="border-t border-[#D8D8E2] pt-2 mt-2">
                 <button
                   onClick={() => { setShowPlanMenu(false); window.location.hash = '#stripe-pricing' }}
-                  className="w-full text-center px-4 py-2 rounded-lg text-blue-600 hover:bg-[#EFF1F5]"
+                  className="w-full text-center px-4 py-2 rounded-lg text-[#0D9488] hover:bg-[#EFF1F5]"
                 >
                   View All Plans
                 </button>
@@ -3739,7 +3739,7 @@ export default function Dashboard() {
         {/* Post-payment success banner */}
         {typeof window !== 'undefined' && (window.location.hash.includes('success=true') || new URLSearchParams(window.location.search).has('session_id')) && (
           <div className="max-w-7xl mx-auto px-6 mb-4">
-            <div className="bg-green-50 border border-green-200 text-green-800 p-4 rounded-lg flex items-center justify-between">
+            <div className="bg-teal-50 border border-[#2DD4BF]/40 text-[#0D9488] p-4 rounded-lg flex items-center justify-between">
               <div>
                 <p className="font-bold">{t('paymentConfirmed')}</p>
                 <p className="text-sm opacity-90">{t('planApplied')}</p>
@@ -3747,12 +3747,12 @@ export default function Dashboard() {
               <div className="flex gap-3">
                 <button
                   onClick={() => { window.location.hash = '#/' }}
-                  className="bg-green-500 hover:bg-green-700 text-[#1A1A2E] font-semibold px-4 py-2 rounded-lg"
+                  className="bg-[#0D9488] hover:bg-[#0F766E] text-white font-semibold px-4 py-2 rounded-lg"
                 >{t('backToHome')}
                 </button>
                 <button
                   onClick={() => { window.location.hash = '#dashboard' }}
-                  className="bg-blue-500 hover:bg-blue-700 text-[#1A1A2E] font-semibold px-4 py-2 rounded-lg"
+                  className="bg-[#FF6B35] hover:bg-[#E85A28] text-white font-semibold px-4 py-2 rounded-lg"
                 >{t('goToDashboard')}
                 </button>
               </div>
@@ -3772,7 +3772,7 @@ export default function Dashboard() {
         {activeTab === 'overview' && (
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
             <div className="xl:col-span-2 space-y-6">
-            <div className="bg-gradient-to-br from-gray-800 via-gray-900 to-black border border-[#E85A28]/40 rounded-2xl p-4 md:p-6">
+            <div className="bg-gradient-to-br from-white via-teal-50/50 to-orange-50/30 border border-[#E8E8EE] rounded-2xl p-4 md:p-6 shadow-sm">
               <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                 <div>
                   <p className="text-xs uppercase tracking-[0.3em] text-[#FF6B35]/70">Performance</p>
@@ -3825,7 +3825,7 @@ export default function Dashboard() {
                     <svg viewBox="0 0 520 140" className="w-full h-32">
                       <polyline
                         fill="none"
-                        stroke="#facc15"
+                        stroke="#2DD4BF"
                         strokeWidth="3"
                         points={buildSparklinePoints(analyticsData.series)}
                       />
@@ -4149,7 +4149,7 @@ export default function Dashboard() {
                       <div className="flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-sm">{item.category}</span>
-                          <span className="text-xs bg-amber-900/40 text-amber-300 px-2 py-0.5 rounded-full">Score: {item.score}/100</span>
+                          <span className="text-xs bg-orange-100 text-[#E85A28] px-2 py-0.5 rounded-full">Score: {item.score}/100</span>
                         </div>
                         <p className="text-[#1A1A2E] font-semibold mt-1">{item.title || 'Produit'}</p>
                         <div className="flex flex-wrap gap-3 mt-2 text-xs text-[#6A6A85]">
@@ -4164,7 +4164,7 @@ export default function Dashboard() {
                         {item.reasons?.length > 0 && (
                           <div className="mt-2 space-y-1">
                             {item.reasons.map((r, i) => (
-                              <div key={i} className="text-xs text-amber-300/80">• {r}</div>
+                              <div key={i} className="text-xs text-[#E85A28]/80">• {r}</div>
                             ))}
                           </div>
                         )}
@@ -4201,7 +4201,7 @@ export default function Dashboard() {
                       <span className="text-xs text-[#8A8AA3]">⏳ Vérification...</span>
                     ) : pixelStatus ? (
                       <span className={`text-xs font-medium ${
-                        pixelStatus.status === 'active' ? 'text-green-500' :
+                        pixelStatus.status === 'active' ? 'text-[#0D9488]' :
                         pixelStatus.status === 'installed_inactive' ? 'text-[#FF6B35]' :
                         'text-red-500'
                       }`}>
@@ -4222,7 +4222,7 @@ export default function Dashboard() {
 
                 {pixelStatus?.has_recent_events && (
                   <div className="px-3 pb-2">
-                    <p className="text-xs text-green-500/70">✅ Des événements Pixel ont été reçus au cours des 30 derniers jours.</p>
+                    <p className="text-xs text-[#0D9488]/70">✅ Des événements Pixel ont été reçus au cours des 30 derniers jours.</p>
                   </div>
                 )}
                 {pixelStatus && !pixelStatus.pixel_installed && !showPixelGuide && (
@@ -4328,7 +4328,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                       >
                         {pixelCodeCopied ? t('copied') : t('copyCode')}
                       </button>
-                      <pre className="bg-[#1A1A2E] border border-[#E8E8EE] rounded-lg p-3 text-xs text-green-500 overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed">{`const BACKEND = "https://shopbrain-backend.onrender.com/api/shopify/pixel-event";
+                      <pre className="bg-[#1A1A2E] border border-[#E8E8EE] rounded-lg p-3 text-xs text-[#2DD4BF] overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed">{`const BACKEND = "https://shopbrain-backend.onrender.com/api/shopify/pixel-event";
 const SHOP_DOMAIN = (typeof Shopify !== "undefined" && Shopify.shop) ? Shopify.shop : null;
 const SESSION_ID = (window.__sb_session_id = window.__sb_session_id || Math.random().toString(36).slice(2));
 
@@ -4407,8 +4407,8 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           <span>💰 {formatCurrency(item.revenue, blockersData?.currency || analyticsData?.currency || 'EUR')}</span>
                           {item.views > 0 && <span>👁️ {item.views} vues</span>}
                           {item.add_to_cart > 0 && <span>🛒 {item.add_to_cart} ajouts panier</span>}
-                          {item.view_to_cart_rate != null && <span className={item.view_to_cart_rate < 0.03 ? 'text-red-500' : 'text-green-500'}>Vue→Panier: {(item.view_to_cart_rate * 100).toFixed(1)}%</span>}
-                          {item.cart_to_order_rate != null && <span className={item.cart_to_order_rate < 0.2 ? 'text-red-500' : 'text-green-500'}>Panier→Achat: {(item.cart_to_order_rate * 100).toFixed(1)}%</span>}
+                          {item.view_to_cart_rate != null && <span className={item.view_to_cart_rate < 0.03 ? 'text-red-500' : 'text-[#0D9488]'}>Vue→Panier: {(item.view_to_cart_rate * 100).toFixed(1)}%</span>}
+                          {item.cart_to_order_rate != null && <span className={item.cart_to_order_rate < 0.2 ? 'text-red-500' : 'text-[#0D9488]'}>Panier→Achat: {(item.cart_to_order_rate * 100).toFixed(1)}%</span>}
                         </div>
                       </div>
                     </div>
@@ -4443,7 +4443,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 <button
                   onClick={() => runActionAnalysis('action-rewrite', { productId: rewriteProductId, instructions: rewriteInstructions })}
                   disabled={insightsLoading || !rewriteProductId}
-                  className="bg-green-500 hover:bg-green-700 text-[#1A1A2E] font-bold py-3 px-6 rounded-lg disabled:opacity-50"
+                  className="bg-[#FF6B35] hover:bg-[#E85A28] text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
                 >
                   {insightsLoading ? t('analysisInProgress') : t('launchRewriteAnalysis')}
                 </button>
@@ -4455,14 +4455,14 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 value={rewriteInstructions}
                 onChange={(e) => setRewriteInstructions(e.target.value)}
                 placeholder="Ex: Ton humoristique, mentionne la livraison gratuite, cibler les jeunes mamans, utiliser un vocabulaire luxe..."
-                className="w-full bg-[#F7F8FA] border border-[#E8E8EE] text-[#1A1A2E] text-sm rounded-lg px-3 py-2 min-h-[80px] resize-y placeholder-gray-600 focus:border-green-500 focus:ring-1 focus:ring-green-500 outline-none"
+                className="w-full bg-[#F7F8FA] border border-[#E8E8EE] text-[#1A1A2E] text-sm rounded-lg px-3 py-2 min-h-[80px] resize-y placeholder-gray-600 focus:border-[#FF6B35] focus:ring-1 focus:ring-[#FF6B35] outline-none"
                 rows={3}
               />
               <p className="text-xs text-gray-600 mt-1">L'IA prendra ces instructions en compte pour générer le titre et la description.</p>
             </div>
             {renderStatus('action-rewrite')}
             {insightsData?.rewrite_ai?.notes?.length ? (
-              <div className="text-xs text-amber-300 bg-amber-900/20 border border-amber-700/40 rounded px-3 py-2">
+              <div className="text-xs text-[#E85A28] bg-orange-50 border border-[#FF6B35]/30 rounded px-3 py-2">
                 {insightsData.rewrite_ai.notes.join(' · ')}
               </div>
             ) : null}
@@ -4485,8 +4485,8 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             onClick={() => handleApplyBlockerAction(item.product_id, { type: 'title', suggested_title: item.suggested_title }, 'action-rewrite')}
                             className={`px-3 py-2 rounded text-sm font-semibold transition ${
                               applyingBlockerActionId === `${item.product_id}-title`
-                                ? 'bg-amber-500 text-black shadow-[0_0_18px_rgba(245,158,11,0.8)]'
-                                : 'bg-amber-400/90 hover:bg-amber-300 text-black'
+                                ? 'bg-[#E85A28] text-white shadow-[0_0_18px_rgba(255,107,53,0.5)]'
+                                : 'bg-[#FF6B35] hover:bg-[#E85A28] text-white'
                             }`}
                             disabled={applyingBlockerActionId === `${item.product_id}-title`}
                           >
@@ -4498,8 +4498,8 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             onClick={() => handleApplyBlockerAction(item.product_id, { type: 'description', suggested_description: item.suggested_description }, 'action-rewrite')}
                             className={`px-3 py-2 rounded text-sm font-semibold transition ${
                               applyingBlockerActionId === `${item.product_id}-description`
-                                ? 'bg-amber-500 text-black shadow-[0_0_18px_rgba(245,158,11,0.8)]'
-                                : 'bg-amber-400/90 hover:bg-amber-300 text-black'
+                                ? 'bg-[#E85A28] text-white shadow-[0_0_18px_rgba(255,107,53,0.5)]'
+                                : 'bg-[#FF6B35] hover:bg-[#E85A28] text-white'
                             }`}
                             disabled={applyingBlockerActionId === `${item.product_id}-description`}
                           >
@@ -4563,7 +4563,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <div className="space-y-1">
                 <p className="text-sm text-[#6A6A85]">{getInsightCount(priceItems)} {t('opportunities')}</p>
-                <p className={`text-xs ${marketStatus?.enabled ? 'text-green-500' : 'text-[#6A6A85]'}`}>
+                <p className={`text-xs ${marketStatus?.enabled ? 'text-[#0D9488]' : 'text-[#6A6A85]'}`}>
                   {t('marketComparison')}: {marketStatus?.enabled ? t('enabled') : t('notConfigured')}
                   {marketStatus?.provider
                     ? marketStatus.provider === 'openai'
@@ -4580,7 +4580,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
               <select
                 value={priceProductId}
                 onChange={(e) => setPriceProductId(e.target.value)}
-                className="bg-[#F7F8FA] border border-[#E8E8EE] text-sm text-[#1A1A2E] rounded-lg px-3 py-2 min-w-[260px] focus:border-[#FF6B35] focus:ring-1 focus:ring-yellow-500 outline-none"
+                className="bg-[#F7F8FA] border border-[#E8E8EE] text-sm text-[#1A1A2E] rounded-lg px-3 py-2 min-w-[260px] focus:border-[#FF6B35] focus:ring-1 focus:ring-[#FF6B35] outline-none"
               >
                 <option value="">{t('allProducts')}</option>
                 {(products || []).map((product) => (
@@ -4608,7 +4608,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 value={priceInstructions}
                 onChange={(e) => setPriceInstructions(e.target.value)}
                 placeholder={t('aiInstructionsPlaceholder')}
-                className="w-full bg-white border border-[#D8D8E2] rounded-lg px-3 py-2 text-sm text-[#1A1A2E] placeholder-gray-500 focus:border-[#FF6B35] focus:ring-1 focus:ring-yellow-500 outline-none resize-none"
+                className="w-full bg-white border border-[#D8D8E2] rounded-lg px-3 py-2 text-sm text-[#1A1A2E] placeholder-gray-500 focus:border-[#FF6B35] focus:ring-1 focus:ring-[#FF6B35] outline-none resize-none"
                 rows={2}
               />
               <p className="text-xs text-[#8A8AA3] mt-1">{t('aiInstructionsHint')}</p>
@@ -4645,7 +4645,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           </p>
                         ) : null}
                         {Number.isFinite(Number(item.target_delta_pct)) ? (
-                          <p className={`text-xs font-semibold ${Number(item.target_delta_pct) > 0 ? 'text-green-500' : 'text-[#FF6B35]'}`}>
+                          <p className={`text-xs font-semibold ${Number(item.target_delta_pct) > 0 ? 'text-[#0D9488]' : 'text-[#FF6B35]'}`}>
                             {t('targetVariation')}: {Number(item.target_delta_pct) > 0 ? '+' : ''}{Number(item.target_delta_pct).toFixed(1)}%
                           </p>
                         ) : null}
@@ -4668,7 +4668,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                                 const panel = e.currentTarget.nextElementSibling
                                 if (panel) panel.classList.toggle('hidden')
                               }}
-                              className="text-xs text-blue-600 hover:text-blue-500 underline cursor-pointer bg-transparent border-none p-0"
+                              className="text-xs text-[#0D9488] hover:text-[#2DD4BF] underline cursor-pointer bg-transparent border-none p-0"
                             >
                               🔍 {item.search_stats.queries_run?.length || 0} {t('searches')} · {item.search_stats.total_prices_found || 0} {t('pricesFound')} — {t('viewResults')} ▾
                             </button>
@@ -4698,7 +4698,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                                   <div key={ri} className="flex items-start justify-between gap-2 text-xs">
                                     <div className="flex-1 min-w-0">
                                       {ref.link ? (
-                                        <a href={ref.link} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-500 hover:underline truncate block">
+                                        <a href={ref.link} target="_blank" rel="noopener noreferrer" className="text-[#0D9488] hover:text-[#2DD4BF] hover:underline truncate block">
                                           {ref.title || 'Produit'}
                                         </a>
                                       ) : (
@@ -4706,7 +4706,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                                       )}
                                       <span className="text-[#8A8AA3]">{ref.source || ''}</span>
                                     </div>
-                                    <span className="text-green-500 font-semibold whitespace-nowrap">{ref.price}$ {ref.currency_code || ''}</span>
+                                    <span className="text-[#0D9488] font-semibold whitespace-nowrap">{ref.price}$ {ref.currency_code || ''}</span>
                                   </div>
                                 ))}
                               </div>
@@ -4721,7 +4721,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         <button
                           onClick={() => handleApplyRecommendation(item.product_id, 'Prix', { suggested_price: item.suggested_price })}
                           disabled={!item.product_id || applyingRecommendationId === `${item.product_id}-Prix`}
-                          className="bg-blue-500 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold px-3 py-2 rounded"
+                          className="bg-[#FF6B35] hover:bg-[#E85A28] disabled:opacity-50 text-white text-xs font-semibold px-3 py-2 rounded"
                         >
                           {applyingRecommendationId === `${item.product_id}-Prix` ? t('applying') : t('applyPrice')}
                         </button>
@@ -4749,7 +4749,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 <div className="mt-2 flex flex-wrap gap-2">
                   <span className="inline-flex items-center gap-1 text-xs bg-purple-50 text-purple-600 border border-purple-200 rounded-full px-3 py-1">🎨 {t('imgBadgeDesign')}</span>
                   <span className="inline-flex items-center gap-1 text-xs bg-pink-50 text-pink-500 border border-pink-200 rounded-full px-3 py-1">📷 {t('imgBadgePhoto')}</span>
-                  <span className="inline-flex items-center gap-1 text-xs bg-blue-50 text-blue-500 border border-blue-200 rounded-full px-3 py-1">📈 {t('imgBadgeConversion')}</span>
+                  <span className="inline-flex items-center gap-1 text-xs bg-teal-50 text-[#0D9488] border border-[#2DD4BF]/30 rounded-full px-3 py-1">📈 {t('imgBadgeConversion')}</span>
                 </div>
               </div>
             </div>
@@ -4761,7 +4761,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 <select
                   value={imageProductId}
                   onChange={(e) => setImageProductId(e.target.value)}
-                  className="w-full bg-[#F7F8FA] border border-[#E8E8EE] text-sm text-[#1A1A2E] rounded-lg px-3 py-2.5 focus:border-[#FF6B35] focus:ring-1 focus:ring-yellow-500 outline-none"
+                  className="w-full bg-[#F7F8FA] border border-[#E8E8EE] text-sm text-[#1A1A2E] rounded-lg px-3 py-2.5 focus:border-[#FF6B35] focus:ring-1 focus:ring-[#FF6B35] outline-none"
                 >
                   <option value="">{t('imgAllProducts')}</option>
                   {(products || []).map((product) => (
@@ -4790,7 +4790,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 value={imageInstructions}
                 onChange={(e) => setImageInstructions(e.target.value)}
                 placeholder={t('imgInstructionsPlaceholder')}
-                className="w-full bg-white border border-[#D8D8E2] rounded-lg px-3 py-2 text-sm text-[#1A1A2E] placeholder-gray-500 focus:border-[#FF6B35] focus:ring-1 focus:ring-yellow-500 outline-none resize-none"
+                className="w-full bg-white border border-[#D8D8E2] rounded-lg px-3 py-2 text-sm text-[#1A1A2E] placeholder-gray-500 focus:border-[#FF6B35] focus:ring-1 focus:ring-[#FF6B35] outline-none resize-none"
                 rows={2}
               />
               <p className="text-xs text-gray-600 mt-1">{t('imgInstructionsHint')}</p>
@@ -4828,7 +4828,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           <span>{item.images_count} {t('imgImagesLabel')}</span>
                           {item.missing_alt ? <span className="text-amber-400">⚠️ {t('imgMissingAlt')}</span> : null}
                           {item.view_to_cart_rate !== null && item.view_to_cart_rate !== undefined ? (
-                            <span className={item.view_to_cart_rate < 0.02 ? 'text-red-500' : item.view_to_cart_rate < 0.05 ? 'text-amber-400' : 'text-green-500'}>
+                            <span className={item.view_to_cart_rate < 0.02 ? 'text-red-500' : item.view_to_cart_rate < 0.05 ? 'text-[#FF6B35]' : 'text-[#0D9488]'}>
                               {t('imgViewToCart')} {Math.round(item.view_to_cart_rate * 100)}%
                             </span>
                           ) : null}
@@ -4871,9 +4871,9 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     {item.recommendations?.source === 'ai' && item.recommendations?.ai?.quality_scores && typeof item.recommendations.ai.quality_scores === 'object' ? (() => {
                       const scores = item.recommendations.ai.quality_scores
                       const scoreMap = {
-                        'excellent': { color: 'text-green-500 bg-green-500/10 border-green-500/30', icon: '✅', val: 4 },
-                        'good': { color: 'text-blue-600 bg-blue-500/10 border-blue-200', icon: '👍', val: 3 },
-                        'needs_improvement': { color: 'text-amber-400 bg-amber-500/10 border-amber-500/30', icon: '⚠️', val: 2 },
+                        'excellent': { color: 'text-[#0D9488] bg-[#0D9488]/10 border-[#0D9488]/30', icon: '✅', val: 4 },
+                        'good': { color: 'text-[#0D9488] bg-[#0D9488]/10 border-[#2DD4BF]/30', icon: '👍', val: 3 },
+                        'needs_improvement': { color: 'text-[#FF6B35] bg-[#FF6B35]/10 border-[#FF6B35]/30', icon: '⚠️', val: 2 },
                         'poor': { color: 'text-red-500 bg-red-500/10 border-red-200', icon: '❌', val: 1 },
                       }
                       const labels = {
@@ -4904,7 +4904,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             <div className="mt-3 flex items-center gap-3">
                               <div className="flex-1 bg-white rounded-full h-2">
                                 <div
-                                  className={`h-2 rounded-full transition-all ${Number(scores.overall) >= 0.75 ? 'bg-green-500' : Number(scores.overall) >= 0.5 ? 'bg-amber-500' : 'bg-red-500'}`}
+                                  className={`h-2 rounded-full transition-all ${Number(scores.overall) >= 0.75 ? 'bg-[#0D9488]' : Number(scores.overall) >= 0.5 ? 'bg-[#FF6B35]' : 'bg-red-500'}`}
                                   style={{ width: `${Math.min(100, Math.round(Number(scores.overall) * 100))}%` }}
                                 />
                               </div>
@@ -4923,7 +4923,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             📌 {t('imgNeedToCreate')} <span className="text-[#1A1A2E] font-bold">{item.recommendations.recommended_new_images}</span> {t('imgNewImages')}
                           </div>
                         ) : item.recommendations.target_total_images ? (
-                          <div className="bg-green-500/10 border border-green-500/30 rounded-lg px-4 py-3 text-green-600 text-sm font-medium">
+                          <div className="bg-[#0D9488]/10 border border-[#0D9488]/30 rounded-lg px-4 py-3 text-[#0D9488] text-sm font-medium">
                             ✅ {t('imgQuantityOk')}
                           </div>
                         ) : null}
@@ -4982,8 +4982,8 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               </div>
                             ) : null}
                             {Array.isArray(item.recommendations.ai.audit.quick_fixes) && item.recommendations.ai.audit.quick_fixes.length > 0 ? (
-                              <div className="bg-green-500/5 border border-green-500/20 rounded-lg p-4 space-y-2">
-                                <div className="text-green-500 font-semibold text-sm flex items-center gap-2">⚡ {t('imgQuickFixes')}</div>
+                              <div className="bg-[#0D9488]/5 border border-[#0D9488]/20 rounded-lg p-4 space-y-2">
+                                <div className="text-[#0D9488] font-semibold text-sm flex items-center gap-2">⚡ {t('imgQuickFixes')}</div>
                                 {item.recommendations.ai.audit.quick_fixes.slice(0, 5).map((line, idx) => (
                                   <div key={idx} className="text-sm text-[#4A4A68]">• {line}</div>
                                 ))}
@@ -5130,7 +5130,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
               <button
                 onClick={loadBundlesHistory}
                 disabled={bundlesHistoryLoading}
-                className="bg-blue-500 hover:bg-blue-700 text-[#1A1A2E] font-bold py-3 px-6 rounded-lg disabled:opacity-50"
+                className="bg-[#0D9488] hover:bg-[#0F766E] text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
               >
                 {bundlesHistoryLoading ? 'Chargement historique...' : 'Historique'}
               </button>
@@ -5214,7 +5214,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         )}
                         <button
                           onClick={() => applyBundlesHistoryJob(job)}
-                          className="self-start bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold py-1 px-3 rounded"
+                          className="self-start bg-[#0D9488] hover:bg-[#0F766E] text-white text-xs font-semibold py-1 px-3 rounded"
                           type="button"
                         >
                           {selectedBundlesHistoryJobId && selectedBundlesHistoryJobId === (job.job_id || '') ? t('resultShown') : t('loadResult')}
@@ -5263,7 +5263,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           <p className="text-[#1A1A2E] text-sm font-medium">{p.title}</p>
                         </td>
                         <td className="px-4 py-3 text-center">
-                          <span className={`text-sm font-bold ${p.inventory <= 0 ? 'text-red-500' : p.inventory <= (p.threshold || 999999) ? 'text-[#FF6B35]' : 'text-green-500'}`}>
+                          <span className={`text-sm font-bold ${p.inventory <= 0 ? 'text-red-500' : p.inventory <= (p.threshold || 999999) ? 'text-[#FF6B35]' : 'text-[#0D9488]'}`}>
                             {p.inventory}
                           </span>
                         </td>
@@ -5306,7 +5306,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
               <button
                 onClick={() => runActionAnalysis('action-returns')}
                 disabled={insightsLoading}
-                className="bg-green-500 hover:bg-green-700 text-[#1A1A2E] font-bold py-3 px-6 rounded-lg disabled:opacity-50"
+                className="bg-[#FF6B35] hover:bg-[#E85A28] text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
               >
                 {insightsLoading ? t('analysisInProgress') : t('analyzeProducts')}
               </button>
@@ -5341,7 +5341,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 <button
                   onClick={analyzeProducts}
                   disabled={loading}
-                  className="bg-green-500 hover:bg-green-700 text-[#1A1A2E] font-bold py-3 px-6 rounded-lg disabled:opacity-50"
+                  className="bg-[#FF6B35] hover:bg-[#E85A28] text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
                 >
                   {loading ? t('analysisInProgress') : t('launchAIAnalysis')}
                 </button>
@@ -5360,18 +5360,18 @@ analytics.subscribe("product_added_to_cart", (event) => {
               <>
                 {/* Auto-Apply Actions Button (Pro/Premium only) */}
                 {(subscription?.plan === 'pro' || subscription?.plan === 'premium') && (
-                  <div className="bg-blue-900 border-2 border-blue-700 rounded-lg p-6 shadow-xl">
+                  <div className="bg-gradient-to-r from-teal-50 to-orange-50 border-2 border-[#2DD4BF]/40 rounded-lg p-6 shadow-sm">
                     <div className="flex items-center justify-between">
                       <div>
                         <h3 className="text-[#1A1A2E] text-xl font-bold mb-2">Actions Automatiques IA</h3>
-                        <p className="text-green-200 text-sm">L'IA peut appliquer automatiquement les optimisations recommandées à votre boutique Shopify.</p>
+                        <p className="text-[#0D9488] text-sm">L'IA peut appliquer automatiquement les optimisations recommandées à votre boutique Shopify.</p>
                         {subscription?.plan === 'premium' && (
                           <p className="text-[#FF6B35] text-xs mt-1">Premium: Modifications automatiques sans limites</p>
                         )}
                       </div>
                       <button
                         onClick={prepareActionsForApply}
-                        className="bg-green-500 hover:bg-green-700 text-[#1A1A2E] font-bold py-3 px-6 rounded-lg shadow-lg transition flex items-center gap-2"
+                        className="bg-[#FF6B35] hover:bg-[#E85A28] text-white font-bold py-3 px-6 rounded-lg shadow-lg transition flex items-center gap-2"
                       >
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
@@ -5391,11 +5391,11 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     </div>
                     <div className="bg-[#EFF1F5] p-4 rounded-lg">
                       <p className="text-[#6A6A85] text-sm">Publiés</p>
-                      <p className="text-green-500 text-2xl font-bold">{analysisResults.overview?.published}</p>
+                      <p className="text-[#0D9488] text-2xl font-bold">{analysisResults.overview?.published}</p>
                     </div>
                     <div className="bg-[#EFF1F5] p-4 rounded-lg">
                       <p className="text-[#6A6A85] text-sm">Variantes</p>
-                      <p className="text-blue-600 text-2xl font-bold">{analysisResults.overview?.total_variants}</p>
+                      <p className="text-[#2DD4BF] text-2xl font-bold">{analysisResults.overview?.total_variants}</p>
                     </div>
                     <div className="bg-[#EFF1F5] p-4 rounded-lg">
                       <p className="text-[#6A6A85] text-sm">Prix moyen</p>
@@ -5433,18 +5433,18 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 )}
 
                 {/* Actions immédiates */}
-                <div className="bg-blue-900 border-2 border-blue-700 rounded-lg p-6">
+                <div className="bg-gradient-to-r from-teal-50 to-orange-50 border-2 border-[#2DD4BF]/30 rounded-lg p-6">
                   <h2 className="text-[#1A1A2E] text-2xl font-bold mb-4">🎯 Actions à faire MAINTENANT</h2>
                   <div className="space-y-4">
                     {analysisResults.immediate_actions?.map((action, idx) => (
-                      <div key={idx} className="bg-green-50 bg-opacity-50 p-5 rounded-lg">
+                      <div key={idx} className="bg-teal-50/50 p-5 rounded-lg">
                         <div className="flex items-center gap-2 mb-3">
-                          <span className="bg-green-500 text-[#1A1A2E] font-bold px-3 py-1 rounded-full text-sm">PRIORITÉ {action.priority}</span>
+                          <span className="bg-[#FF6B35] text-white font-bold px-3 py-1 rounded-full text-sm">PRIORITÉ {action.priority}</span>
                           <h3 className="text-[#1A1A2E] font-bold text-lg">{action.action}</h3>
                         </div>
                         <div className="space-y-2 mb-3">
                           {action.steps?.map((step, sidx) => (
-                            <p key={sidx} className="text-green-800 pl-4">{step}</p>
+                            <p key={sidx} className="text-[#0D9488] pl-4">{step}</p>
                           ))}
                         </div>
                         <div className="flex gap-4 text-sm">
@@ -5465,25 +5465,25 @@ analytics.subscribe("product_added_to_cart", (event) => {
                   </p>
                   <div className="space-y-4">
                     {analysisResults.strategic_recommendations?.recommendations?.map((rec, idx) => (
-                      <div key={idx} className="bg-[#EFF1F5] p-5 rounded-lg border-l-4 border-blue-500">
+                      <div key={idx} className="bg-[#EFF1F5] p-5 rounded-lg border-l-4 border-[#2DD4BF]">
                         <div className="flex items-center gap-2 mb-2">
                           <span className={`px-2 py-1 rounded text-xs font-bold ${
                             rec.priority === 'HAUTE' ? 'bg-[#E85A28]' : 
-                            rec.priority === 'MOYENNE' ? 'bg-blue-700' : 'bg-[#EFF1F5]'
+                            rec.priority === 'MOYENNE' ? 'bg-[#0D9488]' : 'bg-[#EFF1F5]'
                           }`}>
                             {rec.priority}
                           </span>
-                          <span className="text-blue-600 font-bold">{rec.category}</span>
+                          <span className="text-[#0D9488] font-bold">{rec.category}</span>
                         </div>
                         <h3 className="text-[#1A1A2E] font-bold mb-2">{rec.issue}</h3>
                         <p className="text-[#4A4A68] mb-3">{rec.recommendation}</p>
                         <div className="bg-white p-3 rounded">
-                          <p className="text-green-500 text-sm font-bold">💰 Impact attendu:</p>
-                          <p className="text-green-600 text-sm">{rec.impact}</p>
+                          <p className="text-[#0D9488] text-sm font-bold">💰 Impact attendu:</p>
+                          <p className="text-[#0D9488] text-sm">{rec.impact}</p>
                         </div>
-                        <div className="bg-blue-900 bg-opacity-30 p-3 rounded mt-2">
-                          <p className="text-blue-600 text-sm font-bold">Action:</p>
-                          <p className="text-blue-600 text-sm">{rec.action}</p>
+                        <div className="bg-teal-50 p-3 rounded mt-2">
+                          <p className="text-[#0D9488] text-sm font-bold">Action:</p>
+                          <p className="text-[#0D9488] text-sm">{rec.action}</p>
                         </div>
                       </div>
                     ))}
@@ -5505,7 +5505,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         <div key={idx} className="bg-[#EFF1F5] p-4 rounded-lg">
                           <div className="flex justify-between items-start mb-2">
                             <p className="text-[#1A1A2E] font-bold">{opt.product}</p>
-                            <span className="bg-green-500 text-white px-3 py-1 rounded-full text-sm font-bold">
+                            <span className="bg-[#0D9488] text-white px-3 py-1 rounded-full text-sm font-bold">
                               +{opt.increase}$
                             </span>
                           </div>
@@ -5516,11 +5516,11 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             </div>
                             <div>
                               <p className="text-[#6A6A85] text-sm">Prix suggéré</p>
-                              <p className="text-green-500 text-lg font-bold">{opt.suggested_price}$</p>
+                              <p className="text-[#0D9488] text-lg font-bold">{opt.suggested_price}$</p>
                             </div>
                           </div>
                           <p className="text-[#4A4A68] text-sm mb-2">{opt.reason}</p>
-                          <p className="text-green-500 text-sm font-bold">{opt.expected_impact}</p>
+                          <p className="text-[#0D9488] text-sm font-bold">{opt.expected_impact}</p>
                         </div>
                       ))}
                     </div>
@@ -5528,10 +5528,10 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     <h3 className="text-[#1A1A2E] font-bold mt-4">Opportunités de pricing:</h3>
                     <div className="space-y-3">
                       {analysisResults.pricing_strategy?.opportunities?.map((opp, idx) => (
-                        <div key={idx} className="bg-blue-900 bg-opacity-30 p-4 rounded-lg">
-                          <h4 className="text-blue-600 font-bold mb-2">{opp.strategy}</h4>
+                        <div key={idx} className="bg-teal-50 p-4 rounded-lg border border-[#2DD4BF]/20">
+                          <h4 className="text-[#0D9488] font-bold mb-2">{opp.strategy}</h4>
                           <p className="text-[#4A4A68] text-sm mb-2">{opp.description}</p>
-                          <p className="text-green-500 text-sm font-bold">{opp.expected_impact}</p>
+                          <p className="text-[#0D9488] text-sm font-bold">{opp.expected_impact}</p>
                         </div>
                       ))}
                     </div>
@@ -5547,8 +5547,8 @@ analytics.subscribe("product_added_to_cart", (event) => {
                       <div className="flex-1 bg-[#E8E8EE] rounded-full h-4">
                         <div 
                           className={`h-4 rounded-full ${
-                            analysisResults.content_improvements?.overall_score >= 80 ? 'bg-green-500' :
-                            analysisResults.content_improvements?.overall_score >= 60 ? 'bg-[#FF6B35]' : 'bg-blue-700'
+                            analysisResults.content_improvements?.overall_score >= 80 ? 'bg-[#0D9488]' :
+                            analysisResults.content_improvements?.overall_score >= 60 ? 'bg-[#FF6B35]' : 'bg-[#E85A28]'
                           }`}
                           style={{width: `${analysisResults.content_improvements?.overall_score}%`}}
                         />
@@ -5562,11 +5562,11 @@ analytics.subscribe("product_added_to_cart", (event) => {
                       <h3 className="text-[#1A1A2E] font-bold mb-3">Problèmes détectés:</h3>
                       <div className="space-y-3 mb-4">
                         {analysisResults.content_improvements.issues_found.map((issue, idx) => (
-                          <div key={idx} className="bg-yellow-900 bg-opacity-30 p-4 rounded-lg">
+                          <div key={idx} className="bg-orange-50 p-4 rounded-lg border border-[#FF6B35]/20">
                             <div className="flex items-center gap-2 mb-2">
                               <span className={`px-2 py-1 rounded text-xs font-bold ${
                                 issue.priority === 'CRITIQUE' ? 'bg-[#E85A28]' : 
-                                issue.priority === 'HAUTE' ? 'bg-blue-700' : 'bg-[#EFF1F5]'
+                                issue.priority === 'HAUTE' ? 'bg-[#0D9488]' : 'bg-[#EFF1F5]'
                               }`}>
                                 {issue.priority}
                               </span>
@@ -5583,9 +5583,9 @@ analytics.subscribe("product_added_to_cart", (event) => {
                   <div className="space-y-3">
                     {analysisResults.content_improvements?.quick_wins?.map((win, idx) => (
                       <div key={idx} className="bg-[#F7F8FA] p-4 rounded-lg border border-[#E8E8EE]">
-                        <p className="text-green-500 font-bold mb-2">{win.action}</p>
+                        <p className="text-[#0D9488] font-bold mb-2">{win.action}</p>
                         {win.example && <p className="text-[#4A4A68] text-sm mb-2">Exemple: {win.example}</p>}
-                        <p className="text-green-600 text-sm">{win.impact}</p>
+                        <p className="text-[#0D9488] text-sm">{win.impact}</p>
                       </div>
                     ))}
                   </div>
@@ -5604,7 +5604,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             <h4 className="text-[#FF6B35] font-bold mb-2">{upsell.strategy}</h4>
                             <p className="text-[#4A4A68] text-sm mb-2">{upsell.description}</p>
                             {upsell.example && <p className="text-[#4A4A68] text-sm mb-2">Exemple: {upsell.example}</p>}
-                            <p className="text-green-500 text-sm font-bold">{upsell.expected_impact}</p>
+                            <p className="text-[#0D9488] text-sm font-bold">{upsell.expected_impact}</p>
                           </div>
                         ))}
                       </div>
@@ -5627,7 +5627,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               </ul>
                             </div>
                             <p className="text-[#4A4A68] text-sm mb-2">{bundle.positioning}</p>
-                            <p className="text-green-500 text-sm font-bold">{bundle.expected_impact}</p>
+                            <p className="text-[#0D9488] text-sm font-bold">{bundle.expected_impact}</p>
                           </div>
                         ))}
                       </div>
@@ -5640,18 +5640,18 @@ analytics.subscribe("product_added_to_cart", (event) => {
                       <div key={idx} className="bg-[#EFF1F5] p-4 rounded-lg">
                         <p className="text-[#FF6B35] font-bold mb-2">{trigger.trigger}</p>
                         <p className="text-[#4A4A68] text-sm mb-2">{trigger.tactic}</p>
-                        <p className="text-green-500 text-sm font-bold">{trigger.impact}</p>
+                        <p className="text-[#0D9488] text-sm font-bold">{trigger.impact}</p>
                       </div>
                     ))}
                   </div>
                 </div>
 
                 {/* Opportunités de croissance */}
-                <div className="bg-blue-900 rounded-lg p-6 border border-blue-700">
+                <div className="bg-gradient-to-r from-teal-50 to-orange-50 rounded-lg p-6 border border-[#2DD4BF]/30">
                   <h2 className="text-[#1A1A2E] text-2xl font-bold mb-4">Opportunités de croissance</h2>
                   <div className="space-y-4">
                     {analysisResults.growth_opportunities?.map((opp, idx) => (
-                      <div key={idx} className="bg-black bg-opacity-30 p-5 rounded-lg">
+                      <div key={idx} className="bg-white p-5 rounded-lg border border-[#E8E8EE]">
                         <div className="flex items-center gap-2 mb-3">
                           <span className="text-2xl">{opp.category.split(' ')[0]}</span>
                           <h3 className="text-[#1A1A2E] font-bold text-lg">{opp.opportunity}</h3>
@@ -5664,7 +5664,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           </div>
                           <div className="bg-white p-3 rounded">
                             <p className="text-[#6A6A85] text-xs mb-1">Retour attendu</p>
-                            <p className="text-green-500 font-bold">{opp.expected_return}</p>
+                            <p className="text-[#0D9488] font-bold">{opp.expected_return}</p>
                           </div>
                           <div className="bg-white p-3 rounded">
                             <p className="text-[#6A6A85] text-xs mb-1">Difficulté</p>
@@ -5683,10 +5683,10 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     {analysisResults.product_recommendations?.map((rec, idx) => (
                       <div key={idx} className="bg-[#EFF1F5] p-5 rounded-lg">
                         <div className="flex items-center gap-3 mb-3">
-                          <span className="bg-blue-500 text-[#1A1A2E] font-bold px-3 py-1 rounded-full">#{rec.rank}</span>
+                          <span className="bg-[#2DD4BF] text-white font-bold px-3 py-1 rounded-full">#{rec.rank}</span>
                           <h3 className="text-[#1A1A2E] font-bold text-lg">{rec.product_name}</h3>
                           <span className={`ml-auto px-2 py-1 rounded text-xs font-bold ${
-                            rec.current_status === 'active' ? 'bg-green-500' : 'bg-[#FF6B35]'
+                            rec.current_status === 'active' ? 'bg-[#0D9488]' : 'bg-[#FF6B35]'
                           }`}>
                             {rec.current_status}
                           </span>
@@ -5698,20 +5698,20 @@ analytics.subscribe("product_added_to_cart", (event) => {
                                 <div className="flex items-center gap-2 mb-1">
                                   <span className={`px-2 py-1 rounded text-xs font-bold ${
                                     recItem.priority === 'Critique' ? 'bg-[#E85A28]' :
-                                    recItem.priority === 'Haute' ? 'bg-blue-700' : 'bg-[#EFF1F5]'
+                                    recItem.priority === 'Haute' ? 'bg-[#0D9488]' : 'bg-[#EFF1F5]'
                                   }`}>
                                     {recItem.priority}
                                   </span>
-                                  <span className="text-blue-600 font-bold text-sm">{recItem.type}</span>
+                                  <span className="text-[#0D9488] font-bold text-sm">{recItem.type}</span>
                                 </div>
                                 <p className="text-[#4A4A68] text-sm mb-1">{recItem.issue}</p>
-                                <p className="text-green-600 text-sm">{recItem.suggestion}</p>
+                                <p className="text-[#0D9488] text-sm">{recItem.suggestion}</p>
                                 <div className="mt-3 flex items-center gap-2">
                                   {['Titre', 'Description', 'Prix'].includes(recItem.type) ? (
                                     <button
                                       onClick={() => handleApplyRecommendation(rec.product_id, recItem.type)}
                                       disabled={subscription?.plan !== 'premium' || applyingRecommendationId === `${rec.product_id}-${recItem.type}`}
-                                      className="bg-blue-500 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold px-3 py-1 rounded"
+                                      className="bg-[#FF6B35] hover:bg-[#E85A28] disabled:opacity-50 text-white text-xs font-semibold px-3 py-1 rounded"
                                     >
                                       {applyingRecommendationId === `${rec.product_id}-${recItem.type}` ? 'Application...' : 'Faire modification'}
                                     </button>
@@ -5732,7 +5732,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             ))}
                           </div>
                         ) : (
-                          <p className="text-green-500">Aucune amélioration critique nécessaire</p>
+                          <p className="text-[#0D9488]">Aucune amélioration critique nécessaire</p>
                         )}
                       </div>
                     ))}
@@ -5743,7 +5743,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 <div className="flex justify-center">
                   <button
                     onClick={() => setActiveTab('ai')}
-                    className="bg-blue-500 hover:bg-blue-700 text-[#1A1A2E] font-bold py-3 px-8 rounded-lg"
+                    className="bg-[#FF6B35] hover:bg-[#E85A28] text-white font-bold py-3 px-8 rounded-lg"
                   >
                     🔄 Lancer une nouvelle analyse
                   </button>
@@ -5754,7 +5754,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 <p className="text-[#6A6A85] mb-4">Aucune analyse disponible</p>
                 <button
                   onClick={() => setActiveTab('ai')}
-                  className="bg-blue-500 hover:bg-blue-700 text-[#1A1A2E] font-bold py-3 px-6 rounded-lg"
+                  className="bg-[#FF6B35] hover:bg-[#E85A28] text-white font-bold py-3 px-6 rounded-lg"
                 >
                   Lancer une analyse
                 </button>
@@ -5767,10 +5767,10 @@ analytics.subscribe("product_added_to_cart", (event) => {
       {/* Apply Actions Confirmation Modal */}
       {showApplyModal && (
         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" onClick={() => !applyingActions && setShowApplyModal(false)}>
-          <div className="bg-[#F7F8FA] rounded-xl max-w-3xl w-full max-h-[80vh] overflow-hidden border border-green-500 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-[#F7F8FA] rounded-xl max-w-3xl w-full max-h-[80vh] overflow-hidden border border-[#2DD4BF] shadow-2xl" onClick={(e) => e.stopPropagation()}>
             {/* Header */}
-            <div className="bg-blue-900 p-6 flex justify-between items-center">
-              <h2 className="text-2xl font-bold text-[#1A1A2E] flex items-center gap-2">
+            <div className="bg-gradient-to-r from-[#0D9488] to-[#2DD4BF] p-6 flex justify-between items-center">
+              <h2 className="text-2xl font-bold text-white flex items-center gap-2">
                 <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
@@ -5801,8 +5801,8 @@ analytics.subscribe("product_added_to_cart", (event) => {
                   <div key={idx} className="bg-white p-4 rounded-lg border border-[#E8E8EE]">
                     <div className="flex items-start gap-3">
                       <div className={`mt-1 w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
-                        action.type === 'price' ? 'bg-green-500' :
-                        action.type === 'titre' ? 'bg-blue-500' : 'bg-[#E85A28]'
+                        action.type === 'price' ? 'bg-[#0D9488]' :
+                        action.type === 'titre' ? 'bg-[#2DD4BF]' : 'bg-[#FF6B35]'
                       }`}>
                         {action.type === 'price' ? '💰' : action.type === 'titre' ? '📝' : '📄'}
                       </div>
@@ -5814,7 +5814,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             <div className="flex items-center gap-4 text-sm">
                               <span className="text-[#1A1A2E]">Prix actuel: {action.current}$</span>
                               <span className="text-[#8A8AA3]">→</span>
-                              <span className="text-green-500 font-bold">{t('newPrice')}: {action.new}$</span>
+                              <span className="text-[#0D9488] font-bold">{t('newPrice')}: {action.new}$</span>
                             </div>
                           </>
                         )}
@@ -5823,14 +5823,14 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             <div className="flex items-center gap-2 mb-2">
                               <span className={`px-2 py-1 rounded text-xs font-bold ${
                                 action.priority === 'Critique' ? 'bg-[#E85A28]' :
-                                action.priority === 'Haute' ? 'bg-blue-700' : 'bg-[#EFF1F5]'
+                                action.priority === 'Haute' ? 'bg-[#0D9488]' : 'bg-[#EFF1F5]'
                               }`}>
                                 {action.priority}
                               </span>
-                              <span className="text-blue-600 text-sm font-bold">{action.type.toUpperCase()}</span>
+                              <span className="text-[#0D9488] text-sm font-bold">{action.type.toUpperCase()}</span>
                             </div>
                             <p className="text-[#6A6A85] text-sm mb-1">{t('problem')}: {action.issue}</p>
-                            <p className="text-green-600 text-sm">Solution: {action.suggestion}</p>
+                            <p className="text-[#0D9488] text-sm">Solution: {action.suggestion}</p>
                           </>
                         )}
                       </div>
@@ -5859,7 +5859,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
               <button
                 onClick={handleApplyActions}
                 disabled={applyingActions || selectedActions.length === 0}
-                className="bg-green-500 hover:bg-green-700 text-[#1A1A2E] font-bold py-3 px-8 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                className="bg-[#FF6B35] hover:bg-[#E85A28] text-white font-bold py-3 px-8 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
                 {applyingActions ? (
                   <>
@@ -5904,7 +5904,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                       key={tab}
                       onClick={() => setSettingsTab(tab)}
                       className={`w-full text-left px-4 py-2 rounded-lg transition ${
-                        settingsTab === tab ? 'bg-blue-500 text-white' : 'text-[#4A4A68] hover:bg-[#EFF1F5]'
+                        settingsTab === tab ? 'bg-[#0D9488] text-white' : 'text-[#4A4A68] hover:bg-[#EFF1F5]'
                       }`}
                     >
                       {tab === 'profile' && t('tabProfile')}
@@ -5926,7 +5926,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     <div>
                       <h3 className="text-xl font-bold text-[#1A1A2E] mb-4">{t('profileInformation')}</h3>
                       <div className="flex items-center gap-6 mb-6">
-                        <div className="w-24 h-24 rounded-full bg-gradient-to-br from-yellow-400 to-orange-500 flex items-center justify-center font-bold text-3xl shadow-lg overflow-hidden">
+                        <div className="w-24 h-24 rounded-full bg-gradient-to-br from-[#2DD4BF] to-[#FF6B35] flex items-center justify-center font-bold text-3xl shadow-lg overflow-hidden">
                           {profile?.avatar_url ? (
                             <img src={profile.avatar_url} alt="Avatar" className="w-full h-full object-cover" />
                           ) : (
@@ -5943,7 +5943,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         <button
                           onClick={() => avatarInputRef.current?.click()}
                           disabled={avatarUploading}
-                          className="bg-blue-500 hover:bg-blue-700 disabled:opacity-50 px-4 py-2 rounded-lg text-white font-semibold"
+                          className="bg-[#0D9488] hover:bg-[#0F766E] disabled:opacity-50 px-4 py-2 rounded-lg text-white font-semibold"
                         >
                           {avatarUploading ? t('saving') : t('uploadPhoto')}
                         </button>
@@ -5968,7 +5968,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           <label className="block text-sm text-[#6A6A85] mb-2">{t('email')}</label>
                           <input type="email" defaultValue={user?.email} disabled className="w-full bg-[#EFF1F5] border border-[#D8D8E2] rounded-lg px-4 py-2 text-[#6A6A85] cursor-not-allowed" />
                         </div>
-                        <button onClick={handleSaveProfile} disabled={saveLoading} className="bg-blue-500 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold">
+                        <button onClick={handleSaveProfile} disabled={saveLoading} className="bg-[#0D9488] hover:bg-[#0F766E] disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold">
                           {saveLoading ? t('saving') : t('saveChanges')}
                         </button>
                         {renderStatus('profile')}
@@ -5995,7 +5995,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           <label className="block text-sm text-[#6A6A85] mb-2">{t('confirmNewPassword')}</label>
                           <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} className="w-full bg-[#EFF1F5] border border-[#D8D8E2] rounded-lg px-4 py-2 text-[#1A1A2E]" />
                         </div>
-                        <button onClick={handleUpdatePassword} disabled={saveLoading} className="bg-blue-500 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold">
+                        <button onClick={handleUpdatePassword} disabled={saveLoading} className="bg-[#0D9488] hover:bg-[#0F766E] disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold">
                           {saveLoading ? t('updating') : t('updatePassword')}
                         </button>
                         {renderStatus('password')}
@@ -6004,10 +6004,10 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     <div className="bg-white rounded-lg p-6 border border-[#E8E8EE]">
                       <h4 className="text-lg font-semibold text-[#1A1A2E] mb-2">{t('twoFactorAuth')}</h4>
                       <p className="text-[#6A6A85] mb-4">{t('twoFactorDesc')}</p>
-                      <button onClick={handleToggle2FA} disabled={saveLoading} className={`${twoFAEnabled ? 'bg-[#EFF1F5] hover:bg-[#E8E8EE]' : 'bg-blue-500 hover:bg-blue-700'} disabled:opacity-50 px-6 py-2 rounded-lg text-[#1A1A2E] font-semibold`}>
+                      <button onClick={handleToggle2FA} disabled={saveLoading} className={`${twoFAEnabled ? 'bg-[#EFF1F5] hover:bg-[#E8E8EE]' : 'bg-[#0D9488] hover:bg-[#0F766E]'} disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold`}>
                         {saveLoading ? '...' : (twoFAEnabled ? t('disable2FA') : t('enable2FA'))}
                       </button>
-                      {twoFAEnabled && <p className="text-green-500 text-sm mt-2">{t('twoFAEnabled')}</p>}
+                      {twoFAEnabled && <p className="text-[#0D9488] text-sm mt-2">{t('twoFAEnabled')}</p>}
                       {renderStatus('2fa')}
                     </div>
                   </div>
@@ -6025,7 +6025,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           ))}
                         </select>
                       </div>
-                      <button onClick={handleSaveInterface} disabled={saveLoading} className="bg-blue-500 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-[#1A1A2E] font-semibold w-full">
+                      <button onClick={handleSaveInterface} disabled={saveLoading} className="bg-[#0D9488] hover:bg-[#0F766E] disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold w-full">
                         {saveLoading ? t('saving') : t('saveInterface')}
                       </button>
                       {renderStatus('interface')}
@@ -6044,7 +6044,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               <p className="text-sm text-[#6A6A85]">Boutique connectée</p>
                               <p className="text-[#1A1A2E] font-semibold">{shopifyUrl}</p>
                             </div>
-                            <span className="text-xs text-green-600 bg-green-900/30 border border-green-700/40 px-3 py-1 rounded-full">Connecté</span>
+                            <span className="text-xs text-[#0D9488] bg-teal-50 border border-[#2DD4BF]/40 px-3 py-1 rounded-full">Connecté</span>
                           </div>
                         )}
                         <div>
@@ -6130,12 +6130,12 @@ analytics.subscribe("product_added_to_cart", (event) => {
                       ].map(item => (
                         <div key={item.key} className="bg-white rounded-lg p-4 border border-[#E8E8EE] flex justify-between items-center">
                           <span className="text-[#1A1A2E]">{item.label}</span>
-                          <button onClick={() => setNotifications(prev => ({...prev, [item.key]: !prev[item.key]}))} className={`${notifications[item.key] ? 'bg-blue-500' : 'bg-[#E8E8EE]'} w-12 h-6 rounded-full p-1 cursor-pointer transition`}>
+                          <button onClick={() => setNotifications(prev => ({...prev, [item.key]: !prev[item.key]}))} className={`${notifications[item.key] ? 'bg-[#0D9488]' : 'bg-[#E8E8EE]'} w-12 h-6 rounded-full p-1 cursor-pointer transition`}>
                             <div className={`${notifications[item.key] ? 'bg-white ml-auto' : 'bg-white'} w-4 h-4 rounded-full transition`}></div>
                           </button>
                         </div>
                       ))}
-                      <button onClick={handleSaveNotifications} disabled={saveLoading} className="bg-blue-500 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-[#1A1A2E] font-semibold w-full mt-4">
+                      <button onClick={handleSaveNotifications} disabled={saveLoading} className="bg-[#0D9488] hover:bg-[#0F766E] disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold w-full mt-4">
                         {saveLoading ? t('saving') : t('saveNotifications')}
                       </button>
                       {renderStatus('notifications')}
@@ -6153,13 +6153,13 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           <p className="text-[#6A6A85]">{t('activeSince')} {new Date(subscription?.started_at).toLocaleDateString()}</p>
                         </div>
                         <div className="text-right">
-                          <div className="text-2xl font-bold text-green-500">
+                          <div className="text-2xl font-bold text-[#0D9488]">
                             ${subscription?.plan === 'standard' ? '99' : subscription?.plan === 'pro' ? '199' : '299'}/mo
                           </div>
                         </div>
                       </div>
                       <div className="flex gap-4">
-                        <button onClick={() => { setShowSettingsModal(false); setShowPlanMenu(true) }} className="bg-blue-500 hover:bg-blue-700 px-6 py-2 rounded-lg text-[#1A1A2E] font-semibold">
+                        <button onClick={() => { setShowSettingsModal(false); setShowPlanMenu(true) }} className="bg-[#0D9488] hover:bg-[#0F766E] px-6 py-2 rounded-lg text-white font-semibold">
                           {t('changePlan')}
                         </button>
                         <button onClick={handleCancelSubscription} disabled={saveLoading} className="bg-[#EFF1F5] hover:bg-[#E8E8EE] disabled:opacity-50 px-6 py-2 rounded-lg text-[#1A1A2E] font-semibold">
@@ -6171,7 +6171,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     <div className="bg-white rounded-lg p-6 border border-[#E8E8EE]">
                       <h4 className="text-lg font-semibold text-[#1A1A2E] mb-4">{t('paymentMethod')}</h4>
                       <p className="text-sm text-[#6A6A85] mb-4">Géré par Stripe. Cliquez ci-dessous pour mettre à jour.</p>
-                      <button onClick={handleUpdatePaymentMethod} disabled={saveLoading} className="bg-blue-500 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold">
+                      <button onClick={handleUpdatePaymentMethod} disabled={saveLoading} className="bg-[#0D9488] hover:bg-[#0F766E] disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold">
                         {saveLoading ? '...' : t('updatePaymentMethod')}
                       </button>
                       {renderStatus('billing-payment')}
@@ -6182,7 +6182,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 {settingsTab === 'api' && (
                   <div className="space-y-6">
                     <h3 className="text-xl font-bold text-[#1A1A2E] mb-4">{t('apiKeys')}</h3>
-                    <div className="bg-yellow-900/20 border border-[#E85A28] rounded-lg p-4 mb-4">
+                    <div className="bg-orange-50 border border-[#E85A28]/40 rounded-lg p-4 mb-4">
                       <p className="text-[#FF6B35] text-sm">{t('apiWarning')}</p>
                     </div>
                     {apiLoading && <div className="text-[#6A6A85]">Chargement...</div>}
@@ -6231,7 +6231,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     <button
                       onClick={handleGenerateApiKey}
                       disabled={apiLoading}
-                      className="bg-blue-500 hover:bg-blue-700 disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold"
+                      className="bg-[#0D9488] hover:bg-[#0F766E] disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold"
                     >
                       {t('generateKey')}
                     </button>
@@ -6257,16 +6257,16 @@ analytics.subscribe("product_added_to_cart", (event) => {
             className="fixed bottom-6 right-6 z-40 group"
             title="Assistant IA"
           >
-            <div className="relative w-14 h-14 rounded-full bg-gradient-to-br from-[#FF6B35] to-yellow-700 shadow-2xl shadow-yellow-600/30 flex items-center justify-center border-2 border-yellow-400/40 transition-all duration-200 group-hover:scale-110 group-hover:shadow-yellow-500/50">
+            <div className="relative w-14 h-14 rounded-full bg-gradient-to-br from-[#FF6B35] to-[#0D9488] shadow-2xl shadow-[#FF6B35]/30 flex items-center justify-center border-2 border-[#2DD4BF]/40 transition-all duration-200 group-hover:scale-110 group-hover:shadow-[#FF6B35]/50">
               <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
                 <circle cx="16" cy="13" r="8" fill="#0b0d12" opacity="0.85"/>
-                <circle cx="12" cy="12" r="2" fill="#facc15"/>
-                <circle cx="20" cy="12" r="2" fill="#facc15"/>
-                <path d="M11 17 Q16 21 21 17" stroke="#facc15" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
-                <circle cx="8" cy="8" r="1.5" fill="#facc15" opacity="0.7"/>
-                <circle cx="24" cy="8" r="1.5" fill="#facc15" opacity="0.7"/>
+                <circle cx="12" cy="12" r="2" fill="#2DD4BF"/>
+                <circle cx="20" cy="12" r="2" fill="#2DD4BF"/>
+                <path d="M11 17 Q16 21 21 17" stroke="#2DD4BF" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+                <circle cx="8" cy="8" r="1.5" fill="#2DD4BF" opacity="0.7"/>
+                <circle cx="24" cy="8" r="1.5" fill="#2DD4BF" opacity="0.7"/>
               </svg>
-              <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-green-500 rounded-full border-2 border-white"></span>
+              <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-[#0D9488] rounded-full border-2 border-white"></span>
             </div>
           </button>
 
@@ -6417,14 +6417,14 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     /* Welcome Screen */
                     <div className="flex flex-col items-center justify-center h-full px-6">
                       {/* Logo avatar */}
-                      <div className="w-16 h-16 rounded-full bg-gradient-to-br from-[#FF6B35] to-yellow-700 flex items-center justify-center mb-5 shadow-lg shadow-yellow-600/20">
+                      <div className="w-16 h-16 rounded-full bg-gradient-to-br from-[#FF6B35] to-[#0D9488] flex items-center justify-center mb-5 shadow-lg shadow-[#FF6B35]/20">
                         <svg width="36" height="36" viewBox="0 0 32 32" fill="none">
                           <circle cx="16" cy="13" r="8" fill="#0b0d12" opacity="0.85"/>
-                          <circle cx="12" cy="12" r="2.2" fill="#facc15"/>
-                          <circle cx="20" cy="12" r="2.2" fill="#facc15"/>
-                          <path d="M11 17 Q16 21 21 17" stroke="#facc15" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
-                          <circle cx="8" cy="8" r="1.5" fill="#facc15" opacity="0.7"/>
-                          <circle cx="24" cy="8" r="1.5" fill="#facc15" opacity="0.7"/>
+                          <circle cx="12" cy="12" r="2.2" fill="#2DD4BF"/>
+                          <circle cx="20" cy="12" r="2.2" fill="#2DD4BF"/>
+                          <path d="M11 17 Q16 21 21 17" stroke="#2DD4BF" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+                          <circle cx="8" cy="8" r="1.5" fill="#2DD4BF" opacity="0.7"/>
+                          <circle cx="24" cy="8" r="1.5" fill="#2DD4BF" opacity="0.7"/>
                         </svg>
                       </div>
                       <p className="text-[#8A8AA3] text-sm mb-1">{getGreeting()}, {profile?.first_name || user?.user_metadata?.full_name?.split(' ')[0] || 'là'}</p>
@@ -6443,12 +6443,12 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         <div key={idx} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
                           {/* Avatar */}
                           {msg.role === 'assistant' && (
-                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#FF6B35] to-yellow-700 flex items-center justify-center shrink-0 mt-0.5 shadow-md">
+                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#FF6B35] to-[#0D9488] flex items-center justify-center shrink-0 mt-0.5 shadow-md">
                               <svg width="18" height="18" viewBox="0 0 32 32" fill="none">
                                 <circle cx="16" cy="13" r="8" fill="#0b0d12" opacity="0.85"/>
-                                <circle cx="12" cy="12" r="2" fill="#facc15"/>
-                                <circle cx="20" cy="12" r="2" fill="#facc15"/>
-                                <path d="M11 17 Q16 21 21 17" stroke="#facc15" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+                                <circle cx="12" cy="12" r="2" fill="#2DD4BF"/>
+                                <circle cx="20" cy="12" r="2" fill="#2DD4BF"/>
+                                <path d="M11 17 Q16 21 21 17" stroke="#2DD4BF" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
                               </svg>
                             </div>
                           )}
@@ -6489,12 +6489,12 @@ analytics.subscribe("product_added_to_cart", (event) => {
                       {/* ── Typing indicator (3 bouncing dots with logo) ── */}
                       {chatLoading && (
                         <div className="flex gap-3 items-start">
-                          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#FF6B35] to-yellow-700 flex items-center justify-center shrink-0 shadow-md">
+                          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#FF6B35] to-[#0D9488] flex items-center justify-center shrink-0 shadow-md">
                             <svg width="18" height="18" viewBox="0 0 32 32" fill="none">
                               <circle cx="16" cy="13" r="8" fill="#0b0d12" opacity="0.85"/>
-                              <circle cx="12" cy="12" r="2" fill="#facc15"/>
-                              <circle cx="20" cy="12" r="2" fill="#facc15"/>
-                              <path d="M11 17 Q16 21 21 17" stroke="#facc15" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+                              <circle cx="12" cy="12" r="2" fill="#2DD4BF"/>
+                              <circle cx="20" cy="12" r="2" fill="#2DD4BF"/>
+                              <path d="M11 17 Q16 21 21 17" stroke="#2DD4BF" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
                             </svg>
                           </div>
                           <div className="bg-[#F7F8FA] border border-[#E8E8EE] rounded-2xl rounded-bl-md px-4 py-3 flex items-center gap-1.5">
@@ -6564,7 +6564,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                   {/* Mentioned product chip + suggested questions */}
                   {mentionedProduct && (
                     <div className="mb-3 space-y-2">
-                      <div className="flex items-center gap-2 bg-yellow-900/20 border border-[#FF6B35]/30 rounded-xl px-3 py-2">
+                      <div className="flex items-center gap-2 bg-orange-50 border border-[#FF6B35]/30 rounded-xl px-3 py-2">
                         {mentionedProduct.image?.src ? (
                           <img src={mentionedProduct.image.src} alt="" className="w-8 h-8 rounded-lg object-cover" />
                         ) : (
@@ -6740,7 +6740,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           </button>
                           <button
                             onClick={confirmDictation}
-                            className="w-8 h-8 flex items-center justify-center text-white bg-green-500/80 hover:bg-green-500 rounded-full transition-colors"
+                            className="w-8 h-8 flex items-center justify-center text-white bg-[#0D9488]/80 hover:bg-[#0D9488] rounded-full transition-colors"
                             title="Valider"
                           >
                             <span className="text-base font-semibold">✓</span>
