@@ -1656,6 +1656,88 @@ export default function Dashboard() {
           .filter(a => a.preview && a.type?.startsWith('image/'))
           .map(a => a.preview)
       }
+      // ── Build rich real-time dashboard context so AI knows everything ──
+      const ctxParts = []
+
+      // 1. Active tab context
+      const tabNameMap = {
+        overview: 'Vue d\'ensemble (revenus, commandes, AOV)',
+        underperforming: 'Produits sous-performants',
+        'action-blockers': 'Bloqueurs de conversion',
+        'action-rewrite': 'Réécriture IA de fiches produit',
+        'action-price': 'Optimisation dynamique des prix',
+        'action-images': 'Assistance images IA',
+        'action-bundles': 'Bundles & cross-sell',
+        'action-stock': 'Alertes stock',
+        'action-returns': 'Anti-retours',
+        invoices: 'Factures',
+        ai: 'Analyse IA complète',
+        analysis: 'Résultats d\'analyse',
+        settings: 'Paramètres'
+      }
+      ctxParts.push(`[CONTEXTE TABLEAU DE BORD EN TEMPS RÉEL]`)
+      ctxParts.push(`Onglet actif: ${tabNameMap[activeTab] || activeTab}`)
+
+      // 2. Subscription & shop info
+      ctxParts.push(`Plan: ${subscription?.plan || 'free'} | Boutique Shopify: ${shopifyUrl || 'non connectée'} | Connectée: ${shopifyConnected ? 'oui' : 'non'}`)
+
+      // 3. Products summary
+      if (products && products.length > 0) {
+        ctxParts.push(`Nombre de produits Shopify: ${products.length}`)
+        const topProducts = products.slice(0, 5).map(p => `${p.title} (${p.variants?.[0]?.price || '?'}$)`).join(', ')
+        ctxParts.push(`Exemples: ${topProducts}`)
+      } else {
+        ctxParts.push(`Produits: aucun chargé`)
+      }
+
+      // 4. Analytics data (if on overview or available)
+      if (analyticsData?.totals) {
+        const t2 = analyticsData.totals
+        const cur = analyticsData.currency || 'EUR'
+        ctxParts.push(`Revenus (${analyticsRange}): ${t2.revenue || 0} ${cur} | Commandes: ${t2.orders || 0} | AOV: ${t2.aov || 0} ${cur}`)
+      }
+
+      // 5. Tab-specific live data
+      if (activeTab === 'underperforming' && underperformingData?.underperformers?.length > 0) {
+        const items = underperformingData.underperformers.slice(0, 5)
+        ctxParts.push(`Produits sous-performants (${underperformingData.underperformers.length} total): ${items.map(i => `${i.title} (score:${i.score}, ${i.orders} cmd, CA:${i.revenue})`).join(' | ')}`)
+      }
+      if (activeTab === 'action-price' && insightsData) {
+        const priceItems = insightsData?.price_suggestions || insightsData?.price_analysis?.suggestions || []
+        ctxParts.push(`Suggestions de prix: ${priceItems.length} opportunités`)
+        if (priceItems.length > 0) {
+          ctxParts.push(priceItems.slice(0, 3).map(i => `${i.title}: ${i.current_price}→${i.suggested_price}$ (${i.suggestion})`).join(' | '))
+        }
+      }
+      if (activeTab === 'action-bundles') {
+        const bundleItems = insightsData?.bundle_suggestions || []
+        ctxParts.push(`Bundles: ${bundleItems.length} suggestions | Diagnostics: ${bundlesDiagnostics ? JSON.stringify(bundlesDiagnostics) : 'non chargé'}`)
+      }
+      if (activeTab === 'action-stock' && stockProducts?.length > 0) {
+        const lowStock = stockProducts.filter(p => p.inventory <= (p.threshold || 5))
+        ctxParts.push(`Stock: ${stockProducts.length} produits suivis, ${lowStock.length} en alerte basse`)
+      }
+      if (activeTab === 'action-returns' && insightsData?.return_risks?.length > 0) {
+        ctxParts.push(`Retours: ${insightsData.return_risks.length} produits à risque`)
+      }
+      if (activeTab === 'action-images' && insightsData?.image_recommendations?.length > 0) {
+        ctxParts.push(`Images: ${insightsData.image_recommendations.length} produits analysés`)
+      }
+      if ((activeTab === 'analysis' || activeTab === 'ai') && analysisResults) {
+        ctxParts.push(`Résultats analyse: ${analysisResults.overview?.total_products || '?'} produits, ${analysisResults.strategic_recommendations?.total_recommendations || 0} recommandations`)
+      }
+      if (activeTab === 'action-blockers' && blockersData?.blockers?.length > 0) {
+        ctxParts.push(`Bloqueurs: ${blockersData.blockers.length} détectés`)
+      }
+
+      // 6. Error states
+      if (analyticsError) ctxParts.push(`Erreur analytics: ${analyticsError}`)
+      if (insightsError) ctxParts.push(`Erreur insights: ${insightsError}`)
+
+      ctxParts.push(`[FIN CONTEXTE — Réponds en fonction de la situation actuelle de l'utilisateur. S'il pose une question sur ses données, utilise le contexte ci-dessus.]`)
+
+      chatPayload.dashboard_context = ctxParts.join('\n')
+
       // Inject mentioned product context
       if (mentionedProduct) {
         const p = mentionedProduct
@@ -4592,10 +4674,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
               <button
                 onClick={() => runActionAnalysis('action-price')}
                 disabled={insightsLoading}
-                className="font-bold py-3 px-6 rounded-lg disabled:opacity-50 transition-all duration-200 text-black"
-                style={{ background: 'linear-gradient(135deg, #D4A843 0%, #F2D272 25%, #BF953F 50%, #FCF6BA 75%, #B38728 100%)', boxShadow: '0 2px 12px rgba(212, 168, 67, 0.3)' }}
-                onMouseEnter={(e) => { e.currentTarget.style.boxShadow = '0 4px 20px rgba(212, 168, 67, 0.6)'; e.currentTarget.style.transform = 'translateY(-1px)' }}
-                onMouseLeave={(e) => { e.currentTarget.style.boxShadow = '0 2px 12px rgba(212, 168, 67, 0.3)'; e.currentTarget.style.transform = 'translateY(0)' }}
+                className="bg-[#FF6B35] hover:bg-[#E85A28] text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50 transition-all duration-200 shadow-md hover:shadow-lg hover:-translate-y-0.5"
               >
                 {insightsLoading ? t('analysisInProgress') : t('launchPriceOptimization')}
               </button>
@@ -4674,14 +4753,14 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             </button>
                             <div className="hidden mt-2 bg-white/70 border border-[#D8D8E2] rounded-lg p-3 max-h-[300px] overflow-y-auto">
                               {item.search_stats.vision?.search_query ? (
-                                <div className="mb-3 bg-purple-900/30 border border-purple-700/50 rounded-lg p-2">
-                                  <p className="text-xs text-purple-600 font-semibold mb-1">👁️ {t('visualAnalysis')}:</p>
+                                <div className="mb-3 bg-teal-50 border border-[#2DD4BF]/30 rounded-lg p-2">
+                                  <p className="text-xs text-[#0D9488] font-semibold mb-1">👁️ {t('visualAnalysis')}:</p>
                                   <p className="text-xs text-[#4A4A68]">
-                                    <span className="text-purple-400">{t('searchQuery')}:</span> {item.search_stats.vision.search_query}
+                                    <span className="text-[#0D9488]">{t('searchQuery')}:</span> {item.search_stats.vision.search_query}
                                   </p>
                                   {item.search_stats.vision.attributes ? (
                                     <p className="text-xs text-[#6A6A85] mt-0.5">
-                                      <span className="text-purple-400">{t('attributes')}:</span> {item.search_stats.vision.attributes}
+                                      <span className="text-[#0D9488]">{t('attributes')}:</span> {item.search_stats.vision.attributes}
                                     </p>
                                   ) : null}
                                 </div>
@@ -4747,8 +4826,8 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 <h2 className="text-[#1A1A2E] text-2xl font-bold mb-1">{t('imgAssistTitle')}</h2>
                 <p className="text-[#4A4A68] text-base">{t('imgAssistDesc')}</p>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  <span className="inline-flex items-center gap-1 text-xs bg-purple-50 text-purple-600 border border-purple-200 rounded-full px-3 py-1">🎨 {t('imgBadgeDesign')}</span>
-                  <span className="inline-flex items-center gap-1 text-xs bg-pink-50 text-pink-500 border border-pink-200 rounded-full px-3 py-1">📷 {t('imgBadgePhoto')}</span>
+                  <span className="inline-flex items-center gap-1 text-xs bg-orange-50 text-[#FF6B35] border border-[#FF6B35]/20 rounded-full px-3 py-1">🎨 {t('imgBadgeDesign')}</span>
+                  <span className="inline-flex items-center gap-1 text-xs bg-teal-50 text-[#0D9488] border border-[#2DD4BF]/30 rounded-full px-3 py-1">📷 {t('imgBadgePhoto')}</span>
                   <span className="inline-flex items-center gap-1 text-xs bg-teal-50 text-[#0D9488] border border-[#2DD4BF]/30 rounded-full px-3 py-1">📈 {t('imgBadgeConversion')}</span>
                 </div>
               </div>
@@ -4836,7 +4915,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                       </div>
                       {item?.recommendations?.target_total_images ? (
                         <div className="text-right flex-shrink-0">
-                          <div className="text-2xl font-bold text-purple-400">{item.recommendations.target_total_images}</div>
+                          <div className="text-2xl font-bold text-[#0D9488]">{item.recommendations.target_total_images}</div>
                           <div className="text-xs text-[#8A8AA3]">{t('imgTargetImages')}</div>
                         </div>
                       ) : null}
@@ -4852,7 +4931,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               <img
                                 src={url}
                                 alt={`${item.title} #${imgIdx + 1}`}
-                                className="w-24 h-24 object-cover rounded-lg border-2 border-[#E8E8EE] group-hover:border-purple-500 transition-colors cursor-pointer"
+                                className="w-24 h-24 object-cover rounded-lg border-2 border-[#E8E8EE] group-hover:border-[#FF6B35] transition-colors cursor-pointer"
                                 onError={(e) => { e.target.style.display = 'none' }}
                               />
                               <div className="absolute bottom-0 left-0 right-0 bg-black/30 text-center text-[10px] text-[#4A4A68] py-0.5 rounded-b-lg">#{imgIdx + 1}</div>
@@ -4919,7 +4998,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                       <div className="space-y-5">
                         {/* Need to create count */}
                         {Number.isFinite(Number(item.recommendations.recommended_new_images)) && item.recommendations.recommended_new_images > 0 ? (
-                          <div className="bg-purple-500/10 border border-purple-200 rounded-lg px-4 py-3 text-purple-600 text-sm font-medium">
+                          <div className="bg-orange-50 border border-[#FF6B35]/20 rounded-lg px-4 py-3 text-[#E85A28] text-sm font-medium">
                             📌 {t('imgNeedToCreate')} <span className="text-[#1A1A2E] font-bold">{item.recommendations.recommended_new_images}</span> {t('imgNewImages')}
                           </div>
                         ) : item.recommendations.target_total_images ? (
@@ -5018,7 +5097,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             <div className="space-y-3">
                               {item.recommendations.action_plan.slice(0, 7).map((stepObj, idx) => (
                                 <div key={idx} className="flex gap-3 text-sm">
-                                  <div className="w-7 h-7 rounded-full bg-purple-50 text-purple-400 flex items-center justify-center flex-shrink-0 text-xs font-bold">{stepObj.step}</div>
+                                  <div className="w-7 h-7 rounded-full bg-teal-50 text-[#0D9488] flex items-center justify-center flex-shrink-0 text-xs font-bold">{stepObj.step}</div>
                                   <div>
                                     <div className="font-semibold text-[#1A1A2E]">{stepObj.title}</div>
                                     {Array.isArray(stepObj.do) ? (
@@ -5037,7 +5116,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                         {/* Images to create */}
                         {Array.isArray(item.recommendations.images_to_create) && item.recommendations.images_to_create.length > 0 ? (
-                          <div className="bg-white/80 border border-purple-500/20 rounded-lg p-4 space-y-4">
+                          <div className="bg-white/80 border border-[#2DD4BF]/20 rounded-lg p-4 space-y-4">
                             <div className="text-[#1A1A2E] font-semibold flex items-center gap-2">🎯 {t('imgToCreate')}</div>
                             <div className="grid grid-cols-1 gap-4">
                               {item.recommendations.images_to_create.slice(0, 8).map((img, idx) => (
@@ -5048,7 +5127,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                                   </div>
                                   <div className="text-sm text-[#4A4A68] pl-10">{img.what_to_shoot}</div>
                                   {Array.isArray(img.uses_facts) && img.uses_facts.length > 0 ? (
-                                    <div className="text-xs text-purple-400 pl-10">💡 {t('whyItFits')}: {img.uses_facts.slice(0, 3).join(' · ')}</div>
+                                    <div className="text-xs text-[#0D9488] pl-10">💡 {t('whyItFits')}: {img.uses_facts.slice(0, 3).join(' · ')}</div>
                                   ) : null}
                                   <div className="grid grid-cols-2 md:grid-cols-4 gap-2 pl-10 text-xs">
                                     {img.background ? <div className="bg-white rounded px-2 py-1"><span className="text-[#8A8AA3]">{t('backgroundLabel')}:</span> <span className="text-[#1A1A2E]">{img.background}</span></div> : null}
@@ -5095,13 +5174,13 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           <div className="space-y-3">
                             <div className="text-[#1A1A2E] font-semibold flex items-center gap-2">✨ {t('imgPromptBlocks')}</div>
                             {item.recommendations.prompt_blocks.slice(0, 3).map((pb, idx) => (
-                              <div key={idx} className="bg-black/20 border border-purple-500/20 rounded-lg p-4 space-y-2">
+                              <div key={idx} className="bg-[#F7F8FA] border border-[#E8E8EE] rounded-lg p-4 space-y-2">
                                 <div className="text-sm text-[#2A2A42] font-semibold">{pb.shot}</div>
                                 {pb.outcome ? <div className="text-xs text-[#6A6A85]">{t('imgExpectedResult')}: {pb.outcome}</div> : null}
                                 {Array.isArray(pb.prompts) ? pb.prompts.slice(0, 2).map((pr, prIdx) => (
                                   <div key={prIdx} className="space-y-1">
                                     <div className="text-xs text-[#6A6A85]">{pr.label}{pr.when_to_use ? ` — ${pr.when_to_use}` : ''}</div>
-                                    <div className="bg-black/30 border border-[#E8E8EE] rounded p-2 font-mono text-xs whitespace-pre-wrap break-words text-[#2A2A42]">
+                                    <div className="bg-[#F7F8FA] border border-[#E8E8EE] rounded p-2 font-mono text-xs whitespace-pre-wrap break-words text-[#2A2A42]">
                                       {pr.prompt}
                                     </div>
                                   </div>
