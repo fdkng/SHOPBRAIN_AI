@@ -74,6 +74,31 @@ export default function Dashboard() {
   const [products, setProducts] = useState(null)
   const [error, setError] = useState('')
   const [isProcessingPayment, setIsProcessingPayment] = useState(false)
+
+  // ──── STRICT PLAN FEATURE GATES ────
+  // Standard $99: product analysis (50/mo), title rewrite, price suggestions, 1 shop, monthly report
+  // Pro $199: + description rewrite, image recs, cross-sell/bundles, 500/mo, 3 shops, weekly reports, automated actions, invoices
+  // Premium $299: + IA prédictive, auto stock, unlimited products/shops, daily reports, API, account manager
+  const PLAN_GATES = {
+    // feature_key: minimum plan required
+    'product_analysis': 'standard',
+    'title_optimization': 'standard',
+    'price_suggestions': 'standard',
+    'content_generation': 'pro',       // description rewrite
+    'image_recommendations': 'pro',    // image AI
+    'cross_sell': 'pro',               // bundles & upsell
+    'reports': 'pro',                  // weekly reports (standard=monthly only)
+    'automated_actions': 'pro',        // apply actions to Shopify
+    'invoicing': 'pro',                // invoices tab
+    'predictions': 'premium',          // IA prédictive
+    'auto_stock': 'premium',           // automated stock actions
+    'api_access': 'premium',           // API access
+  }
+  const PLAN_RANK = { standard: 1, pro: 2, premium: 3 }
+  const userPlanRank = PLAN_RANK[subscription?.plan] || 0
+  const canAccess = (feature) => userPlanRank >= (PLAN_RANK[PLAN_GATES[feature]] || 1)
+  const getProductLimit = () => ({ standard: 50, pro: 500, premium: Infinity }[subscription?.plan] || 50)
+  const planLabel = (feature) => PLAN_GATES[feature] === 'premium' ? 'Premium' : 'Pro'
   const [showPlanMenu, setShowPlanMenu] = useState(false)
   const [showProfileMenu, setShowProfileMenu] = useState(false)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
@@ -2789,6 +2814,17 @@ export default function Dashboard() {
 
   const runActionAnalysis = async (actionKey, options = {}) => {
     try {
+      // ── Plan gate check before running any analysis ──
+      const actionGateMap = {
+        'action-images': 'image_recommendations',
+        'action-bundles': 'cross_sell',
+      }
+      const requiredFeature = actionGateMap[actionKey]
+      if (requiredFeature && !canAccess(requiredFeature)) {
+        setStatus(actionKey, 'warning', `Fonctionnalité réservée au plan ${planLabel(requiredFeature)} ou supérieur.`)
+        return
+      }
+
       setStatus(actionKey, 'info', t('analysisInProgress'))
       if (actionKey === 'action-rewrite') {
         setInsightsData(null)
@@ -3122,7 +3158,12 @@ export default function Dashboard() {
 
   const handleApplyBlockerAction = async (productId, action, statusKey = 'blockers') => {
     const plan = String(subscription?.plan || '').toLowerCase()
-    if (!['pro', 'premium'].includes(plan)) {
+    // Standard can only apply title rewrites, descriptions need Pro+
+    if (action.type === 'description' && !canAccess('content_generation')) {
+      setStatus(statusKey, 'warning', 'Réécriture des descriptions réservée au plan Pro ou supérieur.')
+      return
+    }
+    if (!['standard', 'pro', 'premium'].includes(plan)) {
       setStatus(statusKey, 'warning', t('featureReservedProPremium'))
       return
     }
@@ -3575,7 +3616,16 @@ export default function Dashboard() {
   }
 
   const handleApplyRecommendation = async (productId, recommendationType) => {
-    if (!['pro', 'premium'].includes(subscription?.plan)) {
+    // Standard can apply titles only, descriptions/images need Pro+
+    if (recommendationType === 'description' && !canAccess('content_generation')) {
+      setStatus(`rec-${productId}-${recommendationType}`, 'warning', 'Réécriture des descriptions réservée au plan Pro ou supérieur.')
+      return
+    }
+    if (recommendationType === 'images' && !canAccess('image_recommendations')) {
+      setStatus(`rec-${productId}-${recommendationType}`, 'warning', 'Recommandations d\'images réservées au plan Pro ou supérieur.')
+      return
+    }
+    if (!subscription?.plan || subscription.plan === 'free') {
       setStatus(`rec-${productId}-${recommendationType}`, 'warning', t('featureReservedProPremium'))
       return
     }
@@ -3737,31 +3787,43 @@ export default function Dashboard() {
 
           <nav className="flex flex-col gap-1">
             {[
-              { key: 'overview', label: t('tabOverview') },
-              { key: 'underperforming', label: t('tabUnderperforming') },
-              { key: 'action-blockers', label: t('tabBlockers') },
-              { key: 'action-rewrite', label: t('tabRewrite') },
-              { key: 'action-price', label: t('tabPriceOpt') },
-              { key: 'action-images', label: t('tabImages') },
-              { key: 'action-bundles', label: t('tabBundles') },
-              { key: 'action-stock', label: t('tabStock') },
-              { key: 'action-returns', label: t('tabReturns') },
-              { key: 'invoices', label: t('tabInvoices') },
-              { key: 'ai', label: t('aiAnalysis') },
-              { key: 'analysis', label: t('tabResults') }
-            ].map((item) => (
-              <button
-                key={item.key}
-                onClick={() => { setActiveTab(item.key); setMobileSidebarOpen(false) }}
-                className={`text-left px-3 py-2 rounded-lg text-sm font-semibold transition ${
-                  activeTab === item.key
-                    ? 'bg-[#FF6B35]/10 text-[#FF6B35] border-l-2 border-[#FF6B35]'
-                    : 'text-[#6A6A85] hover:text-[#1A1A2E] hover:bg-[#EFF1F5]'
-                }`}
-              >
-                {item.label}
-              </button>
-            ))}
+              { key: 'overview', label: t('tabOverview'), gate: null },
+              { key: 'underperforming', label: t('tabUnderperforming'), gate: 'product_analysis' },
+              { key: 'action-blockers', label: t('tabBlockers'), gate: 'product_analysis' },
+              { key: 'action-rewrite', label: t('tabRewrite'), gate: null },
+              { key: 'action-price', label: t('tabPriceOpt'), gate: 'price_suggestions' },
+              { key: 'action-images', label: t('tabImages'), gate: 'image_recommendations' },
+              { key: 'action-bundles', label: t('tabBundles'), gate: 'cross_sell' },
+              { key: 'action-stock', label: t('tabStock'), gate: null },
+              { key: 'action-returns', label: t('tabReturns'), gate: null },
+              { key: 'invoices', label: t('tabInvoices'), gate: 'invoicing' },
+              { key: 'ai', label: t('aiAnalysis'), gate: null },
+              { key: 'analysis', label: t('tabResults'), gate: null }
+            ].map((item) => {
+              const locked = item.gate && !canAccess(item.gate)
+              return (
+                <button
+                  key={item.key}
+                  onClick={() => {
+                    if (locked) {
+                      setStatus('upgrade', 'warning', `${item.label} — Réservé au plan ${planLabel(item.gate)} ou supérieur.`)
+                      return
+                    }
+                    setActiveTab(item.key); setMobileSidebarOpen(false)
+                  }}
+                  className={`text-left px-3 py-2 rounded-lg text-sm font-semibold transition flex items-center justify-between ${
+                    locked
+                      ? 'text-[#B0B0C8] cursor-not-allowed'
+                      : activeTab === item.key
+                        ? 'bg-[#FF6B35]/10 text-[#FF6B35] border-l-2 border-[#FF6B35]'
+                        : 'text-[#6A6A85] hover:text-[#1A1A2E] hover:bg-[#EFF1F5]'
+                  }`}
+                >
+                  {item.label}
+                  {locked && <span className="text-[10px] bg-[#EFF1F5] text-[#8A8AA3] px-1.5 py-0.5 rounded">🔒 {planLabel(item.gate)}</span>}
+                </button>
+              )
+            })}
           </nav>
         </aside>
 

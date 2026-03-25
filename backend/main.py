@@ -1619,9 +1619,9 @@ async def fast_init(request: Request):
                     }
                     plan = tier_map.get(str(raw_tier).lower(), 'standard')
                     capabilities = {
-                        'standard': {'product_limit': 50, 'features': ['product_analysis', 'title_optimization', 'price_suggestions']},
-                        'pro': {'product_limit': 500, 'features': ['product_analysis', 'content_generation', 'cross_sell', 'reports', 'automated_actions', 'invoicing']},
-                        'premium': {'product_limit': None, 'features': ['product_analysis', 'content_generation', 'cross_sell', 'automated_actions', 'reports', 'predictions', 'invoicing']}
+                        'standard': {'product_limit': 50, 'shop_limit': 1, 'report_frequency': 'monthly', 'features': ['product_analysis', 'title_optimization', 'price_suggestions']},
+                        'pro': {'product_limit': 500, 'shop_limit': 3, 'report_frequency': 'weekly', 'features': ['product_analysis', 'title_optimization', 'price_suggestions', 'content_generation', 'image_recommendations', 'cross_sell', 'reports', 'automated_actions', 'invoicing']},
+                        'premium': {'product_limit': None, 'shop_limit': None, 'report_frequency': 'daily', 'features': ['product_analysis', 'title_optimization', 'price_suggestions', 'content_generation', 'image_recommendations', 'cross_sell', 'automated_actions', 'reports', 'predictions', 'invoicing', 'auto_stock', 'api_access']}
                     }
                     subscription_data = {
                         'has_subscription': True,
@@ -1636,9 +1636,9 @@ async def fast_init(request: Request):
                     plan = profile_data['subscription_plan']
                     if plan and plan != 'free':
                         capabilities = {
-                            'standard': {'product_limit': 50, 'features': ['product_analysis', 'title_optimization', 'price_suggestions']},
-                            'pro': {'product_limit': 500, 'features': ['product_analysis', 'content_generation', 'cross_sell', 'reports']},
-                            'premium': {'product_limit': None, 'features': ['product_analysis', 'content_generation', 'cross_sell', 'automated_actions', 'reports', 'predictions']}
+                            'standard': {'product_limit': 50, 'shop_limit': 1, 'report_frequency': 'monthly', 'features': ['product_analysis', 'title_optimization', 'price_suggestions']},
+                            'pro': {'product_limit': 500, 'shop_limit': 3, 'report_frequency': 'weekly', 'features': ['product_analysis', 'title_optimization', 'price_suggestions', 'content_generation', 'image_recommendations', 'cross_sell', 'reports', 'automated_actions', 'invoicing']},
+                            'premium': {'product_limit': None, 'shop_limit': None, 'report_frequency': 'daily', 'features': ['product_analysis', 'title_optimization', 'price_suggestions', 'content_generation', 'image_recommendations', 'cross_sell', 'automated_actions', 'reports', 'predictions', 'invoicing', 'auto_stock', 'api_access']}
                         }
                         subscription_data = {
                             'has_subscription': True,
@@ -4414,6 +4414,8 @@ async def get_shopify_bundles(request: Request, range: str = "30d", limit: int =
     Lightweight alternative to /api/shopify/insights when you only need bundles.
     """
     user_id = get_user_id(request)
+    tier = get_user_tier(user_id)
+    ensure_feature_allowed(tier, "cross_sell")
     shop_domain, access_token = _get_shopify_connection(user_id)
 
     range_map = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}
@@ -4754,6 +4756,8 @@ def _run_bundles_worker(job_id: str, shop_domain: str, access_token: str, days: 
 @app.post("/api/shopify/bundles/async")
 async def start_shopify_bundles_job(request: Request, range: str = "30d", limit: int = 10):
     user_id = get_user_id(request)
+    tier = get_user_tier(user_id)
+    ensure_feature_allowed(tier, "cross_sell")
     shop_domain, access_token = _get_shopify_connection(user_id)
 
     range_map = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}
@@ -6344,7 +6348,7 @@ async def get_shopify_image_risks(request: Request, range: str = "30d", limit: i
     """
     user_id = get_user_id(request)
     tier = get_user_tier(user_id)
-    ensure_feature_allowed(tier, "product_analysis")
+    ensure_feature_allowed(tier, "image_recommendations")
 
     shop_domain, access_token = _get_shopify_connection(user_id)
 
@@ -8341,15 +8345,47 @@ def get_user_tier(user_id: str) -> str:
     return "standard"
 
 
+# ──────────────── PLAN LIMITS & FEATURE GATES ────────────────
+# Standard $99: product_analysis, title_optimization, price_suggestions
+#   50 products/mo, 1 shop, monthly report
+# Pro $199: + content_generation (descriptions), image_recommendations,
+#   cross_sell, reports (weekly), automated_actions, invoicing
+#   500 products/mo, 3 shops
+# Premium $299: + predictions (IA prédictive), auto_stock,
+#   unlimited products, unlimited shops, daily reports, api_access
+PLAN_LIMITS = {
+    "standard": {"product_limit": 50, "shop_limit": 1, "report_frequency": "monthly"},
+    "pro":      {"product_limit": 500, "shop_limit": 3, "report_frequency": "weekly"},
+    "premium":  {"product_limit": None, "shop_limit": None, "report_frequency": "daily"},
+}
+
+def get_plan_product_limit(tier: str) -> int | None:
+    return PLAN_LIMITS.get(tier, PLAN_LIMITS["standard"]).get("product_limit")
+
 def ensure_feature_allowed(tier: str, feature: str):
     feature_map = {
-        "standard": {"product_analysis", "title_optimization", "price_suggestions"},
-        "pro": {"product_analysis", "title_optimization", "price_suggestions", "content_generation", "cross_sell", "reports", "automated_actions", "invoicing"},
-        "premium": {"product_analysis", "title_optimization", "price_suggestions", "content_generation", "cross_sell", "reports", "automated_actions", "predictions", "invoicing"},
+        "standard": {
+            "product_analysis", "title_optimization", "price_suggestions",
+        },
+        "pro": {
+            "product_analysis", "title_optimization", "price_suggestions",
+            "content_generation", "image_recommendations", "cross_sell",
+            "reports", "automated_actions", "invoicing",
+        },
+        "premium": {
+            "product_analysis", "title_optimization", "price_suggestions",
+            "content_generation", "image_recommendations", "cross_sell",
+            "reports", "automated_actions", "predictions",
+            "invoicing", "auto_stock", "api_access",
+        },
     }
     allowed = feature_map.get(tier, feature_map["standard"])
     if feature not in allowed:
-        raise HTTPException(status_code=403, detail="Fonctionnalité non disponible pour votre plan")
+        plan_needed = "Pro" if feature in feature_map["pro"] else "Premium"
+        raise HTTPException(
+            status_code=403,
+            detail=f"Fonctionnalité réservée au plan {plan_needed} ou supérieur. Votre plan: {tier.capitalize()}"
+        )
 
 
 class AnalyzeStoreRequest(BaseModel):
