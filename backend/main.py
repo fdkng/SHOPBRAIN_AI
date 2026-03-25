@@ -189,13 +189,15 @@ def _clean_query_text(text: str, shop_brand: str | None = None) -> str:
     return cleaned
 
 @app.get("/api/shopify/bundles/legacy-v1")
-async def get_shopify_bundles(request: Request, range: str = "30d", limit: int = 10):
+async def get_shopify_bundles_legacy_v1(request: Request, range: str = "30d", limit: int = 10):
     """🧩 Bundles & cross-sell suggestions based on order co-occurrence.
 
     Lightweight alternative to /api/shopify/insights when you only need bundles.
     """
     start_time = time.time()
     user_id = get_user_id(request)
+    tier = get_user_tier(user_id)
+    ensure_feature_allowed(tier, "cross_sell")
     shop_domain, access_token = _get_shopify_connection(user_id)
 
     range_map = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}
@@ -3094,24 +3096,9 @@ async def get_shopify_products(request: Request, limit: int = 250):
     
     print(f"📦 [GET PRODUCTS] User {user_id} requesting products (limit={limit})")
     
-    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
-        print(f"❌ Supabase not configured")
-        raise HTTPException(status_code=500, detail="Supabase not configured")
-    
     try:
-        from supabase import create_client
-        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-        
-        # Get user's Shopify connection
-        print(f"🔍 Fetching Shopify connection for user {user_id}...")
-        connection = supabase.table("shopify_connections").select("*").eq("user_id", user_id).execute()
-        
-        if not connection.data:
-            print(f"❌ No Shopify connection found for user {user_id}")
-            raise HTTPException(status_code=404, detail="Aucune boutique Shopify connectée. Veuillez vous connecter d'abord.")
-        
-        shop_domain = connection.data[0]["shop_domain"]
-        access_token = connection.data[0]["access_token"]
+        # Get user's active Shopify connection (multi-shop aware)
+        shop_domain, access_token = _get_shopify_connection(user_id)
         
         print(f"✅ Found connection: {shop_domain}")
         
@@ -3465,6 +3452,8 @@ def _fetch_shopify_orders(shop_domain: str, access_token: str, range_days: int =
 async def get_shopify_customers(request: Request, limit: int = 100):
     """👥 Récupère les clients Shopify pour facturation"""
     user_id = get_user_id(request)
+    tier = get_user_tier(user_id)
+    ensure_feature_allowed(tier, "invoicing")
     shop_domain, access_token = _get_shopify_connection(user_id)
 
     customers_url = f"https://{shop_domain}/admin/api/2024-10/customers.json?limit={min(limit, 250)}&fields=id,first_name,last_name,email,phone,tags,created_at"
@@ -3565,6 +3554,8 @@ class InvoiceEmailRequest(BaseModel):
 async def send_invoice_email_endpoint(request: Request, payload: InvoiceEmailRequest):
     """📧 Envoie un email de facture au client (via Gmail API, même système que les alertes stock)."""
     user_id = get_user_id(request)
+    tier = get_user_tier(user_id)
+    ensure_feature_allowed(tier, "invoicing")
     shop_domain, _ = _get_shopify_connection(user_id)
 
     if not payload.to_email:
@@ -5404,6 +5395,8 @@ class DraftOrderRequest(BaseModel):
 async def create_draft_order(request: Request, payload: DraftOrderRequest):
     """🧾 Crée une facture Shopify via Draft Order"""
     user_id = get_user_id(request)
+    tier = get_user_tier(user_id)
+    ensure_feature_allowed(tier, "invoicing")
     shop_domain, access_token = _get_shopify_connection(user_id)
 
     if not payload.line_items:
@@ -8652,14 +8645,7 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
         raise HTTPException(status_code=500, detail="Supabase not configured")
 
     try:
-        from supabase import create_client
-        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-        connection = supabase.table("shopify_connections").select("*").eq("user_id", user_id).execute()
-        if not connection.data:
-            raise HTTPException(status_code=404, detail="Aucune boutique Shopify connectée. Veuillez vous connecter d'abord.")
-
-        shop_domain = connection.data[0]["shop_domain"]
-        access_token = connection.data[0]["access_token"]
+        shop_domain, access_token = _get_shopify_connection(user_id)
 
         headers = {
             "X-Shopify-Access-Token": access_token,
@@ -9456,18 +9442,7 @@ async def apply_recommendation_endpoint(req: ApplyRecommendationRequest, request
         tier = get_user_tier(user_id)
         ensure_feature_allowed(tier, "automated_actions")
 
-        if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
-            raise HTTPException(status_code=500, detail="Supabase not configured")
-
-        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-        connection = supabase.table("shopify_connections").select("shop_domain,access_token").eq("user_id", user_id).execute()
-        if not connection.data:
-            raise HTTPException(status_code=404, detail="Aucune boutique Shopify connectée")
-
-        shop_domain = connection.data[0].get("shop_domain")
-        access_token = connection.data[0].get("access_token")
-        if not shop_domain or not access_token:
-            raise HTTPException(status_code=400, detail="Connexion Shopify invalide")
+        shop_domain, access_token = _get_shopify_connection(user_id)
 
         if tier == "pro":
             current_count = _count_actions_this_month(user_id)
@@ -10812,8 +10787,11 @@ def _stock_monitor_once() -> dict:
     for user_id, user_rows in by_user.items():
         summary["users_checked"] += 1
         try:
-            # --- Shopify connection ---
-            conn = sb.table("shopify_connections").select("shop_domain,access_token").eq("user_id", user_id).execute()
+            # --- Shopify connection (use active shop) ---
+            conn = sb.table("shopify_connections").select("shop_domain,access_token").eq("user_id", user_id).eq("is_active", True).limit(1).execute()
+            if not conn.data:
+                # Fallback: most recent
+                conn = sb.table("shopify_connections").select("shop_domain,access_token").eq("user_id", user_id).order("updated_at", desc=True).limit(1).execute()
             if not conn.data:
                 print(f"⚠️ [STOCK] User {user_id}: aucun shopify_connection")
                 continue
