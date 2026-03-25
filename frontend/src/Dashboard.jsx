@@ -87,7 +87,9 @@ export default function Dashboard() {
     'content_generation': 'pro',       // description rewrite
     'image_recommendations': 'pro',    // image AI
     'cross_sell': 'pro',               // bundles & upsell
-    'reports': 'pro',                  // weekly reports (standard=monthly only)
+    'reports': 'standard',                  // monthly reports (standard), weekly (pro), daily (premium)
+    'reports_weekly': 'pro',               // weekly+ reports
+    'reports_daily': 'premium',            // daily reports
     'automated_actions': 'pro',        // apply actions to Shopify
     'invoicing': 'pro',                // invoices tab
     'predictions': 'premium',          // IA prédictive
@@ -2818,6 +2820,7 @@ export default function Dashboard() {
       const actionGateMap = {
         'action-images': 'image_recommendations',
         'action-bundles': 'cross_sell',
+        'action-returns': 'cross_sell',
       }
       const requiredFeature = actionGateMap[actionKey]
       if (requiredFeature && !canAccess(requiredFeature)) {
@@ -3795,7 +3798,7 @@ export default function Dashboard() {
               { key: 'action-images', label: t('tabImages'), gate: 'image_recommendations' },
               { key: 'action-bundles', label: t('tabBundles'), gate: 'cross_sell' },
               { key: 'action-stock', label: t('tabStock'), gate: null },
-              { key: 'action-returns', label: t('tabReturns'), gate: null },
+              { key: 'action-returns', label: t('tabReturns'), gate: 'cross_sell' },
               { key: 'invoices', label: t('tabInvoices'), gate: 'invoicing' },
               { key: 'ai', label: t('aiAnalysis'), gate: null },
               { key: 'analysis', label: t('tabResults'), gate: null }

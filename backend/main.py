@@ -2983,7 +2983,14 @@ async def get_shopify_products(request: Request, limit: int = 250):
         products_data = response.json()
         products = products_data.get("products", [])
         
-        print(f"✅ Retrieved {len(products)} products")
+        # ── Enforce plan product limit ──
+        tier = get_user_tier(user_id)
+        plan_product_limit = get_plan_product_limit(tier)
+        total_available = len(products)
+        if plan_product_limit is not None and len(products) > plan_product_limit:
+            products = products[:plan_product_limit]
+        
+        print(f"✅ Retrieved {total_available} products (plan {tier}: showing {len(products)})")
         
         # Transform products to be more useful for optimization
         transformed_products = []
@@ -3749,10 +3756,13 @@ async def get_shopify_insights(
                 pid = str(item.get("product_id") or item.get("id"))
                 refunds_by_product[pid] = refunds_by_product.get(pid, 0) + 1
 
-    # Fetch products for inventory + images
+    # Fetch products for inventory + images — respect plan product limit
     products_resp = get_shopify_products
     products_payload = await products_resp(request)
     products = products_payload.get("products", [])
+    plan_product_limit = get_plan_product_limit(tier)
+    if plan_product_limit is not None:
+        products = products[:plan_product_limit]
     products_by_id = {str(product.get("id")): product for product in products}
 
     inventory_map = {}
@@ -4163,10 +4173,22 @@ async def get_shopify_insights(
             })
     return_risks = return_risks[:10]
 
+    # ── Plan-based response gating ──
+    # Standard: no image_risks, no bundles, no return_risks (Pro+ only)
+    gated_image_risks = image_risks if tier in ("pro", "premium") else []
+    gated_bundles = bundles if tier in ("pro", "premium") else []
+    gated_return_risks = return_risks if tier in ("pro", "premium") else []
+    # Rewrite opportunities: Standard gets title-only recommendations
+    if tier == "standard":
+        for item in rewrite_opportunities:
+            item["recommendations"] = [r for r in (item.get("recommendations") or []) if r == "title"]
+
     return {
         "success": True,
         "shop": shop_domain,
         "range": range,
+        "tier": tier,
+        "plan_limits": PLAN_LIMITS.get(tier, PLAN_LIMITS["standard"]),
         "benchmarks": {
             "median_orders": median_orders,
             "avg_views": round(avg_views, 2) if avg_views else 0,
@@ -4183,8 +4205,8 @@ async def get_shopify_insights(
             "generated": rewrite_generated,
             "notes": rewrite_ai_notes,
         },
-        "image_risks": image_risks,
-        "bundle_suggestions": bundles,
+        "image_risks": gated_image_risks,
+        "bundle_suggestions": gated_bundles,
         "stock_risks": stock_risks,
         "price_opportunities": price_analysis_items,
         "price_analysis": {
@@ -4192,7 +4214,7 @@ async def get_shopify_insights(
             "market_comparison": market_comparison,
         },
         "market_comparison": market_comparison,
-        "return_risks": return_risks,
+        "return_risks": gated_return_risks,
     }
 
 
@@ -4210,6 +4232,7 @@ async def get_stock_forecast(request: Request, range: str = "30d", threshold_uni
     Returns ALL products so the frontend can display a complete inventory table.
     """
     user_id = get_user_id(request)
+    tier = get_user_tier(user_id)
     shop_domain, access_token = _get_shopify_connection(user_id)
 
     range_map = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}
@@ -4231,10 +4254,13 @@ async def get_stock_forecast(request: Request, range: str = "30d", threshold_uni
             product_sales[pid]["quantity_sold"] += qty
             product_sales[pid]["order_count"] += 1
 
-    # Fetch all products for inventory + metadata
+    # Fetch all products for inventory + metadata — respect plan product limit
     products_resp = get_shopify_products
     products_payload = await products_resp(request)
     products = products_payload.get("products", [])
+    plan_product_limit = get_plan_product_limit(tier)
+    if plan_product_limit is not None:
+        products = products[:plan_product_limit]
 
     forecast_items = []
     total_inventory = 0
@@ -8366,16 +8392,19 @@ def ensure_feature_allowed(tier: str, feature: str):
     feature_map = {
         "standard": {
             "product_analysis", "title_optimization", "price_suggestions",
+            "stock_alerts", "reports",  # monthly report only (frequency enforced separately)
         },
         "pro": {
             "product_analysis", "title_optimization", "price_suggestions",
-            "content_generation", "image_recommendations", "cross_sell",
-            "reports", "automated_actions", "invoicing",
+            "stock_alerts", "reports",
+            "content_generation", "description_rewrite", "image_recommendations",
+            "cross_sell", "automated_actions", "invoicing",
         },
         "premium": {
             "product_analysis", "title_optimization", "price_suggestions",
-            "content_generation", "image_recommendations", "cross_sell",
-            "reports", "automated_actions", "predictions",
+            "stock_alerts", "reports",
+            "content_generation", "description_rewrite", "image_recommendations",
+            "cross_sell", "automated_actions", "predictions",
             "invoicing", "auto_stock", "api_access",
         },
     }
@@ -9360,6 +9389,7 @@ class GenerateReportRequest(BaseModel):
 async def generate_report_endpoint(req: GenerateReportRequest, request: Request):
     """
     📊 Génère un rapport d'analyse
+    Standard: Rapport mensuel uniquement
     Pro: Rapports hebdomadaires
     Premium: Rapports quotidiens + PDF/Email
     """
@@ -9368,6 +9398,18 @@ async def generate_report_endpoint(req: GenerateReportRequest, request: Request)
         tier = get_user_tier(user_id)
 
         ensure_feature_allowed(tier, "reports")
+
+        # Enforce report frequency per plan
+        allowed_freq = PLAN_LIMITS.get(tier, PLAN_LIMITS["standard"]).get("report_frequency", "monthly")
+        freq_hierarchy = {"daily": 3, "weekly": 2, "monthly": 1}
+        requested_level = freq_hierarchy.get(req.report_type, 1)
+        allowed_level = freq_hierarchy.get(allowed_freq, 1)
+        if requested_level > allowed_level:
+            plan_needed = "Premium" if req.report_type == "daily" else "Pro"
+            raise HTTPException(
+                status_code=403,
+                detail=f"Rapport {req.report_type} réservé au plan {plan_needed}. Votre plan ({tier}) permet: {allowed_freq}"
+            )
 
         engine = get_ai_engine()
         report = engine.generate_report(req.analytics_data, tier, req.report_type)
