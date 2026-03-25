@@ -1587,9 +1587,15 @@ async def fast_init(request: Request):
         shopify_connections = []
         shopify_active = None
         try:
-            result = supabase_client.table("shopify_connections").select("shop_domain,is_active,created_at,updated_at").eq("user_id", user_id).order("is_active", desc=True).order("updated_at", desc=True).execute()
-            shopify_connections = result.data or []
-            shopify_active = next((c for c in shopify_connections if c.get("is_active")), shopify_connections[0] if shopify_connections else None)
+            try:
+                result = supabase_client.table("shopify_connections").select("shop_domain,is_active,created_at,updated_at").eq("user_id", user_id).order("is_active", desc=True).order("updated_at", desc=True).execute()
+                shopify_connections = result.data or []
+                shopify_active = next((c for c in shopify_connections if c.get("is_active")), shopify_connections[0] if shopify_connections else None)
+            except Exception:
+                # Fallback: is_active column may not exist yet
+                result = supabase_client.table("shopify_connections").select("shop_domain,created_at,updated_at").eq("user_id", user_id).order("updated_at", desc=True).execute()
+                shopify_connections = result.data or []
+                shopify_active = shopify_connections[0] if shopify_connections else None
         except Exception as e:
             print(f"  ⚠️ Shopify connection fetch error: {e}")
 
@@ -2484,11 +2490,11 @@ async def update_user_shopify(payload: dict, request: Request):
         
         if existing.data:
             # Update existing connection for this shop
-            supabase.table("shopify_connections").update({
-                "access_token": shopify_token,
-                "is_active": True,
-                "updated_at": "now()"
-            }).eq("user_id", user_id).eq("shop_domain", shopify_url).execute()
+            update_data = {"access_token": shopify_token, "updated_at": "now()"}
+            try:
+                supabase.table("shopify_connections").update({**update_data, "is_active": True}).eq("user_id", user_id).eq("shop_domain", shopify_url).execute()
+            except Exception:
+                supabase.table("shopify_connections").update(update_data).eq("user_id", user_id).eq("shop_domain", shopify_url).execute()
         else:
             # Enforce shop limit per plan
             tier = get_user_tier(user_id)
@@ -2502,17 +2508,17 @@ async def update_user_shopify(payload: dict, request: Request):
                            f"Supprimez une boutique existante ou passez au plan supérieur."
                 )
             # Create new connection
-            supabase.table("shopify_connections").insert({
-                "user_id": user_id,
-                "shop_domain": shopify_url,
-                "access_token": shopify_token,
-                "is_active": True,
-            }).execute()
+            insert_data = {"user_id": user_id, "shop_domain": shopify_url, "access_token": shopify_token}
+            try:
+                supabase.table("shopify_connections").insert({**insert_data, "is_active": True}).execute()
+            except Exception:
+                supabase.table("shopify_connections").insert(insert_data).execute()
         
         # Deactivate other shops (set this one as active)
-        supabase.table("shopify_connections").update({
-            "is_active": False
-        }).eq("user_id", user_id).neq("shop_domain", shopify_url).execute()
+        try:
+            supabase.table("shopify_connections").update({"is_active": False}).eq("user_id", user_id).neq("shop_domain", shopify_url).execute()
+        except Exception:
+            pass  # is_active column may not exist yet
         
         return {"success": True, "message": "Shopify connecté avec succès", "active_shop": shopify_url}
         
@@ -2591,11 +2597,11 @@ async def shopify_callback(code: str, shop: str, state: str, hmac: str = None):
             
             if existing.data:
                 # Update existing connection for this shop
-                supabase.table("shopify_connections").update({
-                    "access_token": access_token,
-                    "is_active": True,
-                    "updated_at": "now()"
-                }).eq("user_id", user_id).eq("shop_domain", shop).execute()
+                update_data = {"access_token": access_token, "updated_at": "now()"}
+                try:
+                    supabase.table("shopify_connections").update({**update_data, "is_active": True}).eq("user_id", user_id).eq("shop_domain", shop).execute()
+                except Exception:
+                    supabase.table("shopify_connections").update(update_data).eq("user_id", user_id).eq("shop_domain", shop).execute()
             else:
                 # Enforce shop limit per plan
                 tier = get_user_tier(user_id)
@@ -2607,17 +2613,17 @@ async def shopify_callback(code: str, shop: str, state: str, hmac: str = None):
                         url=f"{frontend_url}/#/dashboard?shopify=limit_reached&plan={tier}&limit={shop_limit}"
                     )
                 # Create new connection
-                supabase.table("shopify_connections").insert({
-                    "user_id": user_id,
-                    "shop_domain": shop,
-                    "access_token": access_token,
-                    "is_active": True,
-                }).execute()
+                insert_data = {"user_id": user_id, "shop_domain": shop, "access_token": access_token}
+                try:
+                    supabase.table("shopify_connections").insert({**insert_data, "is_active": True}).execute()
+                except Exception:
+                    supabase.table("shopify_connections").insert(insert_data).execute()
 
             # Deactivate other shops (set this one as active)
-            supabase.table("shopify_connections").update({
-                "is_active": False
-            }).eq("user_id", user_id).neq("shop_domain", shop).execute()
+            try:
+                supabase.table("shopify_connections").update({"is_active": False}).eq("user_id", user_id).neq("shop_domain", shop).execute()
+            except Exception:
+                pass  # is_active column may not exist
         
         # Redirect back to frontend dashboard with success
         frontend_url = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
@@ -2641,17 +2647,28 @@ async def get_shopify_connection(request: Request):
 
     try:
         supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-        result = (
-            supabase.table("shopify_connections")
-            .select("shop_domain,is_active,created_at,updated_at")
-            .eq("user_id", user_id)
-            .order("is_active", desc=True)
-            .order("updated_at", desc=True)
-            .execute()
-        )
-
-        connections = result.data or []
-        active = next((c for c in connections if c.get("is_active")), connections[0] if connections else None)
+        try:
+            result = (
+                supabase.table("shopify_connections")
+                .select("shop_domain,is_active,created_at,updated_at")
+                .eq("user_id", user_id)
+                .order("is_active", desc=True)
+                .order("updated_at", desc=True)
+                .execute()
+            )
+            connections = result.data or []
+            active = next((c for c in connections if c.get("is_active")), connections[0] if connections else None)
+        except Exception:
+            # Fallback: is_active column may not exist
+            result = (
+                supabase.table("shopify_connections")
+                .select("shop_domain,created_at,updated_at")
+                .eq("user_id", user_id)
+                .order("updated_at", desc=True)
+                .execute()
+            )
+            connections = result.data or []
+            active = connections[0] if connections else None
 
         tier = get_user_tier(user_id)
         shop_limit = _get_shop_limit(tier)
@@ -2699,8 +2716,12 @@ async def switch_active_shop(request: Request):
         raise HTTPException(status_code=404, detail="Boutique non trouvée dans vos connexions")
 
     # Deactivate all, then activate target
-    supabase.table("shopify_connections").update({"is_active": False}).eq("user_id", user_id).execute()
-    supabase.table("shopify_connections").update({"is_active": True, "updated_at": "now()"}).eq("user_id", user_id).eq("shop_domain", target_domain).execute()
+    try:
+        supabase.table("shopify_connections").update({"is_active": False}).eq("user_id", user_id).execute()
+        supabase.table("shopify_connections").update({"is_active": True, "updated_at": "now()"}).eq("user_id", user_id).eq("shop_domain", target_domain).execute()
+    except Exception:
+        # is_active column may not exist — just update updated_at
+        supabase.table("shopify_connections").update({"updated_at": "now()"}).eq("user_id", user_id).eq("shop_domain", target_domain).execute()
 
     # Invalidate init cache
     _init_cache.pop(user_id, None)
@@ -2720,17 +2741,26 @@ async def delete_shopify_shop(shop_domain: str, request: Request):
     supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
     # Verify ownership
-    check = (
-        supabase.table("shopify_connections")
-        .select("id,is_active")
-        .eq("user_id", user_id)
-        .eq("shop_domain", normalized)
-        .execute()
-    )
+    try:
+        check = (
+            supabase.table("shopify_connections")
+            .select("id,is_active")
+            .eq("user_id", user_id)
+            .eq("shop_domain", normalized)
+            .execute()
+        )
+    except Exception:
+        check = (
+            supabase.table("shopify_connections")
+            .select("id")
+            .eq("user_id", user_id)
+            .eq("shop_domain", normalized)
+            .execute()
+        )
     if not check.data:
         raise HTTPException(status_code=404, detail="Boutique non trouvée")
 
-    was_active = check.data[0].get("is_active", False)
+    was_active = check.data[0].get("is_active", True)  # assume active if column missing
 
     # Delete
     supabase.table("shopify_connections").delete().eq("user_id", user_id).eq("shop_domain", normalized).execute()
@@ -2747,7 +2777,10 @@ async def delete_shopify_shop(shop_domain: str, request: Request):
         )
         if remaining.data:
             next_shop = remaining.data[0]["shop_domain"]
-            supabase.table("shopify_connections").update({"is_active": True}).eq("user_id", user_id).eq("shop_domain", next_shop).execute()
+            try:
+                supabase.table("shopify_connections").update({"is_active": True}).eq("user_id", user_id).eq("shop_domain", next_shop).execute()
+            except Exception:
+                pass  # is_active column may not exist
 
     # Invalidate init cache
     _init_cache.pop(user_id, None)
@@ -3253,15 +3286,18 @@ def _get_shopify_connection(user_id: str, shop_domain: str | None = None):
             .execute()
         )
     else:
-        # Try active shop first
-        connection = (
-            supabase.table("shopify_connections")
-            .select("shop_domain,access_token")
-            .eq("user_id", user_id)
-            .eq("is_active", True)
-            .limit(1)
-            .execute()
-        )
+        # Try active shop first (is_active column may not exist yet)
+        try:
+            connection = (
+                supabase.table("shopify_connections")
+                .select("shop_domain,access_token")
+                .eq("user_id", user_id)
+                .eq("is_active", True)
+                .limit(1)
+                .execute()
+            )
+        except Exception:
+            connection = type('R', (), {'data': []})()  # empty fallback
         if not connection.data:
             # Fallback: most recently updated
             connection = (

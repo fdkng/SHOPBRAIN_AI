@@ -446,13 +446,13 @@ export default function Dashboard() {
 
   const formatErrorDetail = (detail, fallback = t('error')) => {
     if (!detail) return fallback
-    if (typeof detail === 'string') return detail
-    if (typeof detail?.message === 'string') return detail.message
-    try {
-      return JSON.stringify(detail)
-    } catch {
-      return fallback
+    const str = typeof detail === 'string' ? detail : typeof detail?.message === 'string' ? detail.message : null
+    if (str) {
+      // Never show raw database/internal errors
+      if (/column.*does not exist|relation.*does not exist|42703|42P01|SQLSTATE/i.test(str)) return fallback
+      return str
     }
+    return fallback
   }
 
   const normalizeNetworkErrorMessage = (err, fallback = t('networkError')) => {
@@ -467,6 +467,10 @@ export default function Dashboard() {
         return t('networkErrorHealthy')
       }
       return t('backendWaking')
+    }
+    // Never show raw database/internal errors to user
+    if (/column.*does not exist|relation.*does not exist|42703|42P01|syntax error at|SQLSTATE/i.test(raw)) {
+      return fallback
     }
     return raw || fallback
   }
