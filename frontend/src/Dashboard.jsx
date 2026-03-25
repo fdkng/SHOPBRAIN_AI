@@ -71,6 +71,13 @@ export default function Dashboard() {
   const [shopifyToken, setShopifyToken] = useState('')
   const [shopifyConnected, setShopifyConnected] = useState(false)
   const [showShopifyToken, setShowShopifyToken] = useState(false)
+  // ── Multi-shop state ──
+  const [shopList, setShopList] = useState([])       // all connected shops [{shop_domain, is_active, created_at, updated_at}]
+  const [shopLimit, setShopLimit] = useState(1)       // plan limit (null = unlimited)
+  const [showAddShop, setShowAddShop] = useState(false)
+  const [newShopUrl, setNewShopUrl] = useState('')
+  const [newShopToken, setNewShopToken] = useState('')
+  const [switchingShop, setSwitchingShop] = useState(false)
   const [products, setProducts] = useState(null)
   const [error, setError] = useState('')
   const [isProcessingPayment, setIsProcessingPayment] = useState(false)
@@ -1034,10 +1041,16 @@ export default function Dashboard() {
           })
         }
 
-        // Shopify connection
+        // Shopify connection (multi-shop)
         if (initData.shopify?.connection?.shop_domain) {
           setShopifyUrl(initData.shopify.connection.shop_domain)
           setShopifyConnected(true)
+        }
+        if (initData.shopify?.connections) {
+          setShopList(initData.shopify.connections)
+        }
+        if (initData.shopify?.shop_limit !== undefined) {
+          setShopLimit(initData.shopify.shop_limit)
         }
 
         setLoading(false)
@@ -1096,6 +1109,8 @@ export default function Dashboard() {
             setShopifyUrl(shopData.connection.shop_domain)
             setShopifyConnected(true)
           }
+          if (shopData.connections) setShopList(shopData.connections)
+          if (shopData.shop_limit !== undefined) setShopLimit(shopData.shop_limit)
         }
 
         setLoading(false)
@@ -1706,7 +1721,7 @@ export default function Dashboard() {
       ctxParts.push(`Onglet actif: ${tabNameMap[activeTab] || activeTab}`)
 
       // 2. Subscription & shop info
-      ctxParts.push(`Plan: ${subscription?.plan || 'free'} | Boutique Shopify: ${shopifyUrl || 'non connectée'} | Connectée: ${shopifyConnected ? 'oui' : 'non'}`)
+      ctxParts.push(`Plan: ${subscription?.plan || 'free'} | Boutique active: ${shopifyUrl || 'non connectée'} | Connectée: ${shopifyConnected ? 'oui' : 'non'} | Boutiques: ${shopList.length}/${shopLimit === null ? '∞' : shopLimit}`)
 
       // 3. Products summary
       if (products && products.length > 0) {
@@ -2202,9 +2217,9 @@ export default function Dashboard() {
         setShopifyConnected(true)
         setShowShopifyToken(false)
         setShopifyToken('')
+        // Refresh shop list
+        await refreshShopList()
         console.log('Connection saved, loading products...')
-        
-        // Charger les produits
         await loadProducts()
       } else {
         throw new Error(t('saveFailed'))
@@ -2214,6 +2229,146 @@ export default function Dashboard() {
       const message = formatUserFacingError(err, t('errorShopify'))
       setStatus('shopify', 'error', message)
       setError(message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // ── Multi-shop helpers ──
+  const refreshShopList = async () => {
+    try {
+      const session = await getCachedSession()
+      if (!session) return
+      const resp = await fetch(`${API_URL}/api/shopify/connection`, {
+        headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' }
+      })
+      if (resp.ok) {
+        const data = await resp.json()
+        setShopList(data.connections || [])
+        setShopLimit(data.shop_limit)
+        const active = data.connection
+        if (active?.shop_domain) {
+          setShopifyUrl(active.shop_domain)
+          setShopifyConnected(true)
+          localStorage.setItem('shopifyUrlCache', active.shop_domain)
+        }
+      }
+    } catch (e) {
+      console.error('refreshShopList error:', e)
+    }
+  }
+
+  const switchShop = async (domain) => {
+    try {
+      setSwitchingShop(true)
+      const session = await getCachedSession()
+      if (!session) return
+      const resp = await fetch(`${API_URL}/api/shopify/switch-shop`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shop_domain: domain })
+      })
+      if (resp.ok) {
+        setShopifyUrl(domain)
+        localStorage.setItem('shopifyUrlCache', domain)
+        setInsightsData(null)
+        setProducts(null)
+        setShopList(prev => prev.map(s => ({ ...s, is_active: s.shop_domain === domain })))
+        setStatus('shopify', 'success', `Boutique active: ${domain}`)
+        await loadProducts()
+      } else {
+        const err = await resp.json()
+        setStatus('shopify', 'error', err.detail || 'Erreur lors du changement de boutique')
+      }
+    } catch (e) {
+      setStatus('shopify', 'error', formatUserFacingError(e, 'Erreur changement boutique'))
+    } finally {
+      setSwitchingShop(false)
+    }
+  }
+
+  const deleteShop = async (domain) => {
+    if (!confirm(`Supprimer la boutique ${domain} ? Cette action est irréversible.`)) return
+    try {
+      const session = await getCachedSession()
+      if (!session) return
+      const resp = await fetch(`${API_URL}/api/shopify/shop/${encodeURIComponent(domain)}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${session.access_token}` }
+      })
+      if (resp.ok) {
+        setStatus('shopify', 'success', `Boutique ${domain} supprimée`)
+        await refreshShopList()
+        if (shopifyUrl === domain) {
+          const remaining = shopList.filter(s => s.shop_domain !== domain)
+          if (remaining.length > 0) {
+            setShopifyUrl(remaining[0].shop_domain)
+          } else {
+            setShopifyUrl('')
+            setShopifyConnected(false)
+          }
+        }
+      } else {
+        const err = await resp.json()
+        setStatus('shopify', 'error', err.detail || 'Erreur suppression')
+      }
+    } catch (e) {
+      setStatus('shopify', 'error', formatUserFacingError(e, 'Erreur suppression'))
+    }
+  }
+
+  const connectNewShop = async () => {
+    if (!newShopUrl || !newShopToken) {
+      setStatus('shopify', 'warning', 'URL et token requis')
+      return
+    }
+    let url = newShopUrl.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '')
+    if (!url.includes('.')) url = `${url}.myshopify.com`
+    if (!url.endsWith('.myshopify.com')) {
+      setStatus('shopify', 'warning', 'Format: boutique.myshopify.com')
+      return
+    }
+    // Check limit client-side
+    if (shopLimit !== null && shopList.length >= shopLimit) {
+      setStatus('shopify', 'warning', `Limite de boutiques atteinte (${shopList.length}/${shopLimit}). Passez au plan supérieur.`)
+      return
+    }
+    try {
+      setLoading(true)
+      const session = await getCachedSession()
+      if (!session) return
+      // Test connection first
+      const testResp = await fetch(`${API_URL}/api/shopify/test-connection`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shopify_shop_url: url, shopify_access_token: newShopToken })
+      })
+      if (!testResp.ok) {
+        const err = await testResp.json()
+        throw new Error(err.detail || 'Test de connexion échoué')
+      }
+      const testData = await testResp.json()
+      if (!testData.ready_to_save) throw new Error('Connexion invalide')
+      // Save
+      const saveResp = await fetch(`${API_URL}/api/user/profile/update`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shopify_shop_url: url, shopify_access_token: newShopToken })
+      })
+      if (!saveResp.ok) {
+        const err = await saveResp.json()
+        throw new Error(err.detail || 'Erreur sauvegarde')
+      }
+      setStatus('shopify', 'success', `${url} connectée avec succès !`)
+      setNewShopUrl('')
+      setNewShopToken('')
+      setShowAddShop(false)
+      setShopifyUrl(url)
+      setShopifyConnected(true)
+      await refreshShopList()
+      await loadProducts()
+    } catch (e) {
+      setStatus('shopify', 'error', formatUserFacingError(e, 'Erreur connexion nouvelle boutique'))
     } finally {
       setLoading(false)
     }
@@ -3787,6 +3942,32 @@ export default function Dashboard() {
             <div className="text-xs text-[#6A6A85] mb-1">Current Plan</div>
             <div className="font-bold text-[#FF6B35] text-lg">{formatPlan(subscription?.plan)}</div>
           </div>
+
+          {/* ── Shop Switcher ── */}
+          {shopList.length > 0 && (
+            <div className="bg-[#F7F8FA] rounded-lg p-3">
+              <div className="text-xs text-[#6A6A85] mb-1.5">🏪 Boutique active</div>
+              {shopList.length === 1 ? (
+                <div className="text-sm font-semibold text-[#1A1A2E] truncate">{shopifyUrl}</div>
+              ) : (
+                <select
+                  value={shopifyUrl}
+                  onChange={(e) => switchShop(e.target.value)}
+                  disabled={switchingShop}
+                  className="w-full bg-white border border-[#D8D8E2] rounded-lg px-2 py-1.5 text-sm font-semibold text-[#1A1A2E] disabled:opacity-50"
+                >
+                  {shopList.map(s => (
+                    <option key={s.shop_domain} value={s.shop_domain}>
+                      {s.shop_domain} {s.is_active ? '✅' : ''}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <div className="text-[10px] text-[#8A8AA3] mt-1">
+                {shopList.length} / {shopLimit === null ? '∞' : shopLimit} boutique{shopLimit !== 1 ? 's' : ''}
+              </div>
+            </div>
+          )}
 
           <nav className="flex flex-col gap-1">
             {[
@@ -6180,17 +6361,57 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 {settingsTab === 'shopify' && (
                   <div className="space-y-6">
                     <h3 className="text-xl font-bold text-[#1A1A2E] mb-4">{t('shopifyConnection')}</h3>
-                    <div className="bg-white rounded-lg p-6 border border-[#E8E8EE] max-w-2xl">
-                      <div className="space-y-4">
-                        {shopifyConnected && shopifyUrl && (
-                          <div className="flex items-center justify-between bg-[#F7F8FA] border border-[#E8E8EE] rounded-xl px-4 py-3">
-                            <div>
-                              <p className="text-sm text-[#6A6A85]">Boutique connectée</p>
-                              <p className="text-[#1A1A2E] font-semibold">{shopifyUrl}</p>
+
+                    {/* ── Shop Limit Banner ── */}
+                    <div className="flex items-center gap-2 text-sm text-[#6A6A85] bg-[#F7F8FA] border border-[#E8E8EE] rounded-lg px-4 py-2">
+                      <span>🏪</span>
+                      <span>
+                        {shopList.length} boutique{shopList.length !== 1 ? 's' : ''} connectée{shopList.length !== 1 ? 's' : ''}
+                        {shopLimit !== null ? ` / ${shopLimit} max (plan ${(subscription?.plan || 'standard').charAt(0).toUpperCase() + (subscription?.plan || 'standard').slice(1)})` : ' (illimité)'}
+                      </span>
+                    </div>
+
+                    {/* ── Connected Shops List ── */}
+                    {shopList.length > 0 && (
+                      <div className="bg-white rounded-lg border border-[#E8E8EE] divide-y divide-[#E8E8EE]">
+                        {shopList.map((shop) => (
+                          <div key={shop.shop_domain} className={`flex items-center justify-between px-5 py-4 ${shop.is_active ? 'bg-teal-50/40' : ''}`}>
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${shop.is_active ? 'bg-[#0D9488]' : 'bg-[#D8D8E2]'}`} />
+                              <div className="min-w-0">
+                                <p className="text-[#1A1A2E] font-semibold truncate">{shop.shop_domain}</p>
+                                <p className="text-xs text-[#8A8AA3]">
+                                  {shop.is_active ? '✅ Boutique active' : 'Inactive'}
+                                  {shop.updated_at && ` · Mis à jour ${new Date(shop.updated_at).toLocaleDateString()}`}
+                                </p>
+                              </div>
                             </div>
-                            <span className="text-xs text-[#0D9488] bg-teal-50 border border-[#2DD4BF]/40 px-3 py-1 rounded-full">Connecté</span>
+                            <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+                              {!shop.is_active && (
+                                <button
+                                  onClick={() => switchShop(shop.shop_domain)}
+                                  disabled={switchingShop}
+                                  className="text-xs bg-[#0D9488] hover:bg-[#0F766E] text-white px-3 py-1.5 rounded-lg font-semibold disabled:opacity-50"
+                                >
+                                  {switchingShop ? '...' : 'Activer'}
+                                </button>
+                              )}
+                              <button
+                                onClick={() => deleteShop(shop.shop_domain)}
+                                className="text-xs bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg font-semibold"
+                              >
+                                Supprimer
+                              </button>
+                            </div>
                           </div>
-                        )}
+                        ))}
+                      </div>
+                    )}
+
+                    {/* ── Add New Shop (if no shops yet, show inline; else toggle) ── */}
+                    {shopList.length === 0 ? (
+                      <div className="bg-white rounded-lg p-6 border border-[#E8E8EE] max-w-2xl space-y-4">
+                        <p className="text-[#6A6A85] text-sm">Connectez votre première boutique Shopify pour commencer.</p>
                         <div>
                           <label className="block text-[#6A6A85] text-sm mb-2">URL de boutique</label>
                           <input
@@ -6201,64 +6422,98 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             className="w-full bg-[#EFF1F5] text-[#1A1A2E] px-4 py-2 rounded-lg border border-[#D8D8E2]"
                           />
                         </div>
-
-                        {!shopifyConnected && (
-                          <div>
-                            <label className="block text-[#6A6A85] text-sm mb-2">Token d'accès</label>
-                            <input
-                              type="password"
-                              placeholder="shpat_..."
-                              value={shopifyToken}
-                              onChange={(e) => setShopifyToken(e.target.value)}
-                              className="w-full bg-[#EFF1F5] text-[#1A1A2E] px-4 py-2 rounded-lg border border-[#D8D8E2]"
-                            />
-                            <p className="text-xs text-[#8A8AA3] mt-2">Scopes requis: read_products, write_products, read_orders, read_customers, read_analytics.</p>
-                          </div>
-                        )}
-
-                        {shopifyConnected && (
-                          <button
-                            onClick={() => setShowShopifyToken((prev) => !prev)}
-                            className="w-full bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E] font-semibold py-2 px-4 rounded-lg"
-                          >
-                            {showShopifyToken ? 'Masquer le token' : 'Mettre à jour le token'}
-                          </button>
-                        )}
-
-                        {shopifyConnected && showShopifyToken && (
-                          <div>
-                            <label className="block text-[#6A6A85] text-sm mb-2">Nouveau token d'accès</label>
-                            <input
-                              type="password"
-                              placeholder="shpat_..."
-                              value={shopifyToken}
-                              onChange={(e) => setShopifyToken(e.target.value)}
-                              className="w-full bg-[#EFF1F5] text-[#1A1A2E] px-4 py-2 rounded-lg border border-[#D8D8E2]"
-                            />
-                            <p className="text-xs text-[#8A8AA3] mt-2">Scopes requis: read_products, write_products, read_orders, read_customers, read_analytics.</p>
-                          </div>
-                        )}
-
-                        <button
-                          onClick={connectShopify}
-                          className="w-full bg-[#FF6B35] hover:bg-[#E85A28] text-black font-bold py-2 px-4 rounded-lg"
-                        >
-                          {shopifyConnected ? 'Mettre à jour la connexion' : 'Connecter Shopify'}
+                        <div>
+                          <label className="block text-[#6A6A85] text-sm mb-2">Token d'accès</label>
+                          <input
+                            type="password"
+                            placeholder="shpat_..."
+                            value={shopifyToken}
+                            onChange={(e) => setShopifyToken(e.target.value)}
+                            className="w-full bg-[#EFF1F5] text-[#1A1A2E] px-4 py-2 rounded-lg border border-[#D8D8E2]"
+                          />
+                          <p className="text-xs text-[#8A8AA3] mt-2">Scopes requis: read_products, write_products, read_orders, read_customers, read_analytics.</p>
+                        </div>
+                        <button onClick={connectShopify} className="w-full bg-[#FF6B35] hover:bg-[#E85A28] text-black font-bold py-2 px-4 rounded-lg">
+                          Connecter Shopify
                         </button>
                         {renderStatus('shopify')}
                       </div>
-
-                      {shopifyUrl && !loading && (
-                        <div className="mt-6">
+                    ) : (
+                      <div className="max-w-2xl">
+                        {!showAddShop ? (
                           <button
-                            onClick={loadProducts}
-                            className="bg-[#FF6B35] hover:bg-[#E85A28] text-black font-bold py-2 px-4 rounded-lg"
+                            onClick={() => {
+                              if (shopLimit !== null && shopList.length >= shopLimit) {
+                                setStatus('shopify', 'warning', `Limite de ${shopLimit} boutique${shopLimit > 1 ? 's' : ''} atteinte. Passez au plan supérieur pour en ajouter.`)
+                              } else {
+                                setShowAddShop(true)
+                              }
+                            }}
+                            className="w-full bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E] font-semibold py-3 px-4 rounded-lg border border-dashed border-[#D8D8E2] flex items-center justify-center gap-2"
                           >
-                            Charger mes produits ({products?.length || 0})
+                            <span className="text-lg">+</span> Ajouter une boutique
                           </button>
-                        </div>
-                      )}
-                    </div>
+                        ) : (
+                          <div className="bg-white rounded-lg p-6 border border-[#E8E8EE] space-y-4">
+                            <div className="flex items-center justify-between">
+                              <h4 className="font-semibold text-[#1A1A2E]">Nouvelle boutique</h4>
+                              <button onClick={() => setShowAddShop(false)} className="text-[#8A8AA3] hover:text-[#1A1A2E] text-sm">✕ Annuler</button>
+                            </div>
+                            <div>
+                              <label className="block text-[#6A6A85] text-sm mb-2">URL de boutique</label>
+                              <input
+                                type="text"
+                                placeholder="ma-boutique.myshopify.com"
+                                value={newShopUrl}
+                                onChange={(e) => setNewShopUrl(e.target.value)}
+                                className="w-full bg-[#EFF1F5] text-[#1A1A2E] px-4 py-2 rounded-lg border border-[#D8D8E2]"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[#6A6A85] text-sm mb-2">Token d'accès</label>
+                              <input
+                                type="password"
+                                placeholder="shpat_..."
+                                value={newShopToken}
+                                onChange={(e) => setNewShopToken(e.target.value)}
+                                className="w-full bg-[#EFF1F5] text-[#1A1A2E] px-4 py-2 rounded-lg border border-[#D8D8E2]"
+                              />
+                              <p className="text-xs text-[#8A8AA3] mt-2">Scopes requis: read_products, write_products, read_orders, read_customers, read_analytics.</p>
+                            </div>
+                            <button onClick={connectNewShop} disabled={loading} className="w-full bg-[#FF6B35] hover:bg-[#E85A28] text-black font-bold py-2 px-4 rounded-lg disabled:opacity-50">
+                              {loading ? 'Connexion...' : 'Connecter cette boutique'}
+                            </button>
+                          </div>
+                        )}
+                        {renderStatus('shopify')}
+
+                        {/* Token update for active shop */}
+                        {shopifyConnected && (
+                          <div className="mt-4">
+                            <button
+                              onClick={() => setShowShopifyToken((prev) => !prev)}
+                              className="w-full bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E] font-semibold py-2 px-4 rounded-lg text-sm"
+                            >
+                              {showShopifyToken ? 'Masquer' : `Mettre à jour le token de ${shopifyUrl}`}
+                            </button>
+                            {showShopifyToken && (
+                              <div className="mt-3 space-y-3">
+                                <input
+                                  type="password"
+                                  placeholder="shpat_..."
+                                  value={shopifyToken}
+                                  onChange={(e) => setShopifyToken(e.target.value)}
+                                  className="w-full bg-[#EFF1F5] text-[#1A1A2E] px-4 py-2 rounded-lg border border-[#D8D8E2]"
+                                />
+                                <button onClick={connectShopify} className="w-full bg-[#FF6B35] hover:bg-[#E85A28] text-black font-bold py-2 px-4 rounded-lg">
+                                  Mettre à jour
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 

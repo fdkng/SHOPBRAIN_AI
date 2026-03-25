@@ -1581,12 +1581,13 @@ async def fast_init(request: Request):
         except Exception as e:
             print(f"  ⚠️ Preferences fetch error: {e}")
 
-        # — 3. Shopify connection —
-        shopify_connection = None
+        # — 3. Shopify connections (multi-shop) —
+        shopify_connections = []
+        shopify_active = None
         try:
-            result = supabase_client.table("shopify_connections").select("shop_domain,created_at,updated_at").eq("user_id", user_id).execute()
-            if result.data:
-                shopify_connection = result.data[0]
+            result = supabase_client.table("shopify_connections").select("shop_domain,is_active,created_at,updated_at").eq("user_id", user_id).order("is_active", desc=True).order("updated_at", desc=True).execute()
+            shopify_connections = result.data or []
+            shopify_active = next((c for c in shopify_connections if c.get("is_active")), shopify_connections[0] if shopify_connections else None)
         except Exception as e:
             print(f"  ⚠️ Shopify connection fetch error: {e}")
 
@@ -1658,7 +1659,12 @@ async def fast_init(request: Request):
             "profile": profile_data,
             "interface": interface_prefs,
             "notifications": notif_prefs,
-            "shopify": {"connection": shopify_connection} if shopify_connection else {"connection": None},
+            "shopify": {
+                "connection": shopify_active,          # rétro-compat: active shop
+                "connections": shopify_connections,     # multi-shop list
+                "shop_count": len(shopify_connections),
+                "shop_limit": PLAN_LIMITS.get(subscription_data.get("plan", "standard"), PLAN_LIMITS["standard"]).get("shop_limit", 1),
+            },
             "subscription": subscription_data,
             "elapsed_ms": elapsed,
         }
@@ -2465,25 +2471,48 @@ async def update_user_shopify(payload: dict, request: Request):
         from supabase import create_client
         supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
         
-        # Vérifier si une connexion existe déjà
-        existing = supabase.table("shopify_connections").select("*").eq("user_id", user_id).execute()
+        # Check if this specific shop is already connected for this user
+        existing = (
+            supabase.table("shopify_connections")
+            .select("*")
+            .eq("user_id", user_id)
+            .eq("shop_domain", shopify_url)
+            .execute()
+        )
         
         if existing.data:
-            # Mettre à jour
+            # Update existing connection for this shop
             supabase.table("shopify_connections").update({
-                "shop_domain": shopify_url,
                 "access_token": shopify_token,
+                "is_active": True,
                 "updated_at": "now()"
-            }).eq("user_id", user_id).execute()
+            }).eq("user_id", user_id).eq("shop_domain", shopify_url).execute()
         else:
-            # Créer
+            # Enforce shop limit per plan
+            tier = get_user_tier(user_id)
+            shop_limit = _get_shop_limit(tier)
+            current_count = _count_user_shops(user_id)
+            if shop_limit is not None and current_count >= shop_limit:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Limite de boutiques atteinte ({current_count}/{shop_limit}). "
+                           f"Votre plan {tier.capitalize()} permet {shop_limit} boutique(s). "
+                           f"Supprimez une boutique existante ou passez au plan supérieur."
+                )
+            # Create new connection
             supabase.table("shopify_connections").insert({
                 "user_id": user_id,
                 "shop_domain": shopify_url,
-                "access_token": shopify_token
+                "access_token": shopify_token,
+                "is_active": True,
             }).execute()
         
-        return {"success": True, "message": "Shopify connecté avec succès"}
+        # Deactivate other shops (set this one as active)
+        supabase.table("shopify_connections").update({
+            "is_active": False
+        }).eq("user_id", user_id).neq("shop_domain", shopify_url).execute()
+        
+        return {"success": True, "message": "Shopify connecté avec succès", "active_shop": shopify_url}
         
     except Exception as e:
         print(f"Error saving Shopify credentials: {e}")
@@ -2544,28 +2573,49 @@ async def shopify_callback(code: str, shop: str, state: str, hmac: str = None):
         if not access_token:
             raise HTTPException(status_code=500, detail="Failed to obtain access token")
         
-        # Store access token in Supabase for this user
+        # Store access token in Supabase for this user (multi-shop)
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
             from supabase import create_client
             supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
             
-            # Check if user already has a Shopify connection
-            existing = supabase.table("shopify_connections").select("*").eq("user_id", user_id).execute()
+            # Check if this specific shop is already connected for this user
+            existing = (
+                supabase.table("shopify_connections")
+                .select("*")
+                .eq("user_id", user_id)
+                .eq("shop_domain", shop)
+                .execute()
+            )
             
             if existing.data:
-                # Update existing connection
+                # Update existing connection for this shop
                 supabase.table("shopify_connections").update({
-                    "shop_domain": shop,
                     "access_token": access_token,
+                    "is_active": True,
                     "updated_at": "now()"
-                }).eq("user_id", user_id).execute()
+                }).eq("user_id", user_id).eq("shop_domain", shop).execute()
             else:
+                # Enforce shop limit per plan
+                tier = get_user_tier(user_id)
+                shop_limit = _get_shop_limit(tier)
+                current_count = _count_user_shops(user_id)
+                if shop_limit is not None and current_count >= shop_limit:
+                    frontend_url = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
+                    return RedirectResponse(
+                        url=f"{frontend_url}/#/dashboard?shopify=limit_reached&plan={tier}&limit={shop_limit}"
+                    )
                 # Create new connection
                 supabase.table("shopify_connections").insert({
                     "user_id": user_id,
                     "shop_domain": shop,
-                    "access_token": access_token
+                    "access_token": access_token,
+                    "is_active": True,
                 }).execute()
+
+            # Deactivate other shops (set this one as active)
+            supabase.table("shopify_connections").update({
+                "is_active": False
+            }).eq("user_id", user_id).neq("shop_domain", shop).execute()
         
         # Redirect back to frontend dashboard with success
         frontend_url = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
@@ -2578,20 +2628,129 @@ async def shopify_callback(code: str, shop: str, state: str, hmac: str = None):
 
 @app.get("/api/shopify/connection")
 async def get_shopify_connection(request: Request):
-    """Récupère la boutique Shopify connectée (sans exposer le token)"""
+    """Récupère TOUTES les boutiques Shopify connectées (multi-shop).
+
+    Retourne:
+      - connections: liste de toutes les boutiques
+      - connection: la boutique active (rétro-compatibilité)
+      - shop_limit: limite du plan actuel
+    """
     user_id = get_user_id(request)
 
     try:
         supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-        result = supabase.table("shopify_connections").select("shop_domain,created_at,updated_at").eq("user_id", user_id).execute()
+        result = (
+            supabase.table("shopify_connections")
+            .select("shop_domain,is_active,created_at,updated_at")
+            .eq("user_id", user_id)
+            .order("is_active", desc=True)
+            .order("updated_at", desc=True)
+            .execute()
+        )
 
-        if result.data:
-            return {"success": True, "connection": result.data[0]}
+        connections = result.data or []
+        active = next((c for c in connections if c.get("is_active")), connections[0] if connections else None)
 
-        return {"success": True, "connection": None}
+        tier = get_user_tier(user_id)
+        shop_limit = _get_shop_limit(tier)
+
+        return {
+            "success": True,
+            "connection": active,            # rétro-compat
+            "connections": connections,       # multi-shop list
+            "shop_count": len(connections),
+            "shop_limit": shop_limit,        # None = unlimited
+            "tier": tier,
+        }
     except Exception as e:
-        print(f"Error fetching Shopify connection: {e}")
+        print(f"Error fetching Shopify connections: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/shopify/switch-shop")
+async def switch_active_shop(request: Request):
+    """Changer la boutique active (multi-shop).
+
+    Body: { "shop_domain": "ma-boutique.myshopify.com" }
+    """
+    user_id = get_user_id(request)
+    body = await request.json()
+    target_domain = (body.get("shop_domain") or "").strip().lower().strip("/")
+    for prefix in ["https://", "http://"]:
+        if target_domain.startswith(prefix):
+            target_domain = target_domain[len(prefix):]
+
+    if not target_domain:
+        raise HTTPException(status_code=400, detail="shop_domain requis")
+
+    supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+    # Verify this shop belongs to the user
+    check = (
+        supabase.table("shopify_connections")
+        .select("id")
+        .eq("user_id", user_id)
+        .eq("shop_domain", target_domain)
+        .execute()
+    )
+    if not check.data:
+        raise HTTPException(status_code=404, detail="Boutique non trouvée dans vos connexions")
+
+    # Deactivate all, then activate target
+    supabase.table("shopify_connections").update({"is_active": False}).eq("user_id", user_id).execute()
+    supabase.table("shopify_connections").update({"is_active": True, "updated_at": "now()"}).eq("user_id", user_id).eq("shop_domain", target_domain).execute()
+
+    # Invalidate init cache
+    _init_cache.pop(user_id, None)
+
+    return {"success": True, "active_shop": target_domain}
+
+
+@app.delete("/api/shopify/shop/{shop_domain}")
+async def delete_shopify_shop(shop_domain: str, request: Request):
+    """Supprimer une boutique connectée.
+
+    Si c'est la boutique active, on active la suivante automatiquement.
+    """
+    user_id = get_user_id(request)
+    normalized = shop_domain.strip().lower().strip("/")
+
+    supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+    # Verify ownership
+    check = (
+        supabase.table("shopify_connections")
+        .select("id,is_active")
+        .eq("user_id", user_id)
+        .eq("shop_domain", normalized)
+        .execute()
+    )
+    if not check.data:
+        raise HTTPException(status_code=404, detail="Boutique non trouvée")
+
+    was_active = check.data[0].get("is_active", False)
+
+    # Delete
+    supabase.table("shopify_connections").delete().eq("user_id", user_id).eq("shop_domain", normalized).execute()
+
+    # If deleted shop was active, activate the next one
+    if was_active:
+        remaining = (
+            supabase.table("shopify_connections")
+            .select("shop_domain")
+            .eq("user_id", user_id)
+            .order("updated_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if remaining.data:
+            next_shop = remaining.data[0]["shop_domain"]
+            supabase.table("shopify_connections").update({"is_active": True}).eq("user_id", user_id).eq("shop_domain", next_shop).execute()
+
+    # Invalidate init cache
+    _init_cache.pop(user_id, None)
+
+    return {"success": True, "deleted": normalized}
 
 
 @app.get("/api/shopify/keep-alive")
@@ -3079,29 +3238,83 @@ async def get_shopify_products(request: Request, limit: int = 250):
         raise HTTPException(status_code=500, detail=f"Erreur: {str(e)}")
 
 
-def _get_shopify_connection(user_id: str):
+def _get_shopify_connection(user_id: str, shop_domain: str | None = None):
+    """Retourne (shop_domain, access_token) pour la boutique active ou spécifiée.
+
+    Multi-shop: un utilisateur peut avoir plusieurs lignes dans
+    shopify_connections.  Si *shop_domain* est fourni on le cherche
+    directement ; sinon on prend celle marquée ``is_active = true``,
+    puis en dernier recours la plus récemment mise à jour.
+    """
     if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
         raise HTTPException(status_code=500, detail="Supabase not configured")
 
     supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-    connection = supabase.table("shopify_connections").select("shop_domain,access_token").eq("user_id", user_id).execute()
+
+    if shop_domain:
+        # Explicit shop requested
+        normalized = shop_domain.strip().lower().strip("/")
+        for prefix in ["https://", "http://"]:
+            if normalized.startswith(prefix):
+                normalized = normalized[len(prefix):]
+        connection = (
+            supabase.table("shopify_connections")
+            .select("shop_domain,access_token")
+            .eq("user_id", user_id)
+            .eq("shop_domain", normalized)
+            .limit(1)
+            .execute()
+        )
+    else:
+        # Try active shop first
+        connection = (
+            supabase.table("shopify_connections")
+            .select("shop_domain,access_token")
+            .eq("user_id", user_id)
+            .eq("is_active", True)
+            .limit(1)
+            .execute()
+        )
+        if not connection.data:
+            # Fallback: most recently updated
+            connection = (
+                supabase.table("shopify_connections")
+                .select("shop_domain,access_token")
+                .eq("user_id", user_id)
+                .order("updated_at", desc=True)
+                .limit(1)
+                .execute()
+            )
 
     if not connection.data:
         raise HTTPException(status_code=404, detail="Aucune boutique Shopify connectée")
 
-    shop_domain = (connection.data[0].get("shop_domain") or "").strip().lower()
-    access_token = connection.data[0].get("access_token")
+    row = connection.data[0]
+    domain = (row.get("shop_domain") or "").strip().lower()
+    access_token = row.get("access_token")
 
-    if not shop_domain or not access_token:
+    if not domain or not access_token:
         raise HTTPException(status_code=400, detail="Connexion Shopify invalide")
-    
+
     # Normalize: ensure clean domain format
     for prefix in ["https://", "http://"]:
-        if shop_domain.startswith(prefix):
-            shop_domain = shop_domain[len(prefix):]
-    shop_domain = shop_domain.strip("/")
+        if domain.startswith(prefix):
+            domain = domain[len(prefix):]
+    domain = domain.strip("/")
 
-    return shop_domain, access_token
+    return domain, access_token
+
+
+def _get_shop_limit(tier: str) -> int | None:
+    """Return max shops allowed for tier (None = unlimited)."""
+    return PLAN_LIMITS.get(tier, PLAN_LIMITS["standard"]).get("shop_limit")
+
+
+def _count_user_shops(user_id: str) -> int:
+    """Count how many shops this user has connected."""
+    supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    result = supabase.table("shopify_connections").select("id", count="exact").eq("user_id", user_id).execute()
+    return result.count if result.count is not None else len(result.data or [])
 
 
 def _parse_shopify_next_link(link_header: str | None) -> str | None:
@@ -10002,10 +10215,49 @@ print(f"========== BACKEND READY ==========\n")
 def _deferred_startup_tasks():
     """Run non-critical startup tasks in background thread so uvicorn binds the port FAST."""
     time.sleep(5)  # let the server fully bind first
-    # ⚡ Auto-create chat_conversations table if it doesn't exist
     if SUPABASE_URL and SUPABASE_SERVICE_KEY:
         try:
             sb = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+            # ── Multi-shop: ensure is_active column exists ──
+            try:
+                import requests as req2
+                migration_sql = """
+                DO $$
+                BEGIN
+                  IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='shopify_connections' AND column_name='is_active'
+                  ) THEN
+                    ALTER TABLE shopify_connections ADD COLUMN is_active BOOLEAN DEFAULT TRUE;
+                    -- Set the most recently updated row as active for each user
+                    UPDATE shopify_connections sc
+                    SET is_active = TRUE
+                    WHERE NOT EXISTS (
+                      SELECT 1 FROM shopify_connections sc2
+                      WHERE sc2.user_id = sc.user_id AND sc2.updated_at > sc.updated_at
+                    );
+                  END IF;
+                END $$;
+                """
+                resp = req2.post(
+                    f"{SUPABASE_URL}/rest/v1/rpc/exec_sql",
+                    headers={
+                        "apikey": SUPABASE_SERVICE_KEY,
+                        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+                        "Content-Type": "application/json"
+                    },
+                    json={"query": migration_sql},
+                    timeout=10
+                )
+                if resp.status_code < 300:
+                    print("✅ shopify_connections.is_active column ready")
+                else:
+                    print(f"⚠️ is_active migration status={resp.status_code}. Will fallback gracefully.")
+            except Exception as e:
+                print(f"⚠️ is_active migration error: {e}")
+
+            # ⚡ Auto-create chat_conversations table if it doesn't exist
             try:
                 sb.table("chat_conversations").select("id").limit(1).execute()
                 print("✅ chat_conversations table exists")
