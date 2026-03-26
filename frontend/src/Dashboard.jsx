@@ -3885,10 +3885,10 @@ export default function Dashboard() {
         <div className="fixed inset-0 bg-black/30 z-50 md:hidden" onClick={() => setMobileSidebarOpen(false)} />
       )}
 
-      <div className="flex min-h-screen">
+      <div className="flex h-screen overflow-hidden">
         <aside className={`${
           mobileSidebarOpen ? 'fixed inset-y-0 left-0 z-50' : 'hidden'
-        } md:relative md:flex w-64 bg-white border-r border-[#E8E8EE] p-4 flex flex-col gap-4 overflow-y-auto`}>
+        } md:sticky md:top-0 md:flex md:h-screen w-64 bg-white border-r border-[#E8E8EE] p-4 flex flex-col gap-4 overflow-y-auto shrink-0`}>
           {/* Mobile close button */}
           <button onClick={() => setMobileSidebarOpen(false)} className="md:hidden self-end text-[#6A6A85] hover:text-[#1A1A2E] mb-2">
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
@@ -4023,7 +4023,7 @@ export default function Dashboard() {
           </nav>
         </aside>
 
-        <main className="flex-1">
+        <main className="flex-1 overflow-y-auto">
           <div className="min-h-full">
 
       {/* Plan Change Menu (kept separate for billing changes) */}
