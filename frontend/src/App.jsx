@@ -1303,13 +1303,13 @@ export default function App() {
                 <div
                   className={`relative p-8 md:p-9 bg-white rounded-2xl transition-all duration-300 hover:shadow-[var(--shadow-lg)] ${
                     plan.highlight
-                      ? 'border-2 border-[#FF6B35] shadow-[var(--shadow-lg)]'
-                      : 'border border-[#E8E8EE] shadow-[var(--shadow-sm)] hover:border-[#FF6B35]/30'
+                      ? 'border-2 border-[#2DD4BF] shadow-[var(--shadow-lg)]'
+                      : 'border border-[#FF6B35]/15 shadow-[var(--shadow-sm)] hover:border-[#FF6B35]/30'
                   }`}
                 >
                   {plan.highlight && (
                     <div className="absolute -top-4 left-1/2 -translate-x-1/2">
-                      <span className="inline-flex items-center gap-1 bg-[#FF6B35] text-white px-4 py-1.5 rounded-full text-xs font-semibold tracking-wide shadow-md">
+                      <span className="inline-flex items-center gap-1 bg-[#0D9488] text-white px-4 py-1.5 rounded-full text-xs font-semibold tracking-wide shadow-md">
                         {t("mostPopularBadge")}
                       </span>
                     </div>
@@ -1328,7 +1328,7 @@ export default function App() {
                     {plan.features.map((feature, fidx) => (
                       <li key={fidx} className="flex items-start gap-3">
                         <span className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-xs mt-0.5 ${
-                          plan.highlight ? 'bg-[#FFF4F0] text-[#FF6B35]' : 'bg-[#F7F8FA] text-[#8A8AA3]'
+                          plan.highlight ? 'bg-[#ECFDF5] text-[#0D9488]' : 'bg-[#F7F8FA] text-[#8A8AA3]'
                         }`}>
                           ✓
                         </span>
@@ -1342,8 +1342,8 @@ export default function App() {
                     onClick={() => window.location.hash = '#stripe-pricing'}
                     className={`w-full py-3.5 rounded-full text-sm font-semibold text-center transition-all ${
                       plan.highlight
-                        ? 'bg-[#1A1A2E] text-white hover:bg-[#2A2A42] shadow-sm'
-                        : 'bg-[#F7F8FA] text-[#1A1A2E] border border-[#E8E8EE] hover:bg-[#EFF1F5]'
+                        ? 'bg-[#0D9488] text-white hover:bg-[#0B7C72] shadow-sm'
+                        : 'bg-[#F7F8FA] text-[#1A1A2E] border border-[#FF6B35]/15 hover:bg-[#EFF1F5] hover:border-[#FF6B35]/30'
                     }`}
                   >
                     {t("viewAllPlans")}
