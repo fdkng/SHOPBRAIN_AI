@@ -161,13 +161,14 @@ class ShopBrainAI:
                 })
         
         # Stratégie de contenu
-        products_without_description = len([p for p in products[:10] if not p.get('body_html') or len(p.get('body_html', '')) < 100])
-        if products_without_description > 3:
+        products_no_desc = [p for p in products[:10] if not p.get('body_html') or len(p.get('body_html', '')) < 100]
+        if len(products_no_desc) > 3:
+            names = ", ".join([f'"{p.get("title","?")}"' for p in products_no_desc[:4]])
             recommendations.append({
                 'priority': 'HAUTE',
                 'category': 'Contenu',
                 'issue': 'Descriptions de produits insuffisantes',
-                'recommendation': f'{products_without_description} produits ont des descriptions trop courtes ou inexistantes. Les descriptions riches augmentent les conversions de 78%.',
+                'recommendation': f'{len(products_no_desc)} produits ont des descriptions trop courtes ou inexistantes (ex: {names}). Les descriptions riches augmentent les conversions de 78%.',
                 'impact': 'Amélioration du SEO et des conversions (+40-78%)',
                 'action': 'Réécrire les descriptions des 5 produits les plus vendus avec 200+ mots'
             })
@@ -299,19 +300,21 @@ class ShopBrainAI:
         }
         
         # Analyse des titres
-        short_titles = len([p for p in products if len(p.get('title', '')) < 20])
-        if short_titles > len(products) * 0.3:
+        short_titles = [p for p in products if len(p.get('title', '')) < 20]
+        if len(short_titles) > len(products) * 0.3:
+            names = ", ".join([f'"{p.get("title","?")}"' for p in short_titles[:5]])
             content_analysis['issues_found'].append({
-                'issue': f'{short_titles} produits ont des titres trop courts',
+                'issue': f'{len(short_titles)} produits ont des titres trop courts (ex: {names})',
                 'fix': 'Les titres devraient faire 40-70 caractères et inclure des mots-clés SEO',
                 'priority': 'HAUTE'
             })
         
         # Analyse des descriptions
-        no_description = len([p for p in products if not p.get('body_html') or len(p.get('body_html', '')) < 50])
-        if no_description > 0:
+        no_description = [p for p in products if not p.get('body_html') or len(p.get('body_html', '')) < 50]
+        if no_description:
+            names = ", ".join([f'"{p.get("title","?")}"' for p in no_description[:5]])
             content_analysis['issues_found'].append({
-                'issue': f'{no_description} produits sans description détaillée',
+                'issue': f'{len(no_description)} produits sans description détaillée (ex: {names})',
                 'fix': 'Ajouter 200+ mots avec bénéfices client, caractéristiques techniques, et FAQ',
                 'priority': 'CRITIQUE'
             })
@@ -428,46 +431,98 @@ class ShopBrainAI:
         return opportunities
     
     def _identify_critical_issues(self, products: List[Dict], analytics: Dict) -> List[Dict]:
-        """Identifie les problèmes critiques à résoudre immédiatement"""
+        """Identifie les problèmes critiques à résoudre immédiatement — avec noms de produits précis"""
         issues = []
         
-        # Produits sans image
+        # Produits sans image — lister les noms exacts
         no_images = [p for p in products if not p.get('images') or len(p.get('images', [])) == 0]
         if no_images:
+            product_names = [f'"{p.get("title", "Sans titre")}"' for p in no_images[:10]]
+            names_str = ", ".join(product_names)
+            extra = f" (et {len(no_images) - 10} autres)" if len(no_images) > 10 else ""
             issues.append({
                 'severity': 'CRITIQUE',
                 'issue': f'{len(no_images)} produit(s) sans image',
-                'impact': 'Impossible de vendre sans images. Taux de conversion proche de 0%.',
-                'action': 'Ajouter minimum 3-5 images professionnelles par produit AUJOURD\'HUI'
+                'impact': f'Impossible de vendre sans images. Taux de conversion proche de 0%.',
+                'action': f'Ajouter minimum 3-5 images professionnelles AUJOURD\'HUI pour : {names_str}{extra}',
+                'affected_products': [p.get('title', 'Sans titre') for p in no_images]
             })
         
-        # Prix à 0
+        # Prix à 0 — lister les noms exacts
         zero_price = []
         for p in products:
             for v in p.get('variants', []):
                 try:
                     if float(v.get('price', 0)) == 0:
-                        zero_price.append(p.get('title'))
+                        zero_price.append(p.get('title', 'Sans titre'))
                         break
                 except:
                     pass
         
         if zero_price:
+            names_str = ", ".join([f'"{n}"' for n in zero_price[:10]])
+            extra = f" (et {len(zero_price) - 10} autres)" if len(zero_price) > 10 else ""
             issues.append({
                 'severity': 'CRITIQUE',
                 'issue': f'{len(zero_price)} produit(s) avec prix à 0$',
                 'impact': 'Impossible de vendre. Perte de revenus de 100%.',
-                'action': f'Corriger immédiatement les prix pour: {", ".join(zero_price[:3])}'
+                'action': f'Corriger immédiatement les prix pour : {names_str}{extra}',
+                'affected_products': zero_price
             })
         
-        # Produits brouillons mais prêts
+        # Produits brouillons mais prêts — lister les noms exacts
         drafts_ready = [p for p in products if p.get('status') != 'active' and p.get('images') and p.get('body_html')]
         if drafts_ready:
+            product_names = [f'"{p.get("title", "Sans titre")}"' for p in drafts_ready[:10]]
+            names_str = ", ".join(product_names)
+            extra = f" (et {len(drafts_ready) - 10} autres)" if len(drafts_ready) > 10 else ""
             issues.append({
                 'severity': 'HAUTE',
                 'issue': f'{len(drafts_ready)} produit(s) prêt(s) mais en brouillon',
                 'impact': f'Perte potentielle de {len(drafts_ready) * 500}$/mois en revenus',
-                'action': 'Publier ces produits immédiatement - ils sont prêts!'
+                'action': f'Publier immédiatement (ils sont prêts!) : {names_str}{extra}',
+                'affected_products': [p.get('title', 'Sans titre') for p in drafts_ready]
+            })
+
+        # Produits avec trop peu d'images (1-2 seulement) — lister les noms
+        few_images = [p for p in products if p.get('images') and 0 < len(p.get('images', [])) < 3]
+        if few_images:
+            product_names = [f'"{p.get("title", "Sans titre")}" ({len(p.get("images", []))} img)' for p in few_images[:8]]
+            names_str = ", ".join(product_names)
+            extra = f" (et {len(few_images) - 8} autres)" if len(few_images) > 8 else ""
+            issues.append({
+                'severity': 'HAUTE',
+                'issue': f'{len(few_images)} produit(s) avec moins de 3 images',
+                'impact': 'Les fiches produit avec 5+ images convertissent 2x mieux que celles avec 1-2 images.',
+                'action': f'Ajouter des images supplémentaires pour : {names_str}{extra}',
+                'affected_products': [p.get('title', 'Sans titre') for p in few_images]
+            })
+
+        # Produits sans description — lister les noms
+        no_desc = [p for p in products if not p.get('body_html') or len(p.get('body_html', '')) < 50]
+        if no_desc:
+            product_names = [f'"{p.get("title", "Sans titre")}"' for p in no_desc[:8]]
+            names_str = ", ".join(product_names)
+            extra = f" (et {len(no_desc) - 8} autres)" if len(no_desc) > 8 else ""
+            issues.append({
+                'severity': 'HAUTE',
+                'issue': f'{len(no_desc)} produit(s) sans description ou description trop courte',
+                'impact': 'Les descriptions riches augmentent les conversions de 78%. Sans description, les clients ne peuvent pas prendre de décision d\'achat.',
+                'action': f'Rédiger des descriptions de 200+ mots pour : {names_str}{extra}',
+                'affected_products': [p.get('title', 'Sans titre') for p in no_desc]
+            })
+
+        # Titres trop courts — lister les noms
+        short_titles = [p for p in products if len(p.get('title', '')) < 20]
+        if len(short_titles) > 2:
+            product_names = [f'"{p.get("title", "?")}"' for p in short_titles[:8]]
+            names_str = ", ".join(product_names)
+            issues.append({
+                'severity': 'MOYENNE',
+                'issue': f'{len(short_titles)} produit(s) avec des titres trop courts (< 20 car.)',
+                'impact': 'Les titres courts réduisent le SEO et la compréhension du produit. Visez 40-70 caractères.',
+                'action': f'Réécrire les titres avec mots-clés SEO pour : {names_str}',
+                'affected_products': [p.get('title', 'Sans titre') for p in short_titles]
             })
         
         return issues

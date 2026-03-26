@@ -60,10 +60,7 @@ export default function Dashboard() {
     }
   })
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState(() => {
-    if (typeof window === 'undefined') return 'overview'
-    return localStorage.getItem('activeTab') || 'overview'
-  })
+  const [activeTab, setActiveTab] = useState('overview')
   const [shopifyUrl, setShopifyUrl] = useState(() => {
     if (typeof window === 'undefined') return ''
     return localStorage.getItem('shopifyUrlCache') || ''
@@ -745,7 +742,8 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      localStorage.setItem('activeTab', activeTab)
+      // Tab persistence disabled — always start on overview
+      // localStorage.setItem('activeTab', activeTab)
     }
   }, [activeTab])
 
@@ -1503,9 +1501,14 @@ export default function Dashboard() {
     try {
       console.log('STT: transcribeWithWhisper called, blob size=', audioBlob ? audioBlob.size : null)
       const sttStart = Date.now()
-      // Downsample to small mono 16kHz WAV
-      const smallBlob = await downsampleToWav(audioBlob)
-      console.log(`STT: downsample took ${Date.now() - sttStart}ms`)
+      // Skip downsample for small files (< 150KB) — send webm directly for speed
+      let smallBlob = audioBlob
+      if (audioBlob.size > 150 * 1024) {
+        smallBlob = await downsampleToWav(audioBlob)
+        console.log(`STT: downsample took ${Date.now() - sttStart}ms`)
+      } else {
+        console.log(`STT: small file (${audioBlob.size} bytes), skipping downsample for speed`)
+      }
       // Use pre-fetched token or fetch now
       let token = accessToken
       if (!token) {
@@ -5076,8 +5079,8 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 <h2 className="text-[#1A1A2E] text-2xl font-bold mb-1">{t('imgAssistTitle')}</h2>
                 <p className="text-[#4A4A68] text-base">{t('imgAssistDesc')}</p>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  <span className="inline-flex items-center gap-1 text-xs bg-orange-50 text-[#FF6B35] border border-[#FF6B35]/20 rounded-full px-3 py-1">🎨 {t('imgBadgeDesign')}</span>
-                  <span className="inline-flex items-center gap-1 text-xs bg-teal-50 text-[#0D9488] border border-[#2DD4BF]/30 rounded-full px-3 py-1">📷 {t('imgBadgePhoto')}</span>
+                  <span className="inline-flex items-center gap-1 text-xs bg-teal-50 text-[#0D9488] border border-[#2DD4BF]/30 rounded-full px-3 py-1">🎨 {t('imgBadgeDesign')}</span>
+                  <span className="inline-flex items-center gap-1 text-xs bg-orange-50 text-[#FF6B35] border border-[#FF6B35]/20 rounded-full px-3 py-1">📷 {t('imgBadgePhoto')}</span>
                   <span className="inline-flex items-center gap-1 text-xs bg-teal-50 text-[#0D9488] border border-[#2DD4BF]/30 rounded-full px-3 py-1">📈 {t('imgBadgeConversion')}</span>
                 </div>
               </div>
@@ -5752,6 +5755,19 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               <div className="bg-white p-3 rounded mt-2">
                                 <p className="text-[#1A1A2E] font-bold text-sm">Action immédiate:</p>
                                 <p className="text-[#2A2A42] text-sm mt-1">{issue.action}</p>
+                                {issue.affected_products && issue.affected_products.length > 0 && (
+                                  <div className="mt-2 pt-2 border-t border-gray-200">
+                                    <p className="text-[#6A6A85] text-xs font-semibold mb-1">Produits concernés :</p>
+                                    <div className="flex flex-wrap gap-1">
+                                      {issue.affected_products.slice(0, 12).map((name, pidx) => (
+                                        <span key={pidx} className="inline-block bg-[#FFF4F0] text-[#E85A28] text-xs px-2 py-0.5 rounded-full border border-[#FF6B35]/20">{name}</span>
+                                      ))}
+                                      {issue.affected_products.length > 12 && (
+                                        <span className="text-[#6A6A85] text-xs">+{issue.affected_products.length - 12} autres</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -7051,15 +7067,6 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               <button onClick={() => { fileInputRef.current?.click() }} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#4A4A68] hover:bg-[#EFF1F5]/60 transition-colors">
                                 <svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-[#6A6A85]"><path d="M5 15L10 5L15 15" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><circle cx="10" cy="3" r="1.5" fill="currentColor"/></svg>
                                 Charger depuis l'appareil
-                              </button>
-                              <div className="border-t border-[#E8E8EE]/40 my-1"></div>
-                              <button onClick={() => { setChatInput(prev => prev + '@'); setShowAttachMenu(false) }} className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-[#4A4A68] hover:bg-[#EFF1F5]/60 transition-colors">
-                                <span className="flex items-center gap-3"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-[#6A6A85]"><circle cx="10" cy="10" r="4" stroke="currentColor" strokeWidth="1.5"/><path d="M14 10C14 12.2 12.2 14 10 14C7.8 14 6 12.2 6 10C6 7.8 7.8 6 10 6C12.2 6 14 7.8 14 10ZM14 10V11.5C14 12.88 15.12 14 16.5 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>Mention</span>
-                                <span className="text-xs text-gray-600 bg-white px-1.5 py-0.5 rounded">@</span>
-                              </button>
-                              <button onClick={() => { setChatInput(prev => prev + '/'); setShowAttachMenu(false) }} className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-[#4A4A68] hover:bg-[#EFF1F5]/60 transition-colors">
-                                <span className="flex items-center gap-3"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-[#6A6A85]"><path d="M13 3L7 17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>{t('skills')}</span>
-                                <span className="text-xs text-gray-600 bg-white px-1.5 py-0.5 rounded">/</span>
                               </button>
                               <div className="border-t border-[#E8E8EE]/40 my-1"></div>
                               <button onClick={() => { setShowProductPicker(true); setShowAttachMenu(false); if (!products || products.length === 0) loadProducts() }} className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-[#FF6B35] hover:bg-[#FF6B35]/10 transition-colors">

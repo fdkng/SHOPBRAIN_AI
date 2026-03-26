@@ -232,6 +232,14 @@ export default function App() {
   // The dashboard is only shown when the user explicitly navigates via the button/hash
 
   const checkUser = async () => {
+    // Force sign out on fresh page load so user must login each time
+    const isFirstLoad = !sessionStorage.getItem('sb_session_active')
+    if (isFirstLoad) {
+      await supabase.auth.signOut()
+      sessionStorage.setItem('sb_session_active', '1')
+      setUser(null)
+      return
+    }
     const { data: { session } } = await supabase.auth.getSession()
     if (session) {
       setUser(session.user)
