@@ -1303,8 +1303,8 @@ export default function App() {
                 <div
                   className={`relative p-8 md:p-9 bg-white rounded-2xl transition-all duration-300 hover:shadow-[var(--shadow-lg)] ${
                     plan.highlight
-                      ? 'border-2 border-[#2DD4BF] shadow-[var(--shadow-lg)]'
-                      : 'border border-[#FF6B35]/15 shadow-[var(--shadow-sm)] hover:border-[#FF6B35]/30'
+                      ? 'border-2 border-[#2DD4BF] shadow-[var(--shadow-lg)] hover:border-[#5EEAD4]'
+                      : 'border-2 border-[#FF6B35]/40 shadow-[var(--shadow-sm)] hover:border-[#FF6B35]/65'
                   }`}
                 >
                   {plan.highlight && (
@@ -1342,8 +1342,8 @@ export default function App() {
                     onClick={() => window.location.hash = '#stripe-pricing'}
                     className={`w-full py-3.5 rounded-full text-sm font-semibold text-center transition-all ${
                       plan.highlight
-                        ? 'bg-[#0D9488] text-white hover:bg-[#0B7C72] shadow-sm'
-                        : 'bg-[#F7F8FA] text-[#1A1A2E] border border-[#FF6B35]/15 hover:bg-[#EFF1F5] hover:border-[#FF6B35]/30'
+                        ? 'bg-[#0D9488] text-white hover:bg-[#2DD4BF] hover:text-[#0D9488] shadow-sm'
+                        : 'bg-[#F7F8FA] text-[#1A1A2E] border border-[#FF6B35]/40 hover:bg-[#EFF1F5] hover:border-[#FF6B35]/65'
                     }`}
                   >
                     {t("viewAllPlans")}
