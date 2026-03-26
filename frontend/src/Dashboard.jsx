@@ -3913,7 +3913,12 @@ export default function Dashboard() {
 
             {showProfileMenu && (
               <div className="absolute top-full left-0 mt-2 w-60 bg-white border border-[#E8E8EE] rounded-lg shadow-2xl z-50">
-                <div className="p-4 border-b border-[#E8E8EE]">
+                <div className="p-4 border-b border-[#E8E8EE] relative">
+                  <button
+                    onClick={() => setShowProfileMenu(false)}
+                    className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center rounded-full hover:bg-[#EFF1F5] text-[#6A6A85] hover:text-[#1A1A2E] transition"
+                    aria-label="Fermer"
+                  >✕</button>
                   <div className="font-semibold text-[#1A1A2E]">{profile?.full_name || user?.email}</div>
                   <div className="text-sm text-[#6A6A85]">{user?.email}</div>
                   <div className="mt-2 px-2 py-1 bg-[#FF6B35]/20 text-[#FF6B35] text-xs rounded inline-block">
@@ -3931,14 +3936,14 @@ export default function Dashboard() {
                     onClick={() => { setShowProfileMenu(false); setShowPlanMenu(true) }}
                     className="w-full text-left px-3 py-2 rounded hover:bg-[#EFF1F5] flex items-center gap-2 text-sm text-[#1A1A2E]"
                   >
-                    Subscription & Billing
+                    Abonnement et facturation
                   </button>
                   <div className="border-t border-[#E8E8EE] my-2"></div>
                   <button
                     onClick={() => { setShowProfileMenu(false); handleLogout() }}
                     className="w-full text-left px-3 py-2 rounded hover:bg-[#EFF1F5] text-sm text-[#4A4A68] hover:text-[#1A1A2E]"
                   >
-                    Sign Out
+                    Déconnexion
                   </button>
                 </div>
               </div>
@@ -3946,7 +3951,7 @@ export default function Dashboard() {
           </div>
 
           <div className="bg-[#F7F8FA] rounded-lg p-3">
-            <div className="text-xs text-[#6A6A85] mb-1">Current Plan</div>
+            <div className="text-xs text-[#6A6A85] mb-1">Plan actuel</div>
             <div className="font-bold text-[#FF6B35] text-lg">{formatPlan(subscription?.plan)}</div>
           </div>
 
