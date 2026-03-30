@@ -1643,7 +1643,9 @@ async def fast_init(request: Request):
             if not subscription_data.get('has_subscription'):
                 if profile_data and profile_data.get('subscription_plan'):
                     plan = profile_data['subscription_plan']
-                    if plan and plan != 'free':
+                    sub_status = profile_data.get('subscription_status', 'inactive')
+                    # ONLY grant access if plan is a PAID tier AND status is active
+                    if plan and plan.lower() in ('standard', 'pro', 'premium') and sub_status in ('active', 'trialing', 'past_due'):
                         capabilities = {
                             'standard': {'product_limit': 50, 'shop_limit': 1, 'report_frequency': 'monthly', 'features': ['product_analysis', 'title_optimization', 'price_suggestions']},
                             'pro': {'product_limit': 500, 'shop_limit': 3, 'report_frequency': 'weekly', 'features': ['product_analysis', 'title_optimization', 'price_suggestions', 'content_generation', 'image_recommendations', 'cross_sell', 'reports', 'automated_actions', 'invoicing']},
@@ -9983,30 +9985,37 @@ async def check_subscription_status(request: Request):
                     profile_data = profile_resp.json()
                     if isinstance(profile_data, list) and len(profile_data) > 0:
                         profile = profile_data[0]
-                        plan = profile.get('subscription_tier', 'standard')
-                        capabilities = {
-                            'standard': {
-                                'product_limit': 50,
-                                'features': ['product_analysis', 'title_optimization', 'price_suggestions']
-                            },
-                            'pro': {
-                                'product_limit': 500,
-                                'features': ['product_analysis', 'content_generation', 'cross_sell', 'reports']
-                            },
-                            'premium': {
-                                'product_limit': None,
-                                'features': ['product_analysis', 'content_generation', 'cross_sell', 'automated_actions', 'reports', 'predictions']
+                        plan = profile.get('subscription_tier') or profile.get('subscription_plan')
+                        sub_status = profile.get('subscription_status', 'inactive')
+                        
+                        # ONLY grant access if plan is a PAID tier AND status is active
+                        paid_plans = ('standard', 'pro', 'premium')
+                        if plan and plan.lower() in paid_plans and sub_status in ('active', 'trialing', 'past_due'):
+                            capabilities = {
+                                'standard': {
+                                    'product_limit': 50,
+                                    'features': ['product_analysis', 'title_optimization', 'price_suggestions']
+                                },
+                                'pro': {
+                                    'product_limit': 500,
+                                    'features': ['product_analysis', 'content_generation', 'cross_sell', 'reports']
+                                },
+                                'premium': {
+                                    'product_limit': None,
+                                    'features': ['product_analysis', 'content_generation', 'cross_sell', 'automated_actions', 'reports', 'predictions']
+                                }
                             }
-                        }
-                        started_at = profile.get('subscription_started_at') or profile.get('created_at')
-                        return {
-                            'success': True,
-                            'has_subscription': plan is not None,
-                            'plan': plan,
-                            'status': profile.get('subscription_status', 'active'),
-                            'started_at': started_at,
-                            'capabilities': capabilities.get(plan, {})
-                        }
+                            started_at = profile.get('subscription_started_at') or profile.get('created_at')
+                            return {
+                                'success': True,
+                                'has_subscription': True,
+                                'plan': plan.lower(),
+                                'status': sub_status,
+                                'started_at': started_at,
+                                'capabilities': capabilities.get(plan.lower(), {})
+                            }
+                        else:
+                            print(f"ℹ️ Profile fallback: plan={plan}, status={sub_status} — not a paid active subscription")
             except Exception as e:
                 print(f"Profile fallback error: {e}")
             
