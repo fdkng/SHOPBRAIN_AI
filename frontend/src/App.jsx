@@ -265,7 +265,7 @@ export default function App() {
         setHasSubscription(false)
         setLandingStatusByKey((prev) => ({
           ...prev,
-          dashboardNav: { type: 'warning', message: 'No active plan found. Please purchase a plan to access your dashboard.' }
+          dashboardHero: { type: 'warning', message: 'No active plan found. Please purchase a plan to access your dashboard.' }
         }))
         return
       }
@@ -284,7 +284,7 @@ export default function App() {
         setHasSubscription(false)
         setLandingStatusByKey((prev) => ({
           ...prev,
-          dashboardNav: { type: 'warning', message: 'No active plan found. Please purchase a plan to access your dashboard.' }
+          dashboardHero: { type: 'warning', message: 'No active plan found. Please purchase a plan to access your dashboard.' }
         }))
         return
       }
@@ -294,15 +294,15 @@ export default function App() {
       setHasSubscription(hasSub)
       if (hasSub) {
         setLandingStatusByKey((prev) => {
-          if (!prev?.dashboardNav) return prev
+          if (!prev?.dashboardHero) return prev
           const next = { ...prev }
-          delete next.dashboardNav
+          delete next.dashboardHero
           return next
         })
       } else {
         setLandingStatusByKey((prev) => ({
           ...prev,
-          dashboardNav: {
+          dashboardHero: {
             type: 'warning',
             message: data?.message || 'No active plan found. Please purchase a plan to access your dashboard.'
           }
@@ -314,7 +314,7 @@ export default function App() {
       setHasSubscription(false)
       setLandingStatusByKey((prev) => ({
         ...prev,
-        dashboardNav: { type: 'warning', message: 'No active plan found. Please purchase a plan to access your dashboard.' }
+        dashboardHero: { type: 'warning', message: 'No active plan found. Please purchase a plan to access your dashboard.' }
       }))
     } finally {
       clearTimeout(timeoutId)
@@ -595,7 +595,7 @@ export default function App() {
                     } else {
                       setLandingStatusByKey((prev) => ({
                         ...prev,
-                        dashboardNav: { type: 'warning', message: t('subscriptionRequired') }
+                        dashboardHero: { type: 'warning', message: t('subscriptionRequired') }
                       }))
                       window.location.hash = '#pricing'
                     }
@@ -608,7 +608,6 @@ export default function App() {
                 >
                   Dashboard
                 </button>
-                {renderLandingStatus('dashboardNav')}
                 <button
                   onClick={async () => {
                     await supabase.auth.signOut()
@@ -965,7 +964,7 @@ export default function App() {
 
           {/* Dashboard Button */}
           {user && (
-            <div className="mt-16 flex justify-center animate-fadeInUp stagger-2">
+            <div className="mt-16 flex flex-col items-center animate-fadeInUp stagger-2">
               <button
                 onClick={() => {
                   if (hasSubscription) {
