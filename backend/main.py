@@ -1621,18 +1621,43 @@ async def fast_init(request: Request):
                 if isinstance(data, list) and len(data) > 0:
                     sub = data[0]
                     raw_tier = sub.get('plan_tier')
+                    stripe_sub_id = sub.get('stripe_subscription_id')
+                    stripe_verified = False
                     tier_map = {
                         '99': 'standard', '199': 'pro', '299': 'premium',
                         'standard': 'standard', 'pro': 'pro', 'premium': 'premium',
                     }
-                    plan = tier_map.get(str(raw_tier).lower()) if raw_tier else None
                     sub_status = str(sub.get('status', '')).lower()
+                    plan = None
+
+                    # Zero-trust check: only grant paid plan if Stripe confirms active/trialing subscription
+                    if stripe_sub_id and str(stripe_sub_id).startswith("sub_"):
+                        try:
+                            stripe_sub = stripe.Subscription.retrieve(stripe_sub_id)
+                            stripe_status = str(stripe_sub.get("status", "")).lower()
+                            if stripe_status in ('active', 'trialing'):
+                                sub_status = stripe_status
+                                if stripe_sub.get("metadata", {}).get("plan"):
+                                    plan = tier_map.get(str(stripe_sub.get("metadata", {}).get("plan")).lower())
+                                if not plan:
+                                    items = stripe_sub.get("items", {}).get("data", [])
+                                    if items:
+                                        price_obj = items[0].get("price", {})
+                                        price_id = price_obj.get("id")
+                                        amount = price_obj.get("unit_amount")
+                                        exact_amount_map = {9900: 'standard', 19900: 'pro', 29900: 'premium'}
+                                        plan = PRICE_TO_TIER.get(price_id) or exact_amount_map.get(int(amount) if amount is not None else None)
+                                if plan:
+                                    stripe_verified = True
+                        except Exception as e:
+                            print(f"  ⚠️ /api/init Stripe verify warning: {e}")
+
                     capabilities = {
                         'standard': {'product_limit': 50, 'shop_limit': 1, 'report_frequency': 'monthly', 'features': ['product_analysis', 'title_optimization', 'price_suggestions']},
                         'pro': {'product_limit': 500, 'shop_limit': 3, 'report_frequency': 'weekly', 'features': ['product_analysis', 'title_optimization', 'price_suggestions', 'content_generation', 'image_recommendations', 'cross_sell', 'reports', 'automated_actions', 'invoicing']},
                         'premium': {'product_limit': None, 'shop_limit': None, 'report_frequency': 'daily', 'features': ['product_analysis', 'title_optimization', 'price_suggestions', 'content_generation', 'image_recommendations', 'cross_sell', 'automated_actions', 'reports', 'predictions', 'invoicing', 'auto_stock', 'api_access']}
                     }
-                    if plan and sub_status in ('active', 'trialing'):
+                    if plan and stripe_verified and sub_status in ('active', 'trialing'):
                         subscription_data = {
                             'has_subscription': True,
                             'plan': plan,
@@ -1640,32 +1665,14 @@ async def fast_init(request: Request):
                             'started_at': sub.get('created_at'),
                             'capabilities': capabilities.get(plan, {})
                         }
-            # Fallback to user_profiles if no subscription row
+            # SECURITY: never grant paid access from user_profiles fallback alone
             if not subscription_data.get('has_subscription'):
-                if profile_data and profile_data.get('subscription_plan'):
-                    plan = profile_data['subscription_plan']
-                    sub_status = profile_data.get('subscription_status', 'inactive')
-                    # ONLY grant access if plan is a PAID tier AND status is active
-                    if plan and plan.lower() in ('standard', 'pro', 'premium') and sub_status in ('active', 'trialing'):
-                        capabilities = {
-                            'standard': {'product_limit': 50, 'shop_limit': 1, 'report_frequency': 'monthly', 'features': ['product_analysis', 'title_optimization', 'price_suggestions']},
-                            'pro': {'product_limit': 500, 'shop_limit': 3, 'report_frequency': 'weekly', 'features': ['product_analysis', 'title_optimization', 'price_suggestions', 'content_generation', 'image_recommendations', 'cross_sell', 'reports', 'automated_actions', 'invoicing']},
-                            'premium': {'product_limit': None, 'shop_limit': None, 'report_frequency': 'daily', 'features': ['product_analysis', 'title_optimization', 'price_suggestions', 'content_generation', 'image_recommendations', 'cross_sell', 'automated_actions', 'reports', 'predictions', 'invoicing', 'auto_stock', 'api_access']}
-                        }
-                        subscription_data = {
-                            'has_subscription': True,
-                            'plan': plan,
-                            'status': profile_data.get('subscription_status', 'active'),
-                            'started_at': profile_data.get('created_at'),
-                            'capabilities': capabilities.get(plan, {})
-                        }
-                    else:
-                        subscription_data = {
-                            'has_subscription': False,
-                            'plan': 'free',
-                            'status': 'inactive',
-                            'message': no_access_message
-                        }
+                subscription_data = {
+                    'has_subscription': False,
+                    'plan': 'free',
+                    'status': 'inactive',
+                    'message': no_access_message
+                }
         except Exception as e:
             print(f"  ⚠️ Subscription fetch error: {e}")
 
@@ -9837,6 +9844,8 @@ async def check_subscription_status(request: Request):
                 if stripe_subscription_id and not str(stripe_subscription_id).startswith("sub_"):
                     stripe_subscription_id = None
 
+                stripe_verified = False
+
                 # Strict sync: use ONLY this user's linked Stripe subscription ID.
                 # Do not scan by email/customer globally (can pick wrong historical subscription).
                 try:
@@ -9870,6 +9879,7 @@ async def check_subscription_status(request: Request):
 
                             if stripe_plan:
                                 raw_tier = stripe_plan
+                                stripe_verified = True
                                 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
                                 supabase.table("subscriptions").update({
                                     "stripe_customer_id": stripe_sub.get("customer") or stripe_customer_id,
@@ -9886,6 +9896,15 @@ async def check_subscription_status(request: Request):
                                 }).eq("id", user_id).execute()
                 except Exception as e:
                     print(f"Stripe strict sync warning: {e}")
+
+                if not stripe_verified:
+                    return {
+                        'success': True,
+                        'has_subscription': False,
+                        'plan': 'free',
+                        'status': 'inactive',
+                        'message': no_access_message
+                    }
                 
                 # Map numeric tiers to named plans
                 tier_map = {
@@ -9943,58 +9962,6 @@ async def check_subscription_status(request: Request):
                     'capabilities': capabilities.get(plan, {})
                 }
 
-            # Fallback: use user_profiles if no subscription row found yet (e.g., race condition)
-            try:
-                profile_resp = requests.get(
-                    f"{SUPABASE_URL}/rest/v1/user_profiles?id=eq.{user_id}",
-                    headers={
-                        'Authorization': f'Bearer {SUPABASE_SERVICE_KEY}',
-                        'apikey': SUPABASE_SERVICE_KEY,
-                        'Content-Type': 'application/json',
-                        'Range': '0-0',
-                        'Range-Unit': 'items'
-                    },
-                    timeout=5
-                ) if SUPABASE_URL and SUPABASE_SERVICE_KEY else None
-
-                if profile_resp and profile_resp.status_code == 200:
-                    profile_data = profile_resp.json()
-                    if isinstance(profile_data, list) and len(profile_data) > 0:
-                        profile = profile_data[0]
-                        plan = profile.get('subscription_tier') or profile.get('subscription_plan')
-                        sub_status = profile.get('subscription_status', 'inactive')
-                        
-                        # ONLY grant access if plan is a PAID tier AND status is active
-                        paid_plans = ('standard', 'pro', 'premium')
-                        if plan and plan.lower() in paid_plans and sub_status in ('active', 'trialing'):
-                            capabilities = {
-                                'standard': {
-                                    'product_limit': 50,
-                                    'features': ['product_analysis', 'title_optimization', 'price_suggestions']
-                                },
-                                'pro': {
-                                    'product_limit': 500,
-                                    'features': ['product_analysis', 'content_generation', 'cross_sell', 'reports']
-                                },
-                                'premium': {
-                                    'product_limit': None,
-                                    'features': ['product_analysis', 'content_generation', 'cross_sell', 'automated_actions', 'reports', 'predictions']
-                                }
-                            }
-                            started_at = profile.get('subscription_started_at') or profile.get('created_at')
-                            return {
-                                'success': True,
-                                'has_subscription': True,
-                                'plan': plan.lower(),
-                                'status': sub_status,
-                                'started_at': started_at,
-                                'capabilities': capabilities.get(plan.lower(), {})
-                            }
-                        else:
-                            print(f"ℹ️ Profile fallback: plan={plan}, status={sub_status} — not a paid active subscription")
-            except Exception as e:
-                print(f"Profile fallback error: {e}")
-            
             # Not found in database - return immediately (don't check Stripe, it's too slow)
             print(f"ℹ️ No active subscription found for user {user_id}")
             return {
