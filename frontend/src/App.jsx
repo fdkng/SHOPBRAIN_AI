@@ -468,9 +468,8 @@ export default function App() {
         return
       }
 
-      // Map UI plan to backend plan keys (Stripe price mapping)
-      const planMap = { standard: '99', pro: '199', premium: '299' }
-      const planKey = planMap[planId] || planId
+      // Plan IDs are already 'standard', 'pro', 'premium' — send as-is
+      const planKey = planId
 
       console.log('Checkout request:', { planKey, email: user.email, token: session.access_token.substring(0, 20) + '...' })
 

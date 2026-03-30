@@ -1912,13 +1912,17 @@ async def create_checkout(payload: dict, request: Request):
     if not STRIPE_SECRET_KEY:
         raise HTTPException(status_code=500, detail="Stripe not configured")
 
-    plan = payload.get("plan")
+    raw_plan = payload.get("plan")
     customer_email = payload.get("email")
     
-    print(f"📊 Plan: {plan}, Email: {customer_email}")
+    # Normalize plan key: accept both numeric ('99','199','299') and named ('standard','pro','premium')
+    _plan_normalize = {'99': 'standard', '199': 'pro', '299': 'premium'}
+    plan = _plan_normalize.get(str(raw_plan), raw_plan)
+    
+    print(f"📊 Plan: {plan} (raw: {raw_plan}), Email: {customer_email}")
     
     if plan not in STRIPE_PLANS:
-        raise HTTPException(status_code=400, detail="Invalid plan")
+        raise HTTPException(status_code=400, detail=f"Invalid plan: {raw_plan}")
 
     price_id = STRIPE_PLANS[plan]
 
@@ -2182,10 +2186,32 @@ async def stripe_webhook(request: Request):
                                 print(f"🛒 [WEBHOOK] Plan inferred from amount {amount}: {plan_tier}")
                                 break
                 
-                # Default to standard if still no plan found
+                # If plan_tier is still unknown, try one last fallback: retrieve the Stripe subscription price
                 if not plan_tier:
-                    plan_tier = "standard"
-                    print(f"⚠️  [WEBHOOK] Using default plan: {plan_tier}")
+                    try:
+                        stripe_sub_id = session.get("subscription")
+                        if stripe_sub_id:
+                            stripe_sub_obj = stripe.Subscription.retrieve(stripe_sub_id)
+                            items = stripe_sub_obj.get("items", {}).get("data", [])
+                            if items:
+                                pid = items[0].get("price", {}).get("id")
+                                amt = items[0].get("price", {}).get("unit_amount")
+                                plan_tier = PRICE_TO_TIER.get(pid) or tier_from_amount(amt)
+                                print(f"🔄 [WEBHOOK] Plan from Stripe subscription fallback: {plan_tier}")
+                    except Exception as e:
+                        print(f"⚠️  [WEBHOOK] Stripe subscription fallback failed: {e}")
+                
+                if not plan_tier:
+                    print(f"❌ [WEBHOOK] Could not determine plan tier! NOT saving subscription.")
+                    return {"received": True, "error": "Could not determine plan tier"}
+                
+                # Normalize plan_tier: map numeric values to named tiers
+                _tier_normalize = {
+                    '99': 'standard', '199': 'pro', '299': 'premium',
+                    'standard': 'standard', 'pro': 'pro', 'premium': 'premium',
+                }
+                plan_tier = _tier_normalize.get(str(plan_tier).lower(), plan_tier)
+                print(f"📋 [WEBHOOK] Normalized plan_tier: {plan_tier}")
                 
                 # Insert to subscriptions table
                 print(f"📝 [WEBHOOK] Upserting to subscriptions table...")
@@ -2210,6 +2236,10 @@ async def stripe_webhook(request: Request):
                     "updated_at": datetime.utcnow().isoformat()
                 }, on_conflict="id").execute()
                 print(f"✅ [WEBHOOK] User profile updated with plan: {plan_tier}")
+                
+                # Invalidate _init_cache so next /api/init call fetches fresh data
+                _init_cache.pop(user_id, None)
+                print(f"🧹 [WEBHOOK] Invalidated _init_cache for user {user_id}")
                 
                 print(f"🎉 [WEBHOOK] SUCCESS: Subscription saved: user_id={user_id}, plan={plan_tier}")
             except Exception as e:
@@ -10076,11 +10106,15 @@ async def create_checkout_session(req: CreateCheckoutSessionRequest, request: Re
     """Crée une session Stripe checkout"""
     try:
         user_id = get_user_id(request)
-        plan = req.plan
+        raw_plan = req.plan
         email = req.email
         
+        # Normalize plan key: accept both numeric ('99','199','299') and named ('standard','pro','premium')
+        _plan_normalize = {'99': 'standard', '199': 'pro', '299': 'premium'}
+        plan = _plan_normalize.get(str(raw_plan), raw_plan)
+        
         if plan not in STRIPE_PLANS:
-            raise HTTPException(status_code=400, detail="Plan invalide")
+            raise HTTPException(status_code=400, detail=f"Plan invalide: {raw_plan}")
         
         price_id = STRIPE_PLANS[plan]
         frontend_url = "https://fdkng.github.io/SHOPBRAIN_AI"
@@ -10180,9 +10214,18 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
                     if plan:
                         break
 
-            # Final fallback
+            # Normalize plan key (metadata might store '99', '199', '299')
+            _tier_normalize = {
+                '99': 'standard', '199': 'pro', '299': 'premium',
+                'standard': 'standard', 'pro': 'pro', 'premium': 'premium',
+            }
+            if plan:
+                plan = _tier_normalize.get(str(plan).lower(), plan)
+            
+            # Final fallback — only if truly no info available
             if not plan:
                 plan = "standard"
+                print(f"⚠️ verify-session: could not determine plan, defaulting to standard")
             
             # Cancel any other active subscriptions for this customer
             try:
@@ -10211,6 +10254,10 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
                 "subscription_status": subscription.status if subscription else "active",
                 "updated_at": datetime.utcnow().isoformat()
             }).execute()
+            
+            # Invalidate _init_cache so next /api/init call fetches fresh data
+            _init_cache.pop(user_id, None)
+            print(f"🧹 [VERIFY] Invalidated _init_cache for user {user_id}")
         
         return {
             "success": True,
