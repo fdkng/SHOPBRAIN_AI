@@ -1534,6 +1534,7 @@ async def fast_init(request: Request):
     start_time = time.time()
 
     try:
+        no_access_message = "No active plan found. Please purchase a plan to access your dashboard."
         supabase_client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
         # — 1. Profile —
@@ -1602,7 +1603,7 @@ async def fast_init(request: Request):
         # — 4. Subscription (fast path — DB only, no Stripe calls) —
         subscription_data = {"has_subscription": False, "plan": "free"}
         try:
-            filter_str = f'user_id=eq.{user_id}&status=in.(active,trialing,past_due,incomplete,incomplete_expired)'
+            filter_str = f'user_id=eq.{user_id}&status=in.(active,trialing)'
             headers = {
                 'Authorization': f'Bearer {SUPABASE_SERVICE_KEY}',
                 'apikey': SUPABASE_SERVICE_KEY,
@@ -1619,33 +1620,35 @@ async def fast_init(request: Request):
                 data = resp.json()
                 if isinstance(data, list) and len(data) > 0:
                     sub = data[0]
-                    raw_tier = sub.get('plan_tier') or 'standard'
+                    raw_tier = sub.get('plan_tier')
                     tier_map = {
                         '99': 'standard', '199': 'pro', '299': 'premium',
                         'standard': 'standard', 'pro': 'pro', 'premium': 'premium',
                         'gold': 'premium', 'silver': 'pro', 'bronze': 'standard',
                         'basic': 'standard', 'business': 'pro', 'enterprise': 'premium',
                     }
-                    plan = tier_map.get(str(raw_tier).lower(), 'standard')
+                    plan = tier_map.get(str(raw_tier).lower()) if raw_tier else None
+                    sub_status = str(sub.get('status', '')).lower()
                     capabilities = {
                         'standard': {'product_limit': 50, 'shop_limit': 1, 'report_frequency': 'monthly', 'features': ['product_analysis', 'title_optimization', 'price_suggestions']},
                         'pro': {'product_limit': 500, 'shop_limit': 3, 'report_frequency': 'weekly', 'features': ['product_analysis', 'title_optimization', 'price_suggestions', 'content_generation', 'image_recommendations', 'cross_sell', 'reports', 'automated_actions', 'invoicing']},
                         'premium': {'product_limit': None, 'shop_limit': None, 'report_frequency': 'daily', 'features': ['product_analysis', 'title_optimization', 'price_suggestions', 'content_generation', 'image_recommendations', 'cross_sell', 'automated_actions', 'reports', 'predictions', 'invoicing', 'auto_stock', 'api_access']}
                     }
-                    subscription_data = {
-                        'has_subscription': True,
-                        'plan': plan,
-                        'status': sub.get('status', 'active'),
-                        'started_at': sub.get('created_at'),
-                        'capabilities': capabilities.get(plan, {})
-                    }
+                    if plan and sub_status in ('active', 'trialing'):
+                        subscription_data = {
+                            'has_subscription': True,
+                            'plan': plan,
+                            'status': sub_status,
+                            'started_at': sub.get('created_at'),
+                            'capabilities': capabilities.get(plan, {})
+                        }
             # Fallback to user_profiles if no subscription row
             if not subscription_data.get('has_subscription'):
                 if profile_data and profile_data.get('subscription_plan'):
                     plan = profile_data['subscription_plan']
                     sub_status = profile_data.get('subscription_status', 'inactive')
                     # ONLY grant access if plan is a PAID tier AND status is active
-                    if plan and plan.lower() in ('standard', 'pro', 'premium') and sub_status in ('active', 'trialing', 'past_due'):
+                    if plan and plan.lower() in ('standard', 'pro', 'premium') and sub_status in ('active', 'trialing'):
                         capabilities = {
                             'standard': {'product_limit': 50, 'shop_limit': 1, 'report_frequency': 'monthly', 'features': ['product_analysis', 'title_optimization', 'price_suggestions']},
                             'pro': {'product_limit': 500, 'shop_limit': 3, 'report_frequency': 'weekly', 'features': ['product_analysis', 'title_optimization', 'price_suggestions', 'content_generation', 'image_recommendations', 'cross_sell', 'reports', 'automated_actions', 'invoicing']},
@@ -1657,6 +1660,13 @@ async def fast_init(request: Request):
                             'status': profile_data.get('subscription_status', 'active'),
                             'started_at': profile_data.get('created_at'),
                             'capabilities': capabilities.get(plan, {})
+                        }
+                    else:
+                        subscription_data = {
+                            'has_subscription': False,
+                            'plan': 'free',
+                            'status': 'inactive',
+                            'message': no_access_message
                         }
         except Exception as e:
             print(f"  ⚠️ Subscription fetch error: {e}")
@@ -9679,6 +9689,7 @@ async def check_subscription_status(request: Request):
     """✅ Vérifie le statut d'abonnement de l'utilisateur"""
     print(f"🔍 [v5b2f458] check_subscription_status called")
     try:
+        no_access_message = "No active plan found. Please purchase a plan to access your dashboard."
         try:
             user_id = get_user_id(request)
         except HTTPException as http_err:
@@ -9696,8 +9707,8 @@ async def check_subscription_status(request: Request):
             try:
                 # Use HTTP directly to avoid SDK parsing issues with UUID filters
                 import urllib.parse
-                # Inclure les statuts actifs ou en cours (trialing, past_due, incomplete)
-                filter_str = f'user_id=eq.{user_id}&status=in.(active,trialing,past_due,incomplete,incomplete_expired)'
+                # Inclure uniquement les abonnements valides d'accès dashboard
+                filter_str = f'user_id=eq.{user_id}&status=in.(active,trialing)'
                 
                 headers = {
                     'Authorization': f'Bearer {SUPABASE_SERVICE_KEY}',
@@ -9725,7 +9736,16 @@ async def check_subscription_status(request: Request):
                 subscription = None
             
             if subscription:
-                raw_tier = subscription.get('plan_tier') or 'standard'
+                raw_tier = subscription.get('plan_tier')
+                sub_status = str(subscription.get('status', '')).lower()
+                if sub_status not in ('active', 'trialing'):
+                    return {
+                        'success': True,
+                        'has_subscription': False,
+                        'plan': 'free',
+                        'status': sub_status or 'inactive',
+                        'message': no_access_message
+                    }
                 stripe_customer_id = subscription.get('stripe_customer_id')
                 stripe_subscription_id = subscription.get('stripe_subscription_id')
 
@@ -9747,7 +9767,7 @@ async def check_subscription_status(request: Request):
                                 subs = stripe.Subscription.list(customer=stripe_customer_id, status="all", limit=5)
                                 latest_sub = None
                                 for sub in subs.get("data", []):
-                                    if sub.get("status") in ["active", "trialing", "past_due", "incomplete"]:
+                                    if sub.get("status") in ["active", "trialing"]:
                                         if not latest_sub or sub.get("created", 0) > latest_sub.get("created", 0):
                                             latest_sub = sub
                                 if latest_sub:
@@ -9791,7 +9811,7 @@ async def check_subscription_status(request: Request):
                         subs = stripe.Subscription.list(customer=stripe_customer_id, status="all", limit=5)
                         latest_sub = None
                         for sub in subs.get("data", []):
-                            if sub.get("status") in ["active", "trialing", "past_due", "incomplete"]:
+                            if sub.get("status") in ["active", "trialing"]:
                                 if not latest_sub or sub.get("created", 0) > latest_sub.get("created", 0):
                                     latest_sub = sub
 
@@ -9844,7 +9864,7 @@ async def check_subscription_status(request: Request):
                             for customer in customers.data:
                                 subs = stripe.Subscription.list(customer=customer.get("id"), status="all", limit=5)
                                 for sub in subs.get("data", []):
-                                    if sub.get("status") in ["active", "trialing", "past_due", "incomplete"]:
+                                    if sub.get("status") in ["active", "trialing"]:
                                         if not newest_sub or sub.get("created", 0) > newest_sub.get("created", 0):
                                             newest_sub = sub
                                             newest_customer_id = customer.get("id")
@@ -9928,7 +9948,15 @@ async def check_subscription_status(request: Request):
                     'pro': 'pro',
                     'premium': 'premium'
                 }
-                plan = tier_map.get(str(raw_tier).lower(), 'standard')
+                plan = tier_map.get(str(raw_tier).lower()) if raw_tier else None
+                if not plan:
+                    return {
+                        'success': True,
+                        'has_subscription': False,
+                        'plan': 'free',
+                        'status': sub_status or 'inactive',
+                        'message': no_access_message
+                    }
                 
                 capabilities = {
                     'standard': {
@@ -9962,7 +9990,7 @@ async def check_subscription_status(request: Request):
                     'success': True,
                     'has_subscription': True,
                     'plan': plan,
-                    'status': subscription.get('status', 'active'),
+                    'status': sub_status,
                     'started_at': started_at,
                     'capabilities': capabilities.get(plan, {})
                 }
@@ -9990,7 +10018,7 @@ async def check_subscription_status(request: Request):
                         
                         # ONLY grant access if plan is a PAID tier AND status is active
                         paid_plans = ('standard', 'pro', 'premium')
-                        if plan and plan.lower() in paid_plans and sub_status in ('active', 'trialing', 'past_due'):
+                        if plan and plan.lower() in paid_plans and sub_status in ('active', 'trialing'):
                             capabilities = {
                                 'standard': {
                                     'product_limit': 50,
@@ -10024,7 +10052,9 @@ async def check_subscription_status(request: Request):
             return {
                 'success': True,
                 'has_subscription': False,
-                'plan': 'free'
+                'plan': 'free',
+                'status': 'inactive',
+                'message': no_access_message
             }
     
     except HTTPException:

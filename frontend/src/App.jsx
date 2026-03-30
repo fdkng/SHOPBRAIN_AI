@@ -263,6 +263,10 @@ export default function App() {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session || !session.user) {
         setHasSubscription(false)
+        setLandingStatusByKey((prev) => ({
+          ...prev,
+          dashboardNav: { type: 'warning', message: 'No active plan found. Please purchase a plan to access your dashboard.' }
+        }))
         return
       }
       const resp = await fetch('https://shopbrain-backend.onrender.com/api/subscription/status', {
@@ -276,15 +280,42 @@ export default function App() {
       })
       if (!resp.ok) {
         console.error('Subscription check failed:', resp.status, resp.statusText)
-        // Don't set false on server error — could be transient
+        // Payment status unclear => NO ACCESS (secure default)
+        setHasSubscription(false)
+        setLandingStatusByKey((prev) => ({
+          ...prev,
+          dashboardNav: { type: 'warning', message: 'No active plan found. Please purchase a plan to access your dashboard.' }
+        }))
         return
       }
       const data = await resp.json()
       console.log('Subscription check response:', data)
-      setHasSubscription(Boolean(data?.success && data?.has_subscription))
+      const hasSub = Boolean(data?.success && data?.has_subscription)
+      setHasSubscription(hasSub)
+      if (hasSub) {
+        setLandingStatusByKey((prev) => {
+          if (!prev?.dashboardNav) return prev
+          const next = { ...prev }
+          delete next.dashboardNav
+          return next
+        })
+      } else {
+        setLandingStatusByKey((prev) => ({
+          ...prev,
+          dashboardNav: {
+            type: 'warning',
+            message: data?.message || 'No active plan found. Please purchase a plan to access your dashboard.'
+          }
+        }))
+      }
     } catch (e) {
-      // On timeout/network error, don't set false — let polling retry
+      // Payment status unclear => NO ACCESS (secure default)
       console.error('Subscription check error:', e)
+      setHasSubscription(false)
+      setLandingStatusByKey((prev) => ({
+        ...prev,
+        dashboardNav: { type: 'warning', message: 'No active plan found. Please purchase a plan to access your dashboard.' }
+      }))
     } finally {
       clearTimeout(timeoutId)
       subscriptionCheckInProgressRef.current = false
