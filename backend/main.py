@@ -2212,6 +2212,62 @@ async def stripe_webhook(request: Request):
                 }
                 plan_tier = _tier_normalize.get(str(plan_tier).lower(), plan_tier)
                 print(f"📋 [WEBHOOK] Normalized plan_tier: {plan_tier}")
+
+                # Guard against out-of-order webhook deliveries:
+                # do not overwrite a newer active/trialing subscription with an older one.
+                should_persist = True
+                try:
+                    incoming_sub_id = session.get("subscription")
+                    incoming_sub_created = 0
+                    incoming_sub_status = str(subscription_status or "").lower()
+
+                    if incoming_sub_id:
+                        try:
+                            incoming_sub_obj = stripe.Subscription.retrieve(incoming_sub_id)
+                            incoming_sub_created = int(incoming_sub_obj.get("created", 0) or 0)
+                            incoming_sub_status = str(incoming_sub_obj.get("status") or incoming_sub_status).lower()
+                        except Exception as sub_fetch_err:
+                            print(f"⚠️  [WEBHOOK] Could not fetch incoming sub details: {sub_fetch_err}")
+
+                    existing_res = (
+                        supabase.table("subscriptions")
+                        .select("stripe_subscription_id,plan_tier,status")
+                        .eq("user_id", user_id)
+                        .order("updated_at", desc=True)
+                        .limit(1)
+                        .execute()
+                    )
+                    existing_row = existing_res.data[0] if existing_res.data else None
+
+                    if existing_row:
+                        existing_sub_id = existing_row.get("stripe_subscription_id")
+                        existing_status = str(existing_row.get("status") or "").lower()
+                        existing_sub_created = 0
+
+                        if existing_sub_id:
+                            try:
+                                existing_sub_obj = stripe.Subscription.retrieve(existing_sub_id)
+                                existing_sub_created = int(existing_sub_obj.get("created", 0) or 0)
+                                existing_status = str(existing_sub_obj.get("status") or existing_status).lower()
+                            except Exception as existing_fetch_err:
+                                print(f"⚠️  [WEBHOOK] Could not fetch existing sub details: {existing_fetch_err}")
+
+                        existing_is_valid = existing_status in ("active", "trialing")
+                        incoming_is_valid = incoming_sub_status in ("active", "trialing")
+
+                        if existing_sub_id and incoming_sub_id and existing_sub_id != incoming_sub_id:
+                            if existing_is_valid and (not incoming_is_valid or existing_sub_created > incoming_sub_created):
+                                should_persist = False
+                                print(
+                                    f"⏭️  [WEBHOOK] Ignoring stale event. Existing sub {existing_sub_id} "
+                                    f"(created={existing_sub_created}, status={existing_status}) is newer/valid than "
+                                    f"incoming {incoming_sub_id} (created={incoming_sub_created}, status={incoming_sub_status})."
+                                )
+                except Exception as guard_err:
+                    print(f"⚠️  [WEBHOOK] Freshness guard warning: {guard_err}")
+
+                if not should_persist:
+                    return {"received": True, "ignored": "stale_event"}
                 
                 # Insert to subscriptions table
                 print(f"📝 [WEBHOOK] Upserting to subscriptions table...")
@@ -10226,6 +10282,56 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
             if not plan:
                 plan = "standard"
                 print(f"⚠️ verify-session: could not determine plan, defaulting to standard")
+
+            # Guard against stale verify requests (e.g., reopening an old Stripe success URL)
+            should_persist = True
+            try:
+                incoming_sub_id = subscription.id if subscription else None
+                incoming_sub_created = int(subscription.get("created", 0) or 0) if subscription else 0
+                incoming_sub_status = str(subscription.status if subscription else "").lower()
+
+                existing_res = (
+                    supabase.table("subscriptions")
+                    .select("stripe_subscription_id,status")
+                    .eq("user_id", user_id)
+                    .order("updated_at", desc=True)
+                    .limit(1)
+                    .execute()
+                )
+                existing_row = existing_res.data[0] if existing_res.data else None
+
+                if existing_row:
+                    existing_sub_id = existing_row.get("stripe_subscription_id")
+                    existing_status = str(existing_row.get("status") or "").lower()
+                    existing_sub_created = 0
+
+                    if existing_sub_id:
+                        try:
+                            existing_sub_obj = stripe.Subscription.retrieve(existing_sub_id)
+                            existing_sub_created = int(existing_sub_obj.get("created", 0) or 0)
+                            existing_status = str(existing_sub_obj.get("status") or existing_status).lower()
+                        except Exception as existing_fetch_err:
+                            print(f"⚠️ verify-session: existing sub fetch warning: {existing_fetch_err}")
+
+                    existing_is_valid = existing_status in ("active", "trialing")
+                    incoming_is_valid = incoming_sub_status in ("active", "trialing")
+
+                    if existing_sub_id and incoming_sub_id and existing_sub_id != incoming_sub_id:
+                        if existing_is_valid and (not incoming_is_valid or existing_sub_created > incoming_sub_created):
+                            should_persist = False
+                            print(
+                                f"⏭️ verify-session: ignoring stale session for sub {incoming_sub_id}; "
+                                f"existing sub {existing_sub_id} is newer/valid."
+                            )
+            except Exception as guard_err:
+                print(f"⚠️ verify-session freshness guard warning: {guard_err}")
+
+            if not should_persist:
+                return {
+                    "success": True,
+                    "plan": plan,
+                    "message": "Session verify ignored (stale), keeping latest active plan"
+                }
             
             # Cancel any other active subscriptions for this customer
             try:
