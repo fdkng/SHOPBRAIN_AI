@@ -1366,6 +1366,59 @@ PRICE_TO_TIER = {
     "price_1SQg3CPSvADOSbOzHXSoDkGN": "premium",
 }
 
+
+def _normalize_stripe_subscription_id(value) -> str | None:
+    """Return a clean Stripe subscription id (sub_...) from mixed inputs."""
+    if not value:
+        return None
+
+    candidate = None
+
+    if isinstance(value, dict):
+        candidate = value.get("id") or value.get("subscription")
+    else:
+        try:
+            if hasattr(value, "get"):
+                candidate = value.get("id") or value.get("subscription")
+        except Exception:
+            candidate = None
+
+    if not candidate:
+        try:
+            if hasattr(value, "id"):
+                candidate = getattr(value, "id")
+        except Exception:
+            candidate = None
+
+    if not candidate:
+        candidate = value
+
+    text = str(candidate).strip()
+    if text.startswith("sub_"):
+        return text
+
+    if text.startswith("{") and text.endswith("}"):
+        try:
+            obj = json.loads(text)
+            return _normalize_stripe_subscription_id(obj)
+        except Exception:
+            pass
+
+    match = re.search(r"sub_[A-Za-z0-9]+", text)
+    return match.group(0) if match else None
+
+
+def _recover_subscription_id_from_session(session_id: str | None) -> str | None:
+    """Recover subscription id from checkout session when DB row is missing/corrupted."""
+    if not session_id:
+        return None
+    try:
+        stripe_session = stripe.checkout.Session.retrieve(session_id, expand=["subscription"])
+        return _normalize_stripe_subscription_id(stripe_session.get("subscription"))
+    except Exception as e:
+        print(f"⚠️ Stripe session recovery warning for {session_id}: {e}")
+        return None
+
 # Helper: get authenticated user from Authorization header or request body
 def get_user_id(request: Request) -> str:
     auth_header = request.headers.get("Authorization", "")
@@ -1621,7 +1674,9 @@ async def fast_init(request: Request):
                 if isinstance(data, list) and len(data) > 0:
                     sub = data[0]
                     raw_tier = sub.get('plan_tier')
-                    stripe_sub_id = sub.get('stripe_subscription_id')
+                    stripe_sub_id = _normalize_stripe_subscription_id(sub.get('stripe_subscription_id'))
+                    if not stripe_sub_id:
+                        stripe_sub_id = _recover_subscription_id_from_session(sub.get('stripe_session_id'))
                     stripe_verified = False
                     tier_map = {
                         '99': 'standard', '199': 'pro', '299': 'premium',
@@ -2217,7 +2272,7 @@ async def stripe_webhook(request: Request):
                 # do not overwrite a newer active/trialing subscription with an older one.
                 should_persist = True
                 try:
-                    incoming_sub_id = session.get("subscription")
+                    incoming_sub_id = _normalize_stripe_subscription_id(session.get("subscription"))
                     incoming_sub_created = 0
                     incoming_sub_status = str(subscription_status or "").lower()
 
@@ -2240,7 +2295,7 @@ async def stripe_webhook(request: Request):
                     existing_row = existing_res.data[0] if existing_res.data else None
 
                     if existing_row:
-                        existing_sub_id = existing_row.get("stripe_subscription_id")
+                        existing_sub_id = _normalize_stripe_subscription_id(existing_row.get("stripe_subscription_id"))
                         existing_status = str(existing_row.get("status") or "").lower()
                         existing_sub_created = 0
 
@@ -2275,7 +2330,7 @@ async def stripe_webhook(request: Request):
                     "user_id": user_id,
                     "email": session.get("customer_email"),
                     "stripe_session_id": session.get("id"),
-                    "stripe_subscription_id": session.get("subscription"),
+                    "stripe_subscription_id": _normalize_stripe_subscription_id(session.get("subscription")),
                     "stripe_customer_id": session.get("customer"),
                     "plan_tier": plan_tier,
                     "status": subscription_status,
@@ -9838,18 +9893,16 @@ async def check_subscription_status(request: Request):
                         'message': no_access_message
                     }
                 stripe_customer_id = subscription.get('stripe_customer_id')
-                stripe_subscription_id = subscription.get('stripe_subscription_id')
-
-                # Normalize invalid Stripe subscription IDs
-                if stripe_subscription_id and not str(stripe_subscription_id).startswith("sub_"):
-                    stripe_subscription_id = None
+                stripe_subscription_id = _normalize_stripe_subscription_id(subscription.get('stripe_subscription_id'))
+                if not stripe_subscription_id:
+                    stripe_subscription_id = _recover_subscription_id_from_session(subscription.get('stripe_session_id'))
 
                 stripe_verified = False
 
                 # Strict sync: use ONLY this user's linked Stripe subscription ID.
                 # Do not scan by email/customer globally (can pick wrong historical subscription).
                 try:
-                    stripe_sub_id = stripe_subscription_id or subscription.get('stripe_subscription_id')
+                    stripe_sub_id = stripe_subscription_id
                     if stripe_sub_id:
                         stripe_sub = stripe.Subscription.retrieve(stripe_sub_id)
                         stripe_status = str(stripe_sub.get("status", "")).lower()
