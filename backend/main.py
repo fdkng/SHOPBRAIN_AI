@@ -1624,8 +1624,6 @@ async def fast_init(request: Request):
                     tier_map = {
                         '99': 'standard', '199': 'pro', '299': 'premium',
                         'standard': 'standard', 'pro': 'pro', 'premium': 'premium',
-                        'gold': 'premium', 'silver': 'pro', 'bronze': 'standard',
-                        'basic': 'standard', 'business': 'pro', 'enterprise': 'premium',
                     }
                     plan = tier_map.get(str(raw_tier).lower()) if raw_tier else None
                     sub_status = str(sub.get('status', '')).lower()
@@ -1683,7 +1681,7 @@ async def fast_init(request: Request):
                 "connection": shopify_active,          # rétro-compat: active shop
                 "connections": shopify_connections,     # multi-shop list
                 "shop_count": len(shopify_connections),
-                "shop_limit": PLAN_LIMITS.get(subscription_data.get("plan", "standard"), PLAN_LIMITS["standard"]).get("shop_limit", 1),
+                "shop_limit": PLAN_LIMITS.get(subscription_data.get("plan", "free"), PLAN_LIMITS["free"]).get("shop_limit", 0),
             },
             "subscription": subscription_data,
             "elapsed_ms": elapsed,
@@ -2143,13 +2141,8 @@ async def stripe_webhook(request: Request):
                 def tier_from_amount(amount_cents: int):
                     if amount_cents is None:
                         return None
-                    if amount_cents >= 29900:
-                        return "premium"
-                    if amount_cents >= 19900:
-                        return "pro"
-                    if amount_cents >= 9900:
-                        return "standard"
-                    return None
+                    exact_amount_map = {9900: "standard", 19900: "pro", 29900: "premium"}
+                    return exact_amount_map.get(int(amount_cents))
 
                 # 1. Try from metadata (most reliable)
                 if session.get("metadata", {}).get("plan"):
@@ -3428,7 +3421,7 @@ def _get_shopify_connection(user_id: str, shop_domain: str | None = None):
 
 def _get_shop_limit(tier: str) -> int | None:
     """Return max shops allowed for tier (None = unlimited)."""
-    return PLAN_LIMITS.get(tier, PLAN_LIMITS["standard"]).get("shop_limit")
+    return PLAN_LIMITS.get(tier, PLAN_LIMITS["free"]).get("shop_limit")
 
 
 def _count_user_shops(user_id: str) -> int:
@@ -4526,7 +4519,7 @@ async def get_shopify_insights(
         "shop": shop_domain,
         "range": range,
         "tier": tier,
-        "plan_limits": PLAN_LIMITS.get(tier, PLAN_LIMITS["standard"]),
+        "plan_limits": PLAN_LIMITS.get(tier, PLAN_LIMITS["free"]),
         "benchmarks": {
             "median_orders": median_orders,
             "avg_views": round(avg_views, 2) if avg_views else 0,
@@ -8684,31 +8677,34 @@ def get_ai_engine():
 
 
 def get_user_tier(user_id: str) -> str:
-    """Resolve user's subscription tier from Supabase; default to standard."""
+    """Resolve user's subscription tier from Supabase; default to free."""
     tier_map = {
         'standard': 'standard', 'pro': 'pro', 'premium': 'premium',
-        'gold': 'premium', 'silver': 'pro', 'bronze': 'standard',
-        'basic': 'standard', 'business': 'pro', 'enterprise': 'premium',
         '99': 'standard', '199': 'pro', '299': 'premium',
     }
     try:
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
             supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-            sub_result = supabase.table("subscriptions").select("plan_tier,status,created_at").eq("user_id", user_id).in_("status", ["active", "trialing", "past_due", "incomplete"]).order("created_at", desc=True).limit(1).execute()
+            sub_result = supabase.table("subscriptions").select("plan_tier,status,created_at").eq("user_id", user_id).in_("status", ["active", "trialing"]).order("created_at", desc=True).limit(1).execute()
             if sub_result.data:
-                raw = (sub_result.data[0].get("plan_tier") or "standard").lower()
-                plan = tier_map.get(raw, "standard")
-                return plan
+                raw = (sub_result.data[0].get("plan_tier") or "").lower()
+                plan = tier_map.get(raw)
+                if plan:
+                    return plan
 
-            profile_result = supabase.table("user_profiles").select("subscription_plan,subscription_tier").eq("id", user_id).limit(1).execute()
+            profile_result = supabase.table("user_profiles").select("subscription_plan,subscription_tier,subscription_status").eq("id", user_id).limit(1).execute()
             if profile_result.data:
-                raw = (profile_result.data[0].get("subscription_plan") or profile_result.data[0].get("subscription_tier") or "standard").lower()
-                plan = tier_map.get(raw, "standard")
-                return plan
+                status = str(profile_result.data[0].get("subscription_status") or "").lower()
+                raw = (profile_result.data[0].get("subscription_plan") or profile_result.data[0].get("subscription_tier") or "").lower()
+                plan = tier_map.get(raw)
+                if plan and status in ("active", "trialing"):
+                    return plan
+
+            return "free"
     except Exception as e:
         print(f"Tier resolve warning: {e}")
 
-    return "standard"
+    return "free"
 
 
 # ──────────────── PLAN LIMITS & FEATURE GATES ────────────────
@@ -8720,16 +8716,18 @@ def get_user_tier(user_id: str) -> str:
 # Premium $299: + predictions (IA prédictive), auto_stock,
 #   unlimited products, unlimited shops, daily reports, api_access
 PLAN_LIMITS = {
+    "free":     {"product_limit": 0, "shop_limit": 0, "report_frequency": "none"},
     "standard": {"product_limit": 50, "shop_limit": 1, "report_frequency": "monthly"},
     "pro":      {"product_limit": 500, "shop_limit": 3, "report_frequency": "weekly"},
     "premium":  {"product_limit": None, "shop_limit": None, "report_frequency": "daily"},
 }
 
 def get_plan_product_limit(tier: str) -> int | None:
-    return PLAN_LIMITS.get(tier, PLAN_LIMITS["standard"]).get("product_limit")
+    return PLAN_LIMITS.get(tier, PLAN_LIMITS["free"]).get("product_limit")
 
 def ensure_feature_allowed(tier: str, feature: str):
     feature_map = {
+        "free": set(),
         "standard": {
             "product_analysis", "title_optimization", "price_suggestions",
             "stock_alerts", "reports",  # monthly report only (frequency enforced separately)
@@ -8748,7 +8746,7 @@ def ensure_feature_allowed(tier: str, feature: str):
             "invoicing", "auto_stock", "api_access",
         },
     }
-    allowed = feature_map.get(tier, feature_map["standard"])
+    allowed = feature_map.get(tier, set())
     if feature not in allowed:
         plan_needed = "Pro" if feature in feature_map["pro"] else "Premium"
         raise HTTPException(
@@ -9722,7 +9720,7 @@ async def generate_report_endpoint(req: GenerateReportRequest, request: Request)
         ensure_feature_allowed(tier, "reports")
 
         # Enforce report frequency per plan
-        allowed_freq = PLAN_LIMITS.get(tier, PLAN_LIMITS["standard"]).get("report_frequency", "monthly")
+        allowed_freq = PLAN_LIMITS.get(tier, PLAN_LIMITS["free"]).get("report_frequency", "none")
         freq_hierarchy = {"daily": 3, "weekly": 2, "monthly": 1}
         requested_level = freq_hierarchy.get(req.report_type, 1)
         allowed_level = freq_hierarchy.get(allowed_freq, 1)
@@ -9839,191 +9837,55 @@ async def check_subscription_status(request: Request):
                 if stripe_subscription_id and not str(stripe_subscription_id).startswith("sub_"):
                     stripe_subscription_id = None
 
-                # Try to resolve Stripe customer/subscription by email if IDs are missing
+                # Strict sync: use ONLY this user's linked Stripe subscription ID.
+                # Do not scan by email/customer globally (can pick wrong historical subscription).
                 try:
-                    if not stripe_customer_id or not stripe_subscription_id:
-                        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-                        profile_result = supabase.table("user_profiles").select("email").eq("id", user_id).execute()
-                        email = profile_result.data[0].get("email") if profile_result.data else None
+                    stripe_sub_id = stripe_subscription_id or subscription.get('stripe_subscription_id')
+                    if stripe_sub_id:
+                        stripe_sub = stripe.Subscription.retrieve(stripe_sub_id)
+                        stripe_status = str(stripe_sub.get("status", "")).lower()
+                        if stripe_status in ('active', 'trialing'):
+                            sub_status = stripe_status
 
-                        if email:
-                            customers = stripe.Customer.list(email=email, limit=1)
-                            if customers.data:
-                                stripe_customer_id = customers.data[0].get("id")
-                                subs = stripe.Subscription.list(customer=stripe_customer_id, status="all", limit=5)
-                                latest_sub = None
-                                for sub in subs.get("data", []):
-                                    if sub.get("status") in ["active", "trialing"]:
-                                        if not latest_sub or sub.get("created", 0) > latest_sub.get("created", 0):
-                                            latest_sub = sub
-                                if latest_sub:
-                                    stripe_subscription_id = latest_sub.get("id")
-                                    items = latest_sub.get("items", {}).get("data", [])
-                                    if items:
-                                        price_id = items[0].get("price", {}).get("id")
-                                        amount = items[0].get("price", {}).get("unit_amount")
+                            tier_map = {
+                                '99': 'standard',
+                                '199': 'pro',
+                                '299': 'premium',
+                                'standard': 'standard',
+                                'pro': 'pro',
+                                'premium': 'premium'
+                            }
 
-                                        def tier_from_amount(amount_cents: int | None):
-                                            if amount_cents is None:
-                                                return None
-                                            if amount_cents >= 29900:
-                                                return "premium"
-                                            if amount_cents >= 19900:
-                                                return "pro"
-                                            if amount_cents >= 9900:
-                                                return "standard"
-                                            return None
+                            stripe_plan = None
+                            if stripe_sub.get("metadata", {}).get("plan"):
+                                stripe_plan = tier_map.get(str(stripe_sub.get("metadata", {}).get("plan")).lower())
 
-                                        stripe_plan = PRICE_TO_TIER.get(price_id) or tier_from_amount(amount)
-                                        if stripe_plan:
-                                            raw_tier = stripe_plan
-                                    supabase.table("subscriptions").update({
-                                        "stripe_customer_id": stripe_customer_id,
-                                        "stripe_subscription_id": stripe_subscription_id,
-                                        "plan_tier": raw_tier,
-                                        "updated_at": datetime.utcnow().isoformat()
-                                    }).eq("id", subscription.get("id")).execute()
-                                    supabase.table("user_profiles").update({
-                                        "subscription_plan": raw_tier,
-                                        "subscription_tier": raw_tier,
-                                        "updated_at": datetime.utcnow().isoformat()
-                                    }).eq("id", user_id).execute()
-                except Exception as e:
-                    print(f"Stripe email sync warning: {e}")
+                            items = stripe_sub.get("items", {}).get("data", [])
+                            if not stripe_plan and items:
+                                price_obj = items[0].get("price", {})
+                                price_id = price_obj.get("id")
+                                amount = price_obj.get("unit_amount")
+                                exact_amount_map = {9900: 'standard', 19900: 'pro', 29900: 'premium'}
+                                stripe_plan = PRICE_TO_TIER.get(price_id) or exact_amount_map.get(int(amount) if amount is not None else None)
 
-                # Always try to sync latest plan from Stripe customer if available
-                try:
-                    if stripe_customer_id:
-                        subs = stripe.Subscription.list(customer=stripe_customer_id, status="all", limit=5)
-                        latest_sub = None
-                        for sub in subs.get("data", []):
-                            if sub.get("status") in ["active", "trialing"]:
-                                if not latest_sub or sub.get("created", 0) > latest_sub.get("created", 0):
-                                    latest_sub = sub
-
-                        if latest_sub:
-                            items = latest_sub.get("items", {}).get("data", [])
-                            price_id = items[0].get("price", {}).get("id") if items else None
-                            amount = items[0].get("price", {}).get("unit_amount") if items else None
-
-                            def tier_from_amount(amount_cents: int | None):
-                                if amount_cents is None:
-                                    return None
-                                if amount_cents >= 29900:
-                                    return "premium"
-                                if amount_cents >= 19900:
-                                    return "pro"
-                                if amount_cents >= 9900:
-                                    return "standard"
-                                return None
-
-                            stripe_plan = PRICE_TO_TIER.get(price_id) or tier_from_amount(amount)
                             if stripe_plan:
                                 raw_tier = stripe_plan
-                                stripe_subscription_id = latest_sub.get("id")
                                 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
                                 supabase.table("subscriptions").update({
-                                    "stripe_subscription_id": stripe_subscription_id,
+                                    "stripe_customer_id": stripe_sub.get("customer") or stripe_customer_id,
+                                    "stripe_subscription_id": stripe_sub_id,
                                     "plan_tier": raw_tier,
+                                    "status": sub_status,
                                     "updated_at": datetime.utcnow().isoformat()
                                 }).eq("id", subscription.get("id")).execute()
                                 supabase.table("user_profiles").update({
                                     "subscription_plan": raw_tier,
                                     "subscription_tier": raw_tier,
+                                    "subscription_status": sub_status,
                                     "updated_at": datetime.utcnow().isoformat()
                                 }).eq("id", user_id).execute()
                 except Exception as e:
-                    print(f"Stripe customer sync warning: {e}")
-
-                # If still missing or suspicious, try email-based lookup across customers
-                try:
-                    if SUPABASE_URL and SUPABASE_SERVICE_KEY:
-                        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-                        profile_result = supabase.table("user_profiles").select("email").eq("id", user_id).execute()
-                        email = profile_result.data[0].get("email") if profile_result.data else None
-
-                        if email:
-                            customers = stripe.Customer.list(email=email, limit=10)
-                            newest_sub = None
-                            newest_customer_id = None
-
-                            for customer in customers.data:
-                                subs = stripe.Subscription.list(customer=customer.get("id"), status="all", limit=5)
-                                for sub in subs.get("data", []):
-                                    if sub.get("status") in ["active", "trialing"]:
-                                        if not newest_sub or sub.get("created", 0) > newest_sub.get("created", 0):
-                                            newest_sub = sub
-                                            newest_customer_id = customer.get("id")
-
-                            if newest_sub:
-                                items = newest_sub.get("items", {}).get("data", [])
-                                price_id = items[0].get("price", {}).get("id") if items else None
-                                amount = items[0].get("price", {}).get("unit_amount") if items else None
-
-                                def tier_from_amount(amount_cents: int | None):
-                                    if amount_cents is None:
-                                        return None
-                                    if amount_cents >= 29900:
-                                        return "premium"
-                                    if amount_cents >= 19900:
-                                        return "pro"
-                                    if amount_cents >= 9900:
-                                        return "standard"
-                                    return None
-
-                                stripe_plan = PRICE_TO_TIER.get(price_id) or tier_from_amount(amount)
-                                if stripe_plan:
-                                    raw_tier = stripe_plan
-                                    supabase.table("subscriptions").update({
-                                        "stripe_customer_id": newest_customer_id,
-                                        "stripe_subscription_id": newest_sub.get("id"),
-                                        "plan_tier": raw_tier,
-                                        "updated_at": datetime.utcnow().isoformat()
-                                    }).eq("id", subscription.get("id")).execute()
-                                    supabase.table("user_profiles").update({
-                                        "subscription_plan": raw_tier,
-                                        "subscription_tier": raw_tier,
-                                        "updated_at": datetime.utcnow().isoformat()
-                                    }).eq("id", user_id).execute()
-                except Exception as e:
-                    print(f"Stripe email customer sync warning: {e}")
-
-                # Sync plan from Stripe if subscription id is available
-                try:
-                    stripe_sub_id = stripe_subscription_id or subscription.get('stripe_subscription_id')
-                    if stripe_sub_id:
-                        stripe_sub = stripe.Subscription.retrieve(stripe_sub_id)
-                        items = stripe_sub.get("items", {}).get("data", [])
-                        if items:
-                            price_id = items[0].get("price", {}).get("id")
-                            amount = items[0].get("price", {}).get("unit_amount")
-
-                            def tier_from_amount(amount_cents: int | None):
-                                if amount_cents is None:
-                                    return None
-                                if amount_cents >= 29900:
-                                    return "premium"
-                                if amount_cents >= 19900:
-                                    return "pro"
-                                if amount_cents >= 9900:
-                                    return "standard"
-                                return None
-
-                            stripe_plan = PRICE_TO_TIER.get(price_id) or tier_from_amount(amount)
-                            if stripe_plan and stripe_plan != raw_tier:
-                                raw_tier = stripe_plan
-                                supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-                                supabase.table("subscriptions").update({
-                                    "plan_tier": stripe_plan,
-                                    "updated_at": datetime.utcnow().isoformat()
-                                }).eq("id", subscription.get("id")).execute()
-                                supabase.table("user_profiles").update({
-                                    "subscription_plan": stripe_plan,
-                                    "subscription_tier": stripe_plan,
-                                    "updated_at": datetime.utcnow().isoformat()
-                                }).eq("id", user_id).execute()
-                except Exception as e:
-                    print(f"Stripe sync warning: {e}")
+                    print(f"Stripe strict sync warning: {e}")
                 
                 # Map numeric tiers to named plans
                 tier_map = {
@@ -10239,19 +10101,14 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
             supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
             
-            # Determine plan from the most reliable source: metadata -> price_id -> amount
+            # Determine plan from the most reliable source: metadata -> price_id -> exact amount
             plan = session.metadata.get("plan") if session.metadata else None
 
             def tier_from_amount(amount_cents: int | None):
                 if amount_cents is None:
                     return None
-                if amount_cents >= 29900:
-                    return "premium"
-                if amount_cents >= 19900:
-                    return "pro"
-                if amount_cents >= 9900:
-                    return "standard"
-                return None
+                exact_amount_map = {9900: "standard", 19900: "pro", 29900: "premium"}
+                return exact_amount_map.get(int(amount_cents))
 
             # Try subscription item price_id
             if not plan and subscription:
@@ -10278,10 +10135,12 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
             if plan:
                 plan = _tier_normalize.get(str(plan).lower(), plan)
             
-            # Final fallback — only if truly no info available
+            # Final fallback — do NOT assign a paid plan if unknown
             if not plan:
-                plan = "standard"
-                print(f"⚠️ verify-session: could not determine plan, defaulting to standard")
+                return {
+                    "success": False,
+                    "message": "Unable to determine purchased plan from Stripe session"
+                }
 
             # Guard against stale verify requests (e.g., reopening an old Stripe success URL)
             should_persist = True
