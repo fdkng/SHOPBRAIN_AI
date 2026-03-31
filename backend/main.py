@@ -2448,7 +2448,12 @@ async def stripe_webhook(request: Request):
                     except Exception as e:
                         print(f"⚠️  [WEBHOOK] Could not retrieve subscription for period fields: {e}")
 
-                paid_flag = str(session.get("payment_status", "")).lower() == "paid"
+                # "paid" means Stripe accepted the checkout — for subscriptions with a trial,
+                # payment_status is "no_payment_required" (not "paid"), so we must accept both.
+                # Also: if the Stripe subscription is active/trialing, the user has valid access.
+                payment_status_str = str(session.get("payment_status", "")).lower()
+                stripe_sub_status = str(stripe_sub_obj.get("status", "")).lower() if stripe_sub_obj else ""
+                paid_flag = payment_status_str in ("paid", "no_payment_required") or stripe_sub_status in ("active", "trialing")
                 supabase.table("subscriptions").upsert({
                     "user_id": user_id,
                     "email": session.get("customer_email"),
@@ -10257,16 +10262,9 @@ async def check_subscription_status(request: Request):
                 
                 started_at = subscription.get('created_at')
 
-                # Prefer Stripe subscription start date when available
-                try:
-                    stripe_sub_id = subscription.get('stripe_subscription_id')
-                    if stripe_sub_id:
-                        stripe_sub = stripe.Subscription.retrieve(stripe_sub_id)
-                        stripe_start = stripe_sub.get('current_period_start') or stripe_sub.get('start_date')
-                        if stripe_start:
-                            started_at = datetime.utcfromtimestamp(stripe_start).isoformat()
-                except Exception as e:
-                    print(f"Stripe started_at sync warning: {e}")
+                # Use start_date from DB (already synced from Stripe above) instead of a second Stripe API call
+                if subscription.get('start_date'):
+                    started_at = subscription.get('start_date')
 
                 return {
                     'success': True,
@@ -10342,7 +10340,10 @@ async def create_checkout_session(req: CreateCheckoutSessionRequest, request: Re
             "metadata": {
                 "user_id": user_id,
                 "plan": plan
-            }
+            },
+            "subscription_data": {
+                "metadata": {"user_id": user_id, "plan": plan},
+            },
         }
 
         if stripe_customer_id:
@@ -11974,6 +11975,9 @@ async def change_plan(payload: dict, request: Request):
                     }
                 ],
                 "metadata": {"user_id": user_id, "plan": new_plan},
+                "subscription_data": {
+                    "metadata": {"user_id": user_id, "plan": new_plan},
+                },
                 "success_url": f"https://shopbrain-ai.onrender.com/#dashboard?success=true&session_id={{CHECKOUT_SESSION_ID}}",
                 "cancel_url": f"https://shopbrain-ai.onrender.com/#dashboard",
             }
