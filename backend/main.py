@@ -1693,106 +1693,103 @@ async def fast_init(request: Request):
         except Exception as e:
             print(f"  ⚠️ Shopify connection fetch error: {e}")
 
-        # — 4. Subscription (fast path — DB only, no Stripe calls) —
-        subscription_data = {"has_subscription": False, "plan": "free"}
+        # — 4. Subscription — DB is the source of truth (written by Stripe webhooks).
+        #   Stripe API call is ONLY used as background auto-heal, NEVER blocks access.
+        subscription_data = {"has_subscription": False, "plan": "free", "paid": False, "status": "inactive"}
         try:
-            filter_str = f'user_id=eq.{user_id}&status=in.(active,trialing)'
-            headers = {
-                'Authorization': f'Bearer {SUPABASE_SERVICE_KEY}',
-                'apikey': SUPABASE_SERVICE_KEY,
-                'Content-Type': 'application/json',
-                'Range': '0-0',
-                'Range-Unit': 'items'
+            tier_map = {
+                '99': 'standard', '199': 'pro', '299': 'premium',
+                'standard': 'standard', 'pro': 'pro', 'premium': 'premium',
             }
-            resp = requests.get(
-                f'{SUPABASE_URL}/rest/v1/subscriptions?{filter_str}&order=created_at.desc',
-                headers=headers,
-                timeout=5
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                if isinstance(data, list) and len(data) > 0:
-                    sub = data[0]
-                    raw_tier = sub.get('plan_tier')
-                    stripe_sub_id = _normalize_stripe_subscription_id(sub.get('stripe_subscription_id'))
-                    if not stripe_sub_id:
-                        stripe_sub_id = _recover_subscription_id_from_session(sub.get('stripe_session_id'))
-                    stripe_verified = False
-                    paid_flag = bool(sub.get('paid')) if sub.get('paid') is not None else False
-                    tier_map = {
-                        '99': 'standard', '199': 'pro', '299': 'premium',
-                        'standard': 'standard', 'pro': 'pro', 'premium': 'premium',
-                    }
-                    sub_status = str(sub.get('status', '')).lower()
-                    plan = None
+            capabilities = {
+                'standard': {'product_limit': 50, 'shop_limit': 1, 'report_frequency': 'monthly', 'features': ['product_analysis', 'title_optimization', 'price_suggestions']},
+                'pro': {'product_limit': 500, 'shop_limit': 3, 'report_frequency': 'weekly', 'features': ['product_analysis', 'title_optimization', 'price_suggestions', 'content_generation', 'image_recommendations', 'cross_sell', 'reports', 'automated_actions', 'invoicing']},
+                'premium': {'product_limit': None, 'shop_limit': None, 'report_frequency': 'daily', 'features': ['product_analysis', 'title_optimization', 'price_suggestions', 'content_generation', 'image_recommendations', 'cross_sell', 'automated_actions', 'reports', 'predictions', 'invoicing', 'auto_stock', 'api_access']}
+            }
 
-                    # Zero-trust check: only grant paid plan if Stripe confirms active/trialing subscription
+            # Step 1: Read from DB
+            sub_row = None
+            try:
+                sub_result = supabase_client.table("subscriptions").select("*").eq("user_id", user_id).in_("status", ["active", "trialing"]).order("updated_at", desc=True).limit(1).execute()
+                if sub_result.data:
+                    sub_row = sub_result.data[0]
+            except Exception as db_err:
+                print(f"  ⚠️ [INIT-SUB] DB query error: {db_err}")
+
+            if sub_row:
+                raw_tier = sub_row.get('plan_tier')
+                sub_status = str(sub_row.get('status', '')).lower()
+                paid_flag = bool(sub_row.get('paid')) if sub_row.get('paid') is not None else False
+                plan = tier_map.get(str(raw_tier).lower()) if raw_tier else None
+
+                print(f"  📋 [INIT-SUB] DB row found: plan_tier={raw_tier}, status={sub_status}, paid={paid_flag}, plan_resolved={plan}")
+
+                # Step 2: DECISION — if DB says paid=true + valid plan + active status → GRANT ACCESS
+                if paid_flag and plan and sub_status in ('active', 'trialing'):
+                    print(f"  ✅ [INIT-SUB] ACCESS GRANTED from DB: paid={paid_flag}, plan={plan}, status={sub_status}")
+                    subscription_data = {
+                        'has_subscription': True,
+                        'plan': plan,
+                        'paid': True,
+                        'status': sub_status,
+                        'started_at': sub_row.get('start_date') or sub_row.get('created_at'),
+                        'capabilities': capabilities.get(plan, {})
+                    }
+                else:
+                    # Step 3: paid is False/NULL in DB — try Stripe auto-heal (best-effort, NOT blocking)
+                    print(f"  🔄 [INIT-SUB] DB paid={paid_flag}, attempting Stripe auto-heal...")
+                    healed = False
+                    stripe_sub_id = _normalize_stripe_subscription_id(sub_row.get('stripe_subscription_id'))
+                    if not stripe_sub_id:
+                        stripe_sub_id = _recover_subscription_id_from_session(sub_row.get('stripe_session_id'))
+
                     if stripe_sub_id and str(stripe_sub_id).startswith("sub_"):
                         try:
                             stripe_sub = stripe.Subscription.retrieve(stripe_sub_id)
                             stripe_status = str(stripe_sub.get("status", "")).lower()
                             if stripe_status in ('active', 'trialing'):
-                                sub_status = stripe_status
-                                if stripe_sub.get("metadata", {}).get("plan"):
-                                    plan = tier_map.get(str(stripe_sub.get("metadata", {}).get("plan")).lower())
-                                if not plan:
-                                    items = stripe_sub.get("items", {}).get("data", [])
-                                    if items:
-                                        price_obj = items[0].get("price", {})
-                                        price_id = price_obj.get("id")
-                                        amount = price_obj.get("unit_amount")
-                                        exact_amount_map = {9900: 'standard', 19900: 'pro', 29900: 'premium'}
-                                        plan = PRICE_TO_TIER.get(price_id) or exact_amount_map.get(int(amount) if amount is not None else None)
-                                if plan:
-                                    stripe_verified = True
-                                    paid_flag = True
+                                # Resolve plan from Stripe
+                                healed_plan = _resolve_plan_from_stripe_subscription(stripe_sub)
+                                if healed_plan:
+                                    plan = healed_plan
+                                    sub_status = stripe_status
+                                    # Update DB so next call is instant
                                     try:
                                         supabase_client.table("subscriptions").update({
-                                            "plan_tier": plan,
-                                            "plan_id": plan,
-                                            "paid": True,
-                                            "status": sub_status,
+                                            "plan_tier": plan, "plan_id": plan,
+                                            "paid": True, "status": sub_status,
                                             "start_date": _stripe_ts_to_iso(stripe_sub.get("current_period_start") or stripe_sub.get("start_date")),
                                             "end_date": _stripe_ts_to_iso(stripe_sub.get("current_period_end")),
                                             "updated_at": datetime.utcnow().isoformat()
-                                        }).eq("id", sub.get("id")).execute()
-                                    except Exception as sync_err:
-                                        print(f"  ⚠️ /api/init paid sync warning: {sync_err}")
-                        except Exception as e:
-                            print(f"  ⚠️ /api/init Stripe verify warning: {e}")
+                                        }).eq("id", sub_row.get("id")).execute()
+                                        print(f"  ✅ [INIT-SUB] Auto-healed DB: paid=true, plan={plan}")
+                                    except Exception as heal_err:
+                                        print(f"  ⚠️ [INIT-SUB] Auto-heal DB write warning: {heal_err}")
+                                    healed = True
+                                    subscription_data = {
+                                        'has_subscription': True,
+                                        'plan': plan,
+                                        'paid': True,
+                                        'status': sub_status,
+                                        'started_at': sub_row.get('start_date') or sub_row.get('created_at'),
+                                        'capabilities': capabilities.get(plan, {})
+                                    }
+                        except Exception as stripe_err:
+                            print(f"  ⚠️ [INIT-SUB] Stripe auto-heal failed (non-blocking): {stripe_err}")
 
-                    capabilities = {
-                        'standard': {'product_limit': 50, 'shop_limit': 1, 'report_frequency': 'monthly', 'features': ['product_analysis', 'title_optimization', 'price_suggestions']},
-                        'pro': {'product_limit': 500, 'shop_limit': 3, 'report_frequency': 'weekly', 'features': ['product_analysis', 'title_optimization', 'price_suggestions', 'content_generation', 'image_recommendations', 'cross_sell', 'reports', 'automated_actions', 'invoicing']},
-                        'premium': {'product_limit': None, 'shop_limit': None, 'report_frequency': 'daily', 'features': ['product_analysis', 'title_optimization', 'price_suggestions', 'content_generation', 'image_recommendations', 'cross_sell', 'automated_actions', 'reports', 'predictions', 'invoicing', 'auto_stock', 'api_access']}
-                    }
-                    if plan and stripe_verified and paid_flag and sub_status in ('active', 'trialing'):
+                    if not healed:
+                        print(f"  ❌ [INIT-SUB] ACCESS DENIED: paid={paid_flag}, plan={plan}, stripe_sub_id={stripe_sub_id}")
                         subscription_data = {
-                            'has_subscription': True,
-                            'plan': plan,
-                            'paid': True,
-                            'status': sub_status,
-                            'started_at': sub.get('created_at'),
-                            'capabilities': capabilities.get(plan, {})
-                        }
-                    elif plan and stripe_verified and not paid_flag:
-                        subscription_data = {
-                            'has_subscription': False,
-                            'plan': 'free',
-                            'paid': False,
+                            'has_subscription': False, 'plan': 'free', 'paid': False,
                             'status': sub_status or 'inactive',
-                            'message': 'Payment not validated yet for this account.',
-                            'workflow_warning': 'Awaiting invoice.payment_succeeded or missing payment linkage in DB.'
+                            'message': 'Payment not yet validated. If you just paid, please wait a few seconds and refresh.',
                         }
-            # SECURITY: never grant paid access from user_profiles fallback alone
-            if not subscription_data.get('has_subscription'):
+            else:
+                print(f"  ❌ [INIT-SUB] No active subscription row found in DB for user {user_id}")
                 subscription_data = {
-                    'has_subscription': False,
-                    'plan': 'free',
-                    'paid': False,
+                    'has_subscription': False, 'plan': 'free', 'paid': False,
                     'status': 'inactive',
                     'message': no_access_message,
-                    'workflow_warning': 'No linked paid subscription found for this user_id. Verify Stripe webhooks and DB account linkage.'
                 }
         except Exception as e:
             print(f"  ⚠️ Subscription fetch error: {e}")
@@ -2454,6 +2451,11 @@ async def stripe_webhook(request: Request):
                 payment_status_str = str(session.get("payment_status", "")).lower()
                 stripe_sub_status = str(stripe_sub_obj.get("status", "")).lower() if stripe_sub_obj else ""
                 paid_flag = payment_status_str in ("paid", "no_payment_required") or stripe_sub_status in ("active", "trialing")
+
+                print(f"💾 [WEBHOOK] WRITING TO DB: user_id={user_id}, plan_tier={plan_tier}, paid={paid_flag}, "
+                      f"status={subscription_status}, payment_status={payment_status_str}, "
+                      f"stripe_sub_status={stripe_sub_status}, stripe_sub_id={normalized_sub_id}")
+
                 supabase.table("subscriptions").upsert({
                     "user_id": user_id,
                     "email": session.get("customer_email"),
@@ -10096,188 +10098,104 @@ async def check_subscription_status(request: Request):
         print(f"🔍 User ID extracted: {user_id}")
         
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
-            # Check in database first (from webhook)
+            # ── DB-FIRST APPROACH: DB is the source of truth (set by webhooks).
+            #    Stripe API call is ONLY for auto-heal, NEVER blocks access.
+            tier_map = {
+                '99': 'standard', '199': 'pro', '299': 'premium',
+                'standard': 'standard', 'pro': 'pro', 'premium': 'premium',
+            }
+            capabilities = {
+                'standard': {'product_limit': 50, 'features': ['product_analysis', 'title_optimization', 'price_suggestions']},
+                'pro': {'product_limit': 500, 'features': ['product_analysis', 'content_generation', 'cross_sell', 'reports', 'automated_actions', 'invoicing']},
+                'premium': {'product_limit': None, 'features': ['product_analysis', 'content_generation', 'cross_sell', 'automated_actions', 'reports', 'predictions', 'invoicing']},
+            }
+
+            # Step 1: Read from DB
             subscription = None
             try:
-                # Use HTTP directly to avoid SDK parsing issues with UUID filters
-                import urllib.parse
-                # Inclure uniquement les abonnements valides d'accès dashboard
-                filter_str = f'user_id=eq.{user_id}&status=in.(active,trialing)'
-                
-                headers = {
-                    'Authorization': f'Bearer {SUPABASE_SERVICE_KEY}',
-                    'apikey': SUPABASE_SERVICE_KEY,
-                    'Content-Type': 'application/json',
-                    'Range': '0-0',  # Limit to first row
-                    'Range-Unit': 'items'
-                }
-                
-                resp = requests.get(
-                    f'{SUPABASE_URL}/rest/v1/subscriptions?{filter_str}&order=created_at.desc',
-                    headers=headers,
-                    timeout=5
-                )
-                
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if isinstance(data, list) and len(data) > 0:
-                        subscription = data[0]
-                        print(f"✅ Found subscription via HTTP query: {subscription.get('id')}")
-                else:
-                    print(f"HTTP query error: {resp.status_code} - {resp.text}")
+                supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+                sub_result = supabase.table("subscriptions").select("*").eq("user_id", user_id).in_("status", ["active", "trialing"]).order("updated_at", desc=True).limit(1).execute()
+                if sub_result.data:
+                    subscription = sub_result.data[0]
+                    print(f"  📋 [STATUS] DB row: id={subscription.get('id')}, plan_tier={subscription.get('plan_tier')}, paid={subscription.get('paid')}, status={subscription.get('status')}")
             except Exception as e:
-                print(f"Query error (HTTP): {e}")
-                subscription = None
-            
+                print(f"  ⚠️ [STATUS] DB query error: {e}")
+
             if subscription:
                 raw_tier = subscription.get('plan_tier')
                 sub_status = str(subscription.get('status', '')).lower()
-                if sub_status not in ('active', 'trialing'):
+                paid_flag = bool(subscription.get('paid')) if subscription.get('paid') is not None else False
+                plan = tier_map.get(str(raw_tier).lower()) if raw_tier else None
+
+                # Step 2: If DB says paid=true + valid plan → GRANT ACCESS
+                if paid_flag and plan and sub_status in ('active', 'trialing'):
+                    print(f"  ✅ [STATUS] ACCESS GRANTED from DB: paid={paid_flag}, plan={plan}, status={sub_status}")
                     return {
                         'success': True,
-                        'has_subscription': False,
-                        'plan': 'free',
-                        'status': sub_status or 'inactive',
-                        'message': no_access_message
+                        'has_subscription': True,
+                        'plan': plan,
+                        'paid': True,
+                        'status': sub_status,
+                        'started_at': subscription.get('start_date') or subscription.get('created_at'),
+                        'capabilities': capabilities.get(plan, {}),
                     }
-                stripe_customer_id = subscription.get('stripe_customer_id')
-                stripe_subscription_id = _normalize_stripe_subscription_id(subscription.get('stripe_subscription_id'))
-                if not stripe_subscription_id:
-                    stripe_subscription_id = _recover_subscription_id_from_session(subscription.get('stripe_session_id'))
-                paid_flag = bool(subscription.get('paid')) if subscription.get('paid') is not None else False
 
-                stripe_verified = False
+                # Step 3: paid is False/NULL — try Stripe auto-heal (best-effort)
+                print(f"  🔄 [STATUS] DB paid={paid_flag}, attempting Stripe auto-heal...")
+                stripe_sub_id = _normalize_stripe_subscription_id(subscription.get('stripe_subscription_id'))
+                if not stripe_sub_id:
+                    stripe_sub_id = _recover_subscription_id_from_session(subscription.get('stripe_session_id'))
 
-                # Strict sync: use ONLY this user's linked Stripe subscription ID.
-                # Do not scan by email/customer globally (can pick wrong historical subscription).
-                try:
-                    stripe_sub_id = stripe_subscription_id
-                    if stripe_sub_id:
+                if stripe_sub_id and str(stripe_sub_id).startswith("sub_"):
+                    try:
                         stripe_sub = stripe.Subscription.retrieve(stripe_sub_id)
                         stripe_status = str(stripe_sub.get("status", "")).lower()
                         if stripe_status in ('active', 'trialing'):
-                            sub_status = stripe_status
+                            healed_plan = _resolve_plan_from_stripe_subscription(stripe_sub)
+                            if healed_plan:
+                                try:
+                                    supabase.table("subscriptions").update({
+                                        "plan_tier": healed_plan, "plan_id": healed_plan,
+                                        "paid": True, "status": stripe_status,
+                                        "stripe_customer_id": stripe_sub.get("customer") or subscription.get("stripe_customer_id"),
+                                        "stripe_subscription_id": stripe_sub_id,
+                                        "start_date": _stripe_ts_to_iso(stripe_sub.get("current_period_start") or stripe_sub.get("start_date")),
+                                        "end_date": _stripe_ts_to_iso(stripe_sub.get("current_period_end")),
+                                        "updated_at": datetime.utcnow().isoformat(),
+                                    }).eq("id", subscription.get("id")).execute()
+                                    supabase.table("user_profiles").update({
+                                        "subscription_plan": healed_plan, "subscription_tier": healed_plan,
+                                        "subscription_status": stripe_status,
+                                        "updated_at": datetime.utcnow().isoformat(),
+                                    }).eq("id", user_id).execute()
+                                    print(f"  ✅ [STATUS] Auto-healed: paid=true, plan={healed_plan}")
+                                except Exception as heal_err:
+                                    print(f"  ⚠️ [STATUS] Auto-heal DB write warning: {heal_err}")
+                                return {
+                                    'success': True,
+                                    'has_subscription': True,
+                                    'plan': healed_plan,
+                                    'paid': True,
+                                    'status': stripe_status,
+                                    'started_at': subscription.get('start_date') or subscription.get('created_at'),
+                                    'capabilities': capabilities.get(healed_plan, {}),
+                                }
+                    except Exception as stripe_err:
+                        print(f"  ⚠️ [STATUS] Stripe auto-heal failed (non-blocking): {stripe_err}")
 
-                            tier_map = {
-                                '99': 'standard',
-                                '199': 'pro',
-                                '299': 'premium',
-                                'standard': 'standard',
-                                'pro': 'pro',
-                                'premium': 'premium'
-                            }
-
-                            stripe_plan = None
-                            if stripe_sub.get("metadata", {}).get("plan"):
-                                stripe_plan = tier_map.get(str(stripe_sub.get("metadata", {}).get("plan")).lower())
-
-                            items = stripe_sub.get("items", {}).get("data", [])
-                            if not stripe_plan and items:
-                                price_obj = items[0].get("price", {})
-                                price_id = price_obj.get("id")
-                                amount = price_obj.get("unit_amount")
-                                exact_amount_map = {9900: 'standard', 19900: 'pro', 29900: 'premium'}
-                                stripe_plan = PRICE_TO_TIER.get(price_id) or exact_amount_map.get(int(amount) if amount is not None else None)
-
-                            if stripe_plan:
-                                raw_tier = stripe_plan
-                                stripe_verified = True
-                                supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-                                supabase.table("subscriptions").update({
-                                    "stripe_customer_id": stripe_sub.get("customer") or stripe_customer_id,
-                                    "stripe_subscription_id": stripe_sub_id,
-                                    "plan_tier": raw_tier,
-                                    "plan_id": raw_tier,
-                                    "paid": True,
-                                    "status": sub_status,
-                                    "start_date": _stripe_ts_to_iso(stripe_sub.get("current_period_start") or stripe_sub.get("start_date")),
-                                    "end_date": _stripe_ts_to_iso(stripe_sub.get("current_period_end")),
-                                    "updated_at": datetime.utcnow().isoformat()
-                                }).eq("id", subscription.get("id")).execute()
-                                supabase.table("user_profiles").update({
-                                    "subscription_plan": raw_tier,
-                                    "subscription_tier": raw_tier,
-                                    "subscription_status": sub_status,
-                                    "updated_at": datetime.utcnow().isoformat()
-                                }).eq("id", user_id).execute()
-                                paid_flag = True
-                except Exception as e:
-                    print(f"Stripe strict sync warning: {e}")
-
-                if not stripe_verified:
-                    return {
-                        'success': True,
-                        'has_subscription': False,
-                        'plan': 'free',
-                        'paid': False,
-                        'status': 'inactive',
-                        'message': no_access_message,
-                        'workflow_warning': 'Payment verification failed: Stripe subscription is not linked to this account.'
-                    }
-
-                if not paid_flag:
-                    return {
-                        'success': True,
-                        'has_subscription': False,
-                        'plan': 'free',
-                        'paid': False,
-                        'status': sub_status or 'inactive',
-                        'message': 'Payment not validated yet for this account.',
-                        'workflow_warning': 'Awaiting successful invoice.payment_succeeded event or missing DB payment flag.'
-                    }
-                
-                # Map numeric tiers to named plans
-                tier_map = {
-                    '99': 'standard',
-                    '199': 'pro',
-                    '299': 'premium',
-                    'standard': 'standard',
-                    'pro': 'pro',
-                    'premium': 'premium'
-                }
-                plan = tier_map.get(str(raw_tier).lower()) if raw_tier else None
-                if not plan:
-                    return {
-                        'success': True,
-                        'has_subscription': False,
-                        'plan': 'free',
-                        'status': sub_status or 'inactive',
-                        'message': no_access_message
-                    }
-                
-                capabilities = {
-                    'standard': {
-                        'product_limit': 50,
-                        'features': ['product_analysis', 'title_optimization', 'price_suggestions']
-                    },
-                    'pro': {
-                        'product_limit': 500,
-                        'features': ['product_analysis', 'content_generation', 'cross_sell', 'reports', 'automated_actions', 'invoicing']
-                    },
-                    'premium': {
-                        'product_limit': None,
-                        'features': ['product_analysis', 'content_generation', 'cross_sell', 'automated_actions', 'reports', 'predictions', 'invoicing']
-                    }
-                }
-                
-                started_at = subscription.get('created_at')
-
-                # Use start_date from DB (already synced from Stripe above) instead of a second Stripe API call
-                if subscription.get('start_date'):
-                    started_at = subscription.get('start_date')
-
+                # Auto-heal failed or no stripe_sub_id → deny
+                print(f"  ❌ [STATUS] ACCESS DENIED: paid={paid_flag}, plan={plan}, stripe_sub_id={stripe_sub_id}")
                 return {
                     'success': True,
-                    'has_subscription': True,
-                    'plan': plan,
-                    'paid': True,
-                    'status': sub_status,
-                    'started_at': started_at,
-                    'capabilities': capabilities.get(plan, {})
+                    'has_subscription': False,
+                    'plan': 'free',
+                    'paid': False,
+                    'status': sub_status or 'inactive',
+                    'message': 'Payment not yet validated. If you just paid, please wait a few seconds and refresh.',
                 }
 
-            # Not found in database - return immediately (don't check Stripe, it's too slow)
-            print(f"ℹ️ No active subscription found for user {user_id}")
+            # No row at all
+            print(f"  ❌ [STATUS] No active subscription row in DB for user {user_id}")
             return {
                 'success': True,
                 'has_subscription': False,
@@ -10285,7 +10203,6 @@ async def check_subscription_status(request: Request):
                 'paid': False,
                 'status': 'inactive',
                 'message': no_access_message,
-                'workflow_warning': 'No linked paid subscription found for this user_id. Verify Stripe webhooks and DB account linkage.'
             }
     
     except HTTPException:
