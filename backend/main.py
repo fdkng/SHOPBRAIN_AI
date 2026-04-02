@@ -2251,8 +2251,18 @@ async def stripe_webhook(request: Request):
             print(f"❌ [WEBHOOK] Invalid JSON: {e}")
             return {"received": True, "warning": "invalid_json"}
 
-    event_type = event.get("type", "unknown")
-    obj = event.get("data", {}).get("object", {})
+    try:
+        if isinstance(event, dict):
+            event_type = event.get("type", "unknown")
+            event_data = event.get("data", {})
+            obj = event_data.get("object", {}) if hasattr(event_data, "get") else {}
+        else:
+            event_type = getattr(event, "type", "unknown")
+            event_data = getattr(event, "data", {}) or {}
+            obj = event_data.get("object", {}) if hasattr(event_data, "get") else {}
+    except Exception as e:
+        print(f"❌ [WEBHOOK] Failed to parse event envelope: {e}")
+        return {"received": True, "warning": "event_envelope_parse_error"}
     print(f"📊 [WEBHOOK] Event type: {event_type}")
 
     def _webhook_resolve_user_id(supabase_client, stripe_subscription_id=None, stripe_customer_id=None, email=None):
