@@ -2242,14 +2242,14 @@ async def stripe_webhook(request: Request):
             print("✅ [WEBHOOK] Signature verified")
         except Exception as e:
             print(f"❌ [WEBHOOK] Signature verification failed: {e}")
-            raise HTTPException(status_code=400, detail=f"Webhook signature verification failed: {e}")
+            return {"received": True, "warning": "invalid_signature"}
     else:
         try:
             event = json.loads(payload)
             print("⚠️ [WEBHOOK] No signature secret, parsed raw event")
         except Exception as e:
             print(f"❌ [WEBHOOK] Invalid JSON: {e}")
-            raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
+            return {"received": True, "warning": "invalid_json"}
 
     event_type = event.get("type", "unknown")
     obj = event.get("data", {}).get("object", {})
