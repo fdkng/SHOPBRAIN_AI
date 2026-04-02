@@ -2232,29 +2232,27 @@ async def dev_check_db(user_id: str):
 
 @app.post("/webhook")
 async def stripe_webhook(request: Request):
-    print(f"🔔 [WEBHOOK] Received Stripe webhook event")
+    print("🔔 [WEBHOOK] Received Stripe webhook event")
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature")
-    event = None
 
     if STRIPE_WEBHOOK_SECRET:
         try:
             event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
-            print(f"✅ [WEBHOOK] Signature verified")
+            print("✅ [WEBHOOK] Signature verified")
         except Exception as e:
             print(f"❌ [WEBHOOK] Signature verification failed: {e}")
             raise HTTPException(status_code=400, detail=f"Webhook signature verification failed: {e}")
     else:
-        # If no webhook secret, try to parse raw
-        import json
         try:
             event = json.loads(payload)
-            print(f"⚠️  [WEBHOOK] No signature secret, parsed raw event")
+            print("⚠️ [WEBHOOK] No signature secret, parsed raw event")
         except Exception as e:
-            print(f"❌ [WEBHOOK] Failed to parse event: {e}")
+            print(f"❌ [WEBHOOK] Invalid JSON: {e}")
             raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
 
     event_type = event.get("type", "unknown")
+    obj = event.get("data", {}).get("object", {})
     print(f"📊 [WEBHOOK] Event type: {event_type}")
 
     def _webhook_resolve_user_id(supabase_client, stripe_subscription_id=None, stripe_customer_id=None, email=None):
@@ -2304,364 +2302,198 @@ async def stripe_webhook(request: Request):
 
         return None
 
-    # Handle the checkout.session.completed event
-    if event_type == "checkout.session.completed":
-        session = event["data"]["object"]
-        print(f"🔍 [WEBHOOK] Session ID: {session.get('id')}")
-        print(f"🔍 [WEBHOOK] Metadata: {session.get('metadata', {})}")
-        
-        # Ensure we have line_items and subscription expanded
-        try:
-            if not session.get("line_items") or not session.get("subscription"):
-                print(f"⏳ [WEBHOOK] Retrieving full session with expansions...")
-                session = stripe.checkout.Session.retrieve(
-                    session["id"],
-                    expand=["line_items", "subscription"]
-                )
-                print(f"✅ [WEBHOOK] Session expanded")
-        except Exception as e:
-            print(f"⚠️  [WEBHOOK] Could not expand session: {e}")
+    try:
+        if not (SUPABASE_URL and SUPABASE_SERVICE_KEY):
+            print("⚠️ [WEBHOOK] Supabase not configured; acknowledging event")
+            return {"received": True, "warning": "supabase_not_configured"}
 
-        user_id = session.get("metadata", {}).get("user_id")
-        print(f"👤 [WEBHOOK] User ID: {user_id}")
-        
-        if not user_id:
-            print(f"❌ [WEBHOOK] No user_id in metadata! Session details: {session.get('metadata', {})}")
-            return {"received": True, "error": "No user_id found"}
-        
-        # Persist subscription to Supabase if configured (best-effort)
-        if SUPABASE_URL and SUPABASE_SERVICE_KEY:
-            try:
-                from supabase import create_client
+        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
-                supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-                
-                # Extract plan from subscription - try different sources
-                plan_tier = None
-                subscription_status = "active"
-                
-                # Helper to map by amount if price_id unknown
-                def tier_from_amount(amount_cents: int):
-                    if amount_cents is None:
-                        return None
-                    exact_amount_map = {9900: "standard", 19900: "pro", 29900: "premium"}
-                    return exact_amount_map.get(int(amount_cents))
+        if event_type == "checkout.session.completed":
+            session = obj
+            user_id = (session.get("metadata") or {}).get("user_id")
+            if not user_id:
+                print("⚠️ [WEBHOOK] checkout.session.completed missing user_id metadata")
+                return {"received": True, "warning": "missing_user_id_metadata"}
 
-                # 1. Try from metadata (most reliable)
-                if session.get("metadata", {}).get("plan"):
-                    plan_tier = session["metadata"]["plan"]
-                    print(f"📋 [WEBHOOK] Plan from metadata: {plan_tier}")
-                
-                # 2. Try to get subscription and check price_id
-                if not plan_tier and session.get("subscription"):
-                    try:
-                        subscription = stripe.Subscription.retrieve(session["subscription"])
-                        subscription_status = subscription.get("status", "active")
-                        if subscription and subscription.get("items", {}).get("data"):
-                            price_id = subscription["items"]["data"][0].get("price", {}).get("id")
-                            plan_tier = PRICE_TO_TIER.get(price_id)
-                            amount = subscription["items"]["data"][0].get("price", {}).get("unit_amount")
-                            if not plan_tier:
-                                plan_tier = tier_from_amount(amount)
-                            print(f"💰 [WEBHOOK] Plan from subscription price_id {price_id}, amount {amount}: {plan_tier}")
-                    except Exception as e:
-                        print(f"⚠️  [WEBHOOK] Could not retrieve subscription: {e}")
-                
-                # 3. Try from line items
-                if not plan_tier:
-                    for li in session.get("line_items", {}).get("data", []):
-                        price_id = li.get("price", {}).get("id")
-                        amount = li.get("price", {}).get("unit_amount")
-                        if price_id in PRICE_TO_TIER:
-                            plan_tier = PRICE_TO_TIER[price_id]
-                            print(f"🛒 [WEBHOOK] Plan from line items price_id {price_id}: {plan_tier}")
-                            break
-                        if not plan_tier:
-                            plan_tier = tier_from_amount(amount)
-                            if plan_tier:
-                                print(f"🛒 [WEBHOOK] Plan inferred from amount {amount}: {plan_tier}")
-                                break
-                
-                # If plan_tier is still unknown, try one last fallback: retrieve the Stripe subscription price
-                if not plan_tier:
-                    try:
-                        stripe_sub_id = session.get("subscription")
-                        if stripe_sub_id:
-                            stripe_sub_obj = stripe.Subscription.retrieve(stripe_sub_id)
-                            items = stripe_sub_obj.get("items", {}).get("data", [])
-                            if items:
-                                pid = items[0].get("price", {}).get("id")
-                                amt = items[0].get("price", {}).get("unit_amount")
-                                plan_tier = PRICE_TO_TIER.get(pid) or tier_from_amount(amt)
-                                print(f"🔄 [WEBHOOK] Plan from Stripe subscription fallback: {plan_tier}")
-                    except Exception as e:
-                        print(f"⚠️  [WEBHOOK] Stripe subscription fallback failed: {e}")
-                
-                if not plan_tier:
-                    print(f"❌ [WEBHOOK] Could not determine plan tier! NOT saving subscription.")
-                    return {"received": True, "error": "Could not determine plan tier"}
-                
-                # Normalize plan_tier: map numeric values to named tiers
-                _tier_normalize = {
-                    '99': 'standard', '199': 'pro', '299': 'premium',
-                    'standard': 'standard', 'pro': 'pro', 'premium': 'premium',
-                }
-                plan_tier = _tier_normalize.get(str(plan_tier).lower(), plan_tier)
-                print(f"📋 [WEBHOOK] Normalized plan_tier: {plan_tier}")
-
-                # Guard against out-of-order webhook deliveries:
-                # do not overwrite a newer active/trialing subscription with an older one.
-                should_persist = True
+            normalized_sub_id = _normalize_stripe_subscription_id(session.get("subscription"))
+            stripe_sub_obj = None
+            stripe_status = "active"
+            plan_tier = None
+            if normalized_sub_id:
                 try:
-                    incoming_sub_id = _normalize_stripe_subscription_id(session.get("subscription"))
-                    incoming_sub_created = 0
-                    incoming_sub_status = str(subscription_status or "").lower()
-
-                    if incoming_sub_id:
-                        try:
-                            incoming_sub_obj = stripe.Subscription.retrieve(incoming_sub_id)
-                            incoming_sub_created = int(incoming_sub_obj.get("created", 0) or 0)
-                            incoming_sub_status = str(incoming_sub_obj.get("status") or incoming_sub_status).lower()
-                        except Exception as sub_fetch_err:
-                            print(f"⚠️  [WEBHOOK] Could not fetch incoming sub details: {sub_fetch_err}")
-
-                    existing_res = (
-                        supabase.table("subscriptions")
-                        .select("stripe_subscription_id,plan_tier,status")
-                        .eq("user_id", user_id)
-                        .order("updated_at", desc=True)
-                        .limit(1)
-                        .execute()
-                    )
-                    existing_row = existing_res.data[0] if existing_res.data else None
-
-                    if existing_row:
-                        existing_sub_id = _normalize_stripe_subscription_id(existing_row.get("stripe_subscription_id"))
-                        existing_status = str(existing_row.get("status") or "").lower()
-                        existing_sub_created = 0
-
-                        if existing_sub_id:
-                            try:
-                                existing_sub_obj = stripe.Subscription.retrieve(existing_sub_id)
-                                existing_sub_created = int(existing_sub_obj.get("created", 0) or 0)
-                                existing_status = str(existing_sub_obj.get("status") or existing_status).lower()
-                            except Exception as existing_fetch_err:
-                                print(f"⚠️  [WEBHOOK] Could not fetch existing sub details: {existing_fetch_err}")
-
-                        existing_is_valid = existing_status in ("active", "trialing")
-                        incoming_is_valid = incoming_sub_status in ("active", "trialing")
-
-                        if existing_sub_id and incoming_sub_id and existing_sub_id != incoming_sub_id:
-                            if existing_is_valid and (not incoming_is_valid or existing_sub_created > incoming_sub_created):
-                                should_persist = False
-                                print(
-                                    f"⏭️  [WEBHOOK] Ignoring stale event. Existing sub {existing_sub_id} "
-                                    f"(created={existing_sub_created}, status={existing_status}) is newer/valid than "
-                                    f"incoming {incoming_sub_id} (created={incoming_sub_created}, status={incoming_sub_status})."
-                                )
-                except Exception as guard_err:
-                    print(f"⚠️  [WEBHOOK] Freshness guard warning: {guard_err}")
-
-                if not should_persist:
-                    return {"received": True, "ignored": "stale_event"}
-                
-                # Insert to subscriptions table
-                print(f"📝 [WEBHOOK] Upserting to subscriptions table...")
-                normalized_sub_id = _normalize_stripe_subscription_id(session.get("subscription"))
-                stripe_sub_obj = None
-                if normalized_sub_id:
-                    try:
-                        stripe_sub_obj = stripe.Subscription.retrieve(normalized_sub_id)
-                        subscription_status = str(stripe_sub_obj.get("status") or subscription_status).lower()
-                    except Exception as e:
-                        print(f"⚠️  [WEBHOOK] Could not retrieve subscription for period fields: {e}")
-
-                # "paid" means Stripe accepted the checkout — for subscriptions with a trial,
-                # payment_status is "no_payment_required" (not "paid"), so we must accept both.
-                # Also: if the Stripe subscription is active/trialing, the user has valid access.
-                payment_status_str = str(session.get("payment_status", "")).lower()
-                stripe_sub_status = str(stripe_sub_obj.get("status", "")).lower() if stripe_sub_obj else ""
-                paid_flag = payment_status_str in ("paid", "no_payment_required") or stripe_sub_status in ("active", "trialing")
-                stored_status = "active" if paid_flag else "inactive"
-                payment_date = _resolve_payment_date(session.get("created"), stripe_sub_obj.get("created") if stripe_sub_obj else None)
-
-                print(f"💾 [WEBHOOK] WRITING TO DB: user_id={user_id}, plan_tier={plan_tier}, paid={paid_flag}, "
-                                            f"status={stored_status}, payment_date={payment_date}, payment_status={payment_status_str}, "
-                      f"stripe_sub_status={stripe_sub_status}, stripe_sub_id={normalized_sub_id}")
-
-                supabase.table("subscriptions").upsert({
-                    "user_id": user_id,
-                    "email": session.get("customer_email"),
-                    "stripe_session_id": session.get("id"),
-                    "stripe_subscription_id": normalized_sub_id,
-                    "stripe_customer_id": session.get("customer"),
-                    "plan_tier": plan_tier,
-                    "plan_id": plan_tier,
-                    "plan": bool(paid_flag),
-                    "paid": paid_flag,
-                    "status": stored_status,
-                    "subscription_status": stored_status,
-                    "payment_date": payment_date,
-                    "start_date": _stripe_ts_to_iso(stripe_sub_obj.get("current_period_start") if stripe_sub_obj else None) or _stripe_ts_to_iso(stripe_sub_obj.get("start_date") if stripe_sub_obj else None),
-                    "end_date": _stripe_ts_to_iso(stripe_sub_obj.get("current_period_end") if stripe_sub_obj else None),
-                }, on_conflict="user_id").execute()
-                print(f"✅ [WEBHOOK] Subscriptions table updated")
-
-                # Keep user profile in sync so the dashboard always sees the latest tier
-                print(f"📝 [WEBHOOK] Upserting to user_profiles table...")
-                supabase.table("user_profiles").upsert({
-                    "id": user_id,
-                    "subscription_tier": plan_tier,
-                    "subscription_plan": plan_tier,
-                    "subscription_status": stored_status,
-                    "updated_at": datetime.utcnow().isoformat()
-                }, on_conflict="id").execute()
-                print(f"✅ [WEBHOOK] User profile updated with plan: {plan_tier}, status={stored_status}")
-                
-                # Invalidate _init_cache so next /api/init call fetches fresh data
-                _init_cache.pop(user_id, None)
-                print(f"🧹 [WEBHOOK] Invalidated _init_cache for user {user_id}")
-                
-                print(f"🎉 [WEBHOOK] SUCCESS: Subscription saved: user_id={user_id}, plan={plan_tier}")
-            except Exception as e:
-                print(f"❌ [WEBHOOK] Failed to persist subscription: {e}")
-                import traceback
-                traceback.print_exc()
-        else:
-            print(f"❌ [WEBHOOK] Supabase not configured")
-    elif event_type == "invoice.payment_succeeded":
-        invoice = event["data"]["object"]
-        print(f"💳 [WEBHOOK] invoice.payment_succeeded: {invoice.get('id')}")
-
-        if SUPABASE_URL and SUPABASE_SERVICE_KEY:
-            try:
-                supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-                stripe_sub_id = _normalize_stripe_subscription_id(invoice.get("subscription"))
-                stripe_customer_id = invoice.get("customer")
-                email = invoice.get("customer_email")
-                user_id = None
-
-                stripe_sub_obj = None
-                plan_tier = None
-                sub_status = "active"
-                try:
-                    if stripe_sub_id:
-                        stripe_sub_obj = stripe.Subscription.retrieve(stripe_sub_id)
-                        user_id = stripe_sub_obj.get("metadata", {}).get("user_id")
-                        plan_tier = _resolve_plan_from_stripe_subscription(stripe_sub_obj)
+                    stripe_sub_obj = stripe.Subscription.retrieve(normalized_sub_id)
+                    stripe_status = str(stripe_sub_obj.get("status") or "active").lower()
+                    plan_tier = _resolve_plan_from_stripe_subscription(stripe_sub_obj)
                 except Exception as e:
-                    print(f"⚠️ [WEBHOOK] invoice success subscription fetch warning: {e}")
+                    print(f"⚠️ [WEBHOOK] checkout subscription fetch warning: {e}")
 
-                if user_id:
-                    print(f"✅ [WEBHOOK] invoice.payment_succeeded resolved user_id from Stripe metadata: {user_id}")
-                else:
-                    user_id = _webhook_resolve_user_id(supabase, stripe_sub_id, stripe_customer_id, email)
+            if not plan_tier:
+                plan_tier = (session.get("metadata") or {}).get("plan")
+            if plan_tier:
+                plan_tier = {"99": "standard", "199": "pro", "299": "premium"}.get(str(plan_tier).lower(), str(plan_tier).lower())
 
-                if not user_id:
-                    print("⚠️ [WEBHOOK] DB linking missing: cannot resolve user_id for invoice.payment_succeeded")
-                    return {"received": True, "warning": "db_not_linked_to_accounts"}
+            payment_status_str = str(session.get("payment_status", "")).lower()
+            paid_flag = payment_status_str in ("paid", "no_payment_required") or stripe_status in ("active", "trialing")
+            stored_status = "active" if paid_flag else "inactive"
+            payment_date = _resolve_payment_date(session.get("created"), stripe_sub_obj.get("created") if stripe_sub_obj else None)
 
-                if not plan_tier:
-                    lines = invoice.get("lines", {}).get("data", [])
-                    if lines:
-                        price = lines[0].get("price", {})
-                        amount = price.get("unit_amount")
-                        exact_amount_map = {9900: 'standard', 19900: 'pro', 29900: 'premium'}
-                        plan_tier = PRICE_TO_TIER.get(price.get("id")) or exact_amount_map.get(int(amount) if amount is not None else None)
+            payload_upsert = {
+                "user_id": user_id,
+                "email": session.get("customer_email"),
+                "stripe_session_id": session.get("id"),
+                "stripe_subscription_id": normalized_sub_id,
+                "stripe_customer_id": session.get("customer"),
+                "plan_tier": plan_tier,
+                "plan_id": plan_tier,
+                "plan": bool(paid_flag),
+                "paid": bool(paid_flag),
+                "status": stored_status,
+                "subscription_status": stored_status,
+                "payment_date": payment_date,
+                "start_date": _stripe_ts_to_iso(stripe_sub_obj.get("current_period_start") if stripe_sub_obj else None) or _stripe_ts_to_iso(stripe_sub_obj.get("start_date") if stripe_sub_obj else None),
+                "end_date": _stripe_ts_to_iso(stripe_sub_obj.get("current_period_end") if stripe_sub_obj else None),
+            }
+            print(f"💾 [WEBHOOK] checkout.session.completed DB write: {payload_upsert}")
+            supabase.table("subscriptions").upsert(payload_upsert, on_conflict="user_id").execute()
 
-                if not plan_tier:
-                    print("⚠️ [WEBHOOK] invoice.payment_succeeded could not resolve plan")
-                    return {"received": True, "warning": "payment_recognized_but_plan_unresolved"}
-
-                period_start = None
-                period_end = None
-                if stripe_sub_obj:
-                    period_start = _stripe_ts_to_iso(stripe_sub_obj.get("current_period_start") or stripe_sub_obj.get("start_date"))
-                    period_end = _stripe_ts_to_iso(stripe_sub_obj.get("current_period_end"))
-                else:
-                    lines = invoice.get("lines", {}).get("data", [])
-                    if lines:
-                        period = lines[0].get("period", {})
-                        period_start = _stripe_ts_to_iso(period.get("start"))
-                        period_end = _stripe_ts_to_iso(period.get("end"))
-
-                payment_date = _resolve_payment_date(invoice.get("status_transitions", {}).get("paid_at"), invoice.get("created"))
-                print(f"💾 [WEBHOOK] invoice.payment_succeeded DB write: user_id={user_id}, plan_tier={plan_tier}, paid=True, status=active, payment_date={payment_date}")
-
-                supabase.table("subscriptions").upsert({
-                    "user_id": user_id,
-                    "email": email,
-                    "stripe_session_id": None,
-                    "stripe_subscription_id": stripe_sub_id,
-                    "stripe_customer_id": stripe_customer_id,
-                    "plan_tier": plan_tier,
-                    "plan_id": plan_tier,
-                    "plan": True,
-                    "paid": True,
-                    "status": "active",
-                    "subscription_status": "active",
-                    "payment_date": payment_date,
-                    "start_date": period_start,
-                    "end_date": period_end,
-                    "current_period_end": period_end,
-                    "updated_at": datetime.utcnow().isoformat(),
-                }, on_conflict="user_id").execute()
-
+            if plan_tier:
                 supabase.table("user_profiles").upsert({
                     "id": user_id,
                     "subscription_tier": plan_tier,
                     "subscription_plan": plan_tier,
-                    "subscription_status": "active",
-                    "updated_at": datetime.utcnow().isoformat()
+                    "subscription_status": stored_status,
+                    "updated_at": datetime.utcnow().isoformat(),
                 }, on_conflict="id").execute()
 
-                _init_cache.pop(user_id, None)
-                print(f"✅ [WEBHOOK] invoice.payment_succeeded processed for user {user_id}, plan {plan_tier}")
-            except Exception as e:
-                print(f"❌ [WEBHOOK] invoice.payment_succeeded processing error: {e}")
+            _init_cache.pop(user_id, None)
+            return {"received": True}
 
-    elif event_type in ("invoice.payment_failed", "customer.subscription.deleted"):
-        obj = event["data"]["object"]
-        print(f"💳 [WEBHOOK] {event_type}: {obj.get('id')}")
+        if event_type == "invoice.payment_succeeded":
+            invoice = obj
+            stripe_sub_id = _normalize_stripe_subscription_id(invoice.get("subscription"))
+            stripe_customer_id = invoice.get("customer")
+            email = invoice.get("customer_email")
 
-        if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+            stripe_sub_obj = None
+            user_id = None
+            plan_tier = None
+            if stripe_sub_id:
+                try:
+                    stripe_sub_obj = stripe.Subscription.retrieve(stripe_sub_id)
+                    user_id = (stripe_sub_obj.get("metadata") or {}).get("user_id")
+                    plan_tier = _resolve_plan_from_stripe_subscription(stripe_sub_obj)
+                except Exception as e:
+                    print(f"⚠️ [WEBHOOK] invoice subscription fetch warning: {e}")
+
+            user_id = user_id or _webhook_resolve_user_id(supabase, stripe_sub_id, stripe_customer_id, email)
+            if not user_id:
+                print("⚠️ [WEBHOOK] invoice.payment_succeeded cannot resolve user_id")
+                return {"received": True, "warning": "db_not_linked_to_accounts"}
+
+            if not plan_tier:
+                lines = invoice.get("lines", {}).get("data", [])
+                if lines:
+                    price = lines[0].get("price", {})
+                    amount = price.get("unit_amount")
+                    exact_amount_map = {9900: "standard", 19900: "pro", 29900: "premium"}
+                    plan_tier = PRICE_TO_TIER.get(price.get("id")) or exact_amount_map.get(int(amount) if amount is not None else None)
+
+            payment_date = _resolve_payment_date(invoice.get("status_transitions", {}).get("paid_at"), invoice.get("created"))
+            payload_upsert = {
+                "user_id": user_id,
+                "email": email,
+                "stripe_subscription_id": stripe_sub_id,
+                "stripe_customer_id": stripe_customer_id,
+                "plan_tier": plan_tier,
+                "plan_id": plan_tier,
+                "plan": True,
+                "paid": True,
+                "status": "active",
+                "subscription_status": "active",
+                "payment_date": payment_date,
+                "start_date": _stripe_ts_to_iso(stripe_sub_obj.get("current_period_start") or stripe_sub_obj.get("start_date")) if stripe_sub_obj else None,
+                "end_date": _stripe_ts_to_iso(stripe_sub_obj.get("current_period_end")) if stripe_sub_obj else None,
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+            print(f"💾 [WEBHOOK] invoice.payment_succeeded DB write: {payload_upsert}")
+            supabase.table("subscriptions").upsert(payload_upsert, on_conflict="user_id").execute()
+            _init_cache.pop(user_id, None)
+            return {"received": True}
+
+        if event_type in ("invoice.payment_failed", "customer.subscription.deleted"):
+            stripe_sub_id = _normalize_stripe_subscription_id(obj.get("subscription") or obj.get("id"))
+            stripe_customer_id = obj.get("customer")
+            email = obj.get("customer_email")
+            user_id = _webhook_resolve_user_id(supabase, stripe_sub_id, stripe_customer_id, email)
+            if not user_id:
+                print(f"⚠️ [WEBHOOK] {event_type} cannot resolve user_id")
+                return {"received": True, "warning": "db_not_linked_to_accounts"}
+
+            supabase.table("subscriptions").update({
+                "plan": False,
+                "paid": False,
+                "status": "inactive",
+                "subscription_status": "inactive",
+                "end_date": datetime.utcnow().isoformat(),
+                "updated_at": datetime.utcnow().isoformat(),
+            }).eq("user_id", user_id).execute()
+            _init_cache.pop(user_id, None)
+            return {"received": True}
+
+        if event_type in ("customer.subscription.created", "customer.subscription.updated"):
+            stripe_sub_id = _normalize_stripe_subscription_id(obj.get("id"))
+            stripe_customer_id = obj.get("customer")
+            stripe_status = str(obj.get("status") or "").lower()
+            plan_tier = _resolve_plan_from_stripe_subscription(obj)
+
+            email = None
             try:
-                supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-
-                stripe_sub_id = _normalize_stripe_subscription_id(obj.get("subscription") or obj.get("id"))
-                stripe_customer_id = obj.get("customer")
-                email = obj.get("customer_email")
-                user_id = _webhook_resolve_user_id(supabase, stripe_sub_id, stripe_customer_id, email)
-
-                if not user_id:
-                    print(f"⚠️ [WEBHOOK] DB linking missing: cannot resolve user_id for {event_type}")
-                    return {"received": True, "warning": "db_not_linked_to_accounts"}
-
-                cancelled_status = "inactive"
-
-                supabase.table("subscriptions").update({
-                    "plan": False,
-                    "paid": False,
-                    "status": cancelled_status,
-                    "subscription_status": cancelled_status,
-                    "end_date": datetime.utcnow().isoformat(),
-                    "updated_at": datetime.utcnow().isoformat()
-                }).eq("user_id", user_id).execute()
-
-                supabase.table("user_profiles").update({
-                    "subscription_status": "inactive",
-                    "updated_at": datetime.utcnow().isoformat()
-                }).eq("id", user_id).execute()
-
-                _init_cache.pop(user_id, None)
-                print(f"✅ [WEBHOOK] {event_type} processed for user {user_id} (paid=false)")
+                if stripe_customer_id:
+                    customer_obj = stripe.Customer.retrieve(stripe_customer_id)
+                    email = customer_obj.get("email")
             except Exception as e:
-                print(f"❌ [WEBHOOK] {event_type} processing error: {e}")
+                print(f"⚠️ [WEBHOOK] customer retrieve warning: {e}")
 
-    else:
-        print(f"⏭️  [WEBHOOK] Ignoring event type: {event_type}")
+            user_id = (obj.get("metadata") or {}).get("user_id") or _webhook_resolve_user_id(
+                supabase,
+                stripe_subscription_id=stripe_sub_id,
+                stripe_customer_id=stripe_customer_id,
+                email=email,
+            )
+            if not user_id:
+                print(f"⚠️ [WEBHOOK] {event_type} cannot resolve user_id")
+                return {"received": True, "warning": "db_not_linked_to_accounts"}
 
-    return {"received": True}
+            stored_status = "active" if stripe_status in ("active", "trialing") else "inactive"
+            update_payload = {
+                "user_id": user_id,
+                "stripe_subscription_id": stripe_sub_id,
+                "stripe_customer_id": stripe_customer_id,
+                "status": stored_status,
+                "subscription_status": stored_status,
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+            if email:
+                update_payload["email"] = email
+            if plan_tier:
+                update_payload["plan_tier"] = plan_tier
+                update_payload["plan_id"] = plan_tier
+            if stored_status == "inactive":
+                update_payload["paid"] = False
+                update_payload["plan"] = False
+
+            print(f"💾 [WEBHOOK] {event_type} DB sync payload: {update_payload}")
+            supabase.table("subscriptions").upsert(update_payload, on_conflict="user_id").execute()
+            _init_cache.pop(user_id, None)
+            return {"received": True}
+
+        print(f"⏭️ [WEBHOOK] Ignoring event type: {event_type}")
+        return {"received": True}
+
+    except Exception as e:
+        print(f"❌ [WEBHOOK] Unexpected processing error (non-fatal): {e}")
+        return {"received": True, "warning": "processing_error"}
 
 
 # ============== AUTH & PROFILE ROUTES ==============
