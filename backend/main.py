@@ -1429,6 +1429,36 @@ def _stripe_ts_to_iso(value) -> str | None:
         return None
 
 
+def _resolve_payment_date(*values) -> str:
+    for value in values:
+        iso_value = _stripe_ts_to_iso(value)
+        if iso_value:
+            return iso_value
+    return datetime.utcnow().isoformat()
+
+
+def _is_paid_subscription_row(row: dict | None) -> bool:
+    if not row:
+        return False
+    status = str(row.get("status") or row.get("subscription_status") or "").strip().lower()
+    paid = bool(row.get("paid") is True or row.get("plan") is True)
+    return status == "active" and paid
+
+
+def _inactive_subscription_payload(message: str | None = None) -> dict:
+    payload = {
+        "has_subscription": False,
+        "plan": "free",
+        "paid": False,
+        "status": "inactive",
+        "subscription_status": "inactive",
+        "payment_date": None,
+    }
+    if message:
+        payload["message"] = message
+    return payload
+
+
 def _resolve_plan_from_stripe_subscription(subscription_obj) -> str | None:
     if not subscription_obj:
         return None
@@ -1710,7 +1740,7 @@ async def fast_init(request: Request):
             # Step 1: Read from DB
             sub_row = None
             try:
-                sub_result = supabase_client.table("subscriptions").select("*").eq("user_id", user_id).in_("status", ["active", "trialing"]).order("updated_at", desc=True).limit(1).execute()
+                sub_result = supabase_client.table("subscriptions").select("*").eq("user_id", user_id).eq("status", "active").order("updated_at", desc=True).limit(1).execute()
                 if sub_result.data:
                     sub_row = sub_result.data[0]
             except Exception as db_err:
@@ -1719,19 +1749,22 @@ async def fast_init(request: Request):
             if sub_row:
                 raw_tier = sub_row.get('plan_tier')
                 sub_status = str(sub_row.get('status', '')).lower()
-                paid_flag = bool(sub_row.get('paid')) if sub_row.get('paid') is not None else False
+                paid_flag = _is_paid_subscription_row(sub_row)
                 plan = tier_map.get(str(raw_tier).lower()) if raw_tier else None
 
                 print(f"  📋 [INIT-SUB] DB row found: plan_tier={raw_tier}, status={sub_status}, paid={paid_flag}, plan_resolved={plan}")
 
                 # Step 2: DECISION — if DB says paid=true + valid plan + active status → GRANT ACCESS
-                if paid_flag and plan and sub_status in ('active', 'trialing'):
-                    print(f"  ✅ [INIT-SUB] ACCESS GRANTED from DB: paid={paid_flag}, plan={plan}, status={sub_status}")
+                payment_date = sub_row.get('payment_date')
+                if paid_flag and plan and sub_status == 'active':
+                    print(f"  ✅ [INIT-SUB] ACCESS GRANTED from DB: paid={paid_flag}, plan={plan}, status={sub_status}, payment_date={payment_date}")
                     subscription_data = {
                         'has_subscription': True,
                         'plan': plan,
                         'paid': True,
                         'status': sub_status,
+                        'subscription_status': sub_status,
+                        'payment_date': payment_date,
                         'started_at': sub_row.get('start_date') or sub_row.get('created_at'),
                         'capabilities': capabilities.get(plan, {})
                     }
@@ -1752,12 +1785,14 @@ async def fast_init(request: Request):
                                 healed_plan = _resolve_plan_from_stripe_subscription(stripe_sub)
                                 if healed_plan:
                                     plan = healed_plan
-                                    sub_status = stripe_status
+                                    sub_status = 'active'
+                                    payment_date = sub_row.get('payment_date') or _resolve_payment_date(stripe_sub.get("created"))
                                     # Update DB so next call is instant
                                     try:
                                         supabase_client.table("subscriptions").update({
                                             "plan_tier": plan, "plan_id": plan,
                                             "paid": True, "status": sub_status,
+                                            "payment_date": payment_date,
                                             "start_date": _stripe_ts_to_iso(stripe_sub.get("current_period_start") or stripe_sub.get("start_date")),
                                             "end_date": _stripe_ts_to_iso(stripe_sub.get("current_period_end")),
                                             "updated_at": datetime.utcnow().isoformat()
@@ -1771,6 +1806,8 @@ async def fast_init(request: Request):
                                         'plan': plan,
                                         'paid': True,
                                         'status': sub_status,
+                                        'subscription_status': sub_status,
+                                        'payment_date': payment_date,
                                         'started_at': sub_row.get('start_date') or sub_row.get('created_at'),
                                         'capabilities': capabilities.get(plan, {})
                                     }
@@ -1779,18 +1816,12 @@ async def fast_init(request: Request):
 
                     if not healed:
                         print(f"  ❌ [INIT-SUB] ACCESS DENIED: paid={paid_flag}, plan={plan}, stripe_sub_id={stripe_sub_id}")
-                        subscription_data = {
-                            'has_subscription': False, 'plan': 'free', 'paid': False,
-                            'status': sub_status or 'inactive',
-                            'message': 'Payment not yet validated. If you just paid, please wait a few seconds and refresh.',
-                        }
+                        subscription_data = _inactive_subscription_payload('Payment not yet validated. If you just paid, please wait a few seconds and refresh.')
+                        subscription_data['status'] = sub_status or 'inactive'
+                        subscription_data['subscription_status'] = sub_status or 'inactive'
             else:
                 print(f"  ❌ [INIT-SUB] No active subscription row found in DB for user {user_id}")
-                subscription_data = {
-                    'has_subscription': False, 'plan': 'free', 'paid': False,
-                    'status': 'inactive',
-                    'message': no_access_message,
-                }
+                subscription_data = _inactive_subscription_payload(no_access_message)
         except Exception as e:
             print(f"  ⚠️ Subscription fetch error: {e}")
 
@@ -2451,9 +2482,11 @@ async def stripe_webhook(request: Request):
                 payment_status_str = str(session.get("payment_status", "")).lower()
                 stripe_sub_status = str(stripe_sub_obj.get("status", "")).lower() if stripe_sub_obj else ""
                 paid_flag = payment_status_str in ("paid", "no_payment_required") or stripe_sub_status in ("active", "trialing")
+                stored_status = "active" if paid_flag else "inactive"
+                payment_date = _resolve_payment_date(session.get("created"), stripe_sub_obj.get("created") if stripe_sub_obj else None)
 
                 print(f"💾 [WEBHOOK] WRITING TO DB: user_id={user_id}, plan_tier={plan_tier}, paid={paid_flag}, "
-                      f"status={subscription_status}, payment_status={payment_status_str}, "
+                                            f"status={stored_status}, payment_date={payment_date}, payment_status={payment_status_str}, "
                       f"stripe_sub_status={stripe_sub_status}, stripe_sub_id={normalized_sub_id}")
 
                 supabase.table("subscriptions").upsert({
@@ -2464,8 +2497,11 @@ async def stripe_webhook(request: Request):
                     "stripe_customer_id": session.get("customer"),
                     "plan_tier": plan_tier,
                     "plan_id": plan_tier,
+                    "plan": bool(paid_flag),
                     "paid": paid_flag,
-                    "status": subscription_status,
+                    "status": stored_status,
+                    "subscription_status": stored_status,
+                    "payment_date": payment_date,
                     "start_date": _stripe_ts_to_iso(stripe_sub_obj.get("current_period_start") if stripe_sub_obj else None) or _stripe_ts_to_iso(stripe_sub_obj.get("start_date") if stripe_sub_obj else None),
                     "end_date": _stripe_ts_to_iso(stripe_sub_obj.get("current_period_end") if stripe_sub_obj else None),
                 }, on_conflict="user_id").execute()
@@ -2477,10 +2513,10 @@ async def stripe_webhook(request: Request):
                     "id": user_id,
                     "subscription_tier": plan_tier,
                     "subscription_plan": plan_tier,
-                    "subscription_status": subscription_status,
+                    "subscription_status": stored_status,
                     "updated_at": datetime.utcnow().isoformat()
                 }, on_conflict="id").execute()
-                print(f"✅ [WEBHOOK] User profile updated with plan: {plan_tier}")
+                print(f"✅ [WEBHOOK] User profile updated with plan: {plan_tier}, status={stored_status}")
                 
                 # Invalidate _init_cache so next /api/init call fetches fresh data
                 _init_cache.pop(user_id, None)
@@ -2503,11 +2539,7 @@ async def stripe_webhook(request: Request):
                 stripe_sub_id = _normalize_stripe_subscription_id(invoice.get("subscription"))
                 stripe_customer_id = invoice.get("customer")
                 email = invoice.get("customer_email")
-                user_id = _webhook_resolve_user_id(supabase, stripe_sub_id, stripe_customer_id, email)
-
-                if not user_id:
-                    print("⚠️ [WEBHOOK] DB linking missing: cannot resolve user_id for invoice.payment_succeeded")
-                    return {"received": True, "warning": "db_not_linked_to_accounts"}
+                user_id = None
 
                 stripe_sub_obj = None
                 plan_tier = None
@@ -2515,10 +2547,19 @@ async def stripe_webhook(request: Request):
                 try:
                     if stripe_sub_id:
                         stripe_sub_obj = stripe.Subscription.retrieve(stripe_sub_id)
-                        sub_status = str(stripe_sub_obj.get("status") or "active").lower()
+                        user_id = stripe_sub_obj.get("metadata", {}).get("user_id")
                         plan_tier = _resolve_plan_from_stripe_subscription(stripe_sub_obj)
                 except Exception as e:
                     print(f"⚠️ [WEBHOOK] invoice success subscription fetch warning: {e}")
+
+                if user_id:
+                    print(f"✅ [WEBHOOK] invoice.payment_succeeded resolved user_id from Stripe metadata: {user_id}")
+                else:
+                    user_id = _webhook_resolve_user_id(supabase, stripe_sub_id, stripe_customer_id, email)
+
+                if not user_id:
+                    print("⚠️ [WEBHOOK] DB linking missing: cannot resolve user_id for invoice.payment_succeeded")
+                    return {"received": True, "warning": "db_not_linked_to_accounts"}
 
                 if not plan_tier:
                     lines = invoice.get("lines", {}).get("data", [])
@@ -2544,6 +2585,9 @@ async def stripe_webhook(request: Request):
                         period_start = _stripe_ts_to_iso(period.get("start"))
                         period_end = _stripe_ts_to_iso(period.get("end"))
 
+                payment_date = _resolve_payment_date(invoice.get("status_transitions", {}).get("paid_at"), invoice.get("created"))
+                print(f"💾 [WEBHOOK] invoice.payment_succeeded DB write: user_id={user_id}, plan_tier={plan_tier}, paid=True, status=active, payment_date={payment_date}")
+
                 supabase.table("subscriptions").upsert({
                     "user_id": user_id,
                     "email": email,
@@ -2552,8 +2596,11 @@ async def stripe_webhook(request: Request):
                     "stripe_customer_id": stripe_customer_id,
                     "plan_tier": plan_tier,
                     "plan_id": plan_tier,
+                    "plan": True,
                     "paid": True,
-                    "status": sub_status,
+                    "status": "active",
+                    "subscription_status": "active",
+                    "payment_date": payment_date,
                     "start_date": period_start,
                     "end_date": period_end,
                     "current_period_end": period_end,
@@ -2564,7 +2611,7 @@ async def stripe_webhook(request: Request):
                     "id": user_id,
                     "subscription_tier": plan_tier,
                     "subscription_plan": plan_tier,
-                    "subscription_status": sub_status,
+                    "subscription_status": "active",
                     "updated_at": datetime.utcnow().isoformat()
                 }, on_conflict="id").execute()
 
@@ -2590,11 +2637,13 @@ async def stripe_webhook(request: Request):
                     print(f"⚠️ [WEBHOOK] DB linking missing: cannot resolve user_id for {event_type}")
                     return {"received": True, "warning": "db_not_linked_to_accounts"}
 
-                cancelled_status = "canceled" if event_type == "customer.subscription.deleted" else "past_due"
+                cancelled_status = "inactive"
 
                 supabase.table("subscriptions").update({
+                    "plan": False,
                     "paid": False,
                     "status": cancelled_status,
+                    "subscription_status": cancelled_status,
                     "end_date": datetime.utcnow().isoformat(),
                     "updated_at": datetime.utcnow().isoformat()
                 }).eq("user_id", user_id).execute()
@@ -8997,19 +9046,11 @@ def get_user_tier(user_id: str) -> str:
     try:
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
             supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-            sub_result = supabase.table("subscriptions").select("plan_tier,status,created_at").eq("user_id", user_id).in_("status", ["active", "trialing"]).order("created_at", desc=True).limit(1).execute()
+            sub_result = supabase.table("subscriptions").select("plan_tier,status,paid,created_at").eq("user_id", user_id).eq("status", "active").eq("paid", True).order("created_at", desc=True).limit(1).execute()
             if sub_result.data:
                 raw = (sub_result.data[0].get("plan_tier") or "").lower()
                 plan = tier_map.get(raw)
                 if plan:
-                    return plan
-
-            profile_result = supabase.table("user_profiles").select("subscription_plan,subscription_tier,subscription_status").eq("id", user_id).limit(1).execute()
-            if profile_result.data:
-                status = str(profile_result.data[0].get("subscription_status") or "").lower()
-                raw = (profile_result.data[0].get("subscription_plan") or profile_result.data[0].get("subscription_tier") or "").lower()
-                plan = tier_map.get(raw)
-                if plan and status in ("active", "trialing"):
                     return plan
 
             return "free"
@@ -10114,28 +10155,31 @@ async def check_subscription_status(request: Request):
             subscription = None
             try:
                 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-                sub_result = supabase.table("subscriptions").select("*").eq("user_id", user_id).in_("status", ["active", "trialing"]).order("updated_at", desc=True).limit(1).execute()
+                sub_result = supabase.table("subscriptions").select("*").eq("user_id", user_id).eq("status", "active").order("updated_at", desc=True).limit(1).execute()
                 if sub_result.data:
                     subscription = sub_result.data[0]
-                    print(f"  📋 [STATUS] DB row: id={subscription.get('id')}, plan_tier={subscription.get('plan_tier')}, paid={subscription.get('paid')}, status={subscription.get('status')}")
+                    print(f"  📋 [STATUS] DB row: id={subscription.get('id')}, plan_tier={subscription.get('plan_tier')}, paid={subscription.get('paid')}, status={subscription.get('status')}, payment_date={subscription.get('payment_date')}")
             except Exception as e:
                 print(f"  ⚠️ [STATUS] DB query error: {e}")
 
             if subscription:
                 raw_tier = subscription.get('plan_tier')
                 sub_status = str(subscription.get('status', '')).lower()
-                paid_flag = bool(subscription.get('paid')) if subscription.get('paid') is not None else False
+                paid_flag = _is_paid_subscription_row(subscription)
                 plan = tier_map.get(str(raw_tier).lower()) if raw_tier else None
 
                 # Step 2: If DB says paid=true + valid plan → GRANT ACCESS
-                if paid_flag and plan and sub_status in ('active', 'trialing'):
-                    print(f"  ✅ [STATUS] ACCESS GRANTED from DB: paid={paid_flag}, plan={plan}, status={sub_status}")
+                payment_date = subscription.get('payment_date')
+                if paid_flag and plan and sub_status == 'active':
+                    print(f"  ✅ [STATUS] ACCESS GRANTED from DB: paid={paid_flag}, plan={plan}, status={sub_status}, payment_date={payment_date}")
                     return {
                         'success': True,
                         'has_subscription': True,
                         'plan': plan,
                         'paid': True,
                         'status': sub_status,
+                        'subscription_status': sub_status,
+                        'payment_date': payment_date,
                         'started_at': subscription.get('start_date') or subscription.get('created_at'),
                         'capabilities': capabilities.get(plan, {}),
                     }
@@ -10153,10 +10197,14 @@ async def check_subscription_status(request: Request):
                         if stripe_status in ('active', 'trialing'):
                             healed_plan = _resolve_plan_from_stripe_subscription(stripe_sub)
                             if healed_plan:
+                                healed_payment_date = subscription.get('payment_date') or _resolve_payment_date(stripe_sub.get("created"))
                                 try:
                                     supabase.table("subscriptions").update({
                                         "plan_tier": healed_plan, "plan_id": healed_plan,
-                                        "paid": True, "status": stripe_status,
+                                        "plan": True,
+                                        "paid": True, "status": "active",
+                                        "subscription_status": "active",
+                                        "payment_date": healed_payment_date,
                                         "stripe_customer_id": stripe_sub.get("customer") or subscription.get("stripe_customer_id"),
                                         "stripe_subscription_id": stripe_sub_id,
                                         "start_date": _stripe_ts_to_iso(stripe_sub.get("current_period_start") or stripe_sub.get("start_date")),
@@ -10165,7 +10213,7 @@ async def check_subscription_status(request: Request):
                                     }).eq("id", subscription.get("id")).execute()
                                     supabase.table("user_profiles").update({
                                         "subscription_plan": healed_plan, "subscription_tier": healed_plan,
-                                        "subscription_status": stripe_status,
+                                        "subscription_status": "active",
                                         "updated_at": datetime.utcnow().isoformat(),
                                     }).eq("id", user_id).execute()
                                     print(f"  ✅ [STATUS] Auto-healed: paid=true, plan={healed_plan}")
@@ -10176,7 +10224,9 @@ async def check_subscription_status(request: Request):
                                     'has_subscription': True,
                                     'plan': healed_plan,
                                     'paid': True,
-                                    'status': stripe_status,
+                                    'status': 'active',
+                                    'subscription_status': 'active',
+                                    'payment_date': healed_payment_date,
                                     'started_at': subscription.get('start_date') or subscription.get('created_at'),
                                     'capabilities': capabilities.get(healed_plan, {}),
                                 }
@@ -10191,6 +10241,7 @@ async def check_subscription_status(request: Request):
                     'plan': 'free',
                     'paid': False,
                     'status': sub_status or 'inactive',
+                    'subscription_status': sub_status or 'inactive',
                     'message': 'Payment not yet validated. If you just paid, please wait a few seconds and refresh.',
                 }
 
@@ -10202,6 +10253,7 @@ async def check_subscription_status(request: Request):
                 'plan': 'free',
                 'paid': False,
                 'status': 'inactive',
+                'subscription_status': 'inactive',
                 'message': no_access_message,
             }
     
@@ -10254,6 +10306,7 @@ async def create_checkout_session(req: CreateCheckoutSessionRequest, request: Re
             "success_url": f"{frontend_url}/#dashboard?session_id={{CHECKOUT_SESSION_ID}}&success=true",
             "cancel_url": f"{frontend_url}/#pricing",
             "allow_promotion_codes": True,
+            "client_reference_id": user_id,
             "metadata": {
                 "user_id": user_id,
                 "plan": plan
@@ -10292,8 +10345,11 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
         user_id = get_user_id(request)
         
         session = stripe.checkout.Session.retrieve(req.session_id, expand=["line_items", "subscription"])
-        
-        if session.payment_status != "paid":
+
+        payment_status_str = str(session.payment_status or "").lower()
+        print(f"💳 [VERIFY] Session received: session_id={req.session_id}, user_id={user_id}, payment_status={payment_status_str}")
+
+        if payment_status_str not in ("paid", "no_payment_required"):
             return {
                 "success": False,
                 "message": "Paiement non confirmé"
@@ -10405,12 +10461,18 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
             except Exception as e:
                 print(f"Stripe cancel old subs warning: {e}")
 
+            payment_date = _resolve_payment_date(session.get("created"), subscription.get("created") if subscription else None)
+            print(f"💾 [VERIFY] Writing DB row: user_id={user_id}, plan={plan}, paid=True, status=active, payment_date={payment_date}")
+
             supabase.table("subscriptions").upsert({
                 "user_id": user_id,
                 "plan_tier": plan,
                 "plan_id": plan,
+                "plan": True,
                 "paid": True,
-                "status": subscription.status if subscription else "active",
+                "status": "active",
+                "subscription_status": "active",
+                "payment_date": payment_date,
                 "stripe_session_id": session.id,
                 "stripe_subscription_id": subscription.id if subscription else None,
                 "stripe_customer_id": session.customer,
@@ -10423,7 +10485,7 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
                 "id": user_id,
                 "subscription_tier": plan,
                 "subscription_plan": plan,
-                "subscription_status": subscription.status if subscription else "active",
+                "subscription_status": "active",
                 "updated_at": datetime.utcnow().isoformat()
             }).execute()
             
@@ -10494,8 +10556,12 @@ def _deferred_startup_tasks():
                 payments_sql = """
                 ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS plan_id TEXT;
                 ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS paid BOOLEAN DEFAULT FALSE;
+                ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS plan BOOLEAN DEFAULT FALSE;
+                ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS subscription_status TEXT DEFAULT 'inactive';
+                ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS payment_date TIMESTAMPTZ;
                 ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS start_date TIMESTAMPTZ;
                 ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS end_date TIMESTAMPTZ;
+                ALTER TABLE subscriptions ALTER COLUMN status SET DEFAULT 'inactive';
                 """
                 payments_resp = req2.post(
                     f"{SUPABASE_URL}/rest/v1/rpc/exec_sql",
@@ -10508,7 +10574,7 @@ def _deferred_startup_tasks():
                     timeout=10
                 )
                 if payments_resp.status_code < 300:
-                    print("✅ subscriptions payment columns ready (plan_id/paid/start_date/end_date)")
+                    print("✅ subscriptions payment columns ready (plan_id/paid/payment_date/start_date/end_date, status default inactive)")
                 else:
                     print(f"⚠️ subscriptions payment columns migration status={payments_resp.status_code}")
             except Exception as e:

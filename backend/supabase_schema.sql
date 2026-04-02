@@ -27,8 +27,11 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   stripe_customer_id TEXT,
   plan_tier TEXT, -- '99', '199', or '299'
   plan_id TEXT,
+  plan BOOLEAN DEFAULT FALSE,
   paid BOOLEAN DEFAULT FALSE,
-  status TEXT DEFAULT 'active', -- 'active', 'cancelled', 'expired'
+  status TEXT DEFAULT 'inactive', -- 'active' when payment validated, otherwise inactive
+  subscription_status TEXT DEFAULT 'inactive',
+  payment_date TIMESTAMPTZ,
   start_date TIMESTAMPTZ,
   end_date TIMESTAMPTZ,
   trial_ends_at TIMESTAMP,

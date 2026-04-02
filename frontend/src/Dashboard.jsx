@@ -13,8 +13,18 @@ const API_URL = 'https://shopbrain-backend.onrender.com'
 let _cachedSession = null
 let _cachedSessionTs = 0
 const SESSION_CACHE_TTL = 30_000 // 30 seconds
-const getCachedSession = async () => {
-  if (_cachedSession && (Date.now() - _cachedSessionTs < SESSION_CACHE_TTL)) {
+const resetSubscriptionClientCaches = () => {
+  _cachedSession = null
+  _cachedSessionTs = 0
+  _apiCache.clear()
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem('subscriptionCache')
+    localStorage.removeItem('profileCache')
+  }
+}
+
+const getCachedSession = async (forceRefresh = false) => {
+  if (!forceRefresh && _cachedSession && (Date.now() - _cachedSessionTs < SESSION_CACHE_TTL)) {
     return _cachedSession
   }
   const { data: { session } } = await supabase.auth.getSession()
@@ -565,11 +575,50 @@ export default function Dashboard() {
 
   // Translations are now managed by LanguageContext
 
+  const normalizeSubscription = (raw) => {
+    const status = String(raw?.subscription_status || raw?.status || 'inactive').toLowerCase().trim()
+    const paid = raw?.paid === true || raw?.plan === true || raw?.has_subscription === true
+    const activePaid = status === 'active' && paid
+    const tier = typeof raw?.plan === 'string' ? raw.plan : (activePaid ? 'premium' : 'free')
+    return {
+      has_subscription: activePaid,
+      paid: activePaid,
+      status: activePaid ? 'active' : 'inactive',
+      subscription_status: activePaid ? 'active' : 'inactive',
+      plan: tier,
+      payment_date: raw?.payment_date || null,
+      started_at: raw?.started_at || null,
+      capabilities: raw?.capabilities || null
+    }
+  }
+
+  const refreshSubscriptionState = async (userId, accessToken) => {
+    const resp = await fetch(`${API_URL}/api/subscription/status`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache'
+      },
+      body: JSON.stringify({ user_id: userId })
+    })
+    const data = await resp.json()
+    console.log('[FRONT-SUB] read on login', data)
+    const normalized = normalizeSubscription(data)
+    setSubscription(normalized)
+    setSubscriptionMissing(!normalized.has_subscription)
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('subscriptionCache', JSON.stringify(normalized))
+    }
+    return normalized
+  }
+
   const verifyPaymentSession = async (sessionId) => {
     try {
-      const session = await getCachedSession()
+      resetSubscriptionClientCaches()
+      const session = await getCachedSession(true)
       if (!session) {
-        initializeUser()
+        initializeUser(true)
         return
       }
 
@@ -588,10 +637,11 @@ export default function Dashboard() {
       }
       
       // Always refresh user data after verification attempt
-      initializeUser()
+      await refreshSubscriptionState(session.user.id, session.access_token)
+      initializeUser(true)
     } catch (err) {
       console.error('Payment verification error:', err)
-      initializeUser()
+      initializeUser(true)
     }
   }
 
@@ -608,6 +658,7 @@ export default function Dashboard() {
     
     if (sessionId || hashSessionId) {
       // Payment redirect - verify session first, then initialize
+      resetSubscriptionClientCaches()
       setIsProcessingPayment(true)
       verifyPaymentSession(sessionId || hashSessionId)
       
@@ -615,7 +666,7 @@ export default function Dashboard() {
       let pollCount = 0
       const pollInterval = setInterval(() => {
         pollCount++
-        initializeUser()
+        initializeUser(true)
         if (pollCount >= 10 || subscription) clearInterval(pollInterval)
       }, 1500)
       
@@ -628,12 +679,13 @@ export default function Dashboard() {
       }, 3000)
     } else if (hasHashSuccess) {
       // Fallback for hash-based success detection
+      resetSubscriptionClientCaches()
       setIsProcessingPayment(true)
-      initializeUser()
+      initializeUser(true)
       
       // Poll aggressively for subscription update from webhook
       const checkInterval = setInterval(() => {
-        initializeUser()
+        initializeUser(true)
       }, 1500)
       
       setTimeout(() => {
@@ -977,10 +1029,11 @@ export default function Dashboard() {
   }, [])
 
   const initRetryRef = useRef(0)
-  const initializeUser = async () => {
+  const initializeUser = async (forceFresh = false) => {
     try {
       const initStart = performance.now()
-      const session = await getCachedSession()
+      if (forceFresh) resetSubscriptionClientCaches()
+      const session = await getCachedSession(forceFresh)
       
       if (!session) {
         window.location.hash = '#/'
@@ -1061,9 +1114,9 @@ export default function Dashboard() {
         loadConversationsFromServer()
 
         // Subscription — no retry loop, trust the DB
-        const subData = initData.subscription
-        if (subData && subData.has_subscription) {
-          setSubscription({ success: true, ...subData })
+        const subData = normalizeSubscription(initData.subscription || {})
+        setSubscription(subData)
+        if (subData.has_subscription) {
           setSubscriptionMissing(false)
           initRetryRef.current = 0
           console.log(`⚡ Subscription: ${subData.plan} — loading products + analytics in parallel...`)
@@ -1072,8 +1125,7 @@ export default function Dashboard() {
             loadProducts(),
             loadAnalytics(analyticsRange)
           ])
-        } else if (!subscription) {
-          // Only mark as missing if we have NO cached subscription
+        } else {
           setSubscriptionMissing(true)
           // Auto-retry up to 5 times with increasing delay
           if (initRetryRef.current < 8) {
@@ -1118,12 +1170,13 @@ export default function Dashboard() {
         setLoading(false)
 
         const data = subResp.ok ? await subResp.json() : null
-        if (data && data.success && data.has_subscription) {
-          setSubscription(data)
+        const normalizedSub = normalizeSubscription(data || {})
+        setSubscription(normalizedSub)
+        if (normalizedSub.has_subscription) {
           setSubscriptionMissing(false)
           initRetryRef.current = 0
           Promise.all([loadProducts(), loadAnalytics(analyticsRange)])
-        } else if (!subscription) {
+        } else {
           setSubscriptionMissing(true)
           // Auto-retry
           if (initRetryRef.current < 8) {
