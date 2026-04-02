@@ -2521,6 +2521,42 @@ async def stripe_webhook(request: Request):
                 print(f"⚠️ [WEBHOOK] {event_type} cannot resolve user_id")
                 return {"received": True, "warning": "db_not_linked_to_accounts"}
 
+            # Freshness guard: if incoming event is for an older/different subscription,
+            # do not overwrite a newer active/trialing plan already linked to this user.
+            try:
+                incoming_created = int(obj.get("created", 0) or 0)
+                existing_res = (
+                    supabase.table("subscriptions")
+                    .select("stripe_subscription_id,plan_tier,status,subscription_status")
+                    .eq("user_id", user_id)
+                    .order("updated_at", desc=True)
+                    .limit(1)
+                    .execute()
+                )
+                existing_row = existing_res.data[0] if existing_res.data else None
+                if existing_row:
+                    existing_sub_id = _normalize_stripe_subscription_id(existing_row.get("stripe_subscription_id"))
+                    existing_status = str(existing_row.get("status") or existing_row.get("subscription_status") or "").lower()
+                    existing_created = 0
+                    if existing_sub_id and existing_sub_id != stripe_sub_id:
+                        try:
+                            existing_sub_obj = stripe.Subscription.retrieve(existing_sub_id)
+                            existing_created = int(existing_sub_obj.get("created", 0) or 0)
+                            existing_status = str(existing_sub_obj.get("status") or existing_status).lower()
+                        except Exception as existing_fetch_err:
+                            print(f"⚠️ [WEBHOOK] existing subscription fetch warning: {existing_fetch_err}")
+
+                        existing_is_valid = existing_status in ("active", "trialing")
+                        incoming_is_valid = stripe_status in ("active", "trialing")
+                        if existing_is_valid and (not incoming_is_valid or existing_created > incoming_created):
+                            print(
+                                f"⏭️ [WEBHOOK] Ignoring stale {event_type}: incoming={stripe_sub_id} created={incoming_created} "
+                                f"existing={existing_sub_id} created={existing_created} status={existing_status}"
+                            )
+                            return {"received": True, "ignored": "stale_subscription_event"}
+            except Exception as guard_err:
+                print(f"⚠️ [WEBHOOK] subscription freshness guard warning: {guard_err}")
+
             stored_status = "active" if stripe_status in ("active", "trialing") else "inactive"
             update_payload = {
                 "user_id": user_id,
@@ -2545,6 +2581,19 @@ async def stripe_webhook(request: Request):
 
             print(f"💾 [WEBHOOK] {event_type} DB sync payload: {update_payload}")
             supabase.table("subscriptions").upsert(update_payload, on_conflict="user_id").execute()
+
+            if plan_tier:
+                try:
+                    supabase.table("user_profiles").upsert({
+                        "id": user_id,
+                        "subscription_tier": plan_tier,
+                        "subscription_plan": plan_tier,
+                        "subscription_status": stored_status,
+                        "updated_at": datetime.utcnow().isoformat(),
+                    }, on_conflict="id").execute()
+                except Exception as profile_sync_err:
+                    print(f"⚠️ [WEBHOOK] user_profiles sync warning: {profile_sync_err}")
+
             _init_cache.pop(user_id, None)
             return {"received": True}
 
