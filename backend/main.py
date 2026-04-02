@@ -1437,12 +1437,43 @@ def _resolve_payment_date(*values) -> str:
     return datetime.utcnow().isoformat()
 
 
+def _parse_iso_datetime(value: str | None):
+    if not value:
+        return None
+    try:
+        normalized = str(value).strip().replace("Z", "+00:00")
+        return datetime.fromisoformat(normalized)
+    except Exception:
+        return None
+
+
+def _subscription_period_is_valid(row: dict | None) -> bool:
+    if not row:
+        return False
+    end_candidate = row.get("end_date") or row.get("current_period_end")
+    if not end_candidate:
+        return True
+
+    end_dt = _parse_iso_datetime(end_candidate)
+    if not end_dt:
+        return True
+
+    try:
+        if end_dt.tzinfo is not None:
+            return end_dt > datetime.now(end_dt.tzinfo)
+    except Exception:
+        pass
+
+    return end_dt > datetime.utcnow()
+
+
 def _is_paid_subscription_row(row: dict | None) -> bool:
     if not row:
         return False
     status = str(row.get("status") or row.get("subscription_status") or "").strip().lower()
     paid = bool(row.get("paid") is True or row.get("plan") is True)
-    return status == "active" and paid
+    period_valid = _subscription_period_is_valid(row)
+    return status == "active" and paid and period_valid
 
 
 def _inactive_subscription_payload(message: str | None = None) -> dict:
