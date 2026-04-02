@@ -2489,6 +2489,10 @@ async def stripe_webhook(request: Request):
             if plan_tier:
                 update_payload["plan_tier"] = plan_tier
                 update_payload["plan_id"] = plan_tier
+            if stored_status == "active":
+                update_payload["paid"] = True
+                update_payload["plan"] = True
+                update_payload["payment_date"] = _resolve_payment_date(obj.get("created"))
             if stored_status == "inactive":
                 update_payload["paid"] = False
                 update_payload["plan"] = False
