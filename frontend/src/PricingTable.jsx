@@ -1,80 +1,78 @@
-import React, { useEffect } from 'react'
+import React from 'react'
 
-// Prefill email/client reference so Stripe checkout is smoother
-// Supports test mode via URL params: ?mode=test&pk=pk_test_...&ptid=prctbl_test_...
-export default function StripePricingTable({ userEmail, userId }) {
-  useEffect(() => {
-    // Load Stripe Pricing Table script
-    const script = document.createElement('script')
-    script.src = 'https://js.stripe.com/v3/pricing-table.js'
-    script.async = true
-    document.body.appendChild(script)
-    
-    return () => {
-      if (script.parentNode) {
-        script.parentNode.removeChild(script)
-      }
-    }
-  }, [])
+const PLANS = [
+  {
+    id: 'standard',
+    name: 'Standard',
+    price: '$99/mois',
+    description: 'Pour lancer ShopBrain AI avec les fonctions essentielles.',
+    features: ['50 produits / mois', 'Optimisation titres et prix', 'Rapport mensuel', 'Essai gratuit de 14 jours'],
+    accent: 'border-orange-200'
+  },
+  {
+    id: 'pro',
+    name: 'Pro',
+    price: '$199/mois',
+    description: 'Le meilleur choix pour une boutique en croissance.',
+    features: ['500 produits / mois', 'Descriptions IA', 'Cross-sell et image reco', 'Support prioritaire'],
+    accent: 'border-teal-300 ring-2 ring-teal-100'
+  },
+  {
+    id: 'premium',
+    name: 'Premium',
+    price: '$299/mois',
+    description: 'Le plan complet pour tout automatiser à grande échelle.',
+    features: ['Produits illimités', 'Actions avancées', 'Fonctions prédictives', 'Support 24/7'],
+    accent: 'border-orange-200'
+  }
+]
 
+export default function StripePricingTable({ userEmail, onCheckout }) {
   return (
     <div className="min-h-screen bg-white">
       <div className="max-w-7xl mx-auto px-6 py-12">
         <div className="text-center mb-12">
           <h1 className="text-5xl md:text-6xl font-bold text-gray-900 mb-6">
-            Plans de pricing
+            Choisissez votre plan
           </h1>
-          <p className="text-xl text-gray-600 max-w-2xl mx-auto">
-            Choisissez le plan qui correspond à vos besoins. Tous les plans incluent 14 jours d'essai gratuit.
+          <p className="text-xl text-gray-600 max-w-3xl mx-auto">
+            Cette page utilise maintenant le checkout backend sécurisé pour garantir que chaque abonnement est relié au bon compte utilisateur.
+          </p>
+          <p className="text-sm text-gray-500 mt-4">
+            Compte connecté : <span className="font-semibold text-gray-700">{userEmail}</span>
           </p>
         </div>
 
-        {/* Stripe Pricing Table Embed (supports overrides via URL params) */}
-        <div id="stripe-pricing-table">
-          {(() => {
-            const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
-            const mode = params?.get('mode') || 'live'
-            const overridePk = params?.get('pk') || ''
-            const overrideTableId = params?.get('ptid') || ''
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {PLANS.map((plan) => (
+            <div key={plan.id} className={`rounded-3xl border bg-white p-8 shadow-sm ${plan.accent}`}>
+              <div className="mb-6">
+                <h2 className="text-2xl font-bold text-gray-900">{plan.name}</h2>
+                <p className="text-4xl font-bold text-gray-900 mt-3">{plan.price}</p>
+                <p className="text-sm text-gray-500 mt-3">{plan.description}</p>
+              </div>
 
-            // Live defaults
-            const LIVE_PUBLISHABLE_KEY = 'pk_live_51REHBEPSvADOSbOzqhf7zqZKxA8T2OWPkMOeNsli4wc1n3GYgmTc7TboQlAL6GeeVSd7i5vfIG1IbkGeXvXqedyB009rEijMRi'
-            const LIVE_TABLE_ID = 'prctbl_1SczvvPSvADOSbOz3kGUkwwZ'
+              <ul className="space-y-3 mb-8 text-sm text-gray-700">
+                {plan.features.map((feature) => (
+                  <li key={feature} className="flex items-start gap-3">
+                    <span className="mt-0.5 text-green-600">✓</span>
+                    <span>{feature}</span>
+                  </li>
+                ))}
+              </ul>
 
-            // Optional test env (fallbacks if provided at build time)
-            const TEST_PUBLISHABLE_KEY = (import.meta?.env?.VITE_STRIPE_TEST_PUBLISHABLE_KEY) || ''
-            const TEST_TABLE_ID = (import.meta?.env?.VITE_STRIPE_TEST_TABLE_ID) || ''
-
-            const publishableKey = overridePk || (mode === 'test' ? TEST_PUBLISHABLE_KEY : LIVE_PUBLISHABLE_KEY)
-            const tableId = overrideTableId || (mode === 'test' ? TEST_TABLE_ID : LIVE_TABLE_ID)
-
-            return (
-              <stripe-pricing-table
-                pricing-table-id={tableId}
-                publishable-key={publishableKey}
-                customer-email={userEmail || undefined}
-                client-reference-id={userId || undefined}
-              ></stripe-pricing-table>
-            )
-          })()}
+              <button
+                onClick={() => onCheckout?.(plan.id)}
+                className="w-full rounded-full bg-[#1A1A2E] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#2A2A42]"
+              >
+                Continuer avec {plan.name}
+              </button>
+            </div>
+          ))}
         </div>
 
-        {/* Fallback: if Stripe shows a success message but doesn't redirect, let user continue */}
-        <div className="mt-8 text-center">
-          <p className="text-sm text-gray-500 mb-3">
-            Si Stripe affiche "Thanks for subscribing" sans redirection,
-            cliquez ci-dessous pour accéder à votre dashboard.
-          </p>
-          <button
-            onClick={() => {
-              // Trigger the dashboard payment success flow
-              window.location.hash = '#dashboard?success=true'
-            }}
-            className="inline-flex items-center gap-2 px-5 py-3 rounded-full bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition shadow"
-          >
-            Continuer vers le dashboard
-            <span aria-hidden>→</span>
-          </button>
+        <div className="mt-10 rounded-2xl border border-blue-100 bg-blue-50 p-5 text-center text-sm text-blue-900">
+          Après le paiement, Stripe redirige automatiquement vers le site et le backend persiste l’abonnement avec le bon `user_id`.
         </div>
       </div>
     </div>
