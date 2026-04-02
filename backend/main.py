@@ -2299,6 +2299,21 @@ async def stripe_webhook(request: Request):
         try:
             if email:
                 row = (
+                    supabase_client.table("subscriptions")
+                    .select("user_id")
+                    .eq("email", email)
+                    .order("updated_at", desc=True)
+                    .limit(1)
+                    .execute()
+                )
+                if row.data:
+                    return row.data[0].get("user_id")
+        except Exception as e:
+            print(f"⚠️ [WEBHOOK] resolve by subscriptions.email warning: {e}")
+
+        try:
+            if email:
+                row = (
                     supabase_client.table("user_profiles")
                     .select("id")
                     .eq("email", email)
