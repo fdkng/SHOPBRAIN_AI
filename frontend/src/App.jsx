@@ -129,6 +129,11 @@ export default function App() {
     const isPaymentSuccess = urlParams.get('payment') === 'success' || urlParams.has('session_id') || urlParams.get('checkout') === 'success'
 
     if (isPaymentSuccess) {
+      try {
+        localStorage.removeItem('subscriptionCache')
+        localStorage.removeItem('profileCache')
+      } catch {}
+
       setPaymentSuccess(true)
 
       const sessionId = urlParams.get('session_id')
@@ -321,6 +326,21 @@ export default function App() {
       subscriptionCheckInProgressRef.current = false
     }
   }
+
+  useEffect(() => {
+    if (currentView === 'stripe-pricing' && !user) {
+      setLandingStatusByKey((prev) => ({
+        ...prev,
+        pricing: { type: 'warning', message: t('mustCreateAccountFirst') }
+      }))
+      setAuthMode('signup')
+      setShowAuthModal(true)
+      setCurrentView('landing')
+      if (typeof window !== 'undefined' && window.location.hash === '#stripe-pricing') {
+        window.location.hash = '#pricing'
+      }
+    }
+  }, [currentView, user, t])
 
   // Compute a safe redirect URL for Supabase OAuth (works locally and on GitHub Pages)
   const getRedirectUrl = () => {
@@ -546,7 +566,7 @@ export default function App() {
   }
 
   // If viewing Stripe Pricing Table
-  if (currentView === 'stripe-pricing') {
+  if (currentView === 'stripe-pricing' && user) {
     return <Suspense fallback={<LazyFallback />}><StripePricingTable userEmail={user?.email} userId={user?.id} /></Suspense>
   }
 

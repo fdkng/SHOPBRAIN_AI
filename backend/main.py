@@ -2003,12 +2003,7 @@ async def create_payment_link(payload: dict, request: Request):
     plan = payload.get("plan", "").lower()
     customer_email = payload.get("email")
     
-    # Try to get user_id from token, fallback to payload
-    try:
-        user_id = get_user_id(request)
-    except:
-        # If token validation fails, get from payload
-        user_id = payload.get("user_id", "unknown")
+    user_id = get_user_id(request)
     
     # Plan pricing configuration
     plan_config = {
@@ -2367,7 +2362,7 @@ async def stripe_webhook(request: Request):
 
         if event_type == "checkout.session.completed":
             session = obj
-            user_id = (session.get("metadata") or {}).get("user_id")
+            user_id = (session.get("metadata") or {}).get("user_id") or session.get("client_reference_id")
             if not user_id:
                 print("⚠️ [WEBHOOK] checkout.session.completed missing user_id metadata")
                 return {"received": True, "warning": "missing_user_id_metadata"}
