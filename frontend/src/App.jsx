@@ -567,7 +567,7 @@ export default function App() {
 
   // If viewing Stripe Pricing Table
   if (currentView === 'stripe-pricing' && user) {
-    return <Suspense fallback={<LazyFallback />}><StripePricingTable userEmail={user?.email} userId={user?.id} onCheckout={handleStripeCheckout} /></Suspense>
+    return <Suspense fallback={<LazyFallback />}><StripePricingTable userEmail={user?.email} userId={user?.id} /></Suspense>
   }
 
   // Otherwise show landing page
