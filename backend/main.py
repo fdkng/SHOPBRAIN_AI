@@ -1821,7 +1821,7 @@ async def fast_init(request: Request):
                                     # Update DB so next call is instant
                                     try:
                                         supabase_client.table("subscriptions").update({
-                                            "plan_tier": plan, "plan_id": plan,
+                                            "plan_tier": plan,
                                             "paid": True, "status": sub_status,
                                             "payment_date": payment_date,
                                             "start_date": _stripe_ts_to_iso(stripe_sub.get("current_period_start") or stripe_sub.get("start_date")),
@@ -2483,7 +2483,6 @@ async def stripe_webhook(request: Request):
                 "stripe_subscription_id": normalized_sub_id,
                 "stripe_customer_id": stripe_customer_id,
                 "plan_tier": plan_tier,
-                "plan_id": plan_tier,
                 "plan": bool(paid_flag),
                 "paid": bool(paid_flag),
                 "status": stored_status,
@@ -2547,7 +2546,6 @@ async def stripe_webhook(request: Request):
                 "stripe_subscription_id": stripe_sub_id,
                 "stripe_customer_id": stripe_customer_id,
                 "plan_tier": plan_tier,
-                "plan_id": plan_tier,
                 "plan": True,
                 "paid": True,
                 "status": "active",
@@ -2655,7 +2653,6 @@ async def stripe_webhook(request: Request):
                 update_payload["email"] = email
             if plan_tier:
                 update_payload["plan_tier"] = plan_tier
-                update_payload["plan_id"] = plan_tier
             if stored_status == "active":
                 update_payload["paid"] = True
                 update_payload["plan"] = True
@@ -10226,7 +10223,7 @@ async def check_subscription_status(request: Request):
                                 healed_payment_date = subscription.get('payment_date') or _resolve_payment_date(stripe_sub.get("created"))
                                 try:
                                     supabase.table("subscriptions").update({
-                                        "plan_tier": healed_plan, "plan_id": healed_plan,
+                                        "plan_tier": healed_plan,
                                         "plan": True,
                                         "paid": True, "status": "active",
                                         "subscription_status": "active",
@@ -10493,7 +10490,6 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
             supabase.table("subscriptions").upsert({
                 "user_id": user_id,
                 "plan_tier": plan,
-                "plan_id": plan,
                 "plan": True,
                 "paid": True,
                 "status": "active",
