@@ -541,6 +541,13 @@ export default function App() {
     }
   }
 
+  const openStripePricing = () => {
+    setCurrentView('stripe-pricing')
+    if (typeof window !== 'undefined' && window.location.hash !== '#stripe-pricing') {
+      window.location.hash = '#stripe-pricing'
+    }
+  }
+
   const renderLandingStatus = (key) => {
     const status = landingStatusByKey[key]
     if (!status?.message) return null
@@ -893,7 +900,7 @@ export default function App() {
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3 md:gap-4 mb-8">
               <button
-                onClick={() => window.location.hash = '#stripe-pricing'}
+                onClick={openStripePricing}
                 className="w-full sm:w-auto px-8 md:px-10 py-4 bg-[#1A1A2E] text-white text-sm md:text-base font-medium rounded-full hover:bg-[#2A2A42] transition-all hover:shadow-lg group"
               >
                 {t("viewAllPlans")} <span className="inline-block transition-transform group-hover:translate-x-1">→</span>
@@ -1333,7 +1340,7 @@ export default function App() {
 
           <div className="flex justify-center mb-14">
             <button
-              onClick={() => window.location.hash = '#stripe-pricing'}
+              onClick={openStripePricing}
               className="px-10 py-4 bg-[#1A1A2E] text-white text-sm font-medium rounded-full hover:bg-[#2A2A42] transition-all hover:shadow-lg"
             >
               {t('chooseSubscription')} →
@@ -1388,7 +1395,7 @@ export default function App() {
 
                   {/* CTA removed; selection via Stripe Pricing Table */}
                   <button
-                    onClick={() => window.location.hash = '#stripe-pricing'}
+                    onClick={openStripePricing}
                     className={`w-full py-3.5 rounded-full text-sm font-semibold text-center transition-all ${
                       plan.highlight
                         ? 'bg-[#0D9488] text-white hover:bg-[#2DD4BF] hover:text-[#0D9488] shadow-sm'
@@ -1408,7 +1415,7 @@ export default function App() {
             <p className="text-[#4A4A68] mb-5">{t('needCustomPlan')}</p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
               <button
-                onClick={() => window.location.hash = '#stripe-pricing'}
+                onClick={openStripePricing}
                 className="px-8 py-3 bg-[#1A1A2E] text-white font-medium rounded-full hover:bg-[#2A2A42] transition-all text-sm"
               >
                 {t("viewAllPlans")} →
@@ -1434,7 +1441,7 @@ export default function App() {
             {t('ctaSubtitle')}
           </p>
           <button
-            onClick={() => window.location.hash = '#stripe-pricing'}
+            onClick={openStripePricing}
             className="px-10 py-4 bg-[#FF6B35] text-white text-sm md:text-base font-semibold rounded-full hover:bg-[#E85A28] transition-all hover:shadow-[0_8px_24px_rgba(255,107,53,0.3)]"
           >
             {t("viewAllPlans")} →
