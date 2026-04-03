@@ -2508,7 +2508,7 @@ async def stripe_webhook(request: Request):
                 )
             if not user_id:
                 print("⚠️ [WEBHOOK] checkout.session.completed missing user_id metadata")
-                return {"received": True, "ignored": "missing_user_id_metadata"}
+                return {"received": True, "warning": "missing_user_id_metadata"}
 
             stripe_sub_obj = None
             stripe_status = "active"
@@ -2591,7 +2591,7 @@ async def stripe_webhook(request: Request):
             user_id = user_id or _webhook_resolve_user_id(supabase, stripe_sub_id, stripe_customer_id, email)
             if not user_id:
                 print("⚠️ [WEBHOOK] invoice.payment_succeeded cannot resolve user_id")
-                return {"received": True, "ignored": "db_not_linked_to_accounts"}
+                return {"received": True, "warning": "db_not_linked_to_accounts"}
 
             if not plan_tier:
                 lines = invoice.get("lines", {}).get("data", [])
@@ -2629,7 +2629,7 @@ async def stripe_webhook(request: Request):
             user_id = _webhook_resolve_user_id(supabase, stripe_sub_id, stripe_customer_id, email)
             if not user_id:
                 print(f"⚠️ [WEBHOOK] {event_type} cannot resolve user_id")
-                return {"received": True, "ignored": "db_not_linked_to_accounts"}
+                return {"received": True, "warning": "db_not_linked_to_accounts"}
 
             supabase.table("subscriptions").update({
                 "plan": False,
@@ -2664,7 +2664,7 @@ async def stripe_webhook(request: Request):
             )
             if not user_id:
                 print(f"⚠️ [WEBHOOK] {event_type} cannot resolve user_id")
-                return {"received": True, "ignored": "db_not_linked_to_accounts"}
+                return {"received": True, "warning": "db_not_linked_to_accounts"}
 
             # Freshness guard: if incoming event is for an older/different subscription,
             # do not overwrite a newer active/trialing plan already linked to this user.

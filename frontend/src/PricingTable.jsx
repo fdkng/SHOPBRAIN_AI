@@ -3,6 +3,8 @@ import React, { useEffect } from 'react'
 // Prefill email/client reference so Stripe checkout is smoother
 // Supports test mode via URL params: ?mode=test&pk=pk_test_...&ptid=prctbl_test_...
 export default function StripePricingTable({ userEmail, userId }) {
+  const readyIdentity = Boolean(userId && userEmail)
+
   useEffect(() => {
     // Load Stripe Pricing Table script
     const script = document.createElement('script')
@@ -48,12 +50,21 @@ export default function StripePricingTable({ userEmail, userId }) {
             const publishableKey = overridePk || (mode === 'test' ? TEST_PUBLISHABLE_KEY : LIVE_PUBLISHABLE_KEY)
             const tableId = overrideTableId || (mode === 'test' ? TEST_TABLE_ID : LIVE_TABLE_ID)
 
+            if (!readyIdentity) {
+              return (
+                <div className="rounded-2xl border border-gray-200 bg-gray-50 p-8 text-center text-gray-700">
+                  Chargement de votre compte sécurisé…
+                </div>
+              )
+            }
+
             return (
               <stripe-pricing-table
+                key={`${userId}-${userEmail}`}
                 pricing-table-id={tableId}
                 publishable-key={publishableKey}
-                customer-email={userEmail || undefined}
-                client-reference-id={userId || undefined}
+                customer-email={userEmail}
+                client-reference-id={userId}
               ></stripe-pricing-table>
             )
           })()}
