@@ -2595,6 +2595,8 @@ async def stripe_webhook(request: Request):
                 try:
                     supabase.table("user_profiles").upsert({
                         "id": user_id,
+                        "stripe_customer_id": stripe_customer_id,
+                        "stripe_subscription_id": normalized_sub_id,
                         "subscription_tier": plan_tier,
                         "subscription_plan": plan_tier,
                         "subscription_status": stored_status,
@@ -2670,6 +2672,19 @@ async def stripe_webhook(request: Request):
             }
             print(f"💾 [WEBHOOK] invoice.payment_succeeded DB write: {payload_upsert}")
             supabase.table("subscriptions").upsert(payload_upsert, on_conflict="user_id").execute()
+            if plan_tier:
+                try:
+                    supabase.table("user_profiles").upsert({
+                        "id": user_id,
+                        "stripe_customer_id": stripe_customer_id,
+                        "stripe_subscription_id": stripe_sub_id,
+                        "subscription_tier": plan_tier,
+                        "subscription_plan": plan_tier,
+                        "subscription_status": "active",
+                        "updated_at": datetime.utcnow().isoformat(),
+                    }, on_conflict="id").execute()
+                except Exception as profile_sync_err:
+                    print(f"⚠️ [WEBHOOK] invoice user_profiles sync warning: {profile_sync_err}")
             _init_cache.pop(user_id, None)
             return {"received": True}
 
@@ -2799,6 +2814,8 @@ async def stripe_webhook(request: Request):
                 try:
                     supabase.table("user_profiles").upsert({
                         "id": user_id,
+                        "stripe_customer_id": stripe_customer_id,
+                        "stripe_subscription_id": stripe_sub_id,
                         "subscription_tier": plan_tier,
                         "subscription_plan": plan_tier,
                         "subscription_status": stored_status,
