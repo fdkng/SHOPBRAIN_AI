@@ -2292,6 +2292,7 @@ async def stripe_webhook(request: Request):
     print(f"📊 [WEBHOOK] Event type: {event_type}")
 
     def _webhook_resolve_user_id(supabase_client, stripe_subscription_id=None, stripe_customer_id=None, email=None):
+        # 1) By stripe_subscription_id in subscriptions table
         try:
             normalized_sub = _normalize_stripe_subscription_id(stripe_subscription_id)
             if normalized_sub:
@@ -2303,10 +2304,12 @@ async def stripe_webhook(request: Request):
                     .execute()
                 )
                 if row.data:
+                    print(f"✅ [WEBHOOK] resolved user by subscription_id: {row.data[0].get('user_id')}")
                     return row.data[0].get("user_id")
         except Exception as e:
             print(f"⚠️ [WEBHOOK] resolve by subscription_id warning: {e}")
 
+        # 2) By stripe_customer_id in subscriptions table
         try:
             if stripe_customer_id:
                 row = (
@@ -2318,10 +2321,12 @@ async def stripe_webhook(request: Request):
                     .execute()
                 )
                 if row.data:
+                    print(f"✅ [WEBHOOK] resolved user by customer_id: {row.data[0].get('user_id')}")
                     return row.data[0].get("user_id")
         except Exception as e:
             print(f"⚠️ [WEBHOOK] resolve by customer_id warning: {e}")
 
+        # 3) By email in subscriptions table
         try:
             if email:
                 normalized_email = str(email).strip().lower()
@@ -2334,6 +2339,7 @@ async def stripe_webhook(request: Request):
                     .execute()
                 )
                 if row.data:
+                    print(f"✅ [WEBHOOK] resolved user by subscriptions.email: {row.data[0].get('user_id')}")
                     return row.data[0].get("user_id")
                 row_ci = (
                     supabase_client.table("subscriptions")
@@ -2344,10 +2350,12 @@ async def stripe_webhook(request: Request):
                     .execute()
                 )
                 if row_ci.data:
+                    print(f"✅ [WEBHOOK] resolved user by subscriptions.email (ci): {row_ci.data[0].get('user_id')}")
                     return row_ci.data[0].get("user_id")
         except Exception as e:
             print(f"⚠️ [WEBHOOK] resolve by subscriptions.email warning: {e}")
 
+        # 4) By email in user_profiles table
         try:
             if email:
                 normalized_email = str(email).strip().lower()
@@ -2359,6 +2367,7 @@ async def stripe_webhook(request: Request):
                     .execute()
                 )
                 if row.data:
+                    print(f"✅ [WEBHOOK] resolved user by user_profiles.email: {row.data[0].get('id')}")
                     return row.data[0].get("id")
                 row_ci = (
                     supabase_client.table("user_profiles")
@@ -2368,10 +2377,42 @@ async def stripe_webhook(request: Request):
                     .execute()
                 )
                 if row_ci.data:
+                    print(f"✅ [WEBHOOK] resolved user by user_profiles.email (ci): {row_ci.data[0].get('id')}")
                     return row_ci.data[0].get("id")
         except Exception as e:
-            print(f"⚠️ [WEBHOOK] resolve by email warning: {e}")
+            print(f"⚠️ [WEBHOOK] resolve by user_profiles.email warning: {e}")
 
+        # 5) CRITICAL FALLBACK: By email in auth.users via Supabase Admin API
+        #    This is the ONLY reliable source for first-time buyers using the
+        #    Stripe Pricing Table, which does NOT pass metadata/client_reference_id.
+        try:
+            if email and SUPABASE_URL and SUPABASE_SERVICE_KEY:
+                normalized_email = str(email).strip().lower()
+                print(f"🔍 [WEBHOOK] Attempting auth.users lookup for email: {normalized_email}")
+                admin_url = f"{SUPABASE_URL}/auth/v1/admin/users"
+                headers = {
+                    "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+                    "apikey": SUPABASE_SERVICE_KEY,
+                    "Content-Type": "application/json",
+                }
+                resp = requests.get(admin_url, headers=headers, params={"page": 1, "per_page": 500}, timeout=10)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    users_list = data.get("users", data) if isinstance(data, dict) else data
+                    if isinstance(users_list, list):
+                        for u in users_list:
+                            u_email = (u.get("email") or "").strip().lower()
+                            if u_email == normalized_email:
+                                auth_uid = u.get("id")
+                                print(f"✅ [WEBHOOK] resolved user by auth.users email: {auth_uid}")
+                                return auth_uid
+                    print(f"⚠️ [WEBHOOK] auth.users lookup: no matching user for {normalized_email}")
+                else:
+                    print(f"⚠️ [WEBHOOK] auth.users admin API returned {resp.status_code}: {resp.text[:200]}")
+        except Exception as e:
+            print(f"⚠️ [WEBHOOK] resolve by auth.users warning: {e}")
+
+        print(f"❌ [WEBHOOK] Could not resolve user_id by any method. email={email}, sub={stripe_subscription_id}, cus={stripe_customer_id}")
         return None
 
     try:
