@@ -2350,6 +2350,105 @@ async def stripe_webhook(request: Request):
     except Exception:
         pass
 
+    def _webhook_recover_checkout_context(stripe_customer_id=None, stripe_subscription_id=None):
+        recovered = {
+            "session_id": None,
+            "client_reference_id": None,
+            "email": None,
+            "stripe_customer_id": stripe_customer_id,
+            "stripe_subscription_id": _normalize_stripe_subscription_id(stripe_subscription_id),
+        }
+
+        try:
+            normalized_sub = _normalize_stripe_subscription_id(stripe_subscription_id)
+            customer_id = stripe_customer_id
+            if normalized_sub and not customer_id:
+                stripe_sub_obj = stripe.Subscription.retrieve(normalized_sub)
+                customer_id = stripe_sub_obj.get("customer")
+                recovered["stripe_customer_id"] = customer_id
+
+            if customer_id:
+                sessions = stripe.checkout.Session.list(customer=customer_id, limit=10)
+                for session_obj in sessions.get("data", []):
+                    session_sub = _normalize_stripe_subscription_id(session_obj.get("subscription"))
+                    if normalized_sub and session_sub and session_sub != normalized_sub:
+                        continue
+
+                    recovered["session_id"] = session_obj.get("id")
+                    recovered["client_reference_id"] = session_obj.get("client_reference_id")
+                    recovered["email"] = session_obj.get("customer_email") or (session_obj.get("customer_details") or {}).get("email")
+                    recovered["stripe_subscription_id"] = session_sub or recovered["stripe_subscription_id"]
+                    return recovered
+        except Exception as e:
+            print(f"⚠️ [WEBHOOK] recover checkout context warning: {e}")
+
+        return recovered
+
+    def _webhook_resolve_email(supabase_client, user_id=None, stripe_customer_id=None, stripe_subscription_id=None, email=None):
+        if email:
+            return str(email).strip().lower()
+
+        try:
+            recovered = _webhook_recover_checkout_context(stripe_customer_id, stripe_subscription_id)
+            if recovered.get("email"):
+                return str(recovered.get("email")).strip().lower()
+        except Exception as e:
+            print(f"⚠️ [WEBHOOK] resolve email from checkout context warning: {e}")
+
+        try:
+            if stripe_customer_id:
+                customer_obj = stripe.Customer.retrieve(stripe_customer_id)
+                customer_email = customer_obj.get("email")
+                if customer_email:
+                    return str(customer_email).strip().lower()
+        except Exception as e:
+            print(f"⚠️ [WEBHOOK] resolve email from stripe customer warning: {e}")
+
+        try:
+            normalized_sub = _normalize_stripe_subscription_id(stripe_subscription_id)
+            if normalized_sub:
+                stripe_sub_obj = stripe.Subscription.retrieve(normalized_sub)
+                customer_obj = stripe_sub_obj.get("customer")
+                if hasattr(customer_obj, "get"):
+                    customer_email = customer_obj.get("email")
+                    if customer_email:
+                        return str(customer_email).strip().lower()
+        except Exception as e:
+            print(f"⚠️ [WEBHOOK] resolve email from stripe subscription warning: {e}")
+
+        try:
+            if user_id:
+                profile_row = (
+                    supabase_client.table("user_profiles")
+                    .select("email")
+                    .eq("id", user_id)
+                    .limit(1)
+                    .execute()
+                )
+                if profile_row.data and profile_row.data[0].get("email"):
+                    return str(profile_row.data[0].get("email")).strip().lower()
+        except Exception as e:
+            print(f"⚠️ [WEBHOOK] resolve email from user_profiles warning: {e}")
+
+        try:
+            if user_id and SUPABASE_URL and SUPABASE_SERVICE_KEY:
+                admin_url = f"{SUPABASE_URL}/auth/v1/admin/users/{user_id}"
+                headers = {
+                    "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+                    "apikey": SUPABASE_SERVICE_KEY,
+                    "Content-Type": "application/json",
+                }
+                resp = requests.get(admin_url, headers=headers, timeout=10)
+                if resp.status_code == 200:
+                    user_data = resp.json() or {}
+                    auth_email = user_data.get("email") or (user_data.get("user") or {}).get("email")
+                    if auth_email:
+                        return str(auth_email).strip().lower()
+        except Exception as e:
+            print(f"⚠️ [WEBHOOK] resolve email from auth.users warning: {e}")
+
+        return None
+
     def _webhook_resolve_user_id(supabase_client, stripe_subscription_id=None, stripe_customer_id=None, email=None):
         # 1) By stripe_subscription_id in subscriptions table
         try:
@@ -2438,6 +2537,17 @@ async def stripe_webhook(request: Request):
                 email = customer_obj.get("email")
         except Exception as e:
             print(f"⚠️ [WEBHOOK] resolve by stripe customer object warning: {e}")
+
+        try:
+            recovered = _webhook_recover_checkout_context(stripe_customer_id, stripe_subscription_id)
+            recovered_user_id = recovered.get("client_reference_id")
+            if recovered_user_id:
+                print(f"✅ [WEBHOOK] resolved user by checkout session client_reference_id: {recovered_user_id}")
+                return recovered_user_id
+            if not email and recovered.get("email"):
+                email = recovered.get("email")
+        except Exception as e:
+            print(f"⚠️ [WEBHOOK] resolve by checkout session context warning: {e}")
 
         # 3) By email in subscriptions table
         try:
@@ -2578,6 +2688,7 @@ async def stripe_webhook(request: Request):
                     stripe_customer_id=stripe_customer_id,
                     email=session_email,
                 )
+            session_email = _webhook_resolve_email(supabase, user_id, stripe_customer_id, normalized_sub_id, session_email)
             if not user_id:
                 print("⚠️ [WEBHOOK] checkout.session.completed missing user_id metadata")
                 return {
@@ -2673,6 +2784,7 @@ async def stripe_webhook(request: Request):
                     print(f"⚠️ [WEBHOOK] invoice subscription fetch warning: {e}")
 
             user_id = user_id or _webhook_resolve_user_id(supabase, stripe_sub_id, stripe_customer_id, email)
+            email = _webhook_resolve_email(supabase, user_id, stripe_customer_id, stripe_sub_id, email)
             if not user_id:
                 print("⚠️ [WEBHOOK] invoice.payment_succeeded cannot resolve user_id")
                 return {
@@ -2733,6 +2845,7 @@ async def stripe_webhook(request: Request):
             stripe_customer_id = obj.get("customer")
             email = obj.get("customer_email") or (obj.get("customer_details") or {}).get("email")
             user_id = _webhook_resolve_user_id(supabase, stripe_sub_id, stripe_customer_id, email)
+            email = _webhook_resolve_email(supabase, user_id, stripe_customer_id, stripe_sub_id, email)
             if not user_id:
                 print(f"⚠️ [WEBHOOK] {event_type} cannot resolve user_id")
                 return {
@@ -2777,6 +2890,7 @@ async def stripe_webhook(request: Request):
                 stripe_customer_id=stripe_customer_id,
                 email=email,
             )
+            email = _webhook_resolve_email(supabase, user_id, stripe_customer_id, stripe_sub_id, email)
             if not user_id:
                 print(f"⚠️ [WEBHOOK] {event_type} cannot resolve user_id")
                 return {
@@ -2872,7 +2986,7 @@ async def stripe_webhook(request: Request):
 
     except Exception as e:
         print(f"❌ [WEBHOOK] Unexpected processing error (non-fatal): {e}")
-        return {"received": True, "warning": "processing_error"}
+        return {"received": True, "warning": "processing_error", "error": str(e), "event_type": event_type}
 
 
 # ============== AUTH & PROFILE ROUTES ==============
