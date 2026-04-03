@@ -2324,6 +2324,7 @@ async def stripe_webhook(request: Request):
 
         try:
             if email:
+                normalized_email = str(email).strip().lower()
                 row = (
                     supabase_client.table("subscriptions")
                     .select("user_id")
@@ -2334,11 +2335,22 @@ async def stripe_webhook(request: Request):
                 )
                 if row.data:
                     return row.data[0].get("user_id")
+                row_ci = (
+                    supabase_client.table("subscriptions")
+                    .select("user_id")
+                    .ilike("email", normalized_email)
+                    .order("updated_at", desc=True)
+                    .limit(1)
+                    .execute()
+                )
+                if row_ci.data:
+                    return row_ci.data[0].get("user_id")
         except Exception as e:
             print(f"⚠️ [WEBHOOK] resolve by subscriptions.email warning: {e}")
 
         try:
             if email:
+                normalized_email = str(email).strip().lower()
                 row = (
                     supabase_client.table("user_profiles")
                     .select("id")
@@ -2348,6 +2360,15 @@ async def stripe_webhook(request: Request):
                 )
                 if row.data:
                     return row.data[0].get("id")
+                row_ci = (
+                    supabase_client.table("user_profiles")
+                    .select("id")
+                    .ilike("email", normalized_email)
+                    .limit(1)
+                    .execute()
+                )
+                if row_ci.data:
+                    return row_ci.data[0].get("id")
         except Exception as e:
             print(f"⚠️ [WEBHOOK] resolve by email warning: {e}")
 
@@ -2362,12 +2383,22 @@ async def stripe_webhook(request: Request):
 
         if event_type == "checkout.session.completed":
             session = obj
+            normalized_sub_id = _normalize_stripe_subscription_id(session.get("subscription"))
+            stripe_customer_id = session.get("customer")
+            session_email = session.get("customer_email")
+
             user_id = (session.get("metadata") or {}).get("user_id") or session.get("client_reference_id")
+            if not user_id:
+                user_id = _webhook_resolve_user_id(
+                    supabase,
+                    stripe_subscription_id=normalized_sub_id,
+                    stripe_customer_id=stripe_customer_id,
+                    email=session_email,
+                )
             if not user_id:
                 print("⚠️ [WEBHOOK] checkout.session.completed missing user_id metadata")
                 return {"received": True, "warning": "missing_user_id_metadata"}
 
-            normalized_sub_id = _normalize_stripe_subscription_id(session.get("subscription"))
             stripe_sub_obj = None
             stripe_status = "active"
             plan_tier = None
@@ -2391,10 +2422,10 @@ async def stripe_webhook(request: Request):
 
             payload_upsert = {
                 "user_id": user_id,
-                "email": session.get("customer_email"),
+                "email": session_email,
                 "stripe_session_id": session.get("id"),
                 "stripe_subscription_id": normalized_sub_id,
-                "stripe_customer_id": session.get("customer"),
+                "stripe_customer_id": stripe_customer_id,
                 "plan_tier": plan_tier,
                 "plan_id": plan_tier,
                 "plan": bool(paid_flag),
