@@ -2395,20 +2395,29 @@ async def stripe_webhook(request: Request):
                     "apikey": SUPABASE_SERVICE_KEY,
                     "Content-Type": "application/json",
                 }
-                resp = requests.get(admin_url, headers=headers, params={"page": 1, "per_page": 500}, timeout=10)
-                if resp.status_code == 200:
+                per_page = 200
+                for page in range(1, 11):
+                    resp = requests.get(admin_url, headers=headers, params={"page": page, "per_page": per_page}, timeout=10)
+                    if resp.status_code != 200:
+                        print(f"⚠️ [WEBHOOK] auth.users admin API returned {resp.status_code}: {resp.text[:200]}")
+                        break
+
                     data = resp.json()
                     users_list = data.get("users", data) if isinstance(data, dict) else data
-                    if isinstance(users_list, list):
-                        for u in users_list:
-                            u_email = (u.get("email") or "").strip().lower()
-                            if u_email == normalized_email:
-                                auth_uid = u.get("id")
-                                print(f"✅ [WEBHOOK] resolved user by auth.users email: {auth_uid}")
-                                return auth_uid
-                    print(f"⚠️ [WEBHOOK] auth.users lookup: no matching user for {normalized_email}")
-                else:
-                    print(f"⚠️ [WEBHOOK] auth.users admin API returned {resp.status_code}: {resp.text[:200]}")
+                    if not isinstance(users_list, list) or not users_list:
+                        break
+
+                    for u in users_list:
+                        u_email = (u.get("email") or "").strip().lower()
+                        if u_email == normalized_email:
+                            auth_uid = u.get("id")
+                            print(f"✅ [WEBHOOK] resolved user by auth.users email: {auth_uid}")
+                            return auth_uid
+
+                    if len(users_list) < per_page:
+                        break
+
+                print(f"⚠️ [WEBHOOK] auth.users lookup: no matching user for {normalized_email}")
         except Exception as e:
             print(f"⚠️ [WEBHOOK] resolve by auth.users warning: {e}")
 
@@ -2427,6 +2436,12 @@ async def stripe_webhook(request: Request):
             normalized_sub_id = _normalize_stripe_subscription_id(session.get("subscription"))
             stripe_customer_id = session.get("customer")
             session_email = session.get("customer_email")
+            if not session_email and stripe_customer_id:
+                try:
+                    customer_obj = stripe.Customer.retrieve(stripe_customer_id)
+                    session_email = customer_obj.get("email")
+                except Exception as e:
+                    print(f"⚠️ [WEBHOOK] checkout customer retrieve warning: {e}")
 
             user_id = (session.get("metadata") or {}).get("user_id") or session.get("client_reference_id")
             if not user_id:
