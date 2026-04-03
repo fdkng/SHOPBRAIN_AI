@@ -2345,6 +2345,38 @@ async def stripe_webhook(request: Request):
         except Exception as e:
             print(f"⚠️ [WEBHOOK] resolve by customer_id warning: {e}")
 
+        # 2c) By stripe ids in user_profiles table
+        try:
+            normalized_sub = _normalize_stripe_subscription_id(stripe_subscription_id)
+            if normalized_sub:
+                row = (
+                    supabase_client.table("user_profiles")
+                    .select("id")
+                    .eq("stripe_subscription_id", normalized_sub)
+                    .limit(1)
+                    .execute()
+                )
+                if row.data:
+                    print(f"✅ [WEBHOOK] resolved user by user_profiles.stripe_subscription_id: {row.data[0].get('id')}")
+                    return row.data[0].get("id")
+        except Exception as e:
+            print(f"⚠️ [WEBHOOK] resolve by user_profiles.stripe_subscription_id warning: {e}")
+
+        try:
+            if stripe_customer_id:
+                row = (
+                    supabase_client.table("user_profiles")
+                    .select("id")
+                    .eq("stripe_customer_id", stripe_customer_id)
+                    .limit(1)
+                    .execute()
+                )
+                if row.data:
+                    print(f"✅ [WEBHOOK] resolved user by user_profiles.stripe_customer_id: {row.data[0].get('id')}")
+                    return row.data[0].get("id")
+        except Exception as e:
+            print(f"⚠️ [WEBHOOK] resolve by user_profiles.stripe_customer_id warning: {e}")
+
         # 2b) Recover from Stripe subscription/customer directly when IDs exist
         try:
             normalized_sub = _normalize_stripe_subscription_id(stripe_subscription_id)
@@ -2508,7 +2540,17 @@ async def stripe_webhook(request: Request):
                 )
             if not user_id:
                 print("⚠️ [WEBHOOK] checkout.session.completed missing user_id metadata")
-                return {"received": True, "warning": "missing_user_id_metadata"}
+                return {
+                    "received": True,
+                    "warning": "missing_user_id_metadata",
+                    "event_type": event_type,
+                    "debug": {
+                        "stripe_customer_id": stripe_customer_id,
+                        "stripe_subscription_id": normalized_sub_id,
+                        "email": session_email,
+                        "client_reference_id": session.get("client_reference_id"),
+                    },
+                }
 
             stripe_sub_obj = None
             stripe_status = "active"
@@ -2591,7 +2633,16 @@ async def stripe_webhook(request: Request):
             user_id = user_id or _webhook_resolve_user_id(supabase, stripe_sub_id, stripe_customer_id, email)
             if not user_id:
                 print("⚠️ [WEBHOOK] invoice.payment_succeeded cannot resolve user_id")
-                return {"received": True, "warning": "db_not_linked_to_accounts"}
+                return {
+                    "received": True,
+                    "warning": "db_not_linked_to_accounts",
+                    "event_type": event_type,
+                    "debug": {
+                        "stripe_customer_id": stripe_customer_id,
+                        "stripe_subscription_id": stripe_sub_id,
+                        "email": email,
+                    },
+                }
 
             if not plan_tier:
                 lines = invoice.get("lines", {}).get("data", [])
@@ -2629,7 +2680,16 @@ async def stripe_webhook(request: Request):
             user_id = _webhook_resolve_user_id(supabase, stripe_sub_id, stripe_customer_id, email)
             if not user_id:
                 print(f"⚠️ [WEBHOOK] {event_type} cannot resolve user_id")
-                return {"received": True, "warning": "db_not_linked_to_accounts"}
+                return {
+                    "received": True,
+                    "warning": "db_not_linked_to_accounts",
+                    "event_type": event_type,
+                    "debug": {
+                        "stripe_customer_id": stripe_customer_id,
+                        "stripe_subscription_id": stripe_sub_id,
+                        "email": email,
+                    },
+                }
 
             supabase.table("subscriptions").update({
                 "plan": False,
@@ -2664,7 +2724,16 @@ async def stripe_webhook(request: Request):
             )
             if not user_id:
                 print(f"⚠️ [WEBHOOK] {event_type} cannot resolve user_id")
-                return {"received": True, "warning": "db_not_linked_to_accounts"}
+                return {
+                    "received": True,
+                    "warning": "db_not_linked_to_accounts",
+                    "event_type": event_type,
+                    "debug": {
+                        "stripe_customer_id": stripe_customer_id,
+                        "stripe_subscription_id": stripe_sub_id,
+                        "email": email,
+                    },
+                }
 
             # Freshness guard: if incoming event is for an older/different subscription,
             # do not overwrite a newer active/trialing plan already linked to this user.
