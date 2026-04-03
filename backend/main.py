@@ -2281,6 +2281,39 @@ async def stripe_webhook(request: Request):
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature")
 
+    def _stripe_to_plain(value):
+        if value is None:
+            return None
+        if isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, list):
+            return [_stripe_to_plain(item) for item in value]
+        if isinstance(value, dict):
+            return {key: _stripe_to_plain(val) for key, val in value.items()}
+
+        try:
+            if hasattr(value, "to_dict_recursive"):
+                return value.to_dict_recursive()
+        except Exception:
+            pass
+
+        try:
+            if hasattr(value, "to_dict"):
+                return value.to_dict()
+        except Exception:
+            pass
+
+        try:
+            if hasattr(value, "items"):
+                return {key: _stripe_to_plain(val) for key, val in value.items()}
+        except Exception:
+            pass
+
+        try:
+            return dict(value)
+        except Exception:
+            return value
+
     if STRIPE_WEBHOOK_SECRET:
         try:
             event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
@@ -2297,18 +2330,25 @@ async def stripe_webhook(request: Request):
             return {"received": True, "warning": "invalid_json"}
 
     try:
-        if isinstance(event, dict):
-            event_type = event.get("type", "unknown")
-            event_data = event.get("data", {})
-            obj = event_data.get("object", {}) if hasattr(event_data, "get") else {}
-        else:
-            event_type = getattr(event, "type", "unknown")
-            event_data = getattr(event, "data", {}) or {}
-            obj = event_data.get("object", {}) if hasattr(event_data, "get") else {}
+        event_plain = _stripe_to_plain(event) or {}
+        if not isinstance(event_plain, dict):
+            event_plain = {}
+
+        event_type = event_plain.get("type") or getattr(event, "type", "unknown")
+        event_data = event_plain.get("data") or {}
+        if not isinstance(event_data, dict):
+            event_data = _stripe_to_plain(event_data) or {}
+        obj = event_data.get("object") or {}
+        if not isinstance(obj, dict):
+            obj = _stripe_to_plain(obj) or {}
     except Exception as e:
         print(f"❌ [WEBHOOK] Failed to parse event envelope: {e}")
         return {"received": True, "warning": "event_envelope_parse_error"}
     print(f"📊 [WEBHOOK] Event type: {event_type}")
+    try:
+        print(f"🧾 [WEBHOOK] Object keys: {list(obj.keys())[:20]}")
+    except Exception:
+        pass
 
     def _webhook_resolve_user_id(supabase_client, stripe_subscription_id=None, stripe_customer_id=None, email=None):
         # 1) By stripe_subscription_id in subscriptions table
