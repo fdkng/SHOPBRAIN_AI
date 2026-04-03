@@ -2496,13 +2496,16 @@ async def stripe_webhook(request: Request):
             supabase.table("subscriptions").upsert(payload_upsert, on_conflict="user_id").execute()
 
             if plan_tier:
-                supabase.table("user_profiles").upsert({
-                    "id": user_id,
-                    "subscription_tier": plan_tier,
-                    "subscription_plan": plan_tier,
-                    "subscription_status": stored_status,
-                    "updated_at": datetime.utcnow().isoformat(),
-                }, on_conflict="id").execute()
+                try:
+                    supabase.table("user_profiles").upsert({
+                        "id": user_id,
+                        "subscription_tier": plan_tier,
+                        "subscription_plan": plan_tier,
+                        "subscription_status": stored_status,
+                        "updated_at": datetime.utcnow().isoformat(),
+                    }, on_conflict="id").execute()
+                except Exception as profile_err:
+                    print(f"⚠️ [WEBHOOK] checkout user_profiles sync warning: {profile_err}")
 
             _init_cache.pop(user_id, None)
             return {"received": True}
