@@ -2345,6 +2345,28 @@ async def stripe_webhook(request: Request):
         except Exception as e:
             print(f"⚠️ [WEBHOOK] resolve by customer_id warning: {e}")
 
+        # 2b) Recover from Stripe subscription/customer directly when IDs exist
+        try:
+            normalized_sub = _normalize_stripe_subscription_id(stripe_subscription_id)
+            if normalized_sub:
+                stripe_sub_obj = stripe.Subscription.retrieve(normalized_sub)
+                metadata_user_id = (stripe_sub_obj.get("metadata") or {}).get("user_id")
+                if metadata_user_id:
+                    print(f"✅ [WEBHOOK] resolved user by stripe subscription metadata: {metadata_user_id}")
+                    return metadata_user_id
+
+                if not stripe_customer_id:
+                    stripe_customer_id = stripe_sub_obj.get("customer")
+        except Exception as e:
+            print(f"⚠️ [WEBHOOK] resolve by stripe subscription object warning: {e}")
+
+        try:
+            if stripe_customer_id and not email:
+                customer_obj = stripe.Customer.retrieve(stripe_customer_id)
+                email = customer_obj.get("email")
+        except Exception as e:
+            print(f"⚠️ [WEBHOOK] resolve by stripe customer object warning: {e}")
+
         # 3) By email in subscriptions table
         try:
             if email:
@@ -2414,6 +2436,20 @@ async def stripe_webhook(request: Request):
                     "apikey": SUPABASE_SERVICE_KEY,
                     "Content-Type": "application/json",
                 }
+
+                # Try exact email query first
+                exact_resp = requests.get(admin_url, headers=headers, params={"email": normalized_email}, timeout=10)
+                if exact_resp.status_code == 200:
+                    exact_data = exact_resp.json()
+                    exact_users = exact_data.get("users", exact_data) if isinstance(exact_data, dict) else exact_data
+                    if isinstance(exact_users, list):
+                        for u in exact_users:
+                            u_email = (u.get("email") or "").strip().lower()
+                            if u_email == normalized_email:
+                                auth_uid = u.get("id")
+                                print(f"✅ [WEBHOOK] resolved user by auth.users exact email: {auth_uid}")
+                                return auth_uid
+
                 per_page = 200
                 for page in range(1, 11):
                     resp = requests.get(admin_url, headers=headers, params={"page": page, "per_page": per_page}, timeout=10)
@@ -2454,7 +2490,7 @@ async def stripe_webhook(request: Request):
             session = obj
             normalized_sub_id = _normalize_stripe_subscription_id(session.get("subscription"))
             stripe_customer_id = session.get("customer")
-            session_email = session.get("customer_email")
+            session_email = session.get("customer_email") or (session.get("customer_details") or {}).get("email")
             if not session_email and stripe_customer_id:
                 try:
                     customer_obj = stripe.Customer.retrieve(stripe_customer_id)
@@ -2472,7 +2508,7 @@ async def stripe_webhook(request: Request):
                 )
             if not user_id:
                 print("⚠️ [WEBHOOK] checkout.session.completed missing user_id metadata")
-                return {"received": True, "warning": "missing_user_id_metadata"}
+                return {"received": True, "ignored": "missing_user_id_metadata"}
 
             stripe_sub_obj = None
             stripe_status = "active"
@@ -2532,7 +2568,14 @@ async def stripe_webhook(request: Request):
             invoice = obj
             stripe_sub_id = _normalize_stripe_subscription_id(invoice.get("subscription"))
             stripe_customer_id = invoice.get("customer")
-            email = invoice.get("customer_email")
+            email = invoice.get("customer_email") or (invoice.get("customer_details") or {}).get("email")
+
+            if not email and stripe_customer_id:
+                try:
+                    customer_obj = stripe.Customer.retrieve(stripe_customer_id)
+                    email = customer_obj.get("email")
+                except Exception as e:
+                    print(f"⚠️ [WEBHOOK] invoice customer retrieve warning: {e}")
 
             stripe_sub_obj = None
             user_id = None
@@ -2548,7 +2591,7 @@ async def stripe_webhook(request: Request):
             user_id = user_id or _webhook_resolve_user_id(supabase, stripe_sub_id, stripe_customer_id, email)
             if not user_id:
                 print("⚠️ [WEBHOOK] invoice.payment_succeeded cannot resolve user_id")
-                return {"received": True, "warning": "db_not_linked_to_accounts"}
+                return {"received": True, "ignored": "db_not_linked_to_accounts"}
 
             if not plan_tier:
                 lines = invoice.get("lines", {}).get("data", [])
@@ -2582,11 +2625,11 @@ async def stripe_webhook(request: Request):
         if event_type in ("invoice.payment_failed", "customer.subscription.deleted"):
             stripe_sub_id = _normalize_stripe_subscription_id(obj.get("subscription") or obj.get("id"))
             stripe_customer_id = obj.get("customer")
-            email = obj.get("customer_email")
+            email = obj.get("customer_email") or (obj.get("customer_details") or {}).get("email")
             user_id = _webhook_resolve_user_id(supabase, stripe_sub_id, stripe_customer_id, email)
             if not user_id:
                 print(f"⚠️ [WEBHOOK] {event_type} cannot resolve user_id")
-                return {"received": True, "warning": "db_not_linked_to_accounts"}
+                return {"received": True, "ignored": "db_not_linked_to_accounts"}
 
             supabase.table("subscriptions").update({
                 "plan": False,
@@ -2621,7 +2664,7 @@ async def stripe_webhook(request: Request):
             )
             if not user_id:
                 print(f"⚠️ [WEBHOOK] {event_type} cannot resolve user_id")
-                return {"received": True, "warning": "db_not_linked_to_accounts"}
+                return {"received": True, "ignored": "db_not_linked_to_accounts"}
 
             # Freshness guard: if incoming event is for an older/different subscription,
             # do not overwrite a newer active/trialing plan already linked to this user.
