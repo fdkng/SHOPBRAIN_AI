@@ -1503,22 +1503,41 @@ def _resolve_plan_from_stripe_subscription(subscription_obj) -> str | None:
         'premium': 'premium'
     }
 
+    items = subscription_obj.get("items", {}).get("data", []) if hasattr(subscription_obj, "get") else []
+    exact_amount_map = {9900: 'standard', 19900: 'pro', 29900: 'premium'}
+
+    # IMPORTANT: price_id / amount is the source of truth for upgrades/downgrades.
+    # metadata.plan can be stale (e.g., user upgraded from standard -> pro).
+    best_tier = None
+    best_amount = -1
+    for item in items or []:
+        price_obj = item.get("price", {}) if isinstance(item, dict) else {}
+        price_id = price_obj.get("id")
+        amount = price_obj.get("unit_amount")
+
+        resolved_tier = PRICE_TO_TIER.get(price_id)
+        if not resolved_tier and amount is not None:
+            try:
+                resolved_tier = exact_amount_map.get(int(amount))
+            except Exception:
+                resolved_tier = None
+
+        if resolved_tier:
+            numeric_amount = int(amount) if amount is not None else 0
+            if numeric_amount >= best_amount:
+                best_amount = numeric_amount
+                best_tier = resolved_tier
+
+    if best_tier:
+        return best_tier
+
     metadata_plan = subscription_obj.get("metadata", {}).get("plan") if hasattr(subscription_obj, "get") else None
     if metadata_plan:
         normalized = tier_map.get(str(metadata_plan).lower())
         if normalized:
             return normalized
 
-    items = subscription_obj.get("items", {}).get("data", []) if hasattr(subscription_obj, "get") else []
-    if not items:
-        return None
-
-    price_obj = items[0].get("price", {})
-    price_id = price_obj.get("id")
-    amount = price_obj.get("unit_amount")
-
-    exact_amount_map = {9900: 'standard', 19900: 'pro', 29900: 'premium'}
-    return PRICE_TO_TIER.get(price_id) or exact_amount_map.get(int(amount) if amount is not None else None)
+    return None
 
 # Helper: get authenticated user from Authorization header or request body
 def get_user_id(request: Request) -> str:
@@ -10383,8 +10402,8 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
             supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
             
-            # Determine plan from the most reliable source: metadata -> price_id -> exact amount
-            plan = session.metadata.get("plan") if session.metadata else None
+            # Determine plan from the most reliable source: price_id/amount -> metadata fallback
+            plan = None
 
             def tier_from_amount(amount_cents: int | None):
                 if amount_cents is None:
@@ -10392,8 +10411,8 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
                 exact_amount_map = {9900: "standard", 19900: "pro", 29900: "premium"}
                 return exact_amount_map.get(int(amount_cents))
 
-            # Try subscription item price_id
-            if not plan and subscription:
+            # Try subscription item price_id first (metadata may be stale after upgrades)
+            if subscription:
                 items = subscription.get("items", {}).get("data", [])
                 if items:
                     price_id = items[0].get("price", {}).get("id")
@@ -10408,6 +10427,10 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
                     plan = PRICE_TO_TIER.get(price_id) or tier_from_amount(amount)
                     if plan:
                         break
+
+            # Metadata fallback only if no reliable price info found
+            if not plan and session.metadata:
+                plan = session.metadata.get("plan")
 
             # Normalize plan key (metadata might store '99', '199', '299')
             _tier_normalize = {
