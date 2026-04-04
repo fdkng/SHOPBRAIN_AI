@@ -6355,11 +6355,11 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         <div className="grid grid-cols-2 gap-4">
                           <div>
                             <label className="block text-sm text-[#6A6A85] mb-2">{t('firstName')}</label>
-                            <input type="text" value={profileFirstName} onChange={(e) => setProfileFirstName(e.target.value)} className="w-full bg-white border border-[#E8E8EE] rounded-lg px-4 py-2 text-[#1A1A2E]" />
+                            <input type="text" value={profileFirstName} onChange={(e) => setProfileFirstName(e.target.value)} autoComplete="off" className="w-full bg-white border border-[#E8E8EE] rounded-lg px-4 py-2 text-[#1A1A2E]" />
                           </div>
                           <div>
                             <label className="block text-sm text-[#6A6A85] mb-2">{t('lastName')}</label>
-                            <input type="text" value={profileLastName} onChange={(e) => setProfileLastName(e.target.value)} className="w-full bg-white border border-[#E8E8EE] rounded-lg px-4 py-2 text-[#1A1A2E]" />
+                            <input type="text" value={profileLastName} onChange={(e) => setProfileLastName(e.target.value)} autoComplete="off" className="w-full bg-white border border-[#E8E8EE] rounded-lg px-4 py-2 text-[#1A1A2E]" />
                           </div>
                         </div>
                         <div>
@@ -6388,15 +6388,15 @@ analytics.subscribe("product_added_to_cart", (event) => {
                       <div className="space-y-4">
                         <div>
                           <label className="block text-sm text-[#6A6A85] mb-2">{t('currentPassword')}</label>
-                          <input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} className="w-full bg-[#EFF1F5] border border-[#D8D8E2] rounded-lg px-4 py-2 text-[#1A1A2E]" />
+                          <input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} autoComplete="off" className="w-full bg-[#EFF1F5] border border-[#D8D8E2] rounded-lg px-4 py-2 text-[#1A1A2E]" />
                         </div>
                         <div>
                           <label className="block text-sm text-[#6A6A85] mb-2">{t('newPassword')}</label>
-                          <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="w-full bg-[#EFF1F5] border border-[#D8D8E2] rounded-lg px-4 py-2 text-[#1A1A2E]" />
+                          <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} autoComplete="new-password" className="w-full bg-[#EFF1F5] border border-[#D8D8E2] rounded-lg px-4 py-2 text-[#1A1A2E]" />
                         </div>
                         <div>
                           <label className="block text-sm text-[#6A6A85] mb-2">{t('confirmNewPassword')}</label>
-                          <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} className="w-full bg-[#EFF1F5] border border-[#D8D8E2] rounded-lg px-4 py-2 text-[#1A1A2E]" />
+                          <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} autoComplete="new-password" className="w-full bg-[#EFF1F5] border border-[#D8D8E2] rounded-lg px-4 py-2 text-[#1A1A2E]" />
                         </div>
                         <button onClick={handleUpdatePassword} disabled={saveLoading} className="bg-[#0D9488] hover:bg-[#0F766E] disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold">
                           {saveLoading ? t('updating') : t('updatePassword')}

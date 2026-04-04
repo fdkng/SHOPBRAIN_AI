@@ -655,7 +655,7 @@ export default function App() {
 
             {/* Signup Form */}
             {authMode === 'signup' && (
-              <form onSubmit={handleSignup} className="space-y-4">
+              <form onSubmit={handleSignup} autoComplete="off" className="space-y-4">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-[#4A4A68] mb-2">{t('firstNameLabel')}</label>
@@ -665,6 +665,7 @@ export default function App() {
                       onChange={(e) => setFormData({...formData, firstName: e.target.value})}
                       placeholder={t("firstNamePlaceholder")}
                       required
+                      autoComplete="off"
                       className="w-full px-4 py-3 border border-[#E8E8EE] rounded-xl text-sm text-[#1A1A2E] placeholder-[#8A8AA3] focus:border-[#FF6B35] focus:ring-2 focus:ring-[#FF6B35]/10 outline-none transition-all"
                     />
                   </div>
@@ -676,6 +677,7 @@ export default function App() {
                       onChange={(e) => setFormData({...formData, lastName: e.target.value})}
                       placeholder={t("lastNamePlaceholder")}
                       required
+                      autoComplete="off"
                       className="w-full px-4 py-3 border border-[#E8E8EE] rounded-xl text-sm text-[#1A1A2E] placeholder-[#8A8AA3] focus:border-[#FF6B35] focus:ring-2 focus:ring-[#FF6B35]/10 outline-none transition-all"
                     />
                   </div>
@@ -688,6 +690,7 @@ export default function App() {
                     onChange={(e) => setFormData({...formData, username: e.target.value})}
                     placeholder={t("usernamePlaceholder")}
                     required
+                    autoComplete="off"
                     className="w-full px-4 py-3 border border-[#E8E8EE] rounded-xl text-sm text-[#1A1A2E] placeholder-[#8A8AA3] focus:border-[#FF6B35] focus:ring-2 focus:ring-[#FF6B35]/10 outline-none transition-all"
                   />
                 </div>
@@ -699,6 +702,7 @@ export default function App() {
                     onChange={(e) => setFormData({...formData, email: e.target.value})}
                     placeholder={t("emailPlaceholder")}
                     required
+                    autoComplete="off"
                     className="w-full px-4 py-3 border border-[#E8E8EE] rounded-xl text-sm text-[#1A1A2E] placeholder-[#8A8AA3] focus:border-[#FF6B35] focus:ring-2 focus:ring-[#FF6B35]/10 outline-none transition-all"
                   />
                 </div>
@@ -711,6 +715,7 @@ export default function App() {
                     placeholder="••••••••"
                     required
                     minLength={6}
+                    autoComplete="new-password"
                     className="w-full px-4 py-3 border border-[#E8E8EE] rounded-xl text-sm text-[#1A1A2E] placeholder-[#8A8AA3] focus:border-[#FF6B35] focus:ring-2 focus:ring-[#FF6B35]/10 outline-none transition-all"
                   />
                   <p className="text-xs text-[#8A8AA3] mt-1.5">{t('passwordHint')}</p>
@@ -729,7 +734,7 @@ export default function App() {
 
             {/* Login Form */}
             {authMode === 'login' && (
-              <form onSubmit={handleLogin} className="space-y-4">
+              <form onSubmit={handleLogin} autoComplete="off" className="space-y-4">
                 <div>
                   <label className="block text-xs font-medium text-[#4A4A68] mb-2">{t("emailLabel")}</label>
                   <input
@@ -738,6 +743,7 @@ export default function App() {
                     onChange={(e) => setFormData({...formData, email: e.target.value})}
                     placeholder={t("emailPlaceholder")}
                     required
+                    autoComplete="off"
                     className="w-full px-4 py-3 border border-[#E8E8EE] rounded-xl text-sm text-[#1A1A2E] placeholder-[#8A8AA3] focus:border-[#FF6B35] focus:ring-2 focus:ring-[#FF6B35]/10 outline-none transition-all"
                   />
                 </div>
@@ -749,6 +755,7 @@ export default function App() {
                     onChange={(e) => setFormData({...formData, password: e.target.value})}
                     placeholder="••••••••"
                     required
+                    autoComplete="new-password"
                     className="w-full px-4 py-3 border border-[#E8E8EE] rounded-xl text-sm text-[#1A1A2E] placeholder-[#8A8AA3] focus:border-[#FF6B35] focus:ring-2 focus:ring-[#FF6B35]/10 outline-none transition-all"
                   />
                 </div>
