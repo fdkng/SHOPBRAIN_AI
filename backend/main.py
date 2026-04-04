@@ -1367,6 +1367,57 @@ PRICE_TO_TIER = {
 }
 
 
+def _sg(obj, key, default=None):
+    """Safe-get that works on dicts AND Stripe v7+ objects (which no longer have .get())."""
+    if obj is None:
+        return default
+    # dict or dict-like
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    # Stripe v7+ objects: try attribute access first, then dict-style
+    try:
+        val = getattr(obj, key, default)
+        return val if val is not None else default
+    except Exception:
+        pass
+    try:
+        return obj[key]
+    except Exception:
+        return default
+
+
+def _stripe_obj_to_dict(obj):
+    """Recursively convert any Stripe object to a plain dict (safe for Stripe SDK v7+)."""
+    if obj is None:
+        return None
+    if isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, list):
+        return [_stripe_obj_to_dict(item) for item in obj]
+    if isinstance(obj, dict):
+        return {k: _stripe_obj_to_dict(v) for k, v in obj.items()}
+    # Stripe object conversion
+    try:
+        if hasattr(obj, 'to_dict_recursive'):
+            return obj.to_dict_recursive()
+    except Exception:
+        pass
+    try:
+        if hasattr(obj, 'to_dict'):
+            return obj.to_dict()
+    except Exception:
+        pass
+    try:
+        if hasattr(obj, '__iter__') and hasattr(obj, 'keys'):
+            return {k: _stripe_obj_to_dict(obj[k]) for k in obj.keys()}
+    except Exception:
+        pass
+    try:
+        return dict(obj)
+    except Exception:
+        return obj
+
+
 def _normalize_stripe_subscription_id(value) -> str | None:
     """Return a clean Stripe subscription id (sub_...) from mixed inputs."""
     if not value:
@@ -1377,9 +1428,9 @@ def _normalize_stripe_subscription_id(value) -> str | None:
     if isinstance(value, dict):
         candidate = value.get("id") or value.get("subscription")
     else:
+        # Use _sg for Stripe v7+ objects that no longer support .get()
         try:
-            if hasattr(value, "get"):
-                candidate = value.get("id") or value.get("subscription")
+            candidate = _sg(value, "id") or _sg(value, "subscription")
         except Exception:
             candidate = None
 
@@ -1414,7 +1465,7 @@ def _recover_subscription_id_from_session(session_id: str | None) -> str | None:
         return None
     try:
         stripe_session = stripe.checkout.Session.retrieve(session_id, expand=["subscription"])
-        return _normalize_stripe_subscription_id(stripe_session.get("subscription"))
+        return _normalize_stripe_subscription_id(_sg(stripe_session, "subscription"))
     except Exception as e:
         print(f"⚠️ Stripe session recovery warning for {session_id}: {e}")
         return None
@@ -1503,7 +1554,8 @@ def _resolve_plan_from_stripe_subscription(subscription_obj) -> str | None:
         'premium': 'premium'
     }
 
-    items = subscription_obj.get("items", {}).get("data", []) if hasattr(subscription_obj, "get") else []
+    items_container = _sg(subscription_obj, "items", {})
+    items = _sg(items_container, "data", []) if items_container else []
     exact_amount_map = {9900: 'standard', 19900: 'pro', 29900: 'premium'}
 
     # IMPORTANT: price_id / amount is the source of truth for upgrades/downgrades.
@@ -1511,11 +1563,11 @@ def _resolve_plan_from_stripe_subscription(subscription_obj) -> str | None:
     best_tier = None
     best_amount = -1
     for item in items or []:
-        price_obj = item.get("price", {}) if isinstance(item, dict) else {}
-        price_id = price_obj.get("id")
-        amount = price_obj.get("unit_amount")
+        price_obj = _sg(item, "price", {})
+        price_id = _sg(price_obj, "id")
+        amount = _sg(price_obj, "unit_amount")
 
-        resolved_tier = PRICE_TO_TIER.get(price_id)
+        resolved_tier = PRICE_TO_TIER.get(price_id) if price_id else None
         if not resolved_tier and amount is not None:
             try:
                 resolved_tier = exact_amount_map.get(int(amount))
@@ -1531,7 +1583,8 @@ def _resolve_plan_from_stripe_subscription(subscription_obj) -> str | None:
     if best_tier:
         return best_tier
 
-    metadata_plan = subscription_obj.get("metadata", {}).get("plan") if hasattr(subscription_obj, "get") else None
+    metadata = _sg(subscription_obj, "metadata", {})
+    metadata_plan = _sg(metadata, "plan") if metadata else None
     if metadata_plan:
         normalized = tier_map.get(str(metadata_plan).lower())
         if normalized:
@@ -1829,22 +1882,22 @@ async def fast_init(request: Request):
                     if stripe_sub_id and str(stripe_sub_id).startswith("sub_"):
                         try:
                             stripe_sub = stripe.Subscription.retrieve(stripe_sub_id)
-                            stripe_status = str(stripe_sub.get("status", "")).lower()
+                            stripe_status = str(_sg(stripe_sub, "status", "")).lower()
                             if stripe_status in ('active', 'trialing'):
                                 # Resolve plan from Stripe
                                 healed_plan = _resolve_plan_from_stripe_subscription(stripe_sub)
                                 if healed_plan:
                                     plan = healed_plan
                                     sub_status = 'active'
-                                    payment_date = sub_row.get('payment_date') or _resolve_payment_date(stripe_sub.get("created"))
+                                    payment_date = sub_row.get('payment_date') or _resolve_payment_date(_sg(stripe_sub, "created"))
                                     # Update DB so next call is instant
                                     try:
                                         supabase_client.table("subscriptions").update({
                                             "plan_tier": plan,
                                             "paid": True, "status": sub_status,
                                             "payment_date": payment_date,
-                                            "start_date": _stripe_ts_to_iso(stripe_sub.get("current_period_start") or stripe_sub.get("start_date")),
-                                            "end_date": _stripe_ts_to_iso(stripe_sub.get("current_period_end")),
+                                            "start_date": _stripe_ts_to_iso(_sg(stripe_sub, "current_period_start") or _sg(stripe_sub, "start_date")),
+                                            "current_period_end": _stripe_ts_to_iso(_sg(stripe_sub, "current_period_end")),
                                             "updated_at": datetime.utcnow().isoformat()
                                         }).eq("id", sub_row.get("id")).execute()
                                         print(f"  ✅ [INIT-SUB] Auto-healed DB: paid=true, plan={plan}")
@@ -2282,37 +2335,8 @@ async def stripe_webhook(request: Request):
     sig_header = request.headers.get("stripe-signature")
 
     def _stripe_to_plain(value):
-        if value is None:
-            return None
-        if isinstance(value, (str, int, float, bool)):
-            return value
-        if isinstance(value, list):
-            return [_stripe_to_plain(item) for item in value]
-        if isinstance(value, dict):
-            return {key: _stripe_to_plain(val) for key, val in value.items()}
-
-        try:
-            if hasattr(value, "to_dict_recursive"):
-                return value.to_dict_recursive()
-        except Exception:
-            pass
-
-        try:
-            if hasattr(value, "to_dict"):
-                return value.to_dict()
-        except Exception:
-            pass
-
-        try:
-            if hasattr(value, "items"):
-                return {key: _stripe_to_plain(val) for key, val in value.items()}
-        except Exception:
-            pass
-
-        try:
-            return dict(value)
-        except Exception:
-            return value
+        """Convert Stripe v7+ objects to plain dicts recursively."""
+        return _stripe_obj_to_dict(value)
 
     if STRIPE_WEBHOOK_SECRET:
         try:
@@ -2364,19 +2388,21 @@ async def stripe_webhook(request: Request):
             customer_id = stripe_customer_id
             if normalized_sub and not customer_id:
                 stripe_sub_obj = stripe.Subscription.retrieve(normalized_sub)
-                customer_id = stripe_sub_obj.get("customer")
+                customer_id = _sg(stripe_sub_obj, "customer")
                 recovered["stripe_customer_id"] = customer_id
 
             if customer_id:
                 sessions = stripe.checkout.Session.list(customer=customer_id, limit=10)
-                for session_obj in sessions.get("data", []):
-                    session_sub = _normalize_stripe_subscription_id(session_obj.get("subscription"))
+                sessions_data = _sg(sessions, "data", [])
+                for session_obj in sessions_data:
+                    session_sub = _normalize_stripe_subscription_id(_sg(session_obj, "subscription"))
                     if normalized_sub and session_sub and session_sub != normalized_sub:
                         continue
 
-                    recovered["session_id"] = session_obj.get("id")
-                    recovered["client_reference_id"] = session_obj.get("client_reference_id")
-                    recovered["email"] = session_obj.get("customer_email") or (session_obj.get("customer_details") or {}).get("email")
+                    recovered["session_id"] = _sg(session_obj, "id")
+                    recovered["client_reference_id"] = _sg(session_obj, "client_reference_id")
+                    cust_details = _sg(session_obj, "customer_details") or {}
+                    recovered["email"] = _sg(session_obj, "customer_email") or _sg(cust_details, "email")
                     recovered["stripe_subscription_id"] = session_sub or recovered["stripe_subscription_id"]
                     return recovered
         except Exception as e:
@@ -2398,7 +2424,7 @@ async def stripe_webhook(request: Request):
         try:
             if stripe_customer_id:
                 customer_obj = stripe.Customer.retrieve(stripe_customer_id)
-                customer_email = customer_obj.get("email")
+                customer_email = _sg(customer_obj, "email")
                 if customer_email:
                     return str(customer_email).strip().lower()
         except Exception as e:
@@ -2408,9 +2434,10 @@ async def stripe_webhook(request: Request):
             normalized_sub = _normalize_stripe_subscription_id(stripe_subscription_id)
             if normalized_sub:
                 stripe_sub_obj = stripe.Subscription.retrieve(normalized_sub)
-                customer_obj = stripe_sub_obj.get("customer")
-                if hasattr(customer_obj, "get"):
-                    customer_email = customer_obj.get("email")
+                cust_id = _sg(stripe_sub_obj, "customer")
+                if cust_id and isinstance(cust_id, str):
+                    customer_obj = stripe.Customer.retrieve(cust_id)
+                    customer_email = _sg(customer_obj, "email")
                     if customer_email:
                         return str(customer_email).strip().lower()
         except Exception as e:
@@ -2521,20 +2548,21 @@ async def stripe_webhook(request: Request):
             normalized_sub = _normalize_stripe_subscription_id(stripe_subscription_id)
             if normalized_sub:
                 stripe_sub_obj = stripe.Subscription.retrieve(normalized_sub)
-                metadata_user_id = (stripe_sub_obj.get("metadata") or {}).get("user_id")
+                metadata = _sg(stripe_sub_obj, "metadata") or {}
+                metadata_user_id = _sg(metadata, "user_id")
                 if metadata_user_id:
                     print(f"✅ [WEBHOOK] resolved user by stripe subscription metadata: {metadata_user_id}")
                     return metadata_user_id
 
                 if not stripe_customer_id:
-                    stripe_customer_id = stripe_sub_obj.get("customer")
+                    stripe_customer_id = _sg(stripe_sub_obj, "customer")
         except Exception as e:
             print(f"⚠️ [WEBHOOK] resolve by stripe subscription object warning: {e}")
 
         try:
             if stripe_customer_id and not email:
                 customer_obj = stripe.Customer.retrieve(stripe_customer_id)
-                email = customer_obj.get("email")
+                email = _sg(customer_obj, "email")
         except Exception as e:
             print(f"⚠️ [WEBHOOK] resolve by stripe customer object warning: {e}")
 
@@ -2672,15 +2700,17 @@ async def stripe_webhook(request: Request):
             session = obj
             normalized_sub_id = _normalize_stripe_subscription_id(session.get("subscription"))
             stripe_customer_id = session.get("customer")
-            session_email = session.get("customer_email") or (session.get("customer_details") or {}).get("email")
+            cust_details = session.get("customer_details") or {}
+            session_email = session.get("customer_email") or _sg(cust_details, "email")
             if not session_email and stripe_customer_id:
                 try:
                     customer_obj = stripe.Customer.retrieve(stripe_customer_id)
-                    session_email = customer_obj.get("email")
+                    session_email = _sg(customer_obj, "email")
                 except Exception as e:
                     print(f"⚠️ [WEBHOOK] checkout customer retrieve warning: {e}")
 
-            user_id = (session.get("metadata") or {}).get("user_id") or session.get("client_reference_id")
+            metadata = session.get("metadata") or {}
+            user_id = _sg(metadata, "user_id") or session.get("client_reference_id")
             if not user_id:
                 user_id = _webhook_resolve_user_id(
                     supabase,
@@ -2709,20 +2739,20 @@ async def stripe_webhook(request: Request):
             if normalized_sub_id:
                 try:
                     stripe_sub_obj = stripe.Subscription.retrieve(normalized_sub_id)
-                    stripe_status = str(stripe_sub_obj.get("status") or "active").lower()
+                    stripe_status = str(_sg(stripe_sub_obj, "status") or "active").lower()
                     plan_tier = _resolve_plan_from_stripe_subscription(stripe_sub_obj)
                 except Exception as e:
                     print(f"⚠️ [WEBHOOK] checkout subscription fetch warning: {e}")
 
             if not plan_tier:
-                plan_tier = (session.get("metadata") or {}).get("plan")
+                plan_tier = _sg(metadata, "plan")
             if plan_tier:
                 plan_tier = {"99": "standard", "199": "pro", "299": "premium"}.get(str(plan_tier).lower(), str(plan_tier).lower())
 
             payment_status_str = str(session.get("payment_status", "")).lower()
             paid_flag = payment_status_str in ("paid", "no_payment_required") or stripe_status in ("active", "trialing")
             stored_status = "active" if paid_flag else "inactive"
-            payment_date = _resolve_payment_date(session.get("created"), stripe_sub_obj.get("created") if stripe_sub_obj else None)
+            payment_date = _resolve_payment_date(session.get("created"), _sg(stripe_sub_obj, "created") if stripe_sub_obj else None)
 
             payload_upsert = {
                 "user_id": user_id,
@@ -2736,8 +2766,8 @@ async def stripe_webhook(request: Request):
                 "status": stored_status,
                 "subscription_status": stored_status,
                 "payment_date": payment_date,
-                "start_date": _stripe_ts_to_iso(stripe_sub_obj.get("current_period_start") if stripe_sub_obj else None) or _stripe_ts_to_iso(stripe_sub_obj.get("start_date") if stripe_sub_obj else None),
-                "end_date": _stripe_ts_to_iso(stripe_sub_obj.get("current_period_end") if stripe_sub_obj else None),
+                "start_date": _stripe_ts_to_iso(_sg(stripe_sub_obj, "current_period_start")) if stripe_sub_obj else None,
+                "current_period_end": _stripe_ts_to_iso(_sg(stripe_sub_obj, "current_period_end")) if stripe_sub_obj else None,
             }
             print(f"💾 [WEBHOOK] checkout.session.completed DB write: {payload_upsert}")
             supabase.table("subscriptions").upsert(payload_upsert, on_conflict="user_id").execute()
@@ -2763,12 +2793,13 @@ async def stripe_webhook(request: Request):
             invoice = obj
             stripe_sub_id = _normalize_stripe_subscription_id(invoice.get("subscription"))
             stripe_customer_id = invoice.get("customer")
-            email = invoice.get("customer_email") or (invoice.get("customer_details") or {}).get("email")
+            inv_cust_details = invoice.get("customer_details") or {}
+            email = invoice.get("customer_email") or _sg(inv_cust_details, "email")
 
             if not email and stripe_customer_id:
                 try:
                     customer_obj = stripe.Customer.retrieve(stripe_customer_id)
-                    email = customer_obj.get("email")
+                    email = _sg(customer_obj, "email")
                 except Exception as e:
                     print(f"⚠️ [WEBHOOK] invoice customer retrieve warning: {e}")
 
@@ -2778,7 +2809,8 @@ async def stripe_webhook(request: Request):
             if stripe_sub_id:
                 try:
                     stripe_sub_obj = stripe.Subscription.retrieve(stripe_sub_id)
-                    user_id = (stripe_sub_obj.get("metadata") or {}).get("user_id")
+                    sub_metadata = _sg(stripe_sub_obj, "metadata") or {}
+                    user_id = _sg(sub_metadata, "user_id")
                     plan_tier = _resolve_plan_from_stripe_subscription(stripe_sub_obj)
                 except Exception as e:
                     print(f"⚠️ [WEBHOOK] invoice subscription fetch warning: {e}")
@@ -2799,14 +2831,16 @@ async def stripe_webhook(request: Request):
                 }
 
             if not plan_tier:
-                lines = invoice.get("lines", {}).get("data", [])
+                lines_container = invoice.get("lines", {})
+                lines = _sg(lines_container, "data", []) if lines_container else []
                 if lines:
-                    price = lines[0].get("price", {})
-                    amount = price.get("unit_amount")
+                    price = _sg(lines[0], "price", {})
+                    amount = _sg(price, "unit_amount")
                     exact_amount_map = {9900: "standard", 19900: "pro", 29900: "premium"}
-                    plan_tier = PRICE_TO_TIER.get(price.get("id")) or exact_amount_map.get(int(amount) if amount is not None else None)
+                    plan_tier = PRICE_TO_TIER.get(_sg(price, "id")) or exact_amount_map.get(int(amount) if amount is not None else None)
 
-            payment_date = _resolve_payment_date(invoice.get("status_transitions", {}).get("paid_at"), invoice.get("created"))
+            status_transitions = invoice.get("status_transitions", {}) or {}
+            payment_date = _resolve_payment_date(_sg(status_transitions, "paid_at"), invoice.get("created"))
             payload_upsert = {
                 "user_id": user_id,
                 "email": email,
@@ -2818,8 +2852,8 @@ async def stripe_webhook(request: Request):
                 "status": "active",
                 "subscription_status": "active",
                 "payment_date": payment_date,
-                "start_date": _stripe_ts_to_iso(stripe_sub_obj.get("current_period_start") or stripe_sub_obj.get("start_date")) if stripe_sub_obj else None,
-                "end_date": _stripe_ts_to_iso(stripe_sub_obj.get("current_period_end")) if stripe_sub_obj else None,
+                "start_date": _stripe_ts_to_iso(_sg(stripe_sub_obj, "current_period_start") or _sg(stripe_sub_obj, "start_date")) if stripe_sub_obj else None,
+                "current_period_end": _stripe_ts_to_iso(_sg(stripe_sub_obj, "current_period_end")) if stripe_sub_obj else None,
                 "updated_at": datetime.utcnow().isoformat(),
             }
             print(f"💾 [WEBHOOK] invoice.payment_succeeded DB write: {payload_upsert}")
@@ -2864,7 +2898,7 @@ async def stripe_webhook(request: Request):
                 "paid": False,
                 "status": "inactive",
                 "subscription_status": "inactive",
-                "end_date": datetime.utcnow().isoformat(),
+                "current_period_end": datetime.utcnow().isoformat(),
                 "updated_at": datetime.utcnow().isoformat(),
             }).eq("user_id", user_id).execute()
             _init_cache.pop(user_id, None)
@@ -2880,11 +2914,12 @@ async def stripe_webhook(request: Request):
             try:
                 if stripe_customer_id:
                     customer_obj = stripe.Customer.retrieve(stripe_customer_id)
-                    email = customer_obj.get("email")
+                    email = _sg(customer_obj, "email")
             except Exception as e:
                 print(f"⚠️ [WEBHOOK] customer retrieve warning: {e}")
 
-            user_id = (obj.get("metadata") or {}).get("user_id") or _webhook_resolve_user_id(
+            obj_metadata = obj.get("metadata") or {}
+            user_id = _sg(obj_metadata, "user_id") or _webhook_resolve_user_id(
                 supabase,
                 stripe_subscription_id=stripe_sub_id,
                 stripe_customer_id=stripe_customer_id,
@@ -2924,8 +2959,8 @@ async def stripe_webhook(request: Request):
                     if existing_sub_id and existing_sub_id != stripe_sub_id:
                         try:
                             existing_sub_obj = stripe.Subscription.retrieve(existing_sub_id)
-                            existing_created = int(existing_sub_obj.get("created", 0) or 0)
-                            existing_status = str(existing_sub_obj.get("status") or existing_status).lower()
+                            existing_created = int(_sg(existing_sub_obj, "created", 0) or 0)
+                            existing_status = str(_sg(existing_sub_obj, "status") or existing_status).lower()
                         except Exception as existing_fetch_err:
                             print(f"⚠️ [WEBHOOK] existing subscription fetch warning: {existing_fetch_err}")
 
@@ -2956,7 +2991,7 @@ async def stripe_webhook(request: Request):
             if stored_status == "active":
                 update_payload["paid"] = True
                 update_payload["plan"] = True
-                update_payload["payment_date"] = _resolve_payment_date(obj.get("created"))
+                update_payload["payment_date"] = _resolve_payment_date(obj.get("created", None))
             if stored_status == "inactive":
                 update_payload["paid"] = False
                 update_payload["plan"] = False
@@ -10518,11 +10553,11 @@ async def check_subscription_status(request: Request):
                 if stripe_sub_id and str(stripe_sub_id).startswith("sub_"):
                     try:
                         stripe_sub = stripe.Subscription.retrieve(stripe_sub_id)
-                        stripe_status = str(stripe_sub.get("status", "")).lower()
+                        stripe_status = str(_sg(stripe_sub, "status", "")).lower()
                         if stripe_status in ('active', 'trialing'):
                             healed_plan = _resolve_plan_from_stripe_subscription(stripe_sub)
                             if healed_plan:
-                                healed_payment_date = subscription.get('payment_date') or _resolve_payment_date(stripe_sub.get("created"))
+                                healed_payment_date = subscription.get('payment_date') or _resolve_payment_date(_sg(stripe_sub, "created"))
                                 try:
                                     supabase.table("subscriptions").update({
                                         "plan_tier": healed_plan,
@@ -10530,10 +10565,10 @@ async def check_subscription_status(request: Request):
                                         "paid": True, "status": "active",
                                         "subscription_status": "active",
                                         "payment_date": healed_payment_date,
-                                        "stripe_customer_id": stripe_sub.get("customer") or subscription.get("stripe_customer_id"),
+                                        "stripe_customer_id": _sg(stripe_sub, "customer") or subscription.get("stripe_customer_id"),
                                         "stripe_subscription_id": stripe_sub_id,
-                                        "start_date": _stripe_ts_to_iso(stripe_sub.get("current_period_start") or stripe_sub.get("start_date")),
-                                        "end_date": _stripe_ts_to_iso(stripe_sub.get("current_period_end")),
+                                        "start_date": _stripe_ts_to_iso(_sg(stripe_sub, "current_period_start") or _sg(stripe_sub, "start_date")),
+                                        "current_period_end": _stripe_ts_to_iso(_sg(stripe_sub, "current_period_end")),
                                         "updated_at": datetime.utcnow().isoformat(),
                                     }).eq("id", subscription.get("id")).execute()
                                     supabase.table("user_profiles").update({
@@ -10696,24 +10731,31 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
 
             # Try subscription item price_id first (metadata may be stale after upgrades)
             if subscription:
-                items = subscription.get("items", {}).get("data", [])
+                items_container = _sg(subscription, "items", {})
+                items = _sg(items_container, "data", []) if items_container else []
                 if items:
-                    price_id = items[0].get("price", {}).get("id")
-                    amount = items[0].get("price", {}).get("unit_amount")
+                    price_obj = _sg(items[0], "price", {})
+                    price_id = _sg(price_obj, "id")
+                    amount = _sg(price_obj, "unit_amount")
                     plan = PRICE_TO_TIER.get(price_id) or tier_from_amount(amount)
 
             # Try line_items if still missing
             if not plan:
-                for li in session.get("line_items", {}).get("data", []):
-                    price_id = li.get("price", {}).get("id")
-                    amount = li.get("price", {}).get("unit_amount")
+                line_items_container = _sg(session, "line_items", {})
+                line_items_data = _sg(line_items_container, "data", []) if line_items_container else []
+                for li in line_items_data:
+                    li_price = _sg(li, "price", {})
+                    price_id = _sg(li_price, "id")
+                    amount = _sg(li_price, "unit_amount")
                     plan = PRICE_TO_TIER.get(price_id) or tier_from_amount(amount)
                     if plan:
                         break
 
             # Metadata fallback only if no reliable price info found
-            if not plan and session.metadata:
-                plan = session.metadata.get("plan")
+            if not plan:
+                session_meta = _sg(session, "metadata", None)
+                if session_meta:
+                    plan = _sg(session_meta, "plan")
 
             # Normalize plan key (metadata might store '99', '199', '299')
             _tier_normalize = {
@@ -10733,9 +10775,9 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
             # Guard against stale verify requests (e.g., reopening an old Stripe success URL)
             should_persist = True
             try:
-                incoming_sub_id = subscription.id if subscription else None
-                incoming_sub_created = int(subscription.get("created", 0) or 0) if subscription else 0
-                incoming_sub_status = str(subscription.status if subscription else "").lower()
+                incoming_sub_id = _sg(subscription, "id") if subscription else None
+                incoming_sub_created = int(_sg(subscription, "created", 0) or 0) if subscription else 0
+                incoming_sub_status = str(_sg(subscription, "status", "")).lower() if subscription else ""
 
                 existing_res = (
                     supabase.table("subscriptions")
@@ -10755,8 +10797,8 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
                     if existing_sub_id:
                         try:
                             existing_sub_obj = stripe.Subscription.retrieve(existing_sub_id)
-                            existing_sub_created = int(existing_sub_obj.get("created", 0) or 0)
-                            existing_status = str(existing_sub_obj.get("status") or existing_status).lower()
+                            existing_sub_created = int(_sg(existing_sub_obj, "created", 0) or 0)
+                            existing_status = str(_sg(existing_sub_obj, "status") or existing_status).lower()
                         except Exception as existing_fetch_err:
                             print(f"⚠️ verify-session: existing sub fetch warning: {existing_fetch_err}")
 
@@ -10782,15 +10824,17 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
             
             # Cancel any other active subscriptions for this customer
             try:
-                if session.customer:
-                    active_subs = stripe.Subscription.list(customer=session.customer, status="active", limit=10)
-                    for sub in active_subs.get("data", []):
-                        if sub.get("id") != subscription.get("id"):
-                            stripe.Subscription.cancel(sub.get("id"))
+                if _sg(session, "customer"):
+                    active_subs = stripe.Subscription.list(customer=_sg(session, "customer"), status="active", limit=10)
+                    active_subs_data = _sg(active_subs, "data", [])
+                    for sub in active_subs_data:
+                        sub_id = _sg(sub, "id")
+                        if sub_id != _sg(subscription, "id"):
+                            stripe.Subscription.cancel(sub_id)
             except Exception as e:
                 print(f"Stripe cancel old subs warning: {e}")
 
-            payment_date = _resolve_payment_date(session.get("created"), subscription.get("created") if subscription else None)
+            payment_date = _resolve_payment_date(_sg(session, "created"), _sg(subscription, "created") if subscription else None)
             print(f"💾 [VERIFY] Writing DB row: user_id={user_id}, plan={plan}, paid=True, status=active, payment_date={payment_date}")
 
             supabase.table("subscriptions").upsert({
@@ -10801,12 +10845,12 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
                 "status": "active",
                 "subscription_status": "active",
                 "payment_date": payment_date,
-                "stripe_session_id": session.id,
-                "stripe_subscription_id": subscription.id if subscription else None,
-                "stripe_customer_id": session.customer,
-                "email": session.customer_email,
-                "start_date": _stripe_ts_to_iso(subscription.get("current_period_start") if subscription else None) or _stripe_ts_to_iso(subscription.get("start_date") if subscription else None),
-                "end_date": _stripe_ts_to_iso(subscription.get("current_period_end") if subscription else None),
+                "stripe_session_id": _sg(session, "id"),
+                "stripe_subscription_id": _sg(subscription, "id") if subscription else None,
+                "stripe_customer_id": _sg(session, "customer"),
+                "email": _sg(session, "customer_email"),
+                "start_date": _stripe_ts_to_iso(_sg(subscription, "current_period_start")) if subscription else None,
+                "current_period_end": _stripe_ts_to_iso(_sg(subscription, "current_period_end")) if subscription else None,
             }, on_conflict="user_id").execute()
             
             supabase.table("user_profiles").upsert({
@@ -10889,6 +10933,7 @@ def _deferred_startup_tasks():
                 ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS payment_date TIMESTAMPTZ;
                 ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS start_date TIMESTAMPTZ;
                 ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS end_date TIMESTAMPTZ;
+                ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS current_period_end TIMESTAMPTZ;
                 ALTER TABLE subscriptions ALTER COLUMN status SET DEFAULT 'inactive';
                 """
                 payments_resp = req2.post(
@@ -12227,7 +12272,7 @@ async def update_payment_method(payload: dict, request: Request):
 
         if not stripe_customer_id and stripe_subscription_id:
             stripe_sub = stripe.Subscription.retrieve(stripe_subscription_id)
-            stripe_customer_id = stripe_sub.get("customer")
+            stripe_customer_id = _sg(stripe_sub, "customer")
             if stripe_customer_id:
                 supabase.table("subscriptions").update({
                     "stripe_customer_id": stripe_customer_id
