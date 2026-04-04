@@ -771,7 +771,7 @@ const en = {
   subscriptionActiveAccessDashboard: 'Your subscription is active. You can now access your dashboard.',
   processingFailedRetryOrContact: 'Processing failed. Try again or contact support.',
   paymentReceivedReconnect: 'Payment received! Sign in again to access your plan.',
-  verificationInProgress: 'Verification in progress — this may take a few seconds.',,
+  verificationInProgress: 'Verification in progress — this may take a few seconds.',
   accessDashboard: 'Access dashboard',
   beforeDashboardLabel: 'Before the dashboard',
   preDashboardTitle: 'Answer critical questions before taking action',
