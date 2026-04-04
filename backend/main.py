@@ -3028,6 +3028,10 @@ async def stripe_webhook(request: Request):
                 print(f"⚠️ [WEBHOOK] subscription freshness guard warning: {guard_err}")
 
             stored_status = "active" if stripe_status in ("active", "trialing") else "inactive"
+            # Handle cancel_at_period_end: subscription is still active but scheduled for cancellation
+            cancel_at_period_end = obj.get("cancel_at_period_end", False)
+            if cancel_at_period_end and stripe_status == "active":
+                stored_status = "cancelling"
             update_payload = {
                 "user_id": user_id,
                 "stripe_subscription_id": stripe_sub_id,
@@ -3039,7 +3043,7 @@ async def stripe_webhook(request: Request):
             }
             if email:
                 update_payload["email"] = email
-            if stored_status == "active":
+            if stored_status in ("active", "cancelling"):
                 update_payload["paid"] = True
                 update_payload["plan"] = True
                 update_payload["payment_date"] = _resolve_payment_date(obj.get("created", None))
@@ -10566,7 +10570,7 @@ async def check_subscription_status(request: Request):
             subscription = None
             try:
                 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-                sub_result = supabase.table("subscriptions").select("*").eq("user_id", user_id).eq("status", "active").order("updated_at", desc=True).limit(1).execute()
+                sub_result = supabase.table("subscriptions").select("*").eq("user_id", user_id).in_("status", ["active", "cancelling"]).order("updated_at", desc=True).limit(1).execute()
                 if sub_result.data:
                     subscription = sub_result.data[0]
                     print(f"  📋 [STATUS] DB row: id={subscription.get('id')}, plan_tier={subscription.get('plan_tier')}, paid={subscription.get('paid')}, status={subscription.get('status')}, payment_date={subscription.get('payment_date')}")
@@ -10581,18 +10585,33 @@ async def check_subscription_status(request: Request):
 
                 # Step 2: If DB says paid=true + valid plan → GRANT ACCESS
                 payment_date = subscription.get('payment_date')
-                if paid_flag and plan and sub_status == 'active':
-                    print(f"  ✅ [STATUS] ACCESS GRANTED from DB: paid={paid_flag}, plan={plan}, status={sub_status}, payment_date={payment_date}")
+                if paid_flag and plan and sub_status in ('active', 'cancelling'):
+                    # If cancelling, fetch cancel date from Stripe
+                    cancel_at_period_end = sub_status == 'cancelling'
+                    cancel_at = None
+                    if cancel_at_period_end:
+                        stripe_sub_id_for_cancel = subscription.get('stripe_subscription_id')
+                        if stripe_sub_id_for_cancel:
+                            try:
+                                stripe_sub_obj = stripe.Subscription.retrieve(stripe_sub_id_for_cancel)
+                                period_end = _sg(stripe_sub_obj, 'current_period_end')
+                                if period_end and isinstance(period_end, (int, float)):
+                                    cancel_at = datetime.utcfromtimestamp(period_end).isoformat()
+                            except Exception:
+                                pass
+                    print(f"  ✅ [STATUS] ACCESS GRANTED from DB: paid={paid_flag}, plan={plan}, status={sub_status}, payment_date={payment_date}, cancelling={cancel_at_period_end}")
                     return {
                         'success': True,
                         'has_subscription': True,
                         'plan': plan,
                         'paid': True,
-                        'status': sub_status,
-                        'subscription_status': sub_status,
+                        'status': 'active' if not cancel_at_period_end else 'cancelling',
+                        'subscription_status': 'active' if not cancel_at_period_end else 'cancelling',
                         'payment_date': payment_date,
                         'started_at': subscription.get('start_date') or subscription.get('created_at'),
                         'capabilities': capabilities.get(plan, {}),
+                        'cancel_at_period_end': cancel_at_period_end,
+                        'cancel_at': cancel_at,
                     }
 
                 # Step 3: paid is False/NULL — try Stripe auto-heal (best-effort)
@@ -12285,7 +12304,7 @@ async def get_interface_settings(request: Request):
 
 @app.post("/api/subscription/cancel")
 async def cancel_subscription(request: Request):
-    """Annule l'abonnement actuel"""
+    """Annule l'abonnement à la fin de la période de facturation"""
     user_id = get_user_id(request)
     
     try:
@@ -12300,24 +12319,33 @@ async def cancel_subscription(request: Request):
         subscription = result.data[0]
         stripe_subscription_id = subscription.get("stripe_subscription_id")
         
+        cancel_at = None
         if stripe_subscription_id:
-            # Cancel Stripe subscription
-            stripe.Subscription.cancel(stripe_subscription_id)
-            print(f"✅ Stripe subscription cancelled: {stripe_subscription_id}")
+            # Cancel at period end (NOT immediately) — user keeps access until renewal date
+            updated_sub = stripe.Subscription.modify(
+                stripe_subscription_id,
+                cancel_at_period_end=True
+            )
+            cancel_at = _sg(updated_sub, "current_period_end")
+            if cancel_at and isinstance(cancel_at, (int, float)):
+                cancel_at = datetime.utcfromtimestamp(cancel_at).isoformat()
+            print(f"✅ Stripe subscription set to cancel at period end: {stripe_subscription_id}, cancel_at={cancel_at}")
         
-        # Update local subscription (cancelled_at column may not exist)
+        # Update local subscription to 'cancelling' (still active until period end)
         supabase.table("subscriptions").update({
-            "status": "cancelled"
+            "status": "cancelling"
         }).eq("user_id", user_id).execute()
         
         try:
             supabase.table("user_profiles").update({
-                "subscription_status": "cancelled"
+                "subscription_status": "cancelling"
             }).eq("id", user_id).execute()
         except Exception:
             pass  # user_profiles may not have this column
         
-        return {"success": True, "message": "Abonnement annulé"}
+        return {"success": True, "message": "Abonnement annulé", "cancel_at": cancel_at}
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Error cancelling subscription: {e}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -578,17 +578,19 @@ export default function Dashboard() {
   const normalizeSubscription = (raw) => {
     const status = String(raw?.subscription_status || raw?.status || 'inactive').toLowerCase().trim()
     const paid = raw?.paid === true || raw?.plan === true || raw?.has_subscription === true
-    const activePaid = status === 'active' && paid
-    const tier = typeof raw?.plan === 'string' ? raw.plan : (activePaid ? 'premium' : 'free')
+    const activePaid = (status === 'active' || status === 'cancelling') && paid
+    const tier = typeof raw?.plan === 'string' ? raw.plan : (activePaid ? 'premium' : null)
     return {
       has_subscription: activePaid,
       paid: activePaid,
-      status: activePaid ? 'active' : 'inactive',
-      subscription_status: activePaid ? 'active' : 'inactive',
+      status: activePaid ? status : 'inactive',
+      subscription_status: activePaid ? status : 'inactive',
       plan: tier,
       payment_date: raw?.payment_date || null,
       started_at: raw?.started_at || null,
-      capabilities: raw?.capabilities || null
+      capabilities: raw?.capabilities || null,
+      cancel_at_period_end: raw?.cancel_at_period_end || false,
+      cancel_at: raw?.cancel_at || null
     }
   }
 
@@ -1781,7 +1783,7 @@ export default function Dashboard() {
       ctxParts.push(`Onglet actif: ${tabNameMap[activeTab] || activeTab}`)
 
       // 2. Subscription & shop info
-      ctxParts.push(`Plan: ${subscription?.plan || 'free'} | Boutique active: ${shopifyUrl || 'non connectée'} | Connectée: ${shopifyConnected ? 'oui' : 'non'} | Boutiques: ${shopList.length}/${shopLimit === null ? '∞' : shopLimit}`)
+      ctxParts.push(`Plan: ${subscription?.plan || 'none'} | Boutique active: ${shopifyUrl || 'non connectée'} | Connectée: ${shopifyConnected ? 'oui' : 'non'} | Boutiques: ${shopList.length}/${shopLimit === null ? '∞' : shopLimit}`)
 
       // 3. Products summary
       if (products && products.length > 0) {
@@ -2159,7 +2161,11 @@ export default function Dashboard() {
       })
       const data = await response.json()
       if (data.success) {
-        setStatus('billing-cancel', 'success', t('subscriptionCancelled'))
+        const cancelDate = data.cancel_at ? new Date(data.cancel_at).toLocaleDateString() : null
+        const msg = cancelDate
+          ? t('subscriptionCancelledAt').replace('{date}', cancelDate)
+          : t('subscriptionCancelled')
+        setStatus('billing-cancel', 'success', msg)
         await initializeUser()
       } else {
         setStatus('billing-cancel', 'error', t('error') + ': ' + (data.detail || t('error')))
@@ -3843,7 +3849,7 @@ export default function Dashboard() {
       setStatus(`rec-${productId}-${recommendationType}`, 'warning', 'Recommandations d\'images réservées au plan Pro ou supérieur.')
       return
     }
-    if (!subscription?.plan || subscription.plan === 'free') {
+    if (!subscription?.plan) {
       setStatus(`rec-${productId}-${recommendationType}`, 'warning', t('featureReservedProPremium'))
       return
     }
@@ -6628,6 +6634,11 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         <div>
                           <h4 className="text-xl font-bold text-[#1A1A2E]">{subscription?.plan?.toUpperCase()} Plan</h4>
                           <p className="text-[#6A6A85]">{t('activeSince')} {new Date(subscription?.started_at).toLocaleDateString()}</p>
+                          {subscription?.cancel_at_period_end && subscription?.cancel_at && (
+                            <p className="text-[#E85A28] text-sm mt-1 font-medium">
+                              ⚠️ {t('cancellingAt').replace('{date}', new Date(subscription.cancel_at).toLocaleDateString())}
+                            </p>
+                          )}
                         </div>
                         <div className="text-right">
                           <div className="text-2xl font-bold text-[#0D9488]">
@@ -6639,9 +6650,11 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         <button onClick={() => { setShowSettingsModal(false); setShowPlanMenu(true) }} className="bg-[#0D9488] hover:bg-[#0F766E] px-6 py-2 rounded-lg text-white font-semibold">
                           {t('changePlan')}
                         </button>
-                        <button onClick={handleCancelSubscription} disabled={saveLoading} className="bg-[#EFF1F5] hover:bg-[#E8E8EE] disabled:opacity-50 px-6 py-2 rounded-lg text-[#1A1A2E] font-semibold">
-                          {saveLoading ? '...' : t('cancelSubscription')}
-                        </button>
+                        {!subscription?.cancel_at_period_end && (
+                          <button onClick={handleCancelSubscription} disabled={saveLoading} className="bg-[#EFF1F5] hover:bg-[#E8E8EE] disabled:opacity-50 px-6 py-2 rounded-lg text-[#1A1A2E] font-semibold">
+                            {saveLoading ? '...' : t('cancelSubscription')}
+                          </button>
+                        )}
                       </div>
                       {renderStatus('billing-cancel')}
                     </div>
