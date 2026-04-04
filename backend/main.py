@@ -10754,7 +10754,7 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
         
         session = stripe.checkout.Session.retrieve(req.session_id, expand=["line_items", "subscription"])
 
-        payment_status_str = str(session.payment_status or "").lower()
+        payment_status_str = str(_sg(session, "payment_status") or "").lower()
         print(f"💳 [VERIFY] Session received: session_id={req.session_id}, user_id={user_id}, payment_status={payment_status_str}")
 
         if payment_status_str not in ("paid", "no_payment_required"):
@@ -10763,7 +10763,16 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
                 "message": "Paiement non confirmé"
             }
         
-        subscription = stripe.Subscription.retrieve(session.subscription)
+        # session.subscription is already expanded (full object), extract the object directly
+        # or retrieve by ID if it's a string
+        sub_raw = _sg(session, "subscription")
+        if sub_raw and not isinstance(sub_raw, str):
+            # Already expanded — use it directly
+            subscription = sub_raw
+        else:
+            # It's a string ID (or None) — retrieve it
+            sub_id = str(sub_raw) if sub_raw else None
+            subscription = stripe.Subscription.retrieve(sub_id) if sub_id else None
         
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
             supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
