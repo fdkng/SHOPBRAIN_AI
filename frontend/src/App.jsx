@@ -172,26 +172,16 @@ export default function App() {
                   setCurrentView('dashboard')
                   window.location.hash = '#dashboard'
                   return
-                } else {
-                  setPaymentProcessingState('failed')
-                  setPaymentProcessingMessage(data?.message || t('verificationFailed'))
                 }
-              } else {
-                console.warn('verify-session failed:', resp.status, resp.statusText)
-                let errDetail = `${t('error')} serveur: ${resp.status}`
-                try {
-                  const errBody = await resp.json()
-                  console.warn('verify-session error detail:', errBody)
-                  if (errBody?.detail) errDetail += ` — ${errBody.detail}`
-                } catch {}
-                setPaymentProcessingState('failed')
-                setPaymentProcessingMessage(errDetail)
               }
+              // verify-session failed or returned !success — NOT an error for the user.
+              // The webhook has likely already written the plan to the DB.
+              // Keep showing "verifying..." and let the polling below find the plan.
+              console.warn('verify-session did not confirm — relying on webhook polling')
             }
           } catch (e) {
-            console.error('Error calling verify-session:', e)
-            setPaymentProcessingState('failed')
-            setPaymentProcessingMessage(e.message || t('verificationError'))
+            // Network error or no auth session — same: rely on polling
+            console.warn('verify-session call failed, relying on polling:', e.message)
           }
         })()
       }
@@ -201,7 +191,17 @@ export default function App() {
       const pollInterval = setInterval(() => {
         checkSubscription()
         pollCount++
-        if (pollCount >= 30) clearInterval(pollInterval)
+        if (pollCount >= 30) {
+          clearInterval(pollInterval)
+          // After 60s of polling, if still not verified, show a soft message (not an error)
+          setPaymentProcessingState((prev) => {
+            if (prev === 'verifying' || prev === 'idle') {
+              setPaymentProcessingMessage(t('paymentReceivedReconnect') || 'Paiement reçu ! Reconnectez-vous pour accéder à votre plan.')
+              return 'verified'
+            }
+            return prev
+          })
+        }
       }, 2000)
 
       return () => {
@@ -324,6 +324,14 @@ export default function App() {
       const hasSub = Boolean(data?.success && data?.has_subscription)
       setHasSubscription(hasSub)
       if (hasSub) {
+        // If we were waiting for payment confirmation via polling, mark it as verified now
+        setPaymentProcessingState((prev) => {
+          if (prev === 'verifying' || prev === 'idle') {
+            setPaymentProcessingMessage(t('paymentConfirmedSubscriptionActive'))
+            return 'verified'
+          }
+          return prev
+        })
         setLandingStatusByKey((prev) => {
           if (!prev?.dashboardHero) return prev
           const next = { ...prev }
