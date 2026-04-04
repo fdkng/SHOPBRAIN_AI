@@ -12353,7 +12353,7 @@ async def update_payment_method(payload: dict, request: Request):
         # Create billing portal session
         session = stripe.billing_portal.Session.create(
             customer=stripe_customer_id,
-            return_url="https://shopbrain-ai.onrender.com/#dashboard",
+            return_url="https://fdkng.github.io/SHOPBRAIN_AI/#dashboard",
         )
         
         return {"success": True, "portal_url": session.url}
