@@ -178,8 +178,14 @@ export default function App() {
                 }
               } else {
                 console.warn('verify-session failed:', resp.status, resp.statusText)
+                let errDetail = `${t('error')} serveur: ${resp.status}`
+                try {
+                  const errBody = await resp.json()
+                  console.warn('verify-session error detail:', errBody)
+                  if (errBody?.detail) errDetail += ` — ${errBody.detail}`
+                } catch {}
                 setPaymentProcessingState('failed')
-                setPaymentProcessingMessage(`${t('error')} serveur: ${resp.status}`)
+                setPaymentProcessingMessage(errDetail)
               }
             }
           } catch (e) {

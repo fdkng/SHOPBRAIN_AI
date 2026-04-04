@@ -1975,6 +1975,7 @@ async def health():
     return {
         "status": "ok",
         "version": "3.0-fast-init",
+        "build": "20260404-verify-fix",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
                 "openai": "configured" if OPENAI_API_KEY else "not_configured",
@@ -10752,10 +10753,15 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
     try:
         user_id = get_user_id(request)
         
-        session = stripe.checkout.Session.retrieve(req.session_id, expand=["line_items", "subscription"])
+        try:
+            session = stripe.checkout.Session.retrieve(req.session_id, expand=["line_items", "subscription"])
+        except Exception as stripe_err:
+            print(f"❌ [VERIFY] Stripe session retrieve failed: {stripe_err}")
+            raise HTTPException(status_code=500, detail=f"Stripe session retrieve failed: {stripe_err}")
 
         payment_status_str = str(_sg(session, "payment_status") or "").lower()
         print(f"💳 [VERIFY] Session received: session_id={req.session_id}, user_id={user_id}, payment_status={payment_status_str}")
+        print(f"  ℹ️ [VERIFY] session.subscription type={type(_sg(session, 'subscription')).__name__}, value_preview={str(_sg(session, 'subscription'))[:120]}")
 
         if payment_status_str not in ("paid", "no_payment_required"):
             return {
@@ -10909,13 +10915,16 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
                 "updated_at": datetime.utcnow().isoformat(),
             })
             
-            supabase.table("user_profiles").upsert({
-                "id": user_id,
-                "subscription_tier": plan,
-                "subscription_plan": plan,
-                "subscription_status": "active",
-                "updated_at": datetime.utcnow().isoformat()
-            }).execute()
+            try:
+                supabase.table("user_profiles").upsert({
+                    "id": user_id,
+                    "subscription_tier": plan,
+                    "subscription_plan": plan,
+                    "subscription_status": "active",
+                    "updated_at": datetime.utcnow().isoformat()
+                }, on_conflict="id").execute()
+            except Exception as profile_err:
+                print(f"⚠️ [VERIFY] user_profiles upsert warning (non-fatal): {profile_err}")
             
             # Invalidate _init_cache so next /api/init call fetches fresh data
             _init_cache.pop(user_id, None)
@@ -10927,9 +10936,13 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
             "message": f"✅ Abonnement {plan.upper()} activé!"
         }
     
+    except HTTPException:
+        raise  # Let auth 401 and other HTTP errors pass through unchanged
     except Exception as e:
-        print(f"Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        tb = traceback.format_exc()
+        print(f"❌ [VERIFY] Error: {e}\n{tb}")
+        raise HTTPException(status_code=500, detail=f"verify-session error: {type(e).__name__}: {e}")
 
 
 @app.get("/api/user/profile")
