@@ -2141,44 +2141,7 @@ export default function Dashboard() {
     }
   }
 
-  const handleCancelSubscription = async () => {
-    if (!pendingCancelSubscription) {
-      setPendingCancelSubscription(true)
-      setStatus('billing-cancel', 'warning', t('confirmCancelSubscription'))
-      return
-    }
-    setPendingCancelSubscription(false)
-    try {
-      setSaveLoading(true)
-      const session = await getCachedSession()
-      const response = await fetch(`${API_URL}/api/subscription/cancel`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json'
-        }
-      })
-      const data = await response.json()
-      if (data.success) {
-        const cancelDate = data.cancel_at ? new Date(data.cancel_at).toLocaleDateString() : null
-        const msg = cancelDate
-          ? t('subscriptionCancelledAt').replace('{date}', cancelDate)
-          : t('subscriptionCancelled')
-        setStatus('billing-cancel', 'success', msg)
-        setPendingCancelSubscription(false)
-        await initializeUser()
-      } else {
-        const detail = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || '')
-        setStatus('billing-cancel', 'error', t('error') + ': ' + (detail || t('error')))
-      }
-    } catch (err) {
-      setStatus('billing-cancel', 'error', formatUserFacingError(err, t('errorCancellation')))
-    } finally {
-      setSaveLoading(false)
-    }
-  }
-
-  const handleUpdatePaymentMethod = async () => {
+  const handleManageBilling = async () => {
     try {
       setSaveLoading(true)
       const session = await getCachedSession()
@@ -2194,10 +2157,10 @@ export default function Dashboard() {
         window.location.href = data.portal_url
       } else {
         const detail = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || '')
-        setStatus('billing-payment', 'error', t('error') + ': ' + (detail || t('error')))
+        setStatus('billing', 'error', t('error') + ': ' + (detail || t('error')))
       }
     } catch (err) {
-      setStatus('billing-payment', 'error', formatUserFacingError(err, t('errorPayment')))
+      setStatus('billing', 'error', formatUserFacingError(err, t('errorPayment')))
     } finally {
       setSaveLoading(false)
     }
@@ -6634,16 +6597,11 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     {subscription?.has_subscription && subscription?.plan ? (
                       <>
                     <div className="bg-white rounded-lg p-6 border border-[#E8E8EE]">
-                      <div className="flex justify-between items-center mb-4">
+                      <div className="flex justify-between items-center mb-6">
                         <div>
                           <h4 className="text-xl font-bold text-[#1A1A2E]">{formatPlan(subscription?.plan)} Plan</h4>
                           {subscription?.started_at && new Date(subscription.started_at).getFullYear() > 1970 && (
-                            <p className="text-[#6A6A85]">{t('activeSince')} {new Date(subscription.started_at).toLocaleDateString()}</p>
-                          )}
-                          {subscription?.cancel_at_period_end && subscription?.cancel_at && (
-                            <p className="text-[#E85A28] text-sm mt-1 font-medium">
-                              ⚠️ {t('cancellingAt').replace('{date}', new Date(subscription.cancel_at).toLocaleDateString())}
-                            </p>
+                            <p className="text-[#6A6A85] text-sm mt-1">{t('activeSince')} {new Date(subscription.started_at).toLocaleDateString()}</p>
                           )}
                         </div>
                         <div className="text-right">
@@ -6652,25 +6610,11 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           </div>
                         </div>
                       </div>
-                      <div className="flex gap-4">
-                        <button onClick={() => { setShowSettingsModal(false); setShowPlanMenu(true) }} className="bg-[#0D9488] hover:bg-[#0F766E] px-6 py-2 rounded-lg text-white font-semibold">
-                          {t('changePlan')}
-                        </button>
-                        {!subscription?.cancel_at_period_end && (
-                          <button onClick={handleCancelSubscription} disabled={saveLoading} className="bg-[#EFF1F5] hover:bg-[#E8E8EE] disabled:opacity-50 px-6 py-2 rounded-lg text-[#1A1A2E] font-semibold">
-                            {saveLoading ? '...' : t('cancelSubscription')}
-                          </button>
-                        )}
-                      </div>
-                      {renderStatus('billing-cancel')}
-                    </div>
-                    <div className="bg-white rounded-lg p-6 border border-[#E8E8EE]">
-                      <h4 className="text-lg font-semibold text-[#1A1A2E] mb-4">{t('paymentMethod')}</h4>
-                      <p className="text-sm text-[#6A6A85] mb-4">Géré par Stripe. Cliquez ci-dessous pour mettre à jour.</p>
-                      <button onClick={handleUpdatePaymentMethod} disabled={saveLoading} className="bg-[#0D9488] hover:bg-[#0F766E] disabled:opacity-50 px-6 py-2 rounded-lg text-white font-semibold">
-                        {saveLoading ? '...' : t('updatePaymentMethod')}
+                      <p className="text-sm text-[#6A6A85] mb-4">{t('manageBillingDesc')}</p>
+                      <button onClick={handleManageBilling} disabled={saveLoading} className="bg-[#0D9488] hover:bg-[#0F766E] disabled:opacity-50 px-6 py-3 rounded-lg text-white font-semibold w-full">
+                        {saveLoading ? '...' : t('manageBilling')}
                       </button>
-                      {renderStatus('billing-payment')}
+                      {renderStatus('billing')}
                     </div>
                       </>
                     ) : (
