@@ -12360,8 +12360,8 @@ async def cancel_subscription(request: Request):
 
 
 @app.post("/api/subscription/update-payment-method")
-async def update_payment_method(payload: dict, request: Request):
-    """Met à jour la méthode de paiement"""
+async def update_payment_method(request: Request):
+    """Ouvre le portail Stripe pour gérer l'abonnement"""
     user_id = get_user_id(request)
     
     try:

@@ -2150,7 +2150,8 @@ export default function Dashboard() {
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
           'Content-Type': 'application/json'
-        }
+        },
+        body: JSON.stringify({})
       })
       const data = await response.json()
       if (data.success && data.portal_url) {
