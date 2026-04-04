@@ -1418,6 +1418,21 @@ def _stripe_obj_to_dict(obj):
         return obj
 
 
+def _sub_upsert(supabase_client, user_id: str, data: dict):
+    """Insert or update a subscriptions row by user_id. No UNIQUE constraint needed."""
+    try:
+        existing = supabase_client.table("subscriptions").select("id").eq("user_id", user_id).limit(1).execute()
+        if existing.data:
+            supabase_client.table("subscriptions").update(data).eq("user_id", user_id).execute()
+            print(f"  ✅ [DB] Updated subscriptions for user {user_id}")
+        else:
+            supabase_client.table("subscriptions").insert(data).execute()
+            print(f"  ✅ [DB] Inserted subscriptions for user {user_id}")
+    except Exception as e:
+        print(f"  ❌ [DB] _sub_upsert error: {e}")
+        raise
+
+
 def _normalize_stripe_subscription_id(value) -> str | None:
     """Return a clean Stripe subscription id (sub_...) from mixed inputs."""
     if not value:
@@ -1896,8 +1911,6 @@ async def fast_init(request: Request):
                                             "plan_tier": plan,
                                             "paid": True, "status": sub_status,
                                             "payment_date": payment_date,
-                                            "start_date": _stripe_ts_to_iso(_sg(stripe_sub, "current_period_start") or _sg(stripe_sub, "start_date")),
-                                            "current_period_end": _stripe_ts_to_iso(_sg(stripe_sub, "current_period_end")),
                                             "updated_at": datetime.utcnow().isoformat()
                                         }).eq("id", sub_row.get("id")).execute()
                                         print(f"  ✅ [INIT-SUB] Auto-healed DB: paid=true, plan={plan}")
@@ -2754,7 +2767,7 @@ async def stripe_webhook(request: Request):
             stored_status = "active" if paid_flag else "inactive"
             payment_date = _resolve_payment_date(session.get("created"), _sg(stripe_sub_obj, "created") if stripe_sub_obj else None)
 
-            payload_upsert = {
+            payload_write = {
                 "user_id": user_id,
                 "email": session_email,
                 "stripe_session_id": session.get("id"),
@@ -2766,11 +2779,10 @@ async def stripe_webhook(request: Request):
                 "status": stored_status,
                 "subscription_status": stored_status,
                 "payment_date": payment_date,
-                "start_date": _stripe_ts_to_iso(_sg(stripe_sub_obj, "current_period_start")) if stripe_sub_obj else None,
-                "current_period_end": _stripe_ts_to_iso(_sg(stripe_sub_obj, "current_period_end")) if stripe_sub_obj else None,
+                "updated_at": datetime.utcnow().isoformat(),
             }
-            print(f"💾 [WEBHOOK] checkout.session.completed DB write: {payload_upsert}")
-            supabase.table("subscriptions").upsert(payload_upsert, on_conflict="user_id").execute()
+            print(f"💾 [WEBHOOK] checkout.session.completed DB write: {payload_write}")
+            _sub_upsert(supabase, user_id, payload_write)
 
             if plan_tier:
                 try:
@@ -2841,7 +2853,7 @@ async def stripe_webhook(request: Request):
 
             status_transitions = invoice.get("status_transitions", {}) or {}
             payment_date = _resolve_payment_date(_sg(status_transitions, "paid_at"), invoice.get("created"))
-            payload_upsert = {
+            payload_write = {
                 "user_id": user_id,
                 "email": email,
                 "stripe_subscription_id": stripe_sub_id,
@@ -2852,12 +2864,10 @@ async def stripe_webhook(request: Request):
                 "status": "active",
                 "subscription_status": "active",
                 "payment_date": payment_date,
-                "start_date": _stripe_ts_to_iso(_sg(stripe_sub_obj, "current_period_start") or _sg(stripe_sub_obj, "start_date")) if stripe_sub_obj else None,
-                "current_period_end": _stripe_ts_to_iso(_sg(stripe_sub_obj, "current_period_end")) if stripe_sub_obj else None,
                 "updated_at": datetime.utcnow().isoformat(),
             }
-            print(f"💾 [WEBHOOK] invoice.payment_succeeded DB write: {payload_upsert}")
-            supabase.table("subscriptions").upsert(payload_upsert, on_conflict="user_id").execute()
+            print(f"💾 [WEBHOOK] invoice.payment_succeeded DB write: {payload_write}")
+            _sub_upsert(supabase, user_id, payload_write)
             if plan_tier:
                 try:
                     supabase.table("user_profiles").upsert({
@@ -2898,7 +2908,6 @@ async def stripe_webhook(request: Request):
                 "paid": False,
                 "status": "inactive",
                 "subscription_status": "inactive",
-                "current_period_end": datetime.utcnow().isoformat(),
                 "updated_at": datetime.utcnow().isoformat(),
             }).eq("user_id", user_id).execute()
             _init_cache.pop(user_id, None)
@@ -2997,7 +3006,7 @@ async def stripe_webhook(request: Request):
                 update_payload["plan"] = False
 
             print(f"💾 [WEBHOOK] {event_type} DB sync payload: {update_payload}")
-            supabase.table("subscriptions").upsert(update_payload, on_conflict="user_id").execute()
+            _sub_upsert(supabase, user_id, update_payload)
 
             if plan_tier:
                 try:
@@ -10567,8 +10576,6 @@ async def check_subscription_status(request: Request):
                                         "payment_date": healed_payment_date,
                                         "stripe_customer_id": _sg(stripe_sub, "customer") or subscription.get("stripe_customer_id"),
                                         "stripe_subscription_id": stripe_sub_id,
-                                        "start_date": _stripe_ts_to_iso(_sg(stripe_sub, "current_period_start") or _sg(stripe_sub, "start_date")),
-                                        "current_period_end": _stripe_ts_to_iso(_sg(stripe_sub, "current_period_end")),
                                         "updated_at": datetime.utcnow().isoformat(),
                                     }).eq("id", subscription.get("id")).execute()
                                     supabase.table("user_profiles").update({
@@ -10837,7 +10844,7 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
             payment_date = _resolve_payment_date(_sg(session, "created"), _sg(subscription, "created") if subscription else None)
             print(f"💾 [VERIFY] Writing DB row: user_id={user_id}, plan={plan}, paid=True, status=active, payment_date={payment_date}")
 
-            supabase.table("subscriptions").upsert({
+            _sub_upsert(supabase, user_id, {
                 "user_id": user_id,
                 "plan_tier": plan,
                 "plan": True,
@@ -10849,9 +10856,8 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
                 "stripe_subscription_id": _sg(subscription, "id") if subscription else None,
                 "stripe_customer_id": _sg(session, "customer"),
                 "email": _sg(session, "customer_email"),
-                "start_date": _stripe_ts_to_iso(_sg(subscription, "current_period_start")) if subscription else None,
-                "current_period_end": _stripe_ts_to_iso(_sg(subscription, "current_period_end")) if subscription else None,
-            }, on_conflict="user_id").execute()
+                "updated_at": datetime.utcnow().isoformat(),
+            })
             
             supabase.table("user_profiles").upsert({
                 "id": user_id,
