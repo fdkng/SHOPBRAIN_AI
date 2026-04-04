@@ -12321,15 +12321,23 @@ async def cancel_subscription(request: Request):
         
         cancel_at = None
         if stripe_subscription_id:
-            # Cancel at period end (NOT immediately) — user keeps access until renewal date
-            updated_sub = stripe.Subscription.modify(
-                stripe_subscription_id,
-                cancel_at_period_end=True
-            )
-            cancel_at = _sg(updated_sub, "current_period_end")
-            if cancel_at and isinstance(cancel_at, (int, float)):
-                cancel_at = datetime.utcfromtimestamp(cancel_at).isoformat()
-            print(f"✅ Stripe subscription set to cancel at period end: {stripe_subscription_id}, cancel_at={cancel_at}")
+            try:
+                # Cancel at period end (NOT immediately) — user keeps access until renewal date
+                updated_sub = stripe.Subscription.modify(
+                    stripe_subscription_id,
+                    cancel_at_period_end=True
+                )
+                cancel_at = _sg(updated_sub, "current_period_end")
+                if cancel_at and isinstance(cancel_at, (int, float)):
+                    cancel_at = datetime.utcfromtimestamp(cancel_at).isoformat()
+                print(f"✅ Stripe subscription set to cancel at period end: {stripe_subscription_id}, cancel_at={cancel_at}")
+            except stripe.InvalidRequestError as stripe_err:
+                error_msg = str(stripe_err).lower()
+                if "canceled" in error_msg or "cancelled" in error_msg:
+                    # Subscription already cancelled in Stripe — just update DB
+                    print(f"ℹ️ Stripe subscription already cancelled: {stripe_subscription_id}")
+                else:
+                    raise
         
         # Update local subscription to 'cancelling' (still active until period end)
         supabase.table("subscriptions").update({

@@ -2165,9 +2165,11 @@ export default function Dashboard() {
           ? t('subscriptionCancelledAt').replace('{date}', cancelDate)
           : t('subscriptionCancelled')
         setStatus('billing-cancel', 'success', msg)
+        setPendingCancelSubscription(false)
         await initializeUser()
       } else {
-        setStatus('billing-cancel', 'error', t('error') + ': ' + (data.detail || t('error')))
+        const detail = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || '')
+        setStatus('billing-cancel', 'error', t('error') + ': ' + (detail || t('error')))
       }
     } catch (err) {
       setStatus('billing-cancel', 'error', formatUserFacingError(err, t('errorCancellation')))
@@ -2191,7 +2193,8 @@ export default function Dashboard() {
       if (data.success && data.portal_url) {
         window.location.href = data.portal_url
       } else {
-        setStatus('billing-payment', 'error', t('error') + ': ' + (data.detail || t('error')))
+        const detail = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || '')
+        setStatus('billing-payment', 'error', t('error') + ': ' + (detail || t('error')))
       }
     } catch (err) {
       setStatus('billing-payment', 'error', formatUserFacingError(err, t('errorPayment')))
