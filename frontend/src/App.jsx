@@ -110,9 +110,6 @@ export default function App() {
     }, 2000) // Start after 2s to not compete with critical resources
     return () => clearTimeout(timer)
   }, [])
-  const [paymentSuccess, setPaymentSuccess] = useState(false)
-  const [paymentProcessingState, setPaymentProcessingState] = useState('idle') // 'idle' | 'verifying' | 'verified' | 'failed'
-  const [paymentProcessingMessage, setPaymentProcessingMessage] = useState('')
   const [landingStatusByKey, setLandingStatusByKey] = useState({})
   const [faqOpenIndex, setFaqOpenIndex] = useState(null)
   
@@ -124,90 +121,22 @@ export default function App() {
     const handleScroll = () => setScrolled(window.scrollY > 10)
     window.addEventListener('scroll', handleScroll)
 
-    // Check for payment success in query string AND hash params
+    // If returning from Stripe payment, clear cached subscription data
     const urlParams = new URLSearchParams(window.location.search)
-    // Also parse hash-based params (e.g., #dashboard?session_id=cs_...&success=true)
     const hashPart = (window.location.hash || '').replace(/^#[^?]*\??/, '')
     const hashParams = new URLSearchParams(hashPart)
-    const isPaymentSuccess =
+    const isPaymentReturn =
       urlParams.get('payment') === 'success' ||
       urlParams.has('session_id') ||
       urlParams.get('checkout') === 'success' ||
       hashParams.get('success') === 'true' ||
       hashParams.has('session_id')
 
-    if (isPaymentSuccess) {
+    if (isPaymentReturn) {
       try {
         localStorage.removeItem('subscriptionCache')
         localStorage.removeItem('profileCache')
       } catch {}
-
-      setPaymentSuccess(true)
-
-      const sessionId = urlParams.get('session_id') || hashParams.get('session_id')
-      if (sessionId) {
-        ;(async () => {
-          try {
-            const { data: { session } } = await supabase.auth.getSession()
-            if (session && session.access_token) {
-              setPaymentProcessingState('verifying')
-              setPaymentProcessingMessage(t('paymentVerifying'))
-
-              const resp = await fetch('https://shopbrain-backend.onrender.com/api/subscription/verify-session', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${session.access_token}`
-                },
-                body: JSON.stringify({ session_id: sessionId })
-              })
-
-              if (resp.ok) {
-                const data = await resp.json().catch(() => ({}))
-                console.log('verify-session response:', data)
-                if (data?.success) {
-                  setHasSubscription(true)
-                  setPaymentProcessingState('verified')
-                  setPaymentProcessingMessage(t('paymentConfirmedSubscriptionActive'))
-                  setCurrentView('dashboard')
-                  window.location.hash = '#dashboard'
-                  return
-                }
-              }
-              // verify-session failed or returned !success — NOT an error for the user.
-              // The webhook has likely already written the plan to the DB.
-              // Keep showing "verifying..." and let the polling below find the plan.
-              console.warn('verify-session did not confirm — relying on webhook polling')
-            }
-          } catch (e) {
-            // Network error or no auth session — same: rely on polling
-            console.warn('verify-session call failed, relying on polling:', e.message)
-          }
-        })()
-      }
-
-      // Poll subscription status for up to 60 seconds
-      let pollCount = 0
-      const pollInterval = setInterval(() => {
-        checkSubscription()
-        pollCount++
-        if (pollCount >= 30) {
-          clearInterval(pollInterval)
-          // After 60s of polling, if still not verified, show a soft message (not an error)
-          setPaymentProcessingState((prev) => {
-            if (prev === 'verifying' || prev === 'idle') {
-              setPaymentProcessingMessage(t('paymentReceivedReconnect') || 'Paiement reçu ! Reconnectez-vous pour accéder à votre plan.')
-              return 'verified'
-            }
-            return prev
-          })
-        }
-      }, 2000)
-
-      return () => {
-        window.removeEventListener('scroll', handleScroll)
-        clearInterval(pollInterval)
-      }
     }
 
     // Hash-based routing (only on explicit hash change by user)
@@ -324,14 +253,6 @@ export default function App() {
       const hasSub = Boolean(data?.success && data?.has_subscription)
       setHasSubscription(hasSub)
       if (hasSub) {
-        // If we were waiting for payment confirmation via polling, mark it as verified now
-        setPaymentProcessingState((prev) => {
-          if (prev === 'verifying' || prev === 'idle') {
-            setPaymentProcessingMessage(t('paymentConfirmedSubscriptionActive'))
-            return 'verified'
-          }
-          return prev
-        })
         setLandingStatusByKey((prev) => {
           if (!prev?.dashboardHero) return prev
           const next = { ...prev }
@@ -699,45 +620,7 @@ export default function App() {
         </div>
       </nav>
 
-      {/* ═══════════════════ PAYMENT SUCCESS BANNER ═══════════════════ */}
-      {paymentSuccess && (
-        <div className="mt-20 mx-auto max-w-7xl px-6 mb-6">
-          <div className={`rounded-2xl p-6 flex items-center justify-between ${
-            paymentProcessingState === 'verified'
-              ? 'bg-green-50 border border-green-200 text-green-800'
-              : paymentProcessingState === 'failed'
-                ? 'bg-yellow-50 border border-yellow-200 text-yellow-800'
-                : 'bg-[#FFF4F0] border border-[#FF6B35]/20 text-[#1A1A2E]'
-          }`}>
-            <div className="flex items-center gap-4">
-              <span className="text-3xl">
-                {paymentProcessingState === 'verified' ? '✓' : paymentProcessingState === 'failed' ? '!' : '⟳'}
-              </span>
-              <div>
-                <div className="font-semibold text-lg">
-                  {paymentProcessingState === 'verified' ? t('paymentConfirmed') : paymentProcessingState === 'failed' ? t('processingFailed') : t('processingPayment')}
-                </div>
-                <div className="text-sm opacity-80">
-                  {paymentProcessingMessage || (paymentProcessingState === 'verified' ? t('subscriptionActiveAccessDashboard') : paymentProcessingState === 'failed' ? t('processingFailedRetryOrContact') : t('verificationInProgress'))}
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center gap-4">
-              <button
-                onClick={() => setCurrentView('dashboard')}
-                disabled={!hasSubscription}
-                className={`px-6 py-2.5 rounded-full text-sm font-semibold whitespace-nowrap transition-all ${
-                  hasSubscription
-                    ? 'bg-[#1A1A2E] text-white hover:bg-[#2A2A42] shadow-sm'
-                    : 'bg-[#EFF1F5] text-[#8A8AA3] cursor-not-allowed'
-                }`}
-              >
-                {t("accessDashboard")}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+
 
       {/* ═══════════════════ AUTH MODAL ═══════════════════ */}
       {showAuthModal && (
