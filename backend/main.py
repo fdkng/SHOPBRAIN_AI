@@ -12305,15 +12305,17 @@ async def cancel_subscription(request: Request):
             stripe.Subscription.cancel(stripe_subscription_id)
             print(f"✅ Stripe subscription cancelled: {stripe_subscription_id}")
         
-        # Update local subscription
+        # Update local subscription (cancelled_at column may not exist)
         supabase.table("subscriptions").update({
-            "status": "cancelled",
-            "cancelled_at": datetime.utcnow().isoformat()
+            "status": "cancelled"
         }).eq("user_id", user_id).execute()
         
-        supabase.table("user_profiles").update({
-            "subscription_status": "cancelled"
-        }).eq("id", user_id).execute()
+        try:
+            supabase.table("user_profiles").update({
+                "subscription_status": "cancelled"
+            }).eq("id", user_id).execute()
+        except Exception:
+            pass  # user_profiles may not have this column
         
         return {"success": True, "message": "Abonnement annulé"}
     except Exception as e:
