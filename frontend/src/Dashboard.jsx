@@ -417,11 +417,10 @@ export default function Dashboard() {
 
   const formatPlan = (plan) => {
     const normalized = String(plan || '').toLowerCase()
-    if (!normalized) return '—'
     if (normalized === 'standard') return 'STANDARD'
     if (normalized === 'pro') return 'PRO'
     if (normalized === 'premium') return 'PREMIUM'
-    return normalized.toUpperCase()
+    return '—'
   }
 
   const getPlanFeatures = (plan) => {
@@ -6629,11 +6628,15 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 {settingsTab === 'billing' && (
                   <div className="space-y-6">
                     <h3 className="text-xl font-bold text-[#1A1A2E] mb-4">{t('billingAndSubscription')}</h3>
+                    {subscription?.has_subscription && subscription?.plan ? (
+                      <>
                     <div className="bg-white rounded-lg p-6 border border-[#E8E8EE]">
                       <div className="flex justify-between items-center mb-4">
                         <div>
-                          <h4 className="text-xl font-bold text-[#1A1A2E]">{subscription?.plan?.toUpperCase()} Plan</h4>
-                          <p className="text-[#6A6A85]">{t('activeSince')} {new Date(subscription?.started_at).toLocaleDateString()}</p>
+                          <h4 className="text-xl font-bold text-[#1A1A2E]">{formatPlan(subscription?.plan)} Plan</h4>
+                          {subscription?.started_at && new Date(subscription.started_at).getFullYear() > 1970 && (
+                            <p className="text-[#6A6A85]">{t('activeSince')} {new Date(subscription.started_at).toLocaleDateString()}</p>
+                          )}
                           {subscription?.cancel_at_period_end && subscription?.cancel_at && (
                             <p className="text-[#E85A28] text-sm mt-1 font-medium">
                               ⚠️ {t('cancellingAt').replace('{date}', new Date(subscription.cancel_at).toLocaleDateString())}
@@ -6666,6 +6669,15 @@ analytics.subscribe("product_added_to_cart", (event) => {
                       </button>
                       {renderStatus('billing-payment')}
                     </div>
+                      </>
+                    ) : (
+                      <div className="bg-white rounded-lg p-6 border border-[#E8E8EE] text-center">
+                        <p className="text-[#6A6A85] mb-4">{t('noActiveSubscription')}</p>
+                        <button onClick={() => { setShowSettingsModal(false); setShowPlanMenu(true) }} className="bg-[#FF6B35] hover:bg-[#E85A28] px-6 py-3 rounded-lg text-white font-semibold">
+                          {t('subscribeToPlan')}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
 

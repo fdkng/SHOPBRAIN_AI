@@ -432,6 +432,8 @@ const fr = {
   subscriptionCancelledAt: 'Votre abonnement sera annulé le {date}. Vous conservez l\'accès jusqu\'à cette date.',
   cancellingAt: 'Annulation prévue le {date}',
   cancellationError: 'Erreur annulation',
+  noActiveSubscription: 'Aucun abonnement actif.',
+  subscribeToPlan: 'Choisir un plan',
   paymentError: 'Erreur paiement',
 
   // ---- Dashboard Shopify ----
@@ -1038,6 +1040,8 @@ const en = {
   subscriptionCancelledAt: 'Your subscription will be cancelled on {date}. You retain access until then.',
   cancellingAt: 'Cancellation scheduled for {date}',
   cancellationError: 'Cancellation error',
+  noActiveSubscription: 'No active subscription.',
+  subscribeToPlan: 'Choose a plan',
   paymentError: 'Payment error',
   shopifyAlreadyConnected: 'Shopify already connected. No token required to continue.',
   fillUrlAndToken: 'Please fill in the URL and token',
@@ -1600,6 +1604,10 @@ const es = generateFromEN({
   twoFAActivated: '2FA activada',
   confirmCancelSubscription: 'Haz clic de nuevo para confirmar la cancelación.',
   subscriptionCancelled: 'Suscripción cancelada',
+  subscriptionCancelledAt: 'Tu suscripción se cancelará el {date}. Mantienes el acceso hasta esa fecha.',
+  cancellingAt: 'Cancelación programada para el {date}',
+  noActiveSubscription: 'Sin suscripción activa.',
+  subscribeToPlan: 'Elegir un plan',
   subscriptionCancelledAt: 'Tu suscripción se cancelará el {date}. Mantienes el acceso hasta entonces.',
   cancellingAt: 'Cancelación programada para el {date}',
   shopifyAlreadyConnected: 'Shopify ya conectado. No se necesita token para continuar.',
