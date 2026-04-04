@@ -2759,8 +2759,34 @@ async def stripe_webhook(request: Request):
 
             if not plan_tier:
                 plan_tier = _sg(metadata, "plan")
+            # Fallback: try to resolve from session line_items (works for Pricing Table checkouts)
+            if not plan_tier:
+                try:
+                    expanded_session = stripe.checkout.Session.retrieve(session.get("id"), expand=["line_items"])
+                    line_items_container = _sg(expanded_session, "line_items", {})
+                    line_items_data = _sg(line_items_container, "data", []) if line_items_container else []
+                    exact_amount_map = {9900: "standard", 19900: "pro", 29900: "premium"}
+                    for li in line_items_data:
+                        li_price = _sg(li, "price", {})
+                        price_id = _sg(li_price, "id")
+                        amount = _sg(li_price, "unit_amount")
+                        plan_tier = PRICE_TO_TIER.get(price_id)
+                        if not plan_tier and amount is not None:
+                            try:
+                                plan_tier = exact_amount_map.get(int(amount))
+                            except Exception:
+                                pass
+                        if plan_tier:
+                            break
+                    print(f"  ℹ️ [WEBHOOK] plan resolved from line_items: {plan_tier}")
+                except Exception as li_err:
+                    print(f"  ⚠️ [WEBHOOK] line_items fallback warning: {li_err}")
             if plan_tier:
                 plan_tier = {"99": "standard", "199": "pro", "299": "premium"}.get(str(plan_tier).lower(), str(plan_tier).lower())
+            # If still no plan, default to 'standard' so user isn't locked out
+            if not plan_tier:
+                print(f"  ⚠️ [WEBHOOK] Could not resolve plan_tier, defaulting to 'standard'")
+                plan_tier = "standard"
 
             payment_status_str = str(session.get("payment_status", "")).lower()
             paid_flag = payment_status_str in ("paid", "no_payment_required") or stripe_status in ("active", "trialing")
@@ -2850,6 +2876,9 @@ async def stripe_webhook(request: Request):
                     amount = _sg(price, "unit_amount")
                     exact_amount_map = {9900: "standard", 19900: "pro", 29900: "premium"}
                     plan_tier = PRICE_TO_TIER.get(_sg(price, "id")) or exact_amount_map.get(int(amount) if amount is not None else None)
+            if not plan_tier:
+                print(f"  ⚠️ [WEBHOOK] invoice.payment_succeeded could not resolve plan_tier, defaulting to 'standard'")
+                plan_tier = "standard"
 
             status_transitions = invoice.get("status_transitions", {}) or {}
             payment_date = _resolve_payment_date(_sg(status_transitions, "paid_at"), invoice.get("created"))
@@ -2918,6 +2947,19 @@ async def stripe_webhook(request: Request):
             stripe_customer_id = obj.get("customer")
             stripe_status = str(obj.get("status") or "").lower()
             plan_tier = _resolve_plan_from_stripe_subscription(obj)
+
+            # If plan not resolved from event object, try a fresh Stripe API call
+            if not plan_tier and stripe_sub_id:
+                try:
+                    fresh_sub = stripe.Subscription.retrieve(stripe_sub_id)
+                    plan_tier = _resolve_plan_from_stripe_subscription(fresh_sub)
+                    if plan_tier:
+                        print(f"  ℹ️ [WEBHOOK] plan resolved from fresh Stripe fetch: {plan_tier}")
+                except Exception as fresh_err:
+                    print(f"  ⚠️ [WEBHOOK] fresh subscription fetch warning: {fresh_err}")
+            if not plan_tier:
+                print(f"  ⚠️ [WEBHOOK] {event_type} could not resolve plan_tier, defaulting to 'standard'")
+                plan_tier = "standard"
 
             email = None
             try:
@@ -2989,14 +3031,13 @@ async def stripe_webhook(request: Request):
                 "user_id": user_id,
                 "stripe_subscription_id": stripe_sub_id,
                 "stripe_customer_id": stripe_customer_id,
+                "plan_tier": plan_tier,
                 "status": stored_status,
                 "subscription_status": stored_status,
                 "updated_at": datetime.utcnow().isoformat(),
             }
             if email:
                 update_payload["email"] = email
-            if plan_tier:
-                update_payload["plan_tier"] = plan_tier
             if stored_status == "active":
                 update_payload["paid"] = True
                 update_payload["plan"] = True

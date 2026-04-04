@@ -124,9 +124,17 @@ export default function App() {
     const handleScroll = () => setScrolled(window.scrollY > 10)
     window.addEventListener('scroll', handleScroll)
 
-    // Check for payment success in query string
+    // Check for payment success in query string AND hash params
     const urlParams = new URLSearchParams(window.location.search)
-    const isPaymentSuccess = urlParams.get('payment') === 'success' || urlParams.has('session_id') || urlParams.get('checkout') === 'success'
+    // Also parse hash-based params (e.g., #dashboard?session_id=cs_...&success=true)
+    const hashPart = (window.location.hash || '').replace(/^#[^?]*\??/, '')
+    const hashParams = new URLSearchParams(hashPart)
+    const isPaymentSuccess =
+      urlParams.get('payment') === 'success' ||
+      urlParams.has('session_id') ||
+      urlParams.get('checkout') === 'success' ||
+      hashParams.get('success') === 'true' ||
+      hashParams.has('session_id')
 
     if (isPaymentSuccess) {
       try {
@@ -136,7 +144,7 @@ export default function App() {
 
       setPaymentSuccess(true)
 
-      const sessionId = urlParams.get('session_id')
+      const sessionId = urlParams.get('session_id') || hashParams.get('session_id')
       if (sessionId) {
         ;(async () => {
           try {
@@ -237,14 +245,26 @@ export default function App() {
   // The dashboard is only shown when the user explicitly navigates via the button/hash
 
   const checkUser = async () => {
+    // Detect if user is returning from Stripe payment (don't sign out in that case)
+    const sp = new URLSearchParams(window.location.search)
+    const hash = window.location.hash || ''
+    const isReturningFromPayment =
+      sp.get('payment') === 'success' ||
+      sp.has('session_id') ||
+      sp.get('checkout') === 'success' ||
+      hash.includes('success=true') ||
+      hash.includes('session_id=')
+
     // Force sign out on fresh page load so user must login each time
+    // BUT skip sign-out if user just came back from Stripe payment
     const isFirstLoad = !sessionStorage.getItem('sb_session_active')
-    if (isFirstLoad) {
+    if (isFirstLoad && !isReturningFromPayment) {
       await supabase.auth.signOut()
       sessionStorage.setItem('sb_session_active', '1')
       setUser(null)
       return
     }
+    sessionStorage.setItem('sb_session_active', '1')
     const { data: { session } } = await supabase.auth.getSession()
     if (session) {
       setUser(session.user)
