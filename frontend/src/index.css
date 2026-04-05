@@ -66,6 +66,14 @@ h1, h2, h3, h4, h5, h6 {
 
 .tab-content { will-change: opacity, transform; transform: translateZ(0); }
 button, a, [role="button"] { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+
+/* Prevent iOS Safari from zooming in when focusing inputs with small fonts */
+@supports (-webkit-touch-callout: none) {
+  input, textarea, select {
+    font-size: 16px !important;
+  }
+}
+
 .scroll-smooth { -webkit-overflow-scrolling: touch; }
 aside, nav, .sidebar { will-change: transform; transform: translateZ(0); backface-visibility: hidden; }
 

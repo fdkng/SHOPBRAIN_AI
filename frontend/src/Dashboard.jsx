@@ -3879,21 +3879,32 @@ export default function Dashboard() {
   }
 
   if (!user || (!subscription && subscriptionMissing)) {
+    const maxRetriesReached = initRetryRef.current >= 8
     return (
-      <div className="min-h-screen bg-[#F7F8FA] flex items-center justify-center">
-        <div className="text-center text-[#1A1A2E] max-w-md px-6">
-          <div className="w-10 h-10 border-2 border-[#D8D8E2] border-t-[#FF6B35] rounded-full animate-spin mx-auto mb-4"></div>
-          <div className="text-xl mb-2">{t('subscriptionSync')}</div>
-          <div className="text-[#4A4A68] text-sm mb-2">{t('paymentDelay')}</div>
-          {initRetryRef.current > 0 && (
-            <div className="text-[#8A8AA3] text-xs mb-4">
-              {t('retry')} {initRetryRef.current}/8...
-            </div>
+      <div className="min-h-screen bg-[#F7F8FA] flex items-center justify-center px-4">
+        <div className="text-center text-[#1A1A2E] max-w-md w-full">
+          {!maxRetriesReached ? (
+            <>
+              <div className="w-10 h-10 border-2 border-[#D8D8E2] border-t-[#FF6B35] rounded-full animate-spin mx-auto mb-4"></div>
+              <div className="text-lg sm:text-xl mb-2">{t('subscriptionSync')}</div>
+              <div className="text-[#4A4A68] text-sm mb-2">{t('paymentDelay')}</div>
+              {initRetryRef.current > 0 && (
+                <div className="text-[#8A8AA3] text-xs mb-4">
+                  {t('retry')} {initRetryRef.current}/8...
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="text-3xl mb-3">⚠️</div>
+              <div className="text-lg sm:text-xl mb-2 font-semibold">{t('noActiveSubscription') || 'Aucun abonnement actif'}</div>
+              <div className="text-[#4A4A68] text-sm mb-4">{t('paymentDelay')}</div>
+            </>
           )}
-          <div className="flex gap-3 justify-center mt-4">
-            <button onClick={() => { initRetryRef.current = 0; initializeUser() }} className="bg-[#FF6B35] hover:bg-[#E85A28] px-5 py-2 rounded-lg text-white text-sm font-medium transition-colors">{t('retry')}</button>
-            <button onClick={() => { window.location.hash = '#stripe-pricing' }} className="bg-[#EFF1F5] hover:bg-[#E8E8EE] px-4 py-2 rounded-lg text-[#1A1A2E] text-sm">{t('viewPlans')}</button>
-            <button onClick={() => { window.location.hash = '#/' }} className="bg-white hover:bg-[#EFF1F5] px-4 py-2 rounded-lg text-[#6A6A85] text-sm">{t('backToHome')}</button>
+          <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 justify-center mt-4">
+            <button onClick={() => { initRetryRef.current = 0; initializeUser() }} className="bg-[#FF6B35] hover:bg-[#E85A28] px-5 py-2.5 rounded-lg text-white text-sm font-medium transition-colors">{t('retry')}</button>
+            <button onClick={() => { window.location.hash = '#stripe-pricing' }} className="bg-[#EFF1F5] hover:bg-[#E8E8EE] px-4 py-2.5 rounded-lg text-[#1A1A2E] text-sm">{t('viewPlans')}</button>
+            <button onClick={() => { window.location.hash = '#/' }} className="bg-white hover:bg-[#EFF1F5] px-4 py-2.5 rounded-lg text-[#6A6A85] text-sm border border-[#E8E8EE]">{t('backToHome')}</button>
           </div>
         </div>
       </div>
@@ -6264,11 +6275,11 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
       {/* Settings Modal */}
       {showSettingsModal && (
-        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={() => setShowSettingsModal(false)}>
-          <div className="bg-[#F7F8FA] rounded-xl max-w-4xl w-full max-h-[90vh] overflow-hidden border border-[#E8E8EE] shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-2 sm:p-4" onClick={() => setShowSettingsModal(false)}>
+          <div className="bg-[#F7F8FA] rounded-xl w-full max-w-4xl max-h-[95vh] sm:max-h-[90vh] overflow-hidden border border-[#E8E8EE] shadow-2xl" onClick={(e) => e.stopPropagation()}>
             {/* Header */}
-            <div className="bg-white border-b border-[#E8E8EE] p-6 flex justify-between items-center">
-              <h2 className="text-2xl font-bold text-[#1A1A2E]">{t('accountSettings')}</h2>
+            <div className="bg-white border-b border-[#E8E8EE] p-4 sm:p-6 flex justify-between items-center">
+              <h2 className="text-xl sm:text-2xl font-bold text-[#1A1A2E]">{t('accountSettings')}</h2>
               <button onClick={() => setShowSettingsModal(false)} className="text-[#6A6A85] hover:bg-[#EFF1F5] p-2 rounded-lg">
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -6276,15 +6287,15 @@ analytics.subscribe("product_added_to_cart", (event) => {
               </button>
             </div>
 
-            <div className="flex flex-col md:flex-row h-[calc(90vh-120px)]">
+            <div className="flex flex-col md:flex-row h-[calc(95vh-120px)] sm:h-[calc(90vh-120px)]">
               {/* Sidebar - horizontal on mobile, vertical on desktop */}
-              <div className="md:w-64 bg-white md:border-r border-b md:border-b-0 border-[#E8E8EE] p-2 md:p-4 overflow-x-auto md:overflow-x-visible">
+              <div className="md:w-64 bg-white md:border-r border-b md:border-b-0 border-[#E8E8EE] p-2 md:p-4 overflow-x-auto md:overflow-x-visible shrink-0">
                 <nav className="flex md:flex-col md:space-y-1 gap-1 md:gap-0 min-w-max md:min-w-0">
                   {['profile', 'security', 'interface', 'notifications', 'shopify', 'billing', 'api'].map(tab => (
                     <button
                       key={tab}
                       onClick={() => setSettingsTab(tab)}
-                      className={`w-full text-left px-4 py-2 rounded-lg transition ${
+                      className={`whitespace-nowrap text-left px-3 md:px-4 py-2 rounded-lg transition text-sm md:text-base ${
                         settingsTab === tab ? 'bg-[#0D9488] text-white' : 'text-[#4A4A68] hover:bg-[#EFF1F5]'
                       }`}
                     >
@@ -6603,16 +6614,16 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     <h3 className="text-xl font-bold text-[#1A1A2E] mb-4">{t('billingAndSubscription')}</h3>
                     {subscription?.has_subscription && subscription?.plan ? (
                       <>
-                    <div className="bg-white rounded-lg p-6 border border-[#E8E8EE]">
-                      <div className="flex justify-between items-center mb-6">
+                    <div className="bg-white rounded-lg p-4 sm:p-6 border border-[#E8E8EE]">
+                      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 mb-4 sm:mb-6">
                         <div>
-                          <h4 className="text-xl font-bold text-[#1A1A2E]">{formatPlan(subscription?.plan)} Plan</h4>
+                          <h4 className="text-lg sm:text-xl font-bold text-[#1A1A2E]">{formatPlan(subscription?.plan)} Plan</h4>
                           {subscription?.started_at && new Date(subscription.started_at).getFullYear() > 1970 && (
                             <p className="text-[#6A6A85] text-sm mt-1">{t('activeSince')} {new Date(subscription.started_at).toLocaleDateString()}</p>
                           )}
                         </div>
-                        <div className="text-right">
-                          <div className="text-2xl font-bold text-[#0D9488]">
+                        <div className="sm:text-right">
+                          <div className="text-xl sm:text-2xl font-bold text-[#0D9488]">
                             ${subscription?.plan === 'standard' ? '99' : subscription?.plan === 'pro' ? '199' : '299'}/mo
                           </div>
                         </div>
