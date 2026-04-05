@@ -60,15 +60,8 @@ export default function Dashboard() {
       return null
     }
   })
-  const [subscription, setSubscription] = useState(() => {
-    if (typeof window === 'undefined') return null
-    try {
-      const cached = localStorage.getItem('subscriptionCache')
-      return cached ? JSON.parse(cached) : null
-    } catch {
-      return null
-    }
-  })
+  const [subscription, setSubscription] = useState(null)
+  const [subscriptionReady, setSubscriptionReady] = useState(false)
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('overview')
   const [shopifyUrl, setShopifyUrl] = useState(() => {
@@ -611,6 +604,7 @@ export default function Dashboard() {
     console.log('[FRONT-SUB] read on login', data)
     const normalized = normalizeSubscription(data)
     setSubscription(normalized)
+    setSubscriptionReady(true)
     setSubscriptionMissing(!normalized.has_subscription)
     if (typeof window !== 'undefined') {
       localStorage.setItem('subscriptionCache', JSON.stringify(normalized))
@@ -641,12 +635,12 @@ export default function Dashboard() {
         console.log('Payment session verified and plan updated')
       }
       
-      // Always refresh user data after verification attempt
-      await refreshSubscriptionState(session.user.id, session.access_token)
-      initializeUser(true)
+      // Single authoritative call — do NOT call refreshSubscriptionState separately
+      // initializeUser already reads subscription from /api/init
+      await initializeUser(true)
     } catch (err) {
       console.error('Payment verification error:', err)
-      initializeUser(true)
+      await initializeUser(true)
     }
   }
 
@@ -662,42 +656,68 @@ export default function Dashboard() {
     const hasHashSuccess = hash.includes('success=true') || hashParams.get('success') === 'true'
     
     if (sessionId || hashSessionId) {
-      // Payment redirect - verify session first, then initialize
+      // Payment redirect — verify session first, then poll sequentially (not in parallel)
       resetSubscriptionClientCaches()
       setIsProcessingPayment(true)
-      verifyPaymentSession(sessionId || hashSessionId)
       
-      // Poll aggressively for subscription to appear (webhook may be delayed)
-      let pollCount = 0
-      const pollInterval = setInterval(() => {
-        pollCount++
-        initializeUser(true)
-        if (pollCount >= 10 || subscription) clearInterval(pollInterval)
-      }, 1500)
+      // Verify first, then poll if subscription not found yet
+      verifyPaymentSession(sessionId || hashSessionId).then(() => {
+        // After verify completes, poll sequentially only if no subscription
+        let pollCount = 0
+        const doPoll = async () => {
+          if (pollCount >= 6) {
+            setIsProcessingPayment(false)
+            return
+          }
+          pollCount++
+          const result = await initializeUser(true)
+          if (result?.has_subscription) {
+            setIsProcessingPayment(false)
+          } else {
+            setIsProcessingPayment(false)
+          }
+        }
+        // Small delay before first poll to let webhook arrive
+        setTimeout(doPoll, 2000)
+      })
       
-      // Cleanup URL and stop processing indicator
+      // Cleanup URL
       setTimeout(() => {
         const baseUrl = window.location.href.split('?')[0].split('#')[0]
         window.history.replaceState({}, document.title, baseUrl)
+      }, 1000)
+      
+      // Safety timeout to stop processing indicator
+      setTimeout(() => {
         setIsProcessingPayment(false)
-        clearInterval(pollInterval)
-      }, 3000)
+      }, 15000)
     } else if (hasHashSuccess) {
-      // Fallback for hash-based success detection
+      // Fallback for hash-based success detection — single sequential flow
       resetSubscriptionClientCaches()
       setIsProcessingPayment(true)
-      initializeUser(true)
       
-      // Poll aggressively for subscription update from webhook
-      const checkInterval = setInterval(() => {
-        initializeUser(true)
-      }, 1500)
+      initializeUser(true).then(() => {
+        let pollCount = 0
+        const doPoll = async () => {
+          if (pollCount >= 5) {
+            setIsProcessingPayment(false)
+            return
+          }
+          pollCount++
+          const result = await initializeUser(true)
+          if (result?.has_subscription) {
+            setIsProcessingPayment(false)
+          } else {
+            setTimeout(doPoll, 2000)
+          }
+        }
+        setTimeout(doPoll, 2000)
+      })
       
       setTimeout(() => {
-        clearInterval(checkInterval)
         setIsProcessingPayment(false)
         window.location.hash = window.location.hash.replace('success=true', '')
-      }, 8000)
+      }, 12000)
     } else {
       // Normal initialization
       initializeUser()
@@ -1123,6 +1143,7 @@ export default function Dashboard() {
         // Subscription — no retry loop, trust the DB
         const subData = normalizeSubscription(initData.subscription || {})
         setSubscription(subData)
+        setSubscriptionReady(true)
         if (subData.has_subscription) {
           setSubscriptionMissing(false)
           initRetryRef.current = 0
@@ -1132,6 +1153,7 @@ export default function Dashboard() {
             loadProducts(),
             loadAnalytics(analyticsRange)
           ])
+          return subData
         } else {
           setSubscriptionMissing(true)
           // Auto-retry up to 5 times with increasing delay
@@ -1141,6 +1163,7 @@ export default function Dashboard() {
             console.log(`🔄 No subscription found, retrying in ${delay/1000}s (attempt ${initRetryRef.current}/8)...`)
             setTimeout(() => initializeUser(), delay)
           }
+          return subData
         }
       } else {
         // Fallback to old method if /api/init fails
@@ -1179,10 +1202,12 @@ export default function Dashboard() {
         const data = subResp.ok ? await subResp.json() : null
         const normalizedSub = normalizeSubscription(data || {})
         setSubscription(normalizedSub)
+        setSubscriptionReady(true)
         if (normalizedSub.has_subscription) {
           setSubscriptionMissing(false)
           initRetryRef.current = 0
           Promise.all([loadProducts(), loadAnalytics(analyticsRange)])
+          return normalizedSub
         } else {
           setSubscriptionMissing(true)
           // Auto-retry
@@ -1192,6 +1217,7 @@ export default function Dashboard() {
             console.log(`🔄 Fallback: no subscription, retrying in ${delay/1000}s...`)
             setTimeout(() => initializeUser(), delay)
           }
+          return normalizedSub
         }
       }
       console.log(`⚡ Total init time: ${Math.round(performance.now() - initStart)}ms`)
@@ -1202,7 +1228,8 @@ export default function Dashboard() {
         console.log('⚡ Init failed but cached subscription exists — showing dashboard')
         setLoading(false)
         setSubscriptionMissing(false)
-        return
+        setSubscriptionReady(true)
+        return subscription
       }
       setError(t('authError'))
       setLoading(false)
@@ -3854,7 +3881,7 @@ export default function Dashboard() {
     }
   }
 
-  if (loading && !user) {
+  if ((loading && !user) || (!subscriptionReady && !isProcessingPayment && !subscriptionMissing)) {
     return (
       <div className="min-h-screen bg-[#F7F8FA] flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
