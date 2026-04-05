@@ -1078,6 +1078,7 @@ export default function Dashboard() {
   }, [])
 
   const initRetryRef = useRef(0)
+  const lastSwitchedPlanRef = useRef(null) // Protect against initializeUser overwriting a just-switched plan
   const initializeUser = async (forceFresh = false) => {
     try {
       const initStart = performance.now()
@@ -1166,6 +1167,20 @@ export default function Dashboard() {
 
         // Subscription — no retry loop, trust the DB
         const subData = normalizeSubscription(initData.subscription || {})
+        
+        // Protect against stale data overwriting a just-switched plan
+        const recentSwitch = lastSwitchedPlanRef?.current
+        if (recentSwitch && (Date.now() - recentSwitch.ts < 10000) && subData.has_subscription) {
+          // Within 10s of a plan switch — keep the switched plan if backend returned a different one
+          if (subData.plan !== recentSwitch.plan) {
+            console.log(`🛡️ Protecting just-switched plan: backend says "${subData.plan}" but we just switched to "${recentSwitch.plan}" — keeping switched plan`)
+            subData.plan = recentSwitch.plan
+          }
+        } else if (recentSwitch && (Date.now() - recentSwitch.ts >= 10000)) {
+          // Clear the protection after 10s
+          lastSwitchedPlanRef.current = null
+        }
+        
         setSubscription(subData)
         setSubscriptionReady(true)
         if (subData.has_subscription) {
@@ -1225,6 +1240,16 @@ export default function Dashboard() {
 
         const data = subResp.ok ? await subResp.json() : null
         const normalizedSub = normalizeSubscription(data || {})
+        
+        // Protect against stale data overwriting a just-switched plan (fallback path)
+        const recentSwitchFb = lastSwitchedPlanRef?.current
+        if (recentSwitchFb && (Date.now() - recentSwitchFb.ts < 10000) && normalizedSub.has_subscription) {
+          if (normalizedSub.plan !== recentSwitchFb.plan) {
+            console.log(`🛡️ [fallback] Protecting just-switched plan: "${normalizedSub.plan}" → "${recentSwitchFb.plan}"`)
+            normalizedSub.plan = recentSwitchFb.plan
+          }
+        }
+        
         setSubscription(normalizedSub)
         setSubscriptionReady(true)
         if (normalizedSub.has_subscription) {
@@ -1300,6 +1325,7 @@ export default function Dashboard() {
 
       const data = await resp.json().catch(() => ({}))
       if (data?.success && data?.plan) {
+        lastSwitchedPlanRef.current = { plan: data.plan, ts: Date.now() }
         setSubscription(prev => ({
           ...prev,
           plan: data.plan,
@@ -1360,6 +1386,8 @@ export default function Dashboard() {
 
       const data = await resp.json().catch(() => ({}))
       if (data?.success && data?.plan) {
+        // Mark the plan as just-switched — protect it for 10s against stale initializeUser
+        lastSwitchedPlanRef.current = { plan: data.plan, ts: Date.now() }
         // Immediately update local subscription state
         setSubscription(prev => ({
           ...prev,
@@ -1371,9 +1399,9 @@ export default function Dashboard() {
         }))
         setShowPlanMenu(false)
         setStatus('change-plan', 'success', `✅ Plan ${data.plan.toUpperCase()} ${t('activated') || 'activated'}!`)
-        // Invalidate caches and refresh from backend to be sure
+        // Invalidate caches and refresh from backend to confirm
         resetSubscriptionClientCaches()
-        setTimeout(() => initializeUser(true), 1500)
+        setTimeout(() => initializeUser(true), 2000)
       } else if (data?.changed === false) {
         // Already on this plan
         setStatus('change-plan', 'info', data.message || 'Already on this plan')
@@ -6781,11 +6809,35 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           </div>
                         </div>
                       </div>
-                      <p className="text-sm text-[#6A6A85] mb-4">{t('manageBillingDesc')}</p>
-                      <button onClick={handleManageBilling} disabled={saveLoading} className="bg-[#0D9488] hover:bg-[#0F766E] disabled:opacity-50 px-6 py-3 rounded-lg text-white font-semibold w-full">
-                        {saveLoading ? '...' : t('manageBilling')}
-                      </button>
-                      {renderStatus('billing')}
+
+                      {/* Inline plan switch buttons */}
+                      <div className="mb-4">
+                        <p className="text-sm font-semibold text-[#1A1A2E] mb-2">{t('changeYourPlan') || 'Change Your Plan'}</p>
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          {['standard', 'pro', 'premium'].filter(p => p !== subscription?.plan).map(targetPlan => (
+                            <button
+                              key={targetPlan}
+                              onClick={() => handleChangePlan(targetPlan)}
+                              disabled={changePlanLoading}
+                              className="flex-1 px-4 py-3 rounded-lg border border-[#E8E8EE] bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E] disabled:opacity-50 transition text-left"
+                            >
+                              <div className="font-semibold text-sm">{formatPlan(targetPlan)}</div>
+                              <div className="text-xs text-[#6A6A85]">
+                                ${targetPlan === 'standard' ? '99' : targetPlan === 'pro' ? '199' : '299'}/{t('month') || 'mo'}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                        {renderStatus('change-plan')}
+                      </div>
+
+                      <div className="border-t border-[#E8E8EE] pt-4">
+                        <p className="text-sm text-[#6A6A85] mb-4">{t('manageBillingDesc')}</p>
+                        <button onClick={handleManageBilling} disabled={saveLoading} className="bg-[#0D9488] hover:bg-[#0F766E] disabled:opacity-50 px-6 py-3 rounded-lg text-white font-semibold w-full">
+                          {saveLoading ? '...' : t('manageBilling')}
+                        </button>
+                        {renderStatus('billing')}
+                      </div>
                     </div>
                       </>
                     ) : (
