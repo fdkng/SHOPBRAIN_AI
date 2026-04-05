@@ -44,8 +44,11 @@ const cachedFetch = async (url, options = {}, ttlMs = 60_000) => {
     return cached.data
   }
   const resp = await fetch(url, options)
-  const data = await resp.json()
-  _apiCache.set(cacheKey, { data, ts: Date.now() })
+  const data = await resp.json().catch(() => ({ success: false, detail: `HTTP ${resp.status}` }))
+  // Only cache successful responses
+  if (resp.ok) {
+    _apiCache.set(cacheKey, { data, ts: Date.now() })
+  }
   return data
 }
 
@@ -674,7 +677,7 @@ export default function Dashboard() {
           if (result?.has_subscription) {
             setIsProcessingPayment(false)
           } else {
-            setIsProcessingPayment(false)
+            setTimeout(doPoll, 2000)
           }
         }
         // Small delay before first poll to let webhook arrive
@@ -1220,7 +1223,6 @@ export default function Dashboard() {
           return normalizedSub
         }
       }
-      console.log(`⚡ Total init time: ${Math.round(performance.now() - initStart)}ms`)
     } catch (err) {
       console.error('Error:', err)
       // If we have a cached subscription, don't block — just show dashboard
@@ -2010,6 +2012,7 @@ export default function Dashboard() {
     try {
       setSaveLoading(true)
       const session = await getCachedSession()
+      if (!session) { setStatus('profile', 'error', t('sessionExpiredReconnect')); return }
       const response = await fetch(`${API_URL}/api/auth/profile`, {
         method: 'PUT',
         headers: {
@@ -2051,6 +2054,7 @@ export default function Dashboard() {
     try {
       setSaveLoading(true)
       const session = await getCachedSession()
+      if (!session) { setStatus('password', 'error', t('sessionExpiredReconnect')); return }
       const response = await fetch(`${API_URL}/api/settings/password`, {
         method: 'POST',
         headers: {
@@ -2082,6 +2086,7 @@ export default function Dashboard() {
     try {
       setSaveLoading(true)
       const session = await getCachedSession()
+      if (!session) { setStatus('2fa', 'error', t('sessionExpiredReconnect')); return }
       const endpoint = twoFAEnabled ? '/api/settings/2fa/disable' : '/api/settings/2fa/enable'
       const response = await fetch(`${API_URL}${endpoint}`, {
         method: 'POST',
@@ -2178,6 +2183,7 @@ export default function Dashboard() {
     try {
       setSaveLoading(true)
       const session = await getCachedSession()
+      if (!session) { setStatus('billing', 'error', t('sessionExpiredReconnect')); return }
       const response = await fetch(`${API_URL}/api/subscription/update-payment-method`, {
         method: 'POST',
         headers: {
@@ -2342,7 +2348,7 @@ export default function Dashboard() {
         setStatus('shopify', 'success', `Boutique active: ${domain}`)
         await loadProducts()
       } else {
-        const err = await resp.json()
+        const err = await resp.json().catch(() => ({}))
         setStatus('shopify', 'error', err.detail || 'Erreur lors du changement de boutique')
       }
     } catch (e) {
@@ -2374,7 +2380,7 @@ export default function Dashboard() {
           }
         }
       } else {
-        const err = await resp.json()
+        const err = await resp.json().catch(() => ({}))
         setStatus('shopify', 'error', err.detail || 'Erreur suppression')
       }
     } catch (e) {
@@ -2409,7 +2415,7 @@ export default function Dashboard() {
         body: JSON.stringify({ shopify_shop_url: url, shopify_access_token: newShopToken })
       })
       if (!testResp.ok) {
-        const err = await testResp.json()
+        const err = await testResp.json().catch(() => ({}))
         throw new Error(err.detail || 'Test de connexion échoué')
       }
       const testData = await testResp.json()
@@ -2421,7 +2427,7 @@ export default function Dashboard() {
         body: JSON.stringify({ shopify_shop_url: url, shopify_access_token: newShopToken })
       })
       if (!saveResp.ok) {
-        const err = await saveResp.json()
+        const err = await saveResp.json().catch(() => ({}))
         throw new Error(err.detail || 'Erreur sauvegarde')
       }
       setStatus('shopify', 'success', `${url} connectée avec succès !`)
@@ -2462,7 +2468,7 @@ export default function Dashboard() {
       })
       
       if (!response.ok) {
-        const errorData = await response.json()
+        const errorData = await response.json().catch(() => ({}))
         throw new Error(errorData.detail || `HTTP ${response.status}`)
       }
       
@@ -2471,11 +2477,10 @@ export default function Dashboard() {
       
       if (data.success && data.products) {
         setProducts(data.products)
-        return data.products
-        // Afficher les statistiques
         if (data.statistics) {
           console.log('Stats:', data.statistics)
         }
+        return data.products
       } else {
         setProducts([])
         setError(t('noProductsFound'))
@@ -2512,7 +2517,7 @@ export default function Dashboard() {
       })
 
       if (!response.ok) {
-        const errorData = await response.json()
+        const errorData = await response.json().catch(() => ({}))
         throw new Error(errorData.detail || `HTTP ${response.status}`)
       }
 
@@ -3261,7 +3266,7 @@ export default function Dashboard() {
         })
         clearTimeout(rewriteTimeout)
         if (!response.ok) {
-          const errorData = await response.json()
+          const errorData = await response.json().catch(() => ({}))
           throw new Error(errorData.detail || `HTTP ${response.status}`)
         }
         const data = await response.json()
@@ -3430,7 +3435,7 @@ export default function Dashboard() {
       clearTimeout(applyTimeout)
 
       if (!response.ok) {
-        const errorData = await response.json()
+        const errorData = await response.json().catch(() => ({}))
         throw new Error(errorData.detail || `HTTP ${response.status}`)
       }
 
@@ -3469,7 +3474,7 @@ export default function Dashboard() {
       })
 
       if (!response.ok) {
-        const errorData = await response.json()
+        const errorData = await response.json().catch(() => ({}))
         throw new Error(errorData.detail || `HTTP ${response.status}`)
       }
 
@@ -3540,7 +3545,7 @@ export default function Dashboard() {
         })
       })
       if (!response.ok) {
-        const errorData = await response.json()
+        const errorData = await response.json().catch(() => ({}))
         throw new Error(errorData.detail || `HTTP ${response.status}`)
       }
       const data = await response.json()
@@ -3626,7 +3631,7 @@ export default function Dashboard() {
       })
 
       if (!response.ok) {
-        const errorData = await response.json()
+        const errorData = await response.json().catch(() => ({}))
         throw new Error(errorData.detail || `HTTP ${response.status}`)
       }
 
@@ -3730,6 +3735,7 @@ export default function Dashboard() {
       setLoading(true)
       console.log('🔍 Lancement de l\'analyse IA...')
       const session = await getCachedSession()
+      if (!session) { setStatus('analyze', 'error', t('sessionExpiredReconnect')); setLoading(false); return }
       
       const response = await fetch(`${API_URL}/api/ai/analyze-store`, {
         method: 'POST',
@@ -3807,6 +3813,7 @@ export default function Dashboard() {
     try {
       setApplyingActions(true)
       const session = await getCachedSession()
+      if (!session) { setStatus('apply-actions', 'error', t('sessionExpiredReconnect')); setApplyingActions(false); return }
       
       const response = await fetch(`${API_URL}/api/ai/execute-actions`, {
         method: 'POST',
@@ -3856,6 +3863,7 @@ export default function Dashboard() {
     try {
       setApplyingRecommendationId(`${productId}-${recommendationType}`)
       const session = await getCachedSession()
+      if (!session) { setStatus(`rec-${productId}-${recommendationType}`, 'error', t('sessionExpiredReconnect')); setApplyingRecommendationId(null); return }
       const response = await fetch(`${API_URL}/api/ai/apply-recommendation`, {
         method: 'POST',
         headers: {
@@ -4193,7 +4201,7 @@ export default function Dashboard() {
                     <button
                       key={range}
                       onClick={() => setAnalyticsRange(range)}
-                      className={`px-3 md:px-3 py-1.5 md:py-1 rounded-full text-xs font-semibold transition ${analyticsRange === range ? 'bg-[#FF6B35] text-black' : 'text-[#4A4A68] hover:text-[#1A1A2E]'}`}
+                      className={`px-3 md:px-3 py-1.5 md:py-1 rounded-full text-xs font-semibold transition ${analyticsRange === range ? 'bg-[#FF6B35] text-white' : 'text-[#4A4A68] hover:text-[#1A1A2E]'}`}
                     >
                       {range}
                     </button>
@@ -5662,7 +5670,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                       <th className="text-center px-4 py-3 text-xs text-[#6A6A85] font-semibold uppercase w-36">Seuil d'alerte</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-700/50">
+                  <tbody className="divide-y divide-[#E8E8EE]">
                     {stockProducts.map((p) => (
                       <tr key={p.id} className="hover:bg-[#EFF1F5]/20 transition-colors">
                         <td className="px-6 py-3">
@@ -6574,7 +6582,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               />
                               <p className="text-xs text-[#8A8AA3] mt-2">Scopes requis: read_products, write_products, read_orders, read_customers, read_analytics.</p>
                             </div>
-                            <button onClick={connectNewShop} disabled={loading} className="w-full bg-[#FF6B35] hover:bg-[#E85A28] text-black font-bold py-2 px-4 rounded-lg disabled:opacity-50">
+                            <button onClick={connectNewShop} disabled={loading} className="w-full bg-[#FF6B35] hover:bg-[#E85A28] text-white font-bold py-2 px-4 rounded-lg disabled:opacity-50">
                               {loading ? 'Connexion...' : 'Connecter cette boutique'}
                             </button>
                           </div>

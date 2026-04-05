@@ -64,7 +64,8 @@ h1, h2, h3, h4, h5, h6 {
   color: var(--text-tertiary);
 }
 
-.tab-content { will-change: opacity, transform; transform: translateZ(0); }
+.tab-content { will-change: opacity, transform; transform: translateZ(0); animation: tabFadeIn 0.25s ease-out; }
+@keyframes tabFadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 button, a, [role="button"] { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 
 /* Prevent iOS Safari from zooming in when focusing inputs with small fonts */

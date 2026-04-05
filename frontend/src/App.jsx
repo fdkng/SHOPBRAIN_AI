@@ -102,7 +102,6 @@ export default function App() {
   const [currentView, setCurrentView] = useState('landing')
   const [user, setUser] = useState(null)
   const [hasSubscription, setHasSubscription] = useState(false)
-  const [subCheckDone, setSubCheckDone] = useState(false) // true once the first subscription check completes
 
   // ⚡ Prefetch Dashboard chunk in background after landing page loads
   useEffect(() => {
@@ -278,7 +277,6 @@ export default function App() {
     } finally {
       clearTimeout(timeoutId)
       subscriptionCheckInProgressRef.current = false
-      setSubCheckDone(true)
     }
   }
 
@@ -571,9 +569,7 @@ export default function App() {
                 </div>
                 <button
                   onClick={() => {
-                    if (hasSubscription || !subCheckDone) {
-                      // If subscription confirmed OR still checking, go to dashboard
-                      // Dashboard has its own subscription validation and retry logic
+                    if (hasSubscription) {
                       setCurrentView('dashboard')
                     } else {
                       setLandingStatusByKey((prev) => ({
@@ -586,12 +582,10 @@ export default function App() {
                   className={`px-4 md:px-5 py-2 rounded-full text-xs md:text-sm font-medium transition-all ${
                     hasSubscription
                       ? 'bg-[#1A1A2E] text-white hover:bg-[#2A2A42] shadow-sm'
-                      : !subCheckDone
-                        ? 'bg-[#1A1A2E]/70 text-white/80 animate-pulse'
-                        : 'bg-[#EFF1F5] text-[#8A8AA3] cursor-not-allowed'
+                      : 'bg-[#EFF1F5] text-[#8A8AA3] cursor-not-allowed'
                   }`}
                 >
-                  {!subCheckDone && !hasSubscription ? '...' : 'Dashboard'}
+                  Dashboard
                 </button>
                 <button
                   onClick={async () => {
@@ -921,7 +915,7 @@ export default function App() {
             <div className="mt-16 flex flex-col items-center animate-fadeInUp stagger-2">
               <button
                 onClick={() => {
-                  if (hasSubscription || !subCheckDone) {
+                  if (hasSubscription) {
                     setCurrentView('dashboard')
                     window.location.hash = '#dashboard'
                   } else {
@@ -932,15 +926,14 @@ export default function App() {
                     document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' })
                   }
                 }}
+                disabled={!hasSubscription}
                 className={`px-12 py-4 text-base font-semibold rounded-full transition-all ${
                   hasSubscription
                     ? 'bg-[#FF6B35] text-white hover:bg-[#E85A28] hover:shadow-lg shadow-[0_8px_24px_rgba(255,107,53,0.25)]'
-                    : !subCheckDone
-                      ? 'bg-[#FF6B35]/70 text-white/80 animate-pulse shadow-[0_8px_24px_rgba(255,107,53,0.15)]'
-                      : 'bg-[#EFF1F5] text-[#8A8AA3] cursor-not-allowed'
+                    : 'bg-[#EFF1F5] text-[#8A8AA3] cursor-not-allowed'
                 }`}
               >
-                {!subCheckDone && !hasSubscription ? 'Chargement...' : 'Accéder à mon Dashboard'}
+                Accéder à mon Dashboard
               </button>
               {renderLandingStatus('dashboardHero')}
             </div>
