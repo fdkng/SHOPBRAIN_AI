@@ -578,13 +578,17 @@ export default function Dashboard() {
     const status = String(raw?.subscription_status || raw?.status || 'inactive').toLowerCase().trim()
     const paid = raw?.paid === true || raw?.plan === true || raw?.has_subscription === true
     const activePaid = (status === 'active' || status === 'cancelling') && paid
-    const tier = typeof raw?.plan === 'string' ? raw.plan : (activePaid ? 'premium' : null)
+    // Plan tier: prefer explicit string plan from backend; never fall back to 'premium'
+    // raw.plan can be boolean (true) from DB, so check typeof; also check plan_tier field
+    const tier = (typeof raw?.plan === 'string' && raw.plan !== 'free' && raw.plan !== 'true')
+      ? raw.plan
+      : (typeof raw?.plan_tier === 'string' ? raw.plan_tier : null)
     return {
       has_subscription: activePaid,
       paid: activePaid,
       status: activePaid ? status : 'inactive',
       subscription_status: activePaid ? status : 'inactive',
-      plan: tier,
+      plan: activePaid ? (tier || 'standard') : null,
       payment_date: raw?.payment_date || null,
       started_at: raw?.started_at || null,
       capabilities: raw?.capabilities || null,
@@ -1062,7 +1066,9 @@ export default function Dashboard() {
       }
 
       // ⚡ FAST INIT — single API call replaces 5 separate calls
-      const initResp = await fetch(`${API_URL}/api/init`, { headers: authHeaders })
+      // Pass force=1 when retrying (forceFresh) to bypass server-side cache
+      const initUrl = forceFresh ? `${API_URL}/api/init?force=1` : `${API_URL}/api/init`
+      const initResp = await fetch(initUrl, { headers: authHeaders })
 
       if (initResp.ok) {
         const initData = await initResp.json()

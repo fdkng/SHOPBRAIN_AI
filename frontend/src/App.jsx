@@ -152,9 +152,12 @@ export default function App() {
     }
     window.addEventListener('hashchange', handleHashChange)
 
-    // Initial load: check user + subscription
-    checkUser()
-    checkSubscription()
+    // Initial load: check user FIRST (may sign out), THEN check subscription
+    const initLoad = async () => {
+      await checkUser()
+      checkSubscription()
+    }
+    initLoad()
 
     // Listen for auth changes
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
@@ -223,10 +226,7 @@ export default function App() {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session || !session.user) {
         setHasSubscription(false)
-        setLandingStatusByKey((prev) => ({
-          ...prev,
-          dashboardHero: { type: 'warning', message: 'No active plan found. Please purchase a plan to access your dashboard.' }
-        }))
+        // Don't show error — user just isn't logged in yet
         return
       }
       const resp = await fetch('https://shopbrain-backend.onrender.com/api/subscription/status', {
@@ -240,12 +240,14 @@ export default function App() {
       })
       if (!resp.ok) {
         console.error('Subscription check failed:', resp.status, resp.statusText)
-        // Payment status unclear => NO ACCESS (secure default)
+        if (resp.status === 401) {
+          // Token expired — user needs to re-login, don't show scary plan message
+          setHasSubscription(false)
+          return
+        }
+        // Server error — don't block user with "no plan" message, it might be a Render cold start
+        // The Dashboard has its own retry logic
         setHasSubscription(false)
-        setLandingStatusByKey((prev) => ({
-          ...prev,
-          dashboardHero: { type: 'warning', message: 'No active plan found. Please purchase a plan to access your dashboard.' }
-        }))
         return
       }
       const data = await resp.json()
@@ -269,13 +271,9 @@ export default function App() {
         }))
       }
     } catch (e) {
-      // Payment status unclear => NO ACCESS (secure default)
+      // Network error / Render cold start — don't show "no plan" error
       console.error('Subscription check error:', e)
       setHasSubscription(false)
-      setLandingStatusByKey((prev) => ({
-        ...prev,
-        dashboardHero: { type: 'warning', message: 'No active plan found. Please purchase a plan to access your dashboard.' }
-      }))
     } finally {
       clearTimeout(timeoutId)
       subscriptionCheckInProgressRef.current = false

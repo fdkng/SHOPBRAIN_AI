@@ -1538,14 +1538,15 @@ def _is_paid_subscription_row(row: dict | None) -> bool:
         return False
     status = str(row.get("status") or row.get("subscription_status") or "").strip().lower()
     paid = bool(row.get("paid") is True or row.get("plan") is True)
-    period_valid = _subscription_period_is_valid(row)
-    return status == "active" and paid and period_valid
+    # Accept both 'active' and 'cancelling' (user paid, just scheduled to cancel at period end)
+    # period_is_valid check removed — the columns end_date/current_period_end don't exist in Supabase
+    return status in ("active", "cancelling") and paid
 
 
 def _inactive_subscription_payload(message: str | None = None) -> dict:
     payload = {
         "has_subscription": False,
-        "plan": "free",
+        "plan": None,
         "paid": False,
         "status": "inactive",
         "subscription_status": "inactive",
@@ -1756,6 +1757,7 @@ async def get_products(request: Request):
 # In-memory caches with TTL
 _init_cache = {}  # key: user_id, value: (timestamp, data)
 _INIT_CACHE_TTL = 120  # 2 minutes
+_INIT_CACHE_TTL_NO_SUB = 5  # 5 seconds for "no subscription" results (so retries hit DB quickly)
 
 @app.get("/api/init")
 async def fast_init(request: Request):
@@ -1763,12 +1765,16 @@ async def fast_init(request: Request):
     Replaces 5 separate API calls on page load."""
     user_id = get_user_id(request)
 
-    # Check cache first
-    cached = _init_cache.get(user_id)
+    # Check cache first (skip cache if ?force=1 query param)
+    force = request.query_params.get("force") in ("1", "true")
+    cached = _init_cache.get(user_id) if not force else None
     if cached:
         cache_ts, cache_data = cached
-        if time.time() - cache_ts < _INIT_CACHE_TTL:
-            print(f"⚡ /api/init cache HIT for {user_id}")
+        # Use shorter TTL for negative results (no subscription)
+        has_sub = (cache_data.get("subscription") or {}).get("has_subscription", False)
+        ttl = _INIT_CACHE_TTL if has_sub else _INIT_CACHE_TTL_NO_SUB
+        if time.time() - cache_ts < ttl:
+            print(f"⚡ /api/init cache HIT for {user_id} (has_sub={has_sub}, ttl={ttl}s)")
             return {**cache_data, "cached": True}
 
     print(f"⚡ /api/init called for {user_id} — fetching all data...")
@@ -1843,7 +1849,7 @@ async def fast_init(request: Request):
 
         # — 4. Subscription — DB is the source of truth (written by Stripe webhooks).
         #   Stripe API call is ONLY used as background auto-heal, NEVER blocks access.
-        subscription_data = {"has_subscription": False, "plan": "free", "paid": False, "status": "inactive"}
+        subscription_data = {"has_subscription": False, "plan": None, "paid": False, "status": "inactive"}
         try:
             tier_map = {
                 '99': 'standard', '199': 'pro', '299': 'premium',
@@ -1858,7 +1864,7 @@ async def fast_init(request: Request):
             # Step 1: Read from DB
             sub_row = None
             try:
-                sub_result = supabase_client.table("subscriptions").select("*").eq("user_id", user_id).eq("status", "active").order("updated_at", desc=True).limit(1).execute()
+                sub_result = supabase_client.table("subscriptions").select("*").eq("user_id", user_id).in_("status", ["active", "cancelling"]).order("updated_at", desc=True).limit(1).execute()
                 if sub_result.data:
                     sub_row = sub_result.data[0]
             except Exception as db_err:
@@ -1874,7 +1880,20 @@ async def fast_init(request: Request):
 
                 # Step 2: DECISION — if DB says paid=true + valid plan + active status → GRANT ACCESS
                 payment_date = sub_row.get('payment_date')
-                if paid_flag and plan and sub_status == 'active':
+                if paid_flag and plan and sub_status in ('active', 'cancelling'):
+                    # If cancelling, fetch cancel date from Stripe
+                    cancel_at_period_end = sub_status == 'cancelling'
+                    cancel_at = None
+                    if cancel_at_period_end:
+                        stripe_sub_id_for_cancel = sub_row.get('stripe_subscription_id')
+                        if stripe_sub_id_for_cancel:
+                            try:
+                                stripe_sub_obj = stripe.Subscription.retrieve(stripe_sub_id_for_cancel)
+                                period_end = _sg(stripe_sub_obj, 'current_period_end')
+                                if period_end and isinstance(period_end, (int, float)):
+                                    cancel_at = datetime.utcfromtimestamp(period_end).isoformat()
+                            except Exception:
+                                pass
                     print(f"  ✅ [INIT-SUB] ACCESS GRANTED from DB: paid={paid_flag}, plan={plan}, status={sub_status}, payment_date={payment_date}")
                     subscription_data = {
                         'has_subscription': True,
@@ -1884,7 +1903,9 @@ async def fast_init(request: Request):
                         'subscription_status': sub_status,
                         'payment_date': payment_date,
                         'started_at': sub_row.get('start_date') or sub_row.get('created_at'),
-                        'capabilities': capabilities.get(plan, {})
+                        'capabilities': capabilities.get(plan, {}),
+                        'cancel_at_period_end': cancel_at_period_end,
+                        'cancel_at': cancel_at,
                     }
                 else:
                     # Step 3: paid is False/NULL in DB — try Stripe auto-heal (best-effort, NOT blocking)
@@ -10666,7 +10687,7 @@ async def check_subscription_status(request: Request):
                 return {
                     'success': True,
                     'has_subscription': False,
-                    'plan': 'free',
+                    'plan': None,
                     'paid': False,
                     'status': sub_status or 'inactive',
                     'subscription_status': sub_status or 'inactive',
@@ -10678,7 +10699,7 @@ async def check_subscription_status(request: Request):
             return {
                 'success': True,
                 'has_subscription': False,
-                'plan': 'free',
+                'plan': None,
                 'paid': False,
                 'status': 'inactive',
                 'subscription_status': 'inactive',
