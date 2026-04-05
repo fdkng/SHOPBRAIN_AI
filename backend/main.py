@@ -1996,7 +1996,7 @@ async def health():
     return {
         "status": "ok",
         "version": "3.0-fast-init",
-        "build": "20260404-verify-fix",
+        "build": "20260405-switch-plan",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
                 "openai": "configured" if OPENAI_API_KEY else "not_configured",
@@ -12378,6 +12378,120 @@ async def cancel_subscription(request: Request):
     except Exception as e:
         print(f"Error cancelling subscription: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/subscription/switch-plan")
+async def switch_plan_inline(request: Request):
+    """🔄 Switch an existing Stripe subscription to a different plan INLINE.
+    No new checkout — modifies the subscription directly via Stripe API.
+    Returns the new plan immediately so the frontend can update."""
+    user_id = get_user_id(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    new_plan = str(body.get("plan", "")).lower().strip()
+    if new_plan not in STRIPE_PLANS:
+        raise HTTPException(status_code=400, detail=f"Invalid plan: {new_plan}")
+
+    new_price_id = STRIPE_PLANS[new_plan]
+
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+        # 1. Find existing subscription row
+        sub_result = (
+            supabase.table("subscriptions")
+            .select("*")
+            .eq("user_id", user_id)
+            .in_("status", ["active", "cancelling"])
+            .order("updated_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        sub_row = sub_result.data[0] if sub_result.data else None
+        if not sub_row:
+            raise HTTPException(status_code=404, detail="No active subscription found")
+
+        stripe_sub_id = _normalize_stripe_subscription_id(sub_row.get("stripe_subscription_id"))
+        if not stripe_sub_id:
+            raise HTTPException(status_code=400, detail="No Stripe subscription ID on record — please contact support")
+
+        # 2. Retrieve current Stripe subscription
+        stripe_sub = stripe.Subscription.retrieve(stripe_sub_id, expand=["items"])
+        stripe_status = str(_sg(stripe_sub, "status") or "").lower()
+        if stripe_status not in ("active", "trialing"):
+            raise HTTPException(status_code=400, detail=f"Subscription is {stripe_status}, cannot switch plan")
+
+        items_container = _sg(stripe_sub, "items", {})
+        items = _sg(items_container, "data", []) if items_container else []
+        if not items:
+            raise HTTPException(status_code=400, detail="Subscription has no items — please contact support")
+
+        current_item = items[0]
+        current_item_id = _sg(current_item, "id")
+        current_price_id = _sg(_sg(current_item, "price", {}), "id")
+
+        if current_price_id == new_price_id:
+            return {"success": True, "plan": new_plan, "message": "Already on this plan", "changed": False}
+
+        # 3. Modify the Stripe subscription — swap price, prorate immediately
+        print(f"🔄 [SWITCH-PLAN] user={user_id} switching from price={current_price_id} to price={new_price_id} (plan={new_plan})")
+        updated_sub = stripe.Subscription.modify(
+            stripe_sub_id,
+            items=[{
+                "id": current_item_id,
+                "price": new_price_id,
+            }],
+            proration_behavior="create_prorations",
+            metadata={"user_id": user_id, "plan": new_plan},
+        )
+        new_status = str(_sg(updated_sub, "status") or "active").lower()
+        print(f"✅ [SWITCH-PLAN] Stripe subscription modified: status={new_status}, new_plan={new_plan}")
+
+        # 4. Immediately update DB so the frontend sees the change right away
+        now_iso = datetime.utcnow().isoformat()
+        _sub_upsert(supabase, user_id, {
+            "user_id": user_id,
+            "plan_tier": new_plan,
+            "plan": True,
+            "paid": True,
+            "status": "active",
+            "subscription_status": "active",
+            "stripe_subscription_id": stripe_sub_id,
+            "stripe_customer_id": _sg(updated_sub, "customer") or sub_row.get("stripe_customer_id"),
+            "updated_at": now_iso,
+        })
+
+        try:
+            supabase.table("user_profiles").upsert({
+                "id": user_id,
+                "subscription_tier": new_plan,
+                "subscription_plan": new_plan,
+                "subscription_status": "active",
+                "updated_at": now_iso,
+            }, on_conflict="id").execute()
+        except Exception as profile_err:
+            print(f"⚠️ [SWITCH-PLAN] user_profiles upsert warning: {profile_err}")
+
+        # 5. Invalidate init cache
+        _init_cache.pop(user_id, None)
+
+        return {
+            "success": True,
+            "plan": new_plan,
+            "changed": True,
+            "message": f"Plan switched to {new_plan.upper()} successfully!"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        print(f"❌ [SWITCH-PLAN] Error: {e}\n{tb}")
+        raise HTTPException(status_code=500, detail=f"switch-plan error: {type(e).__name__}: {e}")
 
 
 @app.post("/api/subscription/update-payment-method")

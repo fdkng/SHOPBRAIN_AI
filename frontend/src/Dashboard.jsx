@@ -727,6 +727,27 @@ export default function Dashboard() {
     }
   }, [])
 
+  // 🔄 Auto-refresh subscription when user returns from Stripe Billing Portal / external redirect
+  // The portal redirects to #dashboard with no session_id, so we detect tab visibility change
+  useEffect(() => {
+    let lastHidden = 0
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        lastHidden = Date.now()
+      } else if (document.visibilityState === 'visible' && lastHidden > 0) {
+        const awayMs = Date.now() - lastHidden
+        // If user was away for more than 3 seconds (likely external redirect), refresh subscription
+        if (awayMs > 3000) {
+          console.log(`🔄 Tab refocused after ${(awayMs / 1000).toFixed(1)}s — refreshing subscription...`)
+          resetSubscriptionClientCaches()
+          initializeUser(true)
+        }
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [])
+
   useEffect(() => {
     if (showSettingsModal && settingsTab === 'api') {
       loadApiKeys()
@@ -1265,20 +1286,48 @@ export default function Dashboard() {
         return
       }
 
-      const resp = await fetch(`${API_URL}/api/subscription/create-session`, {
+      setStatus('upgrade', 'info', t('switching') || 'Switching plan...')
+
+      // Use inline switch-plan (modifies existing Stripe subscription)
+      const resp = await fetch(`${API_URL}/api/subscription/switch-plan`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ plan: nextPlan, email: user?.email || '' })
+        body: JSON.stringify({ plan: nextPlan })
       })
 
-      const data = await resp.json()
-      if (data?.success && data?.url) {
-        window.location.href = data.url
+      const data = await resp.json().catch(() => ({}))
+      if (data?.success && data?.plan) {
+        setSubscription(prev => ({
+          ...prev,
+          plan: data.plan,
+          has_subscription: true,
+          paid: true,
+          status: 'active',
+          subscription_status: 'active',
+        }))
+        setStatus('upgrade', 'success', `✅ Plan ${data.plan.toUpperCase()} ${t('activated') || 'activated'}!`)
+        resetSubscriptionClientCaches()
+        setTimeout(() => initializeUser(true), 1500)
       } else {
-        setStatus('upgrade', 'error', t('errorCreatingStripeSession'))
+        // Fallback to checkout if switch-plan fails
+        console.warn('switch-plan failed for upgrade, falling back:', data)
+        const fallbackResp = await fetch(`${API_URL}/api/subscription/create-session`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ plan: nextPlan, email: user?.email || '' })
+        })
+        const fallbackData = await fallbackResp.json().catch(() => ({}))
+        if (fallbackData?.success && fallbackData?.url) {
+          window.location.href = fallbackData.url
+        } else {
+          setStatus('upgrade', 'error', data?.detail || t('errorCreatingStripeSession'))
+        }
       }
     } catch (e) {
       console.error('Upgrade error:', e)
@@ -1286,6 +1335,7 @@ export default function Dashboard() {
     }
   }
 
+  const [changePlanLoading, setChangePlanLoading] = useState(false)
   const handleChangePlan = async (targetPlan) => {
     try {
       if (!targetPlan || targetPlan === subscription?.plan) return
@@ -1295,24 +1345,61 @@ export default function Dashboard() {
         return
       }
 
-      const resp = await fetch(`${API_URL}/api/subscription/create-session`, {
+      setChangePlanLoading(true)
+      setStatus('change-plan', 'info', t('switching') || 'Switching plan...')
+
+      // Use the inline switch-plan endpoint (modifies existing subscription, no new checkout)
+      const resp = await fetch(`${API_URL}/api/subscription/switch-plan`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ plan: targetPlan, email: user?.email || '' })
+        body: JSON.stringify({ plan: targetPlan })
       })
 
-      const data = await resp.json()
-      if (data?.success && data?.url) {
-        window.location.href = data.url
+      const data = await resp.json().catch(() => ({}))
+      if (data?.success && data?.plan) {
+        // Immediately update local subscription state
+        setSubscription(prev => ({
+          ...prev,
+          plan: data.plan,
+          has_subscription: true,
+          paid: true,
+          status: 'active',
+          subscription_status: 'active',
+        }))
+        setShowPlanMenu(false)
+        setStatus('change-plan', 'success', `✅ Plan ${data.plan.toUpperCase()} ${t('activated') || 'activated'}!`)
+        // Invalidate caches and refresh from backend to be sure
+        resetSubscriptionClientCaches()
+        setTimeout(() => initializeUser(true), 1500)
+      } else if (data?.changed === false) {
+        // Already on this plan
+        setStatus('change-plan', 'info', data.message || 'Already on this plan')
       } else {
-        setStatus('change-plan', 'error', t('errorCreatingStripeSession'))
+        // Fallback: if switch-plan fails (e.g., no existing subscription), use checkout
+        console.warn('switch-plan failed, falling back to create-session:', data)
+        const fallbackResp = await fetch(`${API_URL}/api/subscription/create-session`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ plan: targetPlan, email: user?.email || '' })
+        })
+        const fallbackData = await fallbackResp.json().catch(() => ({}))
+        if (fallbackData?.success && fallbackData?.url) {
+          window.location.href = fallbackData.url
+        } else {
+          setStatus('change-plan', 'error', data?.detail || t('errorCreatingStripeSession'))
+        }
       }
     } catch (e) {
       console.error('Change plan error:', e)
       setStatus('change-plan', 'error', t('anErrorOccurred'))
+    } finally {
+      setChangePlanLoading(false)
     }
   }
 
@@ -4105,46 +4192,77 @@ export default function Dashboard() {
 
       {/* Plan Change Menu (kept separate for billing changes) */}
       {showPlanMenu && (
-        <div className="fixed inset-0 bg-black/25 z-40 flex items-center justify-center" onClick={() => setShowPlanMenu(false)}>
+        <div className="fixed inset-0 bg-black/25 z-40 flex items-center justify-center" onClick={() => !changePlanLoading && setShowPlanMenu(false)}>
           <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 border border-[#E8E8EE]" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-xl font-bold text-[#1A1A2E] mb-4">Change Your Plan</h3>
+            <h3 className="text-xl font-bold text-[#1A1A2E] mb-4">{t('changeYourPlan') || 'Change Your Plan'}</h3>
             <div className="space-y-2">
               {subscription?.plan === 'standard' && (
                 <>
                   <button
                     onClick={() => handleChangePlan('pro')}
-                    className="w-full text-left px-4 py-3 rounded-lg bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E]"
+                    disabled={changePlanLoading}
+                    className="w-full text-left px-4 py-3 rounded-lg bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E] disabled:opacity-50"
                   >
-                    <div className="font-semibold">PRO - $199/mois</div>
-                    <div className="text-sm text-[#6A6A85]">500 produits/mois + rapports</div>
+                    <div className="font-semibold">PRO - $199/{t('month') || 'mois'}</div>
+                    <div className="text-sm text-[#6A6A85]">500 produits/{t('month') || 'mois'} + {t('reports') || 'rapports'}</div>
                   </button>
                   <button
                     onClick={() => handleChangePlan('premium')}
-                    className="w-full text-left px-4 py-3 rounded-lg bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E]"
+                    disabled={changePlanLoading}
+                    className="w-full text-left px-4 py-3 rounded-lg bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E] disabled:opacity-50"
                   >
-                    <div className="font-semibold">PREMIUM - $299/mois</div>
+                    <div className="font-semibold">PREMIUM - $299/{t('month') || 'mois'}</div>
                     <div className="text-sm text-[#6A6A85]">{t('unlimitedAutoActions')}</div>
                   </button>
                 </>
               )}
               {subscription?.plan === 'pro' && (
+                <>
+                <button
+                  onClick={() => handleChangePlan('standard')}
+                  disabled={changePlanLoading}
+                  className="w-full text-left px-4 py-3 rounded-lg bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E] disabled:opacity-50"
+                >
+                  <div className="font-semibold">STANDARD - $99/{t('month') || 'mois'}</div>
+                  <div className="text-sm text-[#6A6A85]">50 produits/{t('month') || 'mois'}</div>
+                </button>
                 <button
                   onClick={() => handleChangePlan('premium')}
-                  className="w-full text-left px-4 py-3 rounded-lg bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E]"
+                  disabled={changePlanLoading}
+                  className="w-full text-left px-4 py-3 rounded-lg bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E] disabled:opacity-50"
                 >
-                  <div className="font-semibold">PREMIUM - $299/mois</div>
+                  <div className="font-semibold">PREMIUM - $299/{t('month') || 'mois'}</div>
                   <div className="text-sm text-[#6A6A85]">{t('unlimitedAutoActions')}</div>
                 </button>
+                </>
               )}
               {subscription?.plan === 'premium' && (
-                <div className="px-4 py-3 text-[#6A6A85]">{t('alreadyOnPremium')}</div>
+                <>
+                <button
+                  onClick={() => handleChangePlan('standard')}
+                  disabled={changePlanLoading}
+                  className="w-full text-left px-4 py-3 rounded-lg bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E] disabled:opacity-50"
+                >
+                  <div className="font-semibold">STANDARD - $99/{t('month') || 'mois'}</div>
+                  <div className="text-sm text-[#6A6A85]">50 produits/{t('month') || 'mois'}</div>
+                </button>
+                <button
+                  onClick={() => handleChangePlan('pro')}
+                  disabled={changePlanLoading}
+                  className="w-full text-left px-4 py-3 rounded-lg bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E] disabled:opacity-50"
+                >
+                  <div className="font-semibold">PRO - $199/{t('month') || 'mois'}</div>
+                  <div className="text-sm text-[#6A6A85]">500 produits/{t('month') || 'mois'} + {t('reports') || 'rapports'}</div>
+                </button>
+                </>
               )}
               <div className="border-t border-[#D8D8E2] pt-2 mt-2">
                 <button
                   onClick={() => { setShowPlanMenu(false); window.location.hash = '#stripe-pricing' }}
+                  disabled={changePlanLoading}
                   className="w-full text-center px-4 py-2 rounded-lg text-[#0D9488] hover:bg-[#EFF1F5]"
                 >
-                  View All Plans
+                  {t('viewAllPlans') || 'View All Plans'}
                 </button>
               </div>
             </div>
