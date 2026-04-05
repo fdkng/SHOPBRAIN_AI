@@ -1996,7 +1996,7 @@ async def health():
     return {
         "status": "ok",
         "version": "3.0-fast-init",
-        "build": "20260405-switch-plan",
+        "build": "20260405-diag",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
                 "openai": "configured" if OPENAI_API_KEY else "not_configured",
@@ -2007,6 +2007,68 @@ async def health():
             "gmail_sender": GMAIL_SENDER_EMAIL or "(non configuré)",
         }
     }
+
+
+@app.get("/api/debug/subscription")
+async def debug_subscription(email: str = "", secret: str = ""):
+    """🔍 TEMPORARY DEBUG: Check subscription state for a user by email. Protected by secret."""
+    if secret != "shopbrain-diag-2026":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if not email:
+        raise HTTPException(status_code=400, detail="Missing email parameter")
+    try:
+        supabase_client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        # Find user by email in auth.users via user_profiles
+        profile_result = supabase_client.table("user_profiles").select("id,email,subscription_plan,subscription_status,subscription_tier").eq("email", email).execute()
+        profile = profile_result.data[0] if profile_result.data else None
+        user_id = profile["id"] if profile else None
+
+        # Get ALL subscription rows for this user (not just active)
+        sub_rows = []
+        if user_id:
+            sub_result = supabase_client.table("subscriptions").select("*").eq("user_id", user_id).order("updated_at", desc=True).limit(10).execute()
+            sub_rows = sub_result.data or []
+
+        # Check Stripe customers by email
+        stripe_customers = []
+        stripe_subscriptions = []
+        try:
+            customers = stripe.Customer.list(email=email, limit=5)
+            for cust in customers.data:
+                cust_info = {"id": cust.id, "email": cust.email, "name": getattr(cust, 'name', None)}
+                stripe_customers.append(cust_info)
+                # Get subscriptions for this customer
+                subs = stripe.Subscription.list(customer=cust.id, limit=10)
+                for sub in subs.data:
+                    items_info = []
+                    for item in sub.get("items", {}).get("data", []):
+                        price = item.get("price", {})
+                        items_info.append({
+                            "price_id": price.get("id"),
+                            "amount": price.get("unit_amount"),
+                            "product": price.get("product"),
+                        })
+                    stripe_subscriptions.append({
+                        "id": sub.id,
+                        "status": sub.status,
+                        "customer": sub.customer,
+                        "current_period_end": sub.current_period_end,
+                        "cancel_at_period_end": sub.cancel_at_period_end,
+                        "items": items_info,
+                        "created": sub.created,
+                    })
+        except Exception as stripe_err:
+            stripe_customers = [{"error": str(stripe_err)}]
+
+        return {
+            "user_id": user_id,
+            "profile": profile,
+            "db_subscription_rows": sub_rows,
+            "stripe_customers": stripe_customers,
+            "stripe_subscriptions": stripe_subscriptions,
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @app.get("/api/stock-alerts/send-test-now")
