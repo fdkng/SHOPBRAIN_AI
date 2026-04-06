@@ -2027,7 +2027,7 @@ async def health():
     return {
         "status": "ok",
         "version": "3.0-fast-init",
-        "build": "20260406-auto-heal-v2",
+        "build": "20260406-auto-heal-v3",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
                 "openai": "configured" if OPENAI_API_KEY else "not_configured",
@@ -2085,10 +2085,10 @@ async def debug_subscription(email: str = "", secret: str = ""):
                         "id": sub.id,
                         "status": sub.status,
                         "customer": sub.customer,
-                        "current_period_end": sub.current_period_end,
-                        "cancel_at_period_end": sub.cancel_at_period_end,
+                        "current_period_end": getattr(sub, 'current_period_end', None),
+                        "cancel_at_period_end": getattr(sub, 'cancel_at_period_end', None),
                         "items": items_info,
-                        "created": sub.created,
+                        "created": getattr(sub, 'created', None),
                     })
         except Exception as stripe_err:
             stripe_customers = [{"error": str(stripe_err)}]
@@ -2997,6 +2997,21 @@ async def stripe_webhook(request: Request):
             paid_flag = payment_status_str in ("paid", "no_payment_required") or stripe_status in ("active", "trialing")
             stored_status = "active" if paid_flag else "inactive"
             payment_date = _resolve_payment_date(session.get("created"), _sg(stripe_sub_obj, "created") if stripe_sub_obj else None)
+
+            # CRITICAL: If we still don't have a subscription ID, try to find it via customer
+            if not normalized_sub_id and stripe_customer_id and paid_flag:
+                try:
+                    cust_subs = stripe.Subscription.list(customer=stripe_customer_id, status='active', limit=1)
+                    if cust_subs.data:
+                        normalized_sub_id = _normalize_stripe_subscription_id(cust_subs.data[0])
+                        if not stripe_sub_obj:
+                            stripe_sub_obj = cust_subs.data[0]
+                            plan_tier_from_sub = _resolve_plan_from_stripe_subscription(stripe_sub_obj)
+                            if plan_tier_from_sub:
+                                plan_tier = plan_tier_from_sub
+                        print(f"  🔧 [WEBHOOK] Recovered subscription ID from customer: {normalized_sub_id}")
+                except Exception as cust_sub_err:
+                    print(f"  ⚠️ [WEBHOOK] Customer subscription recovery warning: {cust_sub_err}")
 
             payload_write = {
                 "user_id": user_id,
