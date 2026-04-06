@@ -3650,27 +3650,27 @@ async def shopify_oauth_authorize(request: Request):
 
     # Accept token from query param (browser redirect) OR header (API call)
     token_param = request.query_params.get("token", "")
-    if token_param and not request.headers.get("Authorization"):
-        # Inject the token into the request scope so get_user_id can read it
-        request._headers = request.headers.mutablecopy()
-        request._headers["authorization"] = f"Bearer {token_param}"
-        request.scope["headers"] = [(k.lower().encode(), v.encode()) for k, v in request._headers.items()]
+    auth_header = request.headers.get("Authorization", "")
 
-    try:
-        user_id = get_user_id(request)
-    except Exception:
-        # If auth fails with query param approach, try direct JWT decode
-        if token_param:
-            try:
-                payload = jwt.decode(token_param, SUPABASE_JWT_SECRET, algorithms=["HS256"], audience="authenticated")
-                user_id = payload.get("sub")
-                if not user_id:
-                    raise HTTPException(status_code=401, detail="Invalid token")
-            except Exception as e:
-                print(f"❌ [SHOPIFY-OAUTH] Token decode failed: {e}")
-                raise HTTPException(status_code=401, detail="Authentication required. Please log in.")
-        else:
-            raise HTTPException(status_code=401, detail="Authentication required. Please log in.")
+    user_id = None
+
+    # Try Authorization header first (API calls)
+    if auth_header.startswith("Bearer "):
+        try:
+            user_id = get_user_id(request)
+        except Exception:
+            pass
+
+    # Fallback: decode token from query param (browser redirect)
+    if not user_id and token_param:
+        try:
+            payload = jwt.decode(token_param, SUPABASE_JWT_SECRET, algorithms=["HS256"], audience="authenticated")
+            user_id = payload.get("sub")
+        except Exception as e:
+            print(f"❌ [SHOPIFY-OAUTH] Token decode failed: {e}")
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required. Please log in.")
 
     shop = request.query_params.get("shop", "").strip().lower().replace("https://", "").replace("http://", "").strip("/")
     if not shop:
