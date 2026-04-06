@@ -2027,7 +2027,7 @@ async def health():
     return {
         "status": "ok",
         "version": "3.0-fast-init",
-        "build": "20260406-auto-heal-v3",
+        "build": "20260406-robust-v4",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
                 "openai": "configured" if OPENAI_API_KEY else "not_configured",
@@ -12624,10 +12624,59 @@ async def switch_plan_inline(request: Request):
             .execute()
         )
         sub_row = sub_result.data[0] if sub_result.data else None
+
+        # FALLBACK: If no active row, check inactive rows and try to find the real Stripe sub
+        if not sub_row:
+            inactive_result = (
+                supabase.table("subscriptions")
+                .select("*")
+                .eq("user_id", user_id)
+                .order("updated_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+            if inactive_result.data:
+                candidate = inactive_result.data[0]
+                # Try to find an active subscription by customer_id
+                cust_id = candidate.get("stripe_customer_id")
+                if cust_id:
+                    try:
+                        cust_subs = stripe.Subscription.list(customer=cust_id, status='active', limit=1)
+                        if cust_subs.data:
+                            active_stripe_sub = cust_subs.data[0]
+                            recovered_sub_id = _normalize_stripe_subscription_id(active_stripe_sub)
+                            recovered_plan = _resolve_plan_from_stripe_subscription(active_stripe_sub)
+                            # Auto-heal the DB row
+                            supabase.table("subscriptions").update({
+                                "stripe_subscription_id": recovered_sub_id,
+                                "plan_tier": recovered_plan or candidate.get("plan_tier"),
+                                "status": "active",
+                                "subscription_status": "active",
+                                "paid": True,
+                                "plan": True,
+                                "updated_at": datetime.utcnow().isoformat(),
+                            }).eq("user_id", user_id).execute()
+                            print(f"  🔧 [SWITCH-PLAN] Auto-healed inactive row: sub={recovered_sub_id}, plan={recovered_plan}")
+                            # Re-fetch the now-active row
+                            healed_result = supabase.table("subscriptions").select("*").eq("user_id", user_id).limit(1).execute()
+                            sub_row = healed_result.data[0] if healed_result.data else None
+                    except Exception as heal_err:
+                        print(f"  ⚠️ [SWITCH-PLAN] Auto-heal warning: {heal_err}")
+
         if not sub_row:
             raise HTTPException(status_code=404, detail="No active subscription found")
 
         stripe_sub_id = _normalize_stripe_subscription_id(sub_row.get("stripe_subscription_id"))
+        if not stripe_sub_id:
+            # Try to recover from session_id or customer_id
+            stripe_sub_id = _recover_subscription_id_from_session(sub_row.get("stripe_session_id"))
+        if not stripe_sub_id and sub_row.get("stripe_customer_id"):
+            try:
+                cust_subs = stripe.Subscription.list(customer=sub_row["stripe_customer_id"], status='active', limit=1)
+                if cust_subs.data:
+                    stripe_sub_id = _normalize_stripe_subscription_id(cust_subs.data[0])
+            except Exception:
+                pass
         if not stripe_sub_id:
             raise HTTPException(status_code=400, detail="No Stripe subscription ID on record — please contact support")
 
