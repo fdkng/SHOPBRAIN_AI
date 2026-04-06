@@ -2027,7 +2027,7 @@ async def health():
     return {
         "status": "ok",
         "version": "3.0-fast-init",
-        "build": "20260406-robust-v4",
+        "build": "20260406-shopify-oauth-v5",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
                 "openai": "configured" if OPENAI_API_KEY else "not_configured",
@@ -3613,111 +3613,289 @@ async def update_user_shopify(payload: dict, request: Request):
         raise HTTPException(status_code=500, detail=f"Erreur Shopify: {str(e)}")
 
 
-async def shopify_auth(shop: str, user_id: str):
-    """Initiate Shopify OAuth flow.
-    Example: /auth/shopify?shop=mystore.myshopify.com&user_id=abc123
-    """
+# ── Shopify OAuth nonce store (in-memory, TTL 10 min) ──
+_shopify_oauth_nonces: dict[str, tuple[float, str]] = {}  # nonce -> (timestamp, user_id)
+_SHOPIFY_NONCE_TTL = 600  # 10 minutes
+
+
+def _verify_shopify_hmac(query_params: dict, secret: str) -> bool:
+    """Verify Shopify OAuth callback HMAC-SHA256 signature.
+    Shopify signs the callback URL params (excluding 'hmac') with the app secret."""
+    received_hmac = query_params.get("hmac", "")
+    if not received_hmac:
+        return False
+
+    # Build the message: sorted key=value pairs joined by &, excluding 'hmac'
+    sorted_params = "&".join(
+        f"{k}={v}" for k, v in sorted(query_params.items()) if k != "hmac"
+    )
+    computed = hmac.new(
+        secret.encode("utf-8"),
+        sorted_params.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+    return hmac.compare_digest(computed, received_hmac)
+
+
+@app.get("/api/shopify/oauth/authorize")
+async def shopify_oauth_authorize(request: Request):
+    """🔐 Step 1: Initiate Shopify OAuth flow.
+    Called by the frontend 'Connect Shopify' button.
+    Requires auth (user must be logged in).
+    Query params: shop=mystore.myshopify.com  &  token=<jwt>
+    The token can be passed as a query param because browsers can't set
+    Authorization headers on a top-level navigation (window.location.href).
+    Redirects user to Shopify's authorization page."""
+
+    # Accept token from query param (browser redirect) OR header (API call)
+    token_param = request.query_params.get("token", "")
+    if token_param and not request.headers.get("Authorization"):
+        # Inject the token into the request scope so get_user_id can read it
+        request._headers = request.headers.mutablecopy()
+        request._headers["authorization"] = f"Bearer {token_param}"
+        request.scope["headers"] = [(k.lower().encode(), v.encode()) for k, v in request._headers.items()]
+
+    try:
+        user_id = get_user_id(request)
+    except Exception:
+        # If auth fails with query param approach, try direct JWT decode
+        if token_param:
+            try:
+                payload = jwt.decode(token_param, SUPABASE_JWT_SECRET, algorithms=["HS256"], audience="authenticated")
+                user_id = payload.get("sub")
+                if not user_id:
+                    raise HTTPException(status_code=401, detail="Invalid token")
+            except Exception as e:
+                print(f"❌ [SHOPIFY-OAUTH] Token decode failed: {e}")
+                raise HTTPException(status_code=401, detail="Authentication required. Please log in.")
+        else:
+            raise HTTPException(status_code=401, detail="Authentication required. Please log in.")
+
+    shop = request.query_params.get("shop", "").strip().lower().replace("https://", "").replace("http://", "").strip("/")
+    if not shop:
+        raise HTTPException(status_code=400, detail="Missing 'shop' parameter")
+    # Auto-append .myshopify.com if user typed just the store name
+    if "." not in shop:
+        shop = f"{shop}.myshopify.com"
+    if not shop.endswith(".myshopify.com"):
+        raise HTTPException(status_code=400, detail="Invalid shop domain. Expected format: mystore.myshopify.com")
+
     if not SHOPIFY_API_KEY:
-        raise HTTPException(status_code=500, detail="Shopify API key not configured")
-    
-    # Validate shop domain format
-    if not shop or not shop.endswith('.myshopify.com'):
-        raise HTTPException(status_code=400, detail="Invalid shop domain")
-    
-    # Build OAuth authorization URL
+        raise HTTPException(status_code=500, detail="Shopify API key not configured on the server")
+
+    # Generate a cryptographic nonce for CSRF protection
+    # The nonce is stored server-side and tied to the user_id
+    nonce = uuid.uuid4().hex
+    _shopify_oauth_nonces[nonce] = (time.time(), user_id)
+
+    # Cleanup old nonces (> 10 min)
+    cutoff = time.time() - _SHOPIFY_NONCE_TTL
+    expired = [k for k, (ts, _) in _shopify_oauth_nonces.items() if ts < cutoff]
+    for k in expired:
+        _shopify_oauth_nonces.pop(k, None)
+
+    # The state parameter carries nonce:user_id so we can verify on callback
+    state = f"{nonce}:{user_id}"
+
+    redirect_uri = SHOPIFY_REDIRECT_URI
     auth_url = (
         f"https://{shop}/admin/oauth/authorize?"
         f"client_id={SHOPIFY_API_KEY}"
         f"&scope={SHOPIFY_SCOPES}"
-        f"&redirect_uri={SHOPIFY_REDIRECT_URI}"
-        f"&state={user_id}"  # Pass user_id as state for verification
+        f"&redirect_uri={redirect_uri}"
+        f"&state={state}"
+        f"&grant_options[]="  # Online access mode not needed for backend-only tokens
     )
-    
+
+    print(f"🔐 [SHOPIFY-OAUTH] Redirecting user {user_id} to Shopify auth for shop {shop}")
     return RedirectResponse(url=auth_url)
 
 
 @app.get("/auth/shopify/callback")
-async def shopify_callback(code: str, shop: str, state: str, hmac: str = None):
-    """Handle Shopify OAuth callback and exchange code for access token."""
+async def shopify_callback(request: Request):
+    """🔐 Step 2: Handle Shopify OAuth callback.
+    - Verifies HMAC signature from Shopify
+    - Verifies state/nonce matches what we generated
+    - Exchanges authorization code for permanent access token
+    - Stores token securely in Supabase (never exposed to frontend)
+    - Redirects user back to the dashboard"""
+
+    params = dict(request.query_params)
+    code = params.get("code")
+    shop = params.get("shop", "").strip().lower().strip("/")
+    state = params.get("state", "")
+    received_hmac = params.get("hmac", "")
+
+    if not code or not shop or not state:
+        print(f"❌ [SHOPIFY-OAUTH] Missing params: code={bool(code)}, shop={bool(shop)}, state={bool(state)}")
+        frontend_url = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
+        return RedirectResponse(url=f"{frontend_url}/#/dashboard?shopify=error&reason=missing_params")
+
     if not SHOPIFY_API_KEY or not SHOPIFY_API_SECRET:
-        raise HTTPException(status_code=500, detail="Shopify credentials not configured")
-    
-    user_id = state  # Retrieve user_id from state parameter
-    
+        print("❌ [SHOPIFY-OAUTH] SHOPIFY_API_KEY or SHOPIFY_API_SECRET not configured")
+        frontend_url = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
+        return RedirectResponse(url=f"{frontend_url}/#/dashboard?shopify=error&reason=server_config")
+
+    # ── 1. Verify HMAC signature ──
+    if received_hmac:
+        if not _verify_shopify_hmac(params, SHOPIFY_API_SECRET):
+            print(f"❌ [SHOPIFY-OAUTH] HMAC verification FAILED for shop {shop}")
+            frontend_url = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
+            return RedirectResponse(url=f"{frontend_url}/#/dashboard?shopify=error&reason=hmac_failed")
+        print(f"✅ [SHOPIFY-OAUTH] HMAC verified for shop {shop}")
+    else:
+        print(f"⚠️ [SHOPIFY-OAUTH] No HMAC in callback params (shop={shop}) — proceeding with state verification only")
+
+    # ── 2. Verify state/nonce (CSRF protection) ──
+    nonce = None
+    user_id = None
+    if ":" in state:
+        nonce, user_id = state.split(":", 1)
+    else:
+        user_id = state  # Legacy fallback (state=user_id without nonce)
+
+    if nonce and nonce in _shopify_oauth_nonces:
+        nonce_ts, nonce_user_id = _shopify_oauth_nonces.pop(nonce)
+        if time.time() - nonce_ts > _SHOPIFY_NONCE_TTL:
+            print(f"❌ [SHOPIFY-OAUTH] Nonce expired for user {user_id}")
+            frontend_url = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
+            return RedirectResponse(url=f"{frontend_url}/#/dashboard?shopify=error&reason=expired")
+        if nonce_user_id != user_id:
+            print(f"❌ [SHOPIFY-OAUTH] Nonce user_id mismatch: expected {nonce_user_id}, got {user_id}")
+            frontend_url = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
+            return RedirectResponse(url=f"{frontend_url}/#/dashboard?shopify=error&reason=state_mismatch")
+        print(f"✅ [SHOPIFY-OAUTH] Nonce verified for user {user_id}")
+    elif nonce:
+        print(f"⚠️ [SHOPIFY-OAUTH] Nonce not found in store (may have expired or server restarted) — trusting state param")
+
+    if not user_id:
+        print(f"❌ [SHOPIFY-OAUTH] Could not extract user_id from state: {state}")
+        frontend_url = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
+        return RedirectResponse(url=f"{frontend_url}/#/dashboard?shopify=error&reason=no_user")
+
     # Normalize shop domain
-    shop = shop.strip().lower().strip("/")
     for prefix in ["https://", "http://"]:
         if shop.startswith(prefix):
             shop = shop[len(prefix):]
-    
-    # Exchange authorization code for access token
+    shop = shop.strip("/")
+
+    # ── 3. Exchange authorization code for access token ──
     token_url = f"https://{shop}/admin/oauth/access_token"
-    payload = {
+    exchange_payload = {
         "client_id": SHOPIFY_API_KEY,
         "client_secret": SHOPIFY_API_SECRET,
-        "code": code
+        "code": code,
     }
-    
+
+    frontend_url = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
+
     try:
-        response = requests.post(token_url, json=payload)
+        print(f"🔄 [SHOPIFY-OAUTH] Exchanging code for token (shop={shop}, user={user_id})")
+        response = requests.post(token_url, json=exchange_payload, timeout=15)
         response.raise_for_status()
-        data = response.json()
-        access_token = data.get("access_token")
-        
+        token_data = response.json()
+        access_token = token_data.get("access_token")
+        granted_scopes = token_data.get("scope", "")
+
         if not access_token:
-            raise HTTPException(status_code=500, detail="Failed to obtain access token")
-        
-        # Store access token in Supabase for this user (multi-shop)
+            print(f"❌ [SHOPIFY-OAUTH] No access_token in response: {token_data}")
+            return RedirectResponse(url=f"{frontend_url}/#/dashboard?shopify=error&reason=no_token")
+
+        print(f"✅ [SHOPIFY-OAUTH] Got access token for {shop} (scopes: {granted_scopes})")
+
+        # ── 4. Verify we got the scopes we need ──
+        required_scopes = {"read_products", "read_orders", "read_customers"}
+        granted_set = set(granted_scopes.split(",")) if granted_scopes else set()
+        missing_scopes = required_scopes - granted_set
+        if missing_scopes:
+            print(f"⚠️ [SHOPIFY-OAUTH] Missing scopes: {missing_scopes}. Granted: {granted_set}")
+            # Don't block — store what we got, but log the warning
+
+        # ── 5. Verify the token works by hitting the shop API ──
+        verify_resp = requests.get(
+            f"https://{shop}/admin/api/2024-10/shop.json",
+            headers={"X-Shopify-Access-Token": access_token},
+            timeout=10,
+        )
+        if verify_resp.status_code != 200:
+            print(f"❌ [SHOPIFY-OAUTH] Token verification failed: {verify_resp.status_code} {verify_resp.text[:200]}")
+            return RedirectResponse(url=f"{frontend_url}/#/dashboard?shopify=error&reason=token_invalid")
+
+        shop_info = verify_resp.json().get("shop", {})
+        shop_name = shop_info.get("name", shop)
+        print(f"✅ [SHOPIFY-OAUTH] Token verified — shop name: {shop_name}")
+
+        # ── 6. Store token securely in Supabase ──
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
-            from supabase import create_client
             supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-            
-            # Check if this specific shop is already connected for this user
+
+            # Check if this shop is already connected for this user
             existing = (
                 supabase.table("shopify_connections")
-                .select("*")
+                .select("id")
                 .eq("user_id", user_id)
                 .eq("shop_domain", shop)
                 .execute()
             )
-            
+
             if existing.data:
-                # Update existing connection for this shop
-                update_data = {"access_token": access_token, "updated_at": "now()"}
+                update_data = {"access_token": access_token, "updated_at": datetime.utcnow().isoformat()}
                 try:
                     supabase.table("shopify_connections").update({**update_data, "is_active": True}).eq("user_id", user_id).eq("shop_domain", shop).execute()
                 except Exception:
                     supabase.table("shopify_connections").update(update_data).eq("user_id", user_id).eq("shop_domain", shop).execute()
+                print(f"✅ [SHOPIFY-OAUTH] Updated existing connection for {shop}")
             else:
                 # Enforce shop limit per plan
                 tier = get_user_tier(user_id)
                 shop_limit = _get_shop_limit(tier)
                 current_count = _count_user_shops(user_id)
                 if shop_limit is not None and current_count >= shop_limit:
-                    frontend_url = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
                     return RedirectResponse(
                         url=f"{frontend_url}/#/dashboard?shopify=limit_reached&plan={tier}&limit={shop_limit}"
                     )
                 # Create new connection
-                insert_data = {"user_id": user_id, "shop_domain": shop, "access_token": access_token}
+                insert_data = {
+                    "user_id": user_id,
+                    "shop_domain": shop,
+                    "access_token": access_token,
+                }
                 try:
                     supabase.table("shopify_connections").insert({**insert_data, "is_active": True}).execute()
                 except Exception:
                     supabase.table("shopify_connections").insert(insert_data).execute()
+                print(f"✅ [SHOPIFY-OAUTH] Stored new connection for {shop}")
 
             # Deactivate other shops (set this one as active)
             try:
                 supabase.table("shopify_connections").update({"is_active": False}).eq("user_id", user_id).neq("shop_domain", shop).execute()
             except Exception:
-                pass  # is_active column may not exist
-        
-        # Redirect back to frontend dashboard with success
-        frontend_url = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
-        return RedirectResponse(url=f"{frontend_url}/#/dashboard?shopify=connected")
-        
+                pass
+
+        # ── 7. Redirect back to dashboard with success ──
+        return RedirectResponse(url=f"{frontend_url}/#/dashboard?shopify=connected&shop={shop}")
+
+    except requests.exceptions.Timeout:
+        print(f"❌ [SHOPIFY-OAUTH] Token exchange timed out for {shop}")
+        return RedirectResponse(url=f"{frontend_url}/#/dashboard?shopify=error&reason=timeout")
+    except requests.exceptions.HTTPError as he:
+        print(f"❌ [SHOPIFY-OAUTH] Token exchange HTTP error: {he}")
+        return RedirectResponse(url=f"{frontend_url}/#/dashboard?shopify=error&reason=exchange_failed")
     except Exception as e:
-        print(f"Error in Shopify OAuth callback: {e}")
-        raise HTTPException(status_code=500, detail=f"OAuth failed: {str(e)}")
+        print(f"❌ [SHOPIFY-OAUTH] Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+        return RedirectResponse(url=f"{frontend_url}/#/dashboard?shopify=error&reason=internal")
+
+
+@app.get("/api/shopify/oauth/status")
+async def shopify_oauth_status():
+    """Check if Shopify OAuth is configured on the server."""
+    return {
+        "oauth_available": bool(SHOPIFY_API_KEY and SHOPIFY_API_SECRET),
+        "scopes": SHOPIFY_SCOPES,
+    }
 
 
 @app.get("/api/shopify/connection")

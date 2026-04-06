@@ -722,8 +722,66 @@ export default function Dashboard() {
         window.location.hash = window.location.hash.replace('success=true', '')
       }, 12000)
     } else {
-      // Normal initialization
-      initializeUser()
+      // ── Shopify OAuth return handler ──
+      const shopifyStatus = hashParams.get('shopify')
+      if (shopifyStatus) {
+        if (shopifyStatus === 'connected') {
+          const connectedShop = hashParams.get('shop') || ''
+          console.log('✅ Shopify OAuth connected:', connectedShop)
+          setShopifyConnected(true)
+          if (connectedShop) {
+            setShopifyUrl(connectedShop)
+            localStorage.setItem('shopifyUrlCache', connectedShop)
+          }
+          setActiveTab('settings')
+          setTimeout(() => {
+            setStatus('shopify', 'success', `Boutique Shopify connectée avec succès${connectedShop ? ` (${connectedShop})` : ''} ! 🎉`)
+          }, 500)
+          // Refresh shop list and products
+          initializeUser().then(() => {
+            refreshShopList()
+            loadProducts()
+          })
+        } else if (shopifyStatus === 'limit_reached') {
+          const plan = hashParams.get('plan') || ''
+          const limit = hashParams.get('limit') || ''
+          setActiveTab('settings')
+          setTimeout(() => {
+            setStatus('shopify', 'warning', `Limite de ${limit} boutique${limit > 1 ? 's' : ''} atteinte (plan ${plan}). Passez au plan supérieur pour en ajouter.`)
+          }, 500)
+          initializeUser()
+        } else if (shopifyStatus === 'error') {
+          const reason = hashParams.get('reason') || 'unknown'
+          const reasonMessages = {
+            missing_params: 'Paramètres manquants dans la réponse Shopify.',
+            server_config: 'Configuration Shopify incomplète sur le serveur.',
+            hmac_failed: 'Vérification de sécurité échouée. Réessayez.',
+            expired: 'La session OAuth a expiré. Réessayez.',
+            state_mismatch: 'Erreur de vérification. Réessayez.',
+            no_user: 'Session utilisateur introuvable. Reconnectez-vous.',
+            timeout: 'Délai d\'attente dépassé. Réessayez.',
+            exchange_failed: 'Échec de l\'échange de token. Réessayez.',
+            token_invalid: 'Le token obtenu est invalide. Réessayez.',
+            no_token: 'Aucun token reçu de Shopify. Réessayez.',
+            internal: 'Erreur interne. Réessayez.',
+          }
+          setActiveTab('settings')
+          setTimeout(() => {
+            setStatus('shopify', 'error', reasonMessages[reason] || `Erreur Shopify OAuth: ${reason}`)
+          }, 500)
+          initializeUser()
+        } else {
+          initializeUser()
+        }
+        // Clean up the hash params
+        setTimeout(() => {
+          const cleanHash = hash.split('?')[0] || '#/dashboard'
+          window.location.hash = cleanHash
+        }, 1500)
+      } else {
+        // Normal initialization
+        initializeUser()
+      }
     }
   }, [])
 
@@ -2318,6 +2376,36 @@ export default function Dashboard() {
       setStatus('billing', 'error', formatUserFacingError(err, t('errorPayment')))
     } finally {
       setSaveLoading(false)
+    }
+  }
+
+  // ── Shopify OAuth flow ──
+  const [oauthShopInput, setOauthShopInput] = useState('')
+  const [showManualConnect, setShowManualConnect] = useState(false)
+
+  const startShopifyOAuth = async (shopDomain) => {
+    let shop = (shopDomain || oauthShopInput || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '')
+    if (!shop) {
+      setStatus('shopify', 'warning', 'Entrez le nom de votre boutique Shopify.')
+      return
+    }
+    if (!shop.includes('.')) shop = `${shop}.myshopify.com`
+    if (!shop.endsWith('.myshopify.com')) {
+      setStatus('shopify', 'warning', 'Format attendu : ma-boutique.myshopify.com')
+      return
+    }
+    try {
+      const session = await getCachedSession()
+      if (!session) {
+        setStatus('shopify', 'error', t('sessionExpiredReconnect'))
+        return
+      }
+      setStatus('shopify', 'success', 'Redirection vers Shopify...')
+      // Navigate directly — backend accepts token as query param for browser redirects
+      window.location.href = `${API_URL}/api/shopify/oauth/authorize?shop=${encodeURIComponent(shop)}&token=${encodeURIComponent(session.access_token)}`
+    } catch (err) {
+      console.error('OAuth start error:', err)
+      setStatus('shopify', 'error', formatUserFacingError(err, 'Erreur démarrage OAuth'))
     }
   }
 
@@ -6658,32 +6746,67 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                     {/* ── Add New Shop (if no shops yet, show inline; else toggle) ── */}
                     {shopList.length === 0 ? (
-                      <div className="bg-white rounded-lg p-6 border border-[#E8E8EE] max-w-2xl space-y-4">
+                      <div className="bg-white rounded-lg p-6 border border-[#E8E8EE] max-w-2xl space-y-5">
                         <p className="text-[#6A6A85] text-sm">Connectez votre première boutique Shopify pour commencer.</p>
-                        <div>
-                          <label className="block text-[#6A6A85] text-sm mb-2">URL de boutique</label>
+
+                        {/* ── OAuth Connect (recommended) ── */}
+                        <div className="space-y-3">
+                          <label className="block text-[#1A1A2E] text-sm font-semibold">Nom de votre boutique</label>
                           <input
                             type="text"
                             placeholder="ma-boutique.myshopify.com"
-                            value={shopifyUrl}
-                            onChange={(e) => setShopifyUrl(e.target.value)}
-                            className="w-full bg-[#EFF1F5] text-[#1A1A2E] px-4 py-2 rounded-lg border border-[#D8D8E2]"
+                            value={oauthShopInput}
+                            onChange={(e) => setOauthShopInput(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && startShopifyOAuth()}
+                            className="w-full bg-[#EFF1F5] text-[#1A1A2E] px-4 py-2.5 rounded-lg border border-[#D8D8E2]"
                           />
+                          <button
+                            onClick={() => startShopifyOAuth()}
+                            className="w-full bg-[#96BF48] hover:bg-[#7FA83D] text-white font-bold py-3 px-4 rounded-lg flex items-center justify-center gap-2 shadow-sm"
+                          >
+                            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M15.337 3.415c-.148-.18-.348-.26-.548-.26-.1 0-.2.02-.298.06-.898.38-1.497.84-1.897 1.4-.2-.12-.498-.22-.797-.3-.1-.36-.298-.72-.597-.98-.498-.44-1.197-.66-2.095-.66h-.05c-.598 0-2.394.32-3.792 2.36-.998 1.44-1.746 3.46-1.946 6.24l3.493-1.04c.05-.46.15-.92.299-1.34.348-.98.997-1.56 1.496-1.76.05-.02.1-.02.15-.02.1 0 .199.04.249.14.05.08.05.2-.05.36-.349.58-.498 1.2-.498 1.86v.16l3.593-1.06v-.18c0-.56.1-1.08.299-1.56.198-.5.497-.9.846-1.18.05-.04.15-.08.2-.08.048 0 .098.02.148.06.1.08.1.24.05.4-.15.46-.2.96-.2 1.48v.16l3.194-.94c-.05-1.24-.349-2.4-.997-3.08zm-6.234 9.365l-3.493 1.04c-.05 1.38.1 2.52.349 3.32.05.2.15.44.249.66l3.493-1.04c-.15-.18-.249-.44-.349-.7-.199-.78-.299-1.88-.249-3.28zm9.826-2.58l-3.194.94c.05 1.32-.05 2.4-.249 3.16-.1.36-.2.62-.349.8l3.194-.94c.199-.22.349-.52.449-.9.199-.78.249-1.82.149-3.06z"/></svg>
+                            Connecter avec Shopify
+                          </button>
+                          <p className="text-xs text-[#8A8AA3] text-center">Connexion sécurisée via OAuth 2.0 — aucun token à copier.</p>
                         </div>
-                        <div>
-                          <label className="block text-[#6A6A85] text-sm mb-2">Token d'accès</label>
-                          <input
-                            type="password"
-                            placeholder="shpat_..."
-                            value={shopifyToken}
-                            onChange={(e) => setShopifyToken(e.target.value)}
-                            className="w-full bg-[#EFF1F5] text-[#1A1A2E] px-4 py-2 rounded-lg border border-[#D8D8E2]"
-                          />
-                          <p className="text-xs text-[#8A8AA3] mt-2">Scopes requis: read_products, write_products, read_orders, read_customers, read_analytics.</p>
+
+                        {/* ── Manual fallback (advanced) ── */}
+                        <div className="border-t border-[#E8E8EE] pt-4">
+                          <button
+                            onClick={() => setShowManualConnect(!showManualConnect)}
+                            className="text-xs text-[#8A8AA3] hover:text-[#6A6A85] underline"
+                          >
+                            {showManualConnect ? 'Masquer la connexion manuelle' : '⚙️ Connexion manuelle (avancé)'}
+                          </button>
+                          {showManualConnect && (
+                            <div className="mt-3 space-y-3">
+                              <div>
+                                <label className="block text-[#6A6A85] text-sm mb-2">URL de boutique</label>
+                                <input
+                                  type="text"
+                                  placeholder="ma-boutique.myshopify.com"
+                                  value={shopifyUrl}
+                                  onChange={(e) => setShopifyUrl(e.target.value)}
+                                  className="w-full bg-[#EFF1F5] text-[#1A1A2E] px-4 py-2 rounded-lg border border-[#D8D8E2]"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[#6A6A85] text-sm mb-2">Token d'accès</label>
+                                <input
+                                  type="password"
+                                  placeholder="shpat_..."
+                                  value={shopifyToken}
+                                  onChange={(e) => setShopifyToken(e.target.value)}
+                                  className="w-full bg-[#EFF1F5] text-[#1A1A2E] px-4 py-2 rounded-lg border border-[#D8D8E2]"
+                                />
+                                <p className="text-xs text-[#8A8AA3] mt-2">Scopes requis: read_products, write_products, read_orders, read_customers, read_analytics.</p>
+                              </div>
+                              <button onClick={connectShopify} className="w-full bg-[#FF6B35] hover:bg-[#E85A28] text-black font-bold py-2 px-4 rounded-lg">
+                                Connecter manuellement
+                              </button>
+                            </div>
+                          )}
                         </div>
-                        <button onClick={connectShopify} className="w-full bg-[#FF6B35] hover:bg-[#E85A28] text-black font-bold py-2 px-4 rounded-lg">
-                          Connecter Shopify
-                        </button>
                         {renderStatus('shopify')}
                       </div>
                     ) : (
@@ -6704,48 +6827,86 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         ) : (
                           <div className="bg-white rounded-lg p-6 border border-[#E8E8EE] space-y-4">
                             <div className="flex items-center justify-between">
-                              <h4 className="font-semibold text-[#1A1A2E]">Nouvelle boutique</h4>
+                              <h4 className="font-semibold text-[#1A1A2E]">Ajouter une boutique</h4>
                               <button onClick={() => setShowAddShop(false)} className="text-[#8A8AA3] hover:text-[#1A1A2E] text-sm">✕ Annuler</button>
                             </div>
-                            <div>
-                              <label className="block text-[#6A6A85] text-sm mb-2">URL de boutique</label>
+                            {/* OAuth for adding new shops */}
+                            <div className="space-y-3">
+                              <label className="block text-[#6A6A85] text-sm mb-1">Nom de la boutique</label>
                               <input
                                 type="text"
-                                placeholder="ma-boutique.myshopify.com"
-                                value={newShopUrl}
-                                onChange={(e) => setNewShopUrl(e.target.value)}
-                                className="w-full bg-[#EFF1F5] text-[#1A1A2E] px-4 py-2 rounded-lg border border-[#D8D8E2]"
+                                placeholder="autre-boutique.myshopify.com"
+                                value={oauthShopInput}
+                                onChange={(e) => setOauthShopInput(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && startShopifyOAuth()}
+                                className="w-full bg-[#EFF1F5] text-[#1A1A2E] px-4 py-2.5 rounded-lg border border-[#D8D8E2]"
                               />
+                              <button
+                                onClick={() => startShopifyOAuth()}
+                                className="w-full bg-[#96BF48] hover:bg-[#7FA83D] text-white font-bold py-3 px-4 rounded-lg flex items-center justify-center gap-2 shadow-sm"
+                              >
+                                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M15.337 3.415c-.148-.18-.348-.26-.548-.26-.1 0-.2.02-.298.06-.898.38-1.497.84-1.897 1.4-.2-.12-.498-.22-.797-.3-.1-.36-.298-.72-.597-.98-.498-.44-1.197-.66-2.095-.66h-.05c-.598 0-2.394.32-3.792 2.36-.998 1.44-1.746 3.46-1.946 6.24l3.493-1.04c.05-.46.15-.92.299-1.34.348-.98.997-1.56 1.496-1.76.05-.02.1-.02.15-.02.1 0 .199.04.249.14.05.08.05.2-.05.36-.349.58-.498 1.2-.498 1.86v.16l3.593-1.06v-.18c0-.56.1-1.08.299-1.56.198-.5.497-.9.846-1.18.05-.04.15-.08.2-.08.048 0 .098.02.148.06.1.08.1.24.05.4-.15.46-.2.96-.2 1.48v.16l3.194-.94c-.05-1.24-.349-2.4-.997-3.08zm-6.234 9.365l-3.493 1.04c-.05 1.38.1 2.52.349 3.32.05.2.15.44.249.66l3.493-1.04c-.15-.18-.249-.44-.349-.7-.199-.78-.299-1.88-.249-3.28zm9.826-2.58l-3.194.94c.05 1.32-.05 2.4-.249 3.16-.1.36-.2.62-.349.8l3.194-.94c.199-.22.349-.52.449-.9.199-.78.249-1.82.149-3.06z"/></svg>
+                                Connecter avec Shopify
+                              </button>
+                              <p className="text-xs text-[#8A8AA3] text-center">Connexion sécurisée via OAuth 2.0</p>
                             </div>
-                            <div>
-                              <label className="block text-[#6A6A85] text-sm mb-2">Token d'accès</label>
-                              <input
-                                type="password"
-                                placeholder="shpat_..."
-                                value={newShopToken}
-                                onChange={(e) => setNewShopToken(e.target.value)}
-                                className="w-full bg-[#EFF1F5] text-[#1A1A2E] px-4 py-2 rounded-lg border border-[#D8D8E2]"
-                              />
-                              <p className="text-xs text-[#8A8AA3] mt-2">Scopes requis: read_products, write_products, read_orders, read_customers, read_analytics.</p>
+                            {/* Manual fallback for adding shops */}
+                            <div className="border-t border-[#E8E8EE] pt-3">
+                              <button
+                                onClick={() => setShowManualConnect(!showManualConnect)}
+                                className="text-xs text-[#8A8AA3] hover:text-[#6A6A85] underline"
+                              >
+                                {showManualConnect ? 'Masquer' : '⚙️ Connexion manuelle (avancé)'}
+                              </button>
+                              {showManualConnect && (
+                                <div className="mt-3 space-y-3">
+                                  <div>
+                                    <label className="block text-[#6A6A85] text-sm mb-2">URL de boutique</label>
+                                    <input
+                                      type="text"
+                                      placeholder="ma-boutique.myshopify.com"
+                                      value={newShopUrl}
+                                      onChange={(e) => setNewShopUrl(e.target.value)}
+                                      className="w-full bg-[#EFF1F5] text-[#1A1A2E] px-4 py-2 rounded-lg border border-[#D8D8E2]"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-[#6A6A85] text-sm mb-2">Token d'accès</label>
+                                    <input
+                                      type="password"
+                                      placeholder="shpat_..."
+                                      value={newShopToken}
+                                      onChange={(e) => setNewShopToken(e.target.value)}
+                                      className="w-full bg-[#EFF1F5] text-[#1A1A2E] px-4 py-2 rounded-lg border border-[#D8D8E2]"
+                                    />
+                                  </div>
+                                  <button onClick={connectNewShop} disabled={loading} className="w-full bg-[#FF6B35] hover:bg-[#E85A28] text-white font-bold py-2 px-4 rounded-lg disabled:opacity-50">
+                                    {loading ? 'Connexion...' : 'Connecter manuellement'}
+                                  </button>
+                                </div>
+                              )}
                             </div>
-                            <button onClick={connectNewShop} disabled={loading} className="w-full bg-[#FF6B35] hover:bg-[#E85A28] text-white font-bold py-2 px-4 rounded-lg disabled:opacity-50">
-                              {loading ? 'Connexion...' : 'Connecter cette boutique'}
-                            </button>
                           </div>
                         )}
                         {renderStatus('shopify')}
 
-                        {/* Token update for active shop */}
+                        {/* Reconnect active shop via OAuth */}
                         {shopifyConnected && (
-                          <div className="mt-4">
+                          <div className="mt-4 space-y-2">
+                            <button
+                              onClick={() => startShopifyOAuth(shopifyUrl)}
+                              className="w-full bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E] font-semibold py-2 px-4 rounded-lg text-sm flex items-center justify-center gap-2"
+                            >
+                              🔄 Reconnecter {shopifyUrl} via OAuth
+                            </button>
                             <button
                               onClick={() => setShowShopifyToken((prev) => !prev)}
-                              className="w-full bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E] font-semibold py-2 px-4 rounded-lg text-sm"
+                              className="w-full bg-transparent hover:bg-[#EFF1F5] text-[#8A8AA3] py-1.5 px-4 rounded-lg text-xs"
                             >
-                              {showShopifyToken ? 'Masquer' : `Mettre à jour le token de ${shopifyUrl}`}
+                              {showShopifyToken ? 'Masquer' : `⚙️ Mettre à jour le token manuellement`}
                             </button>
                             {showShopifyToken && (
-                              <div className="mt-3 space-y-3">
+                              <div className="mt-2 space-y-3 bg-white rounded-lg p-4 border border-[#E8E8EE]">
                                 <input
                                   type="password"
                                   placeholder="shpat_..."
