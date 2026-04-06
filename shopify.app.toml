@@ -1,6 +1,6 @@
 client_id = "2993e31e71939664b4f6a255d27d6ab4"
 name = "ShopBrain AI"
-handle = "shopbrain-ai"
+handle = "shopbrain-ai-louis-felix"
 application_url = "https://shopbrain-backend.onrender.com/api/shopify/install"
 embedded = false
 
