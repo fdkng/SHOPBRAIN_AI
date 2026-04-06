@@ -1,0 +1,21 @@
+client_id = "2993e31e71939664b4f6a255d27d6ab4"
+name = "ShopBrain AI"
+handle = "shopbrain-ai"
+application_url = "https://shopbrain-backend.onrender.com/api/shopify/install"
+embedded = false
+
+[auth]
+redirect_urls = [
+  "https://shopbrain-backend.onrender.com/auth/shopify/callback"
+]
+
+[access_scopes]
+scopes = "read_analytics,read_customers,read_orders,read_products,write_products,read_script_tags"
+use_legacy_install_flow = true
+
+[webhooks]
+api_version = "2026-04"
+
+  [[webhooks.subscriptions]]
+  compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
+  uri = "https://shopbrain-backend.onrender.com/api/shopify/webhooks"

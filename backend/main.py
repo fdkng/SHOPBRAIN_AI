@@ -4206,6 +4206,31 @@ def _verify_shopify_webhook_hmac(body: bytes, hmac_header: str, secret: str) -> 
     return hmac.compare_digest(computed_b64, hmac_header)
 
 
+@app.post("/api/shopify/webhooks")
+async def shopify_webhooks_dispatcher(request: Request):
+    """🔀 Unified Shopify compliance webhook dispatcher.
+    Shopify sends all compliance webhooks to a single URI with
+    X-Shopify-Topic header to identify the topic.
+    Routes to the appropriate handler."""
+    topic = request.headers.get("X-Shopify-Topic", "").strip().lower()
+    print(f"📬 [SHOPIFY-WEBHOOK] Received topic: {topic}")
+
+    if topic == "customers/data_request":
+        return await shopify_webhook_customers_data_request(request)
+    elif topic == "customers/redact":
+        return await shopify_webhook_customers_redact(request)
+    elif topic == "shop/redact":
+        return await shopify_webhook_shop_redact(request)
+    else:
+        # Still verify HMAC even for unknown topics
+        body = await request.body()
+        hmac_header = request.headers.get("X-Shopify-Hmac-Sha256", "")
+        if hmac_header and not _verify_shopify_webhook_hmac(body, hmac_header, SHOPIFY_API_SECRET or ""):
+            return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+        print(f"⚠️ [SHOPIFY-WEBHOOK] Unknown topic: {topic}")
+        return JSONResponse(status_code=200, content={"success": True, "topic": topic})
+
+
 @app.post("/api/shopify/webhooks/customers-data-request")
 async def shopify_webhook_customers_data_request(request: Request):
     """📋 GDPR: customers/data_request — A customer requests their data.
