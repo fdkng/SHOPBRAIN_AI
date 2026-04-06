@@ -3613,9 +3613,51 @@ async def update_user_shopify(payload: dict, request: Request):
         raise HTTPException(status_code=500, detail=f"Erreur Shopify: {str(e)}")
 
 
-# ── Shopify OAuth nonce store (in-memory, TTL 10 min) ──
-_shopify_oauth_nonces: dict[str, tuple[float, str]] = {}  # nonce -> (timestamp, user_id)
-_SHOPIFY_NONCE_TTL = 600  # 10 minutes
+# ── Shopify Client Credentials + Token Refresh ──
+# Dev Dashboard apps (2026+) use grant_type=client_credentials.
+# Tokens expire every 24h. The backend auto-refreshes them.
+_shopify_token_cache: dict[str, tuple[float, str]] = {}  # shop -> (expiry_ts, token)
+_SHOPIFY_TOKEN_TTL = 82800  # refresh 1h before expiry (24h - 1h = 23h)
+
+
+def _get_or_refresh_shopify_token(shop: str) -> str | None:
+    """Get a valid Shopify access token for a shop via Client Credentials Grant.
+    Auto-refreshes if expired. Returns None if credentials are not configured."""
+    if not SHOPIFY_API_KEY or not SHOPIFY_API_SECRET:
+        return None
+
+    # Check cache
+    cached = _shopify_token_cache.get(shop)
+    if cached:
+        expiry_ts, token = cached
+        if time.time() < expiry_ts:
+            return token
+
+    # Request new token via Client Credentials Grant
+    try:
+        resp = requests.post(
+            f"https://{shop}/admin/oauth/access_token",
+            data={
+                "grant_type": "client_credentials",
+                "client_id": SHOPIFY_API_KEY,
+                "client_secret": SHOPIFY_API_SECRET,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        token = data.get("access_token")
+        expires_in = data.get("expires_in", 86399)
+        if token:
+            _shopify_token_cache[shop] = (time.time() + min(expires_in - 3600, _SHOPIFY_TOKEN_TTL), token)
+            print(f"✅ [SHOPIFY-CCG] Got token for {shop} (expires in {expires_in}s)")
+            return token
+        print(f"❌ [SHOPIFY-CCG] No access_token in response: {data}")
+        return None
+    except Exception as e:
+        print(f"❌ [SHOPIFY-CCG] Token request failed for {shop}: {e}")
+        return None
 
 
 def _verify_shopify_hmac(query_params: dict, secret: str) -> bool:
@@ -3624,8 +3666,6 @@ def _verify_shopify_hmac(query_params: dict, secret: str) -> bool:
     received_hmac = query_params.get("hmac", "")
     if not received_hmac:
         return False
-
-    # Build the message: sorted key=value pairs joined by &, excluding 'hmac'
     sorted_params = "&".join(
         f"{k}={v}" for k, v in sorted(query_params.items()) if k != "hmac"
     )
@@ -3634,19 +3674,193 @@ def _verify_shopify_hmac(query_params: dict, secret: str) -> bool:
         sorted_params.encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
-
     return hmac.compare_digest(computed, received_hmac)
+
+
+# ============================================================
+# PRIMARY: Client Credentials Connect (Dev Dashboard apps)
+# User enters shop domain → backend gets token automatically
+# ============================================================
+
+@app.post("/api/shopify/connect-shop")
+async def shopify_connect_shop(request: Request):
+    """🔐 Connect a Shopify shop via Client Credentials Grant.
+    The user only needs to provide their shop domain.
+    The backend exchanges client_id + client_secret for an access token
+    directly with Shopify — NO redirect, NO manual token paste.
+
+    Requires: the Shopify app must be installed on the target shop.
+    Body: { "shop": "mystore.myshopify.com" }
+    """
+    user_id = get_user_id(request)
+    body = await request.json()
+
+    shop = (body.get("shop") or "").strip().lower().replace("https://", "").replace("http://", "").strip("/")
+    if not shop:
+        raise HTTPException(status_code=400, detail="Missing 'shop' parameter")
+    if "." not in shop:
+        shop = f"{shop}.myshopify.com"
+    if not shop.endswith(".myshopify.com"):
+        raise HTTPException(status_code=400, detail="Format attendu : ma-boutique.myshopify.com")
+
+    if not SHOPIFY_API_KEY or not SHOPIFY_API_SECRET:
+        raise HTTPException(status_code=500, detail="Shopify API credentials not configured on the server. Contact support.")
+
+    # ── 1. Enforce shop limit per plan ──
+    tier = get_user_tier(user_id)
+    shop_limit = _get_shop_limit(tier)
+    current_count = _count_user_shops(user_id)
+
+    # Check if this shop is already connected (allow reconnect)
+    existing = None
+    if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        existing = supabase.table("shopify_connections").select("id").eq("user_id", user_id).eq("shop_domain", shop).execute()
+
+    if not (existing and existing.data):
+        # New shop — check limit
+        if shop_limit is not None and current_count >= shop_limit:
+            return {
+                "success": False,
+                "error": "limit_reached",
+                "message": f"Limite de {shop_limit} boutique{'s' if shop_limit > 1 else ''} atteinte (plan {tier}). Passez au plan supérieur.",
+                "plan": tier,
+                "limit": shop_limit,
+            }
+
+    # ── 2. Get token via Client Credentials Grant ──
+    print(f"🔄 [SHOPIFY-CCG] Requesting token for {shop} (user={user_id})")
+    try:
+        resp = requests.post(
+            f"https://{shop}/admin/oauth/access_token",
+            data={
+                "grant_type": "client_credentials",
+                "client_id": SHOPIFY_API_KEY,
+                "client_secret": SHOPIFY_API_SECRET,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=15,
+        )
+
+        if resp.status_code == 404:
+            return {
+                "success": False,
+                "error": "app_not_installed",
+                "message": f"L'app ShopBrain AI n'est pas installée sur {shop}. Installez-la d'abord depuis le Dev Dashboard Shopify.",
+            }
+
+        if resp.status_code in (401, 403):
+            return {
+                "success": False,
+                "error": "auth_failed",
+                "message": f"Les credentials de l'app ne sont pas valides pour {shop}. Vérifiez que l'app est installée et les API scopes configurés.",
+            }
+
+        resp.raise_for_status()
+        token_data = resp.json()
+        access_token = token_data.get("access_token")
+        granted_scopes = token_data.get("scope", "")
+        expires_in = token_data.get("expires_in", 86399)
+
+        if not access_token:
+            return {"success": False, "error": "no_token", "message": "Shopify n'a pas retourné de token."}
+
+        print(f"✅ [SHOPIFY-CCG] Got token for {shop} (scopes: {granted_scopes}, expires: {expires_in}s)")
+
+    except requests.exceptions.Timeout:
+        return {"success": False, "error": "timeout", "message": f"Shopify ne répond pas pour {shop}. Réessayez."}
+    except requests.exceptions.HTTPError as he:
+        return {"success": False, "error": "http_error", "message": f"Erreur Shopify: {he}"}
+    except Exception as e:
+        print(f"❌ [SHOPIFY-CCG] Error: {e}")
+        return {"success": False, "error": "internal", "message": f"Erreur interne: {str(e)}"}
+
+    # ── 3. Verify the token works ──
+    try:
+        verify_resp = requests.get(
+            f"https://{shop}/admin/api/2024-10/shop.json",
+            headers={"X-Shopify-Access-Token": access_token},
+            timeout=10,
+        )
+        if verify_resp.status_code != 200:
+            return {"success": False, "error": "token_invalid", "message": "Le token obtenu ne fonctionne pas. Vérifiez les scopes de l'app."}
+
+        shop_info = verify_resp.json().get("shop", {})
+        shop_name = shop_info.get("name", shop)
+        print(f"✅ [SHOPIFY-CCG] Token verified — shop: {shop_name}")
+    except Exception as e:
+        print(f"⚠️ [SHOPIFY-CCG] Token verification failed: {e}")
+        shop_name = shop
+
+    # ── 4. Store token securely in Supabase ──
+    if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+        # Cache the token for auto-refresh
+        _shopify_token_cache[shop] = (time.time() + min(expires_in - 3600, _SHOPIFY_TOKEN_TTL), access_token)
+
+        if existing and existing.data:
+            # Update existing connection
+            update_data = {"access_token": access_token, "updated_at": datetime.utcnow().isoformat()}
+            try:
+                supabase.table("shopify_connections").update({**update_data, "is_active": True}).eq("user_id", user_id).eq("shop_domain", shop).execute()
+            except Exception:
+                supabase.table("shopify_connections").update(update_data).eq("user_id", user_id).eq("shop_domain", shop).execute()
+            print(f"✅ [SHOPIFY-CCG] Updated existing connection for {shop}")
+        else:
+            # Create new connection
+            insert_data = {"user_id": user_id, "shop_domain": shop, "access_token": access_token}
+            try:
+                supabase.table("shopify_connections").insert({**insert_data, "is_active": True}).execute()
+            except Exception:
+                supabase.table("shopify_connections").insert(insert_data).execute()
+            print(f"✅ [SHOPIFY-CCG] Stored new connection for {shop}")
+
+        # Deactivate other shops (set this one as active)
+        try:
+            supabase.table("shopify_connections").update({"is_active": False}).eq("user_id", user_id).neq("shop_domain", shop).execute()
+        except Exception:
+            pass
+
+    # ── 5. Count products for feedback ──
+    product_count = 0
+    try:
+        products_resp = requests.get(
+            f"https://{shop}/admin/api/2024-10/products/count.json",
+            headers={"X-Shopify-Access-Token": access_token},
+            timeout=10,
+        )
+        if products_resp.status_code == 200:
+            product_count = products_resp.json().get("count", 0)
+    except Exception:
+        pass
+
+    return {
+        "success": True,
+        "shop_domain": shop,
+        "shop_name": shop_name,
+        "scopes": granted_scopes,
+        "product_count": product_count,
+        "token_expires_in": expires_in,
+        "message": f"✅ {shop_name} connectée ! {product_count} produits trouvés.",
+    }
+
+
+# ============================================================
+# LEGACY FALLBACK: OAuth Authorization Code Grant (Partner apps)
+# Keep for future use if app goes public
+# ============================================================
+
+# ── OAuth nonce store (in-memory, TTL 10 min) ──
+_shopify_oauth_nonces: dict[str, tuple[float, str]] = {}
+_SHOPIFY_NONCE_TTL = 600
 
 
 @app.get("/api/shopify/oauth/authorize")
 async def shopify_oauth_authorize(request: Request):
-    """🔐 Step 1: Initiate Shopify OAuth flow.
-    Called by the frontend 'Connect Shopify' button.
-    Requires auth (user must be logged in).
-    Query params: shop=mystore.myshopify.com  &  token=<jwt>
-    The token can be passed as a query param because browsers can't set
-    Authorization headers on a top-level navigation (window.location.href).
-    Redirects user to Shopify's authorization page."""
+    """🔐 Legacy OAuth: Initiate Shopify OAuth redirect flow.
+    For Partner/public apps that use the authorization code grant.
+    Dev Dashboard apps should use POST /api/shopify/connect-shop instead."""
 
     # Accept token from query param (browser redirect) OR header (API call)
     token_param = request.query_params.get("token", "")
