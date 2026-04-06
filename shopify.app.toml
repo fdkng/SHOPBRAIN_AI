@@ -17,5 +17,13 @@ use_legacy_install_flow = true
 api_version = "2026-04"
 
   [[webhooks.subscriptions]]
-  compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
-  uri = "https://shopbrain-backend.onrender.com/api/shopify/webhooks"
+  compliance_topics = ["customers/data_request"]
+  uri = "https://shopbrain-backend.onrender.com/api/shopify/webhooks/customers-data-request"
+
+  [[webhooks.subscriptions]]
+  compliance_topics = ["customers/redact"]
+  uri = "https://shopbrain-backend.onrender.com/api/shopify/webhooks/customers-redact"
+
+  [[webhooks.subscriptions]]
+  compliance_topics = ["shop/redact"]
+  uri = "https://shopbrain-backend.onrender.com/api/shopify/webhooks/shop-redact"
