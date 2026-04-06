@@ -1419,10 +1419,26 @@ def _stripe_obj_to_dict(obj):
 
 
 def _sub_upsert(supabase_client, user_id: str, data: dict):
-    """Insert or update a subscriptions row by user_id. No UNIQUE constraint needed."""
+    """Insert or update a subscriptions row by user_id.
+    CRITICAL: If the existing row has an ACTIVE subscription with a DIFFERENT
+    stripe_subscription_id, and the incoming data wants to set inactive,
+    we SKIP the update to avoid a stale webhook clobbering a valid subscription."""
     try:
-        existing = supabase_client.table("subscriptions").select("id").eq("user_id", user_id).limit(1).execute()
+        existing = supabase_client.table("subscriptions").select("id,status,paid,stripe_subscription_id").eq("user_id", user_id).limit(1).execute()
         if existing.data:
+            row = existing.data[0]
+            incoming_status = str(data.get("status") or "").lower()
+            incoming_sub_id = _normalize_stripe_subscription_id(data.get("stripe_subscription_id"))
+            existing_sub_id = _normalize_stripe_subscription_id(row.get("stripe_subscription_id"))
+            existing_status = str(row.get("status") or "").lower()
+            existing_paid = row.get("paid") is True
+
+            # GUARD: Don't let a delete/failed webhook for sub_A clobber an active sub_B
+            if (incoming_status == "inactive" and existing_status in ("active", "cancelling") and existing_paid
+                    and existing_sub_id and incoming_sub_id and existing_sub_id != incoming_sub_id):
+                print(f"  🛡️ [DB] SKIPPING inactive update: incoming sub {incoming_sub_id} != existing active sub {existing_sub_id} for user {user_id}")
+                return
+
             supabase_client.table("subscriptions").update(data).eq("user_id", user_id).execute()
             print(f"  ✅ [DB] Updated subscriptions for user {user_id}")
         else:
@@ -1867,6 +1883,12 @@ async def fast_init(request: Request):
                 sub_result = supabase_client.table("subscriptions").select("*").eq("user_id", user_id).in_("status", ["active", "cancelling"]).order("updated_at", desc=True).limit(1).execute()
                 if sub_result.data:
                     sub_row = sub_result.data[0]
+                else:
+                    # FALLBACK: Also check inactive rows — they might be auto-healable via Stripe
+                    inactive_result = supabase_client.table("subscriptions").select("*").eq("user_id", user_id).order("updated_at", desc=True).limit(1).execute()
+                    if inactive_result.data:
+                        sub_row = inactive_result.data[0]
+                        print(f"  📋 [INIT-SUB] Found inactive row, will attempt auto-heal: status={sub_row.get('status')}, paid={sub_row.get('paid')}, stripe_sub_id={sub_row.get('stripe_subscription_id')}, stripe_customer_id={sub_row.get('stripe_customer_id')}")
             except Exception as db_err:
                 print(f"  ⚠️ [INIT-SUB] DB query error: {db_err}")
 
@@ -1909,11 +1931,20 @@ async def fast_init(request: Request):
                     }
                 else:
                     # Step 3: paid is False/NULL in DB — try Stripe auto-heal (best-effort, NOT blocking)
-                    print(f"  🔄 [INIT-SUB] DB paid={paid_flag}, attempting Stripe auto-heal...")
+                    print(f"  🔄 [INIT-SUB] DB paid={paid_flag}, plan={plan}, status={sub_status}, attempting Stripe auto-heal...")
                     healed = False
                     stripe_sub_id = _normalize_stripe_subscription_id(sub_row.get('stripe_subscription_id'))
                     if not stripe_sub_id:
                         stripe_sub_id = _recover_subscription_id_from_session(sub_row.get('stripe_session_id'))
+                    # Also try to find by customer ID if we still don't have a sub_id
+                    if not stripe_sub_id and sub_row.get('stripe_customer_id'):
+                        try:
+                            cust_subs = stripe.Subscription.list(customer=sub_row['stripe_customer_id'], status='active', limit=1)
+                            if cust_subs.data:
+                                stripe_sub_id = _normalize_stripe_subscription_id(cust_subs.data[0])
+                                print(f"  🔍 [INIT-SUB] Recovered sub_id from customer {sub_row['stripe_customer_id']}: {stripe_sub_id}")
+                        except Exception as cust_err:
+                            print(f"  ⚠️ [INIT-SUB] Customer sub lookup warning: {cust_err}")
 
                     if stripe_sub_id and str(stripe_sub_id).startswith("sub_"):
                         try:
@@ -1996,7 +2027,7 @@ async def health():
     return {
         "status": "ok",
         "version": "3.0-fast-init",
-        "build": "20260405-diag",
+        "build": "20260406-auto-heal-v2",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
                 "openai": "configured" if OPENAI_API_KEY else "not_configured",
@@ -2041,12 +2072,14 @@ async def debug_subscription(email: str = "", secret: str = ""):
                 subs = stripe.Subscription.list(customer=cust.id, limit=10)
                 for sub in subs.data:
                     items_info = []
-                    for item in sub.get("items", {}).get("data", []):
-                        price = item.get("price", {})
+                    sub_items = _sg(sub, "items", {})
+                    sub_items_data = _sg(sub_items, "data", []) if sub_items else []
+                    for item in sub_items_data:
+                        price = _sg(item, "price", {})
                         items_info.append({
-                            "price_id": price.get("id"),
-                            "amount": price.get("unit_amount"),
-                            "product": price.get("product"),
+                            "price_id": _sg(price, "id"),
+                            "amount": _sg(price, "unit_amount"),
+                            "product": _sg(price, "product"),
                         })
                     stripe_subscriptions.append({
                         "id": sub.id,
@@ -2066,6 +2099,94 @@ async def debug_subscription(email: str = "", secret: str = ""):
             "db_subscription_rows": sub_rows,
             "stripe_customers": stripe_customers,
             "stripe_subscriptions": stripe_subscriptions,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/debug/repair-subscription")
+async def repair_subscription(email: str = "", secret: str = ""):
+    """🔧 TEMPORARY: Auto-repair subscription by finding active Stripe subscription for a user."""
+    if secret != "shopbrain-diag-2026":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if not email:
+        raise HTTPException(status_code=400, detail="Missing email")
+    try:
+        supabase_client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        # Find user
+        profile_result = supabase_client.table("user_profiles").select("id,email").eq("email", email).execute()
+        if not profile_result.data:
+            return {"error": "User not found"}
+        user_id = profile_result.data[0]["id"]
+
+        # Find ALL Stripe customers for this email and check for active subs
+        customers = stripe.Customer.list(email=email, limit=5)
+        active_sub = None
+        active_customer_id = None
+        for cust in customers.data:
+            subs = stripe.Subscription.list(customer=cust.id, status="active", limit=1)
+            if subs.data:
+                active_sub = subs.data[0]
+                active_customer_id = cust.id
+                break
+            # Also check trialing
+            trialing = stripe.Subscription.list(customer=cust.id, status="trialing", limit=1)
+            if trialing.data:
+                active_sub = trialing.data[0]
+                active_customer_id = cust.id
+                break
+
+        if not active_sub:
+            return {"error": "No active Stripe subscription found for this email", "customers": [c.id for c in customers.data]}
+
+        # Resolve plan from subscription
+        plan_tier = _resolve_plan_from_stripe_subscription(active_sub)
+        if not plan_tier:
+            plan_tier = "standard"
+
+        stripe_sub_id = active_sub.id
+        cancel_at_period_end = getattr(active_sub, 'cancel_at_period_end', False)
+        status = "cancelling" if cancel_at_period_end else "active"
+        payment_date = _resolve_payment_date(active_sub.created)
+
+        # Write to DB
+        repair_data = {
+            "user_id": user_id,
+            "email": email,
+            "stripe_subscription_id": stripe_sub_id,
+            "stripe_customer_id": active_customer_id,
+            "plan_tier": plan_tier,
+            "plan": True,
+            "paid": True,
+            "status": status,
+            "subscription_status": status,
+            "payment_date": payment_date,
+            "updated_at": datetime.utcnow().isoformat(),
+        }
+        _sub_upsert(supabase_client, user_id, repair_data)
+
+        # Also update user_profiles
+        supabase_client.table("user_profiles").update({
+            "stripe_customer_id": active_customer_id,
+            "stripe_subscription_id": stripe_sub_id,
+            "subscription_tier": plan_tier,
+            "subscription_plan": plan_tier,
+            "subscription_status": status,
+            "updated_at": datetime.utcnow().isoformat(),
+        }).eq("id", user_id).execute()
+
+        # Clear init cache
+        _init_cache.pop(user_id, None)
+
+        return {
+            "success": True,
+            "repaired": True,
+            "user_id": user_id,
+            "stripe_subscription_id": stripe_sub_id,
+            "stripe_customer_id": active_customer_id,
+            "plan_tier": plan_tier,
+            "status": status,
+            "payment_date": payment_date,
         }
     except Exception as e:
         return {"error": str(e)}
@@ -10656,7 +10777,13 @@ async def check_subscription_status(request: Request):
                 sub_result = supabase.table("subscriptions").select("*").eq("user_id", user_id).in_("status", ["active", "cancelling"]).order("updated_at", desc=True).limit(1).execute()
                 if sub_result.data:
                     subscription = sub_result.data[0]
-                    print(f"  📋 [STATUS] DB row: id={subscription.get('id')}, plan_tier={subscription.get('plan_tier')}, paid={subscription.get('paid')}, status={subscription.get('status')}, payment_date={subscription.get('payment_date')}")
+                    print(f"  📋 [STATUS] DB row (active): id={subscription.get('id')}, plan_tier={subscription.get('plan_tier')}, paid={subscription.get('paid')}, status={subscription.get('status')}, payment_date={subscription.get('payment_date')}")
+                else:
+                    # FALLBACK: Also check inactive rows — they might be auto-healable via Stripe
+                    inactive_result = supabase.table("subscriptions").select("*").eq("user_id", user_id).order("updated_at", desc=True).limit(1).execute()
+                    if inactive_result.data:
+                        subscription = inactive_result.data[0]
+                        print(f"  📋 [STATUS] DB row (inactive, will attempt auto-heal): id={subscription.get('id')}, plan_tier={subscription.get('plan_tier')}, paid={subscription.get('paid')}, status={subscription.get('status')}, stripe_sub_id={subscription.get('stripe_subscription_id')}, stripe_session_id={subscription.get('stripe_session_id')}, stripe_customer_id={subscription.get('stripe_customer_id')}")
             except Exception as e:
                 print(f"  ⚠️ [STATUS] DB query error: {e}")
 
@@ -10698,10 +10825,19 @@ async def check_subscription_status(request: Request):
                     }
 
                 # Step 3: paid is False/NULL — try Stripe auto-heal (best-effort)
-                print(f"  🔄 [STATUS] DB paid={paid_flag}, attempting Stripe auto-heal...")
+                print(f"  🔄 [STATUS] DB paid={paid_flag}, plan={plan}, status={sub_status}, attempting Stripe auto-heal...")
                 stripe_sub_id = _normalize_stripe_subscription_id(subscription.get('stripe_subscription_id'))
                 if not stripe_sub_id:
                     stripe_sub_id = _recover_subscription_id_from_session(subscription.get('stripe_session_id'))
+                # Also try to find active subscription by customer ID
+                if not stripe_sub_id and subscription.get('stripe_customer_id'):
+                    try:
+                        cust_subs = stripe.Subscription.list(customer=subscription['stripe_customer_id'], status='active', limit=1)
+                        if cust_subs.data:
+                            stripe_sub_id = _normalize_stripe_subscription_id(cust_subs.data[0])
+                            print(f"  🔍 [STATUS] Recovered sub_id from customer {subscription['stripe_customer_id']}: {stripe_sub_id}")
+                    except Exception as cust_err:
+                        print(f"  ⚠️ [STATUS] Customer sub lookup warning: {cust_err}")
 
                 if stripe_sub_id and str(stripe_sub_id).startswith("sub_"):
                     try:
