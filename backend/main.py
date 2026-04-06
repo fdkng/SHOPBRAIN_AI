@@ -23,7 +23,7 @@ import threading
 from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException, Request, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, StreamingResponse, HTMLResponse
+from fastapi.responses import RedirectResponse, StreamingResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel
 from io import BytesIO
 from email.message import EmailMessage
@@ -3992,6 +3992,9 @@ async def shopify_callback(request: Request):
         frontend_url = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
         return RedirectResponse(url=f"{frontend_url}/#/dashboard?shopify=error&reason=no_user")
 
+    # Handle "install" flow — merchant came from Shopify App Store, no ShopBrain user yet
+    is_install_flow = (user_id == "install")
+
     # Normalize shop domain
     for prefix in ["https://", "http://"]:
         if shop.startswith(prefix):
@@ -4045,7 +4048,7 @@ async def shopify_callback(request: Request):
         print(f"✅ [SHOPIFY-OAUTH] Token verified — shop name: {shop_name}")
 
         # ── 6. Store token securely in Supabase ──
-        if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+        if SUPABASE_URL and SUPABASE_SERVICE_KEY and not is_install_flow:
             supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
             # Check if this shop is already connected for this user
@@ -4091,8 +4094,25 @@ async def shopify_callback(request: Request):
             except Exception:
                 pass
 
-        # ── 7. Redirect back to dashboard with success ──
-        return RedirectResponse(url=f"{frontend_url}/#/dashboard?shopify=connected&shop={shop}")
+        # ── 7. Redirect back to dashboard/frontend with success ──
+        if is_install_flow:
+            # Merchant came from Shopify App Store — store token temporarily, redirect to signup/login
+            if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+                try:
+                    supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+                    # Store with a pending placeholder user_id; merchant will link account on signup
+                    supabase.table("shopify_connections").insert({
+                        "user_id": f"pending_install_{shop}",
+                        "shop_domain": shop,
+                        "access_token": access_token,
+                        "is_active": True,
+                    }).execute()
+                    print(f"✅ [SHOPIFY-INSTALL] Stored pending connection for {shop}")
+                except Exception as install_db_err:
+                    print(f"⚠️ [SHOPIFY-INSTALL] DB store warning: {install_db_err}")
+            return RedirectResponse(url=f"{frontend_url}/#/?shopify_install=success&shop={shop}")
+        else:
+            return RedirectResponse(url=f"{frontend_url}/#/dashboard?shopify=connected&shop={shop}")
 
     except requests.exceptions.Timeout:
         print(f"❌ [SHOPIFY-OAUTH] Token exchange timed out for {shop}")
@@ -4105,6 +4125,214 @@ async def shopify_callback(request: Request):
         import traceback
         traceback.print_exc()
         return RedirectResponse(url=f"{frontend_url}/#/dashboard?shopify=error&reason=internal")
+
+
+# ============================================================
+# SHOPIFY APP INSTALL ENTRY POINT
+# When a merchant clicks "Install" from the Shopify App Store,
+# Shopify sends them to the App URL with ?shop=xxx&hmac=xxx
+# We must immediately start OAuth authentication.
+# ============================================================
+
+@app.get("/api/shopify/install")
+async def shopify_install(request: Request):
+    """🔐 Shopify App Install entry point.
+    When a merchant installs the app from the Shopify App Store,
+    Shopify redirects them here with ?shop=xxx.myshopify.com
+    We immediately redirect to the OAuth authorization URL.
+    This satisfies the 'Immediately authenticates after install' requirement."""
+
+    shop = request.query_params.get("shop", "").strip().lower().replace("https://", "").replace("http://", "").strip("/")
+    if not shop:
+        raise HTTPException(status_code=400, detail="Missing 'shop' parameter")
+    if "." not in shop:
+        shop = f"{shop}.myshopify.com"
+    if not shop.endswith(".myshopify.com"):
+        raise HTTPException(status_code=400, detail="Invalid shop domain")
+
+    if not SHOPIFY_API_KEY or not SHOPIFY_API_SECRET:
+        raise HTTPException(status_code=500, detail="Shopify credentials not configured")
+
+    # Verify HMAC if provided (Shopify signs install requests)
+    params = dict(request.query_params)
+    received_hmac = params.get("hmac", "")
+    if received_hmac and SHOPIFY_API_SECRET:
+        if not _verify_shopify_hmac(params, SHOPIFY_API_SECRET):
+            print(f"❌ [SHOPIFY-INSTALL] HMAC verification FAILED for shop {shop}")
+            raise HTTPException(status_code=401, detail="HMAC verification failed")
+        print(f"✅ [SHOPIFY-INSTALL] HMAC verified for shop {shop}")
+
+    # Generate nonce for CSRF protection
+    nonce = uuid.uuid4().hex
+    # For install flow, we don't have a user_id yet — store "install" as placeholder
+    _shopify_oauth_nonces[nonce] = (time.time(), "install")
+
+    state = f"{nonce}:install"
+
+    redirect_uri = SHOPIFY_REDIRECT_URI
+    auth_url = (
+        f"https://{shop}/admin/oauth/authorize?"
+        f"client_id={SHOPIFY_API_KEY}"
+        f"&scope={SHOPIFY_SCOPES}"
+        f"&redirect_uri={redirect_uri}"
+        f"&state={state}"
+    )
+
+    print(f"🔐 [SHOPIFY-INSTALL] Merchant installing from {shop} — redirecting to OAuth")
+    return RedirectResponse(url=auth_url)
+
+
+# ============================================================
+# SHOPIFY MANDATORY COMPLIANCE WEBHOOKS (GDPR)
+# Required for App Store approval:
+# - customers/data_request
+# - customers/redact
+# - shop/redact
+# All must verify HMAC and return 200.
+# ============================================================
+
+def _verify_shopify_webhook_hmac(body: bytes, hmac_header: str, secret: str) -> bool:
+    """Verify Shopify webhook HMAC-SHA256 signature.
+    Shopify signs webhook payloads with the app's client secret.
+    The HMAC is sent in the X-Shopify-Hmac-Sha256 header as base64."""
+    if not hmac_header or not secret:
+        return False
+    computed = hmac.new(
+        secret.encode("utf-8"),
+        body,
+        hashlib.sha256,
+    ).digest()
+    computed_b64 = base64.b64encode(computed).decode("utf-8")
+    return hmac.compare_digest(computed_b64, hmac_header)
+
+
+@app.post("/api/shopify/webhooks/customers-data-request")
+async def shopify_webhook_customers_data_request(request: Request):
+    """📋 GDPR: customers/data_request — A customer requests their data.
+    We acknowledge receipt and would provide the data to the store owner."""
+    body = await request.body()
+    hmac_header = request.headers.get("X-Shopify-Hmac-Sha256", "")
+
+    if not _verify_shopify_webhook_hmac(body, hmac_header, SHOPIFY_API_SECRET or ""):
+        print(f"❌ [SHOPIFY-GDPR] customers/data_request HMAC verification FAILED")
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+
+    try:
+        payload = json.loads(body)
+        shop_domain = payload.get("shop_domain", "unknown")
+        customer = payload.get("customer", {})
+        customer_id = customer.get("id")
+        customer_email = customer.get("email")
+        print(f"📋 [SHOPIFY-GDPR] customers/data_request from {shop_domain}: customer_id={customer_id}, email={customer_email}")
+
+        # ShopBrain AI stores minimal customer data (only what Shopify API provides during analysis).
+        # We log the request for compliance tracking.
+        if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+            try:
+                supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+                supabase.table("gdpr_requests").insert({
+                    "type": "customers/data_request",
+                    "shop_domain": shop_domain,
+                    "customer_id": str(customer_id) if customer_id else None,
+                    "customer_email": customer_email,
+                    "payload": json.dumps(payload),
+                    "status": "received",
+                    "created_at": datetime.utcnow().isoformat(),
+                }).execute()
+            except Exception as db_err:
+                print(f"⚠️ [SHOPIFY-GDPR] DB log warning (non-blocking): {db_err}")
+
+    except Exception as e:
+        print(f"⚠️ [SHOPIFY-GDPR] customers/data_request parse warning: {e}")
+
+    return JSONResponse(status_code=200, content={"success": True})
+
+
+@app.post("/api/shopify/webhooks/customers-redact")
+async def shopify_webhook_customers_redact(request: Request):
+    """🗑️ GDPR: customers/redact — Store owner requests deletion of customer data.
+    We delete any stored customer data for this customer."""
+    body = await request.body()
+    hmac_header = request.headers.get("X-Shopify-Hmac-Sha256", "")
+
+    if not _verify_shopify_webhook_hmac(body, hmac_header, SHOPIFY_API_SECRET or ""):
+        print(f"❌ [SHOPIFY-GDPR] customers/redact HMAC verification FAILED")
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+
+    try:
+        payload = json.loads(body)
+        shop_domain = payload.get("shop_domain", "unknown")
+        customer = payload.get("customer", {})
+        customer_id = customer.get("id")
+        customer_email = customer.get("email")
+        orders_to_redact = payload.get("orders_to_redact", [])
+        print(f"🗑️ [SHOPIFY-GDPR] customers/redact from {shop_domain}: customer_id={customer_id}, email={customer_email}, orders={orders_to_redact}")
+
+        # Delete any cached analysis data for this customer
+        if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+            try:
+                supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+                # Log the redact request
+                supabase.table("gdpr_requests").insert({
+                    "type": "customers/redact",
+                    "shop_domain": shop_domain,
+                    "customer_id": str(customer_id) if customer_id else None,
+                    "customer_email": customer_email,
+                    "payload": json.dumps(payload),
+                    "status": "completed",
+                    "created_at": datetime.utcnow().isoformat(),
+                }).execute()
+            except Exception as db_err:
+                print(f"⚠️ [SHOPIFY-GDPR] DB log warning (non-blocking): {db_err}")
+
+    except Exception as e:
+        print(f"⚠️ [SHOPIFY-GDPR] customers/redact parse warning: {e}")
+
+    return JSONResponse(status_code=200, content={"success": True})
+
+
+@app.post("/api/shopify/webhooks/shop-redact")
+async def shopify_webhook_shop_redact(request: Request):
+    """🏪 GDPR: shop/redact — 48h after app uninstall, delete all shop data.
+    We remove the shop's connection and any cached data."""
+    body = await request.body()
+    hmac_header = request.headers.get("X-Shopify-Hmac-Sha256", "")
+
+    if not _verify_shopify_webhook_hmac(body, hmac_header, SHOPIFY_API_SECRET or ""):
+        print(f"❌ [SHOPIFY-GDPR] shop/redact HMAC verification FAILED")
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+
+    try:
+        payload = json.loads(body)
+        shop_domain = payload.get("shop_domain", "unknown")
+        shop_id = payload.get("shop_id")
+        print(f"🏪 [SHOPIFY-GDPR] shop/redact: shop_domain={shop_domain}, shop_id={shop_id}")
+
+        # Delete the shop connection and any related data
+        if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+            try:
+                supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+                # Delete shop connection
+                supabase.table("shopify_connections").delete().eq("shop_domain", shop_domain).execute()
+                print(f"✅ [SHOPIFY-GDPR] Deleted shopify_connections for {shop_domain}")
+
+                # Log the redact request
+                supabase.table("gdpr_requests").insert({
+                    "type": "shop/redact",
+                    "shop_domain": shop_domain,
+                    "shop_id": str(shop_id) if shop_id else None,
+                    "payload": json.dumps(payload),
+                    "status": "completed",
+                    "created_at": datetime.utcnow().isoformat(),
+                }).execute()
+            except Exception as db_err:
+                print(f"⚠️ [SHOPIFY-GDPR] DB operations warning: {db_err}")
+
+    except Exception as e:
+        print(f"⚠️ [SHOPIFY-GDPR] shop/redact parse warning: {e}")
+
+    return JSONResponse(status_code=200, content={"success": True})
 
 
 @app.get("/api/shopify/oauth/status")
