@@ -56,12 +56,20 @@ print("\n🚀 ========== BACKEND STARTUP ==========")
 print(f"✅ FastAPI initializing...")
 app = FastAPI()
 
+
+def _sanitize_url(raw: str | None, default: str = "") -> str:
+    value = (raw or default or "").strip()
+    return value.rstrip("/") if value.endswith("/") else value
+
 # Shopify OAuth credentials
 SHOPIFY_API_KEY = os.getenv("SHOPIFY_API_KEY")
 SHOPIFY_API_SECRET = os.getenv("SHOPIFY_API_SECRET")
 SHOPIFY_ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN")
 SHOPIFY_SCOPES = "read_products,write_products,read_orders,read_customers,read_analytics,read_script_tags"
-SHOPIFY_REDIRECT_URI = os.getenv("SHOPIFY_REDIRECT_URI", "https://shopbrain-backend.onrender.com/auth/shopify/callback")
+SHOPIFY_REDIRECT_URI = _sanitize_url(
+    os.getenv("SHOPIFY_REDIRECT_URI"),
+    "https://shopbrain-backend.onrender.com/auth/shopify/callback",
+)
 
 try:
     from shopbrain_expert_system import SHOPBRAIN_EXPERT_SYSTEM as _SYSTEM_PROMPT
@@ -99,7 +107,10 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
-FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
+FRONTEND_ORIGIN = _sanitize_url(
+    os.getenv("FRONTEND_ORIGIN"),
+    "https://fdkng.github.io/SHOPBRAIN_AI",
+)
 SERPAPI_KEY = os.getenv("SERPAPI_KEY") or os.getenv("SERPAPI_API_KEY")
 MARKET_TOLERANCE_PCT = float(os.getenv("MARKET_TOLERANCE_PCT", "5"))
 SERP_MAX_PRODUCTS = int(os.getenv("SERP_MAX_PRODUCTS", "8"))
@@ -1331,7 +1342,7 @@ allowed_origins = [
     "http://localhost:3000",
 ]
 
-frontend_origin = os.getenv("FRONTEND_ORIGIN")
+frontend_origin = FRONTEND_ORIGIN
 if frontend_origin:
     allowed_origins.append(frontend_origin)
 
@@ -3947,19 +3958,19 @@ async def shopify_callback(request: Request):
 
     if not code or not shop or not state:
         print(f"❌ [SHOPIFY-OAUTH] Missing params: code={bool(code)}, shop={bool(shop)}, state={bool(state)}")
-        frontend_url = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
+        frontend_url = FRONTEND_ORIGIN
         return RedirectResponse(url=f"{frontend_url}/#/dashboard?shopify=error&reason=missing_params")
 
     if not SHOPIFY_API_KEY or not SHOPIFY_API_SECRET:
         print("❌ [SHOPIFY-OAUTH] SHOPIFY_API_KEY or SHOPIFY_API_SECRET not configured")
-        frontend_url = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
+        frontend_url = FRONTEND_ORIGIN
         return RedirectResponse(url=f"{frontend_url}/#/dashboard?shopify=error&reason=server_config")
 
     # ── 1. Verify HMAC signature ──
     if received_hmac:
         if not _verify_shopify_hmac(params, SHOPIFY_API_SECRET):
             print(f"❌ [SHOPIFY-OAUTH] HMAC verification FAILED for shop {shop}")
-            frontend_url = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
+            frontend_url = FRONTEND_ORIGIN
             return RedirectResponse(url=f"{frontend_url}/#/dashboard?shopify=error&reason=hmac_failed")
         print(f"✅ [SHOPIFY-OAUTH] HMAC verified for shop {shop}")
     else:
@@ -3977,11 +3988,11 @@ async def shopify_callback(request: Request):
         nonce_ts, nonce_user_id = _shopify_oauth_nonces.pop(nonce)
         if time.time() - nonce_ts > _SHOPIFY_NONCE_TTL:
             print(f"❌ [SHOPIFY-OAUTH] Nonce expired for user {user_id}")
-            frontend_url = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
+            frontend_url = FRONTEND_ORIGIN
             return RedirectResponse(url=f"{frontend_url}/#/dashboard?shopify=error&reason=expired")
         if nonce_user_id != user_id:
             print(f"❌ [SHOPIFY-OAUTH] Nonce user_id mismatch: expected {nonce_user_id}, got {user_id}")
-            frontend_url = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
+            frontend_url = FRONTEND_ORIGIN
             return RedirectResponse(url=f"{frontend_url}/#/dashboard?shopify=error&reason=state_mismatch")
         print(f"✅ [SHOPIFY-OAUTH] Nonce verified for user {user_id}")
     elif nonce:
@@ -3989,7 +4000,7 @@ async def shopify_callback(request: Request):
 
     if not user_id:
         print(f"❌ [SHOPIFY-OAUTH] Could not extract user_id from state: {state}")
-        frontend_url = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
+        frontend_url = FRONTEND_ORIGIN
         return RedirectResponse(url=f"{frontend_url}/#/dashboard?shopify=error&reason=no_user")
 
     # Handle "install" flow — merchant came from Shopify App Store, no ShopBrain user yet
@@ -4009,7 +4020,7 @@ async def shopify_callback(request: Request):
         "code": code,
     }
 
-    frontend_url = os.getenv("FRONTEND_ORIGIN", "https://fdkng.github.io/SHOPBRAIN_AI")
+    frontend_url = FRONTEND_ORIGIN
 
     try:
         print(f"🔄 [SHOPIFY-OAUTH] Exchanging code for token (shop={shop}, user={user_id})")
@@ -12041,7 +12052,10 @@ GMAIL_SENDER_EMAIL = os.getenv("GMAIL_SENDER_EMAIL", "")  # ex: shopbrainai@gmai
 STOCK_ALERT_COOLDOWN_DAYS = 5
 STOCK_ALERT_REMINDER_DAYS = 7
 STOCK_ALERT_TOKEN_EXPIRY_DAYS = 30
-BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "https://shopbrain-backend.onrender.com")
+BACKEND_BASE_URL = _sanitize_url(
+    os.getenv("BACKEND_BASE_URL"),
+    "https://shopbrain-backend.onrender.com",
+)
 
 # --- Cache access_token en mémoire (expire ~3600 s) ---
 _gmail_access_token: str = ""
