@@ -1369,6 +1369,25 @@ export default function Dashboard() {
         return
       }
 
+      // GUARD: If user has no active subscription, redirect to Stripe checkout
+      if (!subscription?.has_subscription || !subscription?.paid) {
+        const checkoutResp = await fetch(`${API_URL}/api/subscription/create-session`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ plan: nextPlan, email: user?.email || '' })
+        })
+        const checkoutData = await checkoutResp.json().catch(() => ({}))
+        if (checkoutData?.success && checkoutData?.url) {
+          window.location.href = checkoutData.url
+        } else {
+          setStatus('upgrade', 'error', t('errorCreatingStripeSession') || 'Error creating checkout session')
+        }
+        return
+      }
+
       setStatus('upgrade', 'info', t('switching') || 'Switching plan...')
 
       // Use inline switch-plan (modifies existing Stripe subscription)
@@ -1423,6 +1442,33 @@ export default function Dashboard() {
   const handleChangePlan = async (targetPlan) => {
     try {
       if (!targetPlan || targetPlan === subscription?.plan) return
+
+      // GUARD: If user has no active subscription, redirect to Stripe checkout instead of switch-plan
+      if (!subscription?.has_subscription || !subscription?.paid) {
+        const session = await getCachedSession()
+        if (!session) {
+          setStatus('change-plan', 'error', t('sessionExpiredReconnect'))
+          return
+        }
+        setChangePlanLoading(true)
+        const checkoutResp = await fetch(`${API_URL}/api/subscription/create-session`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ plan: targetPlan, email: user?.email || '' })
+        })
+        const checkoutData = await checkoutResp.json().catch(() => ({}))
+        if (checkoutData?.success && checkoutData?.url) {
+          window.location.href = checkoutData.url
+        } else {
+          setStatus('change-plan', 'error', t('errorCreatingStripeSession') || 'Error creating checkout session')
+        }
+        setChangePlanLoading(false)
+        return
+      }
+
       const session = await getCachedSession()
       if (!session) {
         setStatus('change-plan', 'error', t('sessionExpiredReconnect'))
@@ -4116,7 +4162,7 @@ export default function Dashboard() {
     )
   }
 
-  if (!user || (!subscription && subscriptionMissing)) {
+  if (!user || ((!subscription || !subscription.has_subscription) && subscriptionMissing)) {
     const maxRetriesReached = initRetryRef.current >= 8
     return (
       <div className="min-h-screen bg-[#F7F8FA] flex items-center justify-center px-4">

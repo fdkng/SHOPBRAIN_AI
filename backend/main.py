@@ -1553,10 +1553,14 @@ def _is_paid_subscription_row(row: dict | None) -> bool:
     if not row:
         return False
     status = str(row.get("status") or row.get("subscription_status") or "").strip().lower()
-    paid = bool(row.get("paid") is True or row.get("plan") is True)
+    # Robustly check paid/plan — DB may return bool True, string "true", or int 1
+    raw_paid = row.get("paid")
+    raw_plan = row.get("plan")
+    paid = raw_paid is True or str(raw_paid).lower().strip() in ("true", "1")
+    plan_ok = raw_plan is True or str(raw_plan).lower().strip() in ("true", "1")
     # Accept both 'active' and 'cancelling' (user paid, just scheduled to cancel at period end)
     # period_is_valid check removed — the columns end_date/current_period_end don't exist in Supabase
-    return status in ("active", "cancelling") and paid
+    return status in ("active", "cancelling") and (paid or plan_ok)
 
 
 def _inactive_subscription_payload(message: str | None = None) -> dict:
@@ -1772,7 +1776,7 @@ async def get_products(request: Request):
 # ============ FAST INIT ENDPOINT — replaces 5 parallel calls with 1 ============
 # In-memory caches with TTL
 _init_cache = {}  # key: user_id, value: (timestamp, data)
-_INIT_CACHE_TTL = 120  # 2 minutes
+_INIT_CACHE_TTL = 45  # 45 seconds (was 120 — reduced to avoid stale subscription data)
 _INIT_CACHE_TTL_NO_SUB = 5  # 5 seconds for "no subscription" results (so retries hit DB quickly)
 
 @app.get("/api/init")
@@ -2027,7 +2031,7 @@ async def health():
     return {
         "status": "ok",
         "version": "3.0-fast-init",
-        "build": "20260406-shopify-oauth-v5",
+        "build": "20260406-sub-gate-fix-v6",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
                 "openai": "configured" if OPENAI_API_KEY else "not_configured",
