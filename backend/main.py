@@ -2081,7 +2081,7 @@ async def health():
     return {
         "status": "ok",
         "version": "3.0-fast-init",
-        "build": "20260406-next-renewal-switch-v8",
+        "build": "20260406-next-renewal-switch-v8.1",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
                 "openai": "configured" if OPENAI_API_KEY else "not_configured",
@@ -13433,7 +13433,6 @@ async def switch_plan_inline(request: Request):
             raise HTTPException(status_code=400, detail="Subscription has no items — please contact support")
 
         current_item = items[0]
-        current_item_id = _sg(current_item, "id")
         current_price_id = _sg(_sg(current_item, "price", {}), "id")
 
         if current_price_id == new_price_id:
@@ -13462,6 +13461,15 @@ async def switch_plan_inline(request: Request):
             else:
                 schedule_id = _sg(schedule_raw, "id")
 
+        if schedule_id:
+            try:
+                existing_schedule = stripe.SubscriptionSchedule.retrieve(schedule_id)
+                schedule_status = str(_sg(existing_schedule, "status") or "").lower()
+                if schedule_status in ("released", "completed", "canceled"):
+                    schedule_id = None
+            except Exception:
+                schedule_id = None
+
         if not schedule_id:
             created_schedule = stripe.SubscriptionSchedule.create(from_subscription=stripe_sub_id)
             schedule_id = _sg(created_schedule, "id")
@@ -13476,6 +13484,7 @@ async def switch_plan_inline(request: Request):
                     "items": [{"price": current_price_id, "quantity": quantity}],
                 },
                 {
+                    "start_date": current_period_end,
                     "items": [{"price": new_price_id, "quantity": quantity}],
                 },
             ],

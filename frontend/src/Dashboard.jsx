@@ -1405,22 +1405,10 @@ export default function Dashboard() {
         // Immediately re-fetch from backend which now live-syncs with Stripe
         await initializeUser(true)
       } else {
-        // Fallback to checkout if switch-plan fails
-        console.warn('switch-plan failed for upgrade, falling back:', data)
-        const fallbackResp = await fetch(`${API_URL}/api/subscription/create-session`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${session.access_token}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ plan: nextPlan, email: user?.email || '' })
-        })
-        const fallbackData = await fallbackResp.json().catch(() => ({}))
-        if (fallbackData?.success && fallbackData?.url) {
-          window.location.href = fallbackData.url
-        } else {
-          setStatus('upgrade', 'error', data?.detail || t('errorCreatingStripeSession'))
-        }
+        // Never redirect active subscribers to checkout for plan switch failures.
+        // Keep the current plan and show actionable error.
+        console.warn('switch-plan failed for upgrade (no checkout fallback):', data)
+        setStatus('upgrade', 'error', data?.detail || tr('unableToSchedulePlanChange', 'Unable to schedule plan change. Please try again.'))
       }
     } catch (e) {
       console.error('Upgrade error:', e)
@@ -1498,22 +1486,9 @@ export default function Dashboard() {
         // Already on this plan
         setStatus('change-plan', 'info', data.message || 'Already on this plan')
       } else {
-        // Fallback: if switch-plan fails (e.g., no existing subscription), use checkout
-        console.warn('switch-plan failed, falling back to create-session:', data)
-        const fallbackResp = await fetch(`${API_URL}/api/subscription/create-session`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${session.access_token}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ plan: targetPlan, email: user?.email || '' })
-        })
-        const fallbackData = await fallbackResp.json().catch(() => ({}))
-        if (fallbackData?.success && fallbackData?.url) {
-          window.location.href = fallbackData.url
-        } else {
-          setStatus('change-plan', 'error', data?.detail || t('errorCreatingStripeSession'))
-        }
+        // Never redirect active subscribers to checkout for plan switch failures.
+        console.warn('switch-plan failed (no checkout fallback):', data)
+        setStatus('change-plan', 'error', data?.detail || tr('unableToSchedulePlanChange', 'Unable to schedule plan change. Please try again.'))
       }
     } catch (e) {
       console.error('Change plan error:', e)
