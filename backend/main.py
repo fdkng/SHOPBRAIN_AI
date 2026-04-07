@@ -2081,7 +2081,7 @@ async def health():
     return {
         "status": "ok",
         "version": "3.0-fast-init",
-        "build": "20260406-stripe-source-of-truth-v7",
+        "build": "20260406-stripe-source-of-truth-v7.1",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
                 "openai": "configured" if OPENAI_API_KEY else "not_configured",
