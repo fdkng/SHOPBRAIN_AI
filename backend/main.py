@@ -2643,6 +2643,20 @@ async def create_checkout(payload: dict, request: Request):
 
     price_id = STRIPE_PLANS[plan]
 
+    # GUARD: prevent duplicate subscriptions — active subscribers must use switch-plan
+    try:
+        if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+            _supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+            _sub_check = _supabase.table("subscriptions").select("status,paid").eq("user_id", user_id).limit(1).execute()
+            if _sub_check.data:
+                _r = _sub_check.data[0]
+                if _r.get("paid") and str(_r.get("status") or "").lower() in ("active", "cancelling", "trialing"):
+                    raise HTTPException(status_code=409, detail="You already have an active subscription. Use the plan switch in your dashboard.")
+    except HTTPException:
+        raise
+    except Exception:
+        pass  # Non-blocking; allow checkout to proceed if check fails
+
     try:
         session = stripe.checkout.Session.create(
             payment_method_types=["card"],
@@ -11908,14 +11922,26 @@ async def create_checkout_session(req: CreateCheckoutSessionRequest, request: Re
         frontend_url = "https://fdkng.github.io/SHOPBRAIN_AI"
 
         stripe_customer_id = None
+        has_active_sub = False
         try:
             if SUPABASE_URL and SUPABASE_SERVICE_KEY:
                 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-                sub_res = supabase.table("subscriptions").select("stripe_customer_id").eq("user_id", user_id).order("created_at", desc=True).limit(1).execute()
+                sub_res = supabase.table("subscriptions").select("stripe_customer_id,status,paid,stripe_subscription_id").eq("user_id", user_id).order("created_at", desc=True).limit(1).execute()
                 if sub_res.data:
-                    stripe_customer_id = sub_res.data[0].get("stripe_customer_id")
+                    row = sub_res.data[0]
+                    stripe_customer_id = row.get("stripe_customer_id")
+                    # Check if user already has an active paid subscription
+                    if row.get("paid") and str(row.get("status") or "").lower() in ("active", "cancelling", "trialing"):
+                        has_active_sub = True
         except Exception as e:
             print(f"Stripe customer lookup warning: {e}")
+
+        # GUARD: prevent duplicate subscriptions — active subscribers must use switch-plan
+        if has_active_sub:
+            raise HTTPException(
+                status_code=409,
+                detail="You already have an active subscription. Use the plan switch feature in your dashboard instead of creating a new checkout."
+            )
         
         session_kwargs = {
             "payment_method_types": ["card"],
@@ -13553,17 +13579,20 @@ async def cancel_subscription(request: Request):
 
 
 @app.post("/api/subscription/switch-plan")
-async def switch_plan_inline(request: Request):
+async def switch_plan_inline(request: Request, _override_plan: str | None = None):
     """🔄 Switch an existing Stripe subscription to a different plan INLINE.
     No new checkout — modifies the subscription directly via Stripe API.
     Returns the new plan immediately so the frontend can update."""
     user_id = get_user_id(request)
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON body")
 
-    new_plan = str(body.get("plan", "")).lower().strip()
+    if _override_plan:
+        new_plan = str(_override_plan).lower().strip()
+    else:
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+        new_plan = str(body.get("plan", "")).lower().strip()
     if new_plan not in STRIPE_PLANS:
         raise HTTPException(status_code=400, detail=f"Invalid plan: {new_plan}")
 
@@ -13961,62 +13990,10 @@ async def update_payment_method(request: Request):
 
 @app.post("/api/subscription/change-plan")
 async def change_plan(payload: dict, request: Request):
-    """Change the user's subscription plan"""
-    user_id = get_user_id(request)
-    new_plan = payload.get("plan")
-    
-    if new_plan not in ["standard", "pro", "premium"]:
-        raise HTTPException(status_code=400, detail="Plan invalide")
-    
-    try:
-        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-        
-        # Get current subscription
-        result = supabase.table("subscriptions").select("*").eq("user_id", user_id).execute()
-        
-        if not result.data:
-            raise HTTPException(status_code=404, detail="Aucun abonnement trouvé")
-        
-        subscription = result.data[0]
-        current_plan = subscription.get("plan_tier")
-        stripe_customer_id = subscription.get("stripe_customer_id")
-        
-        # If downgrading or switching, create a new checkout session
-        if new_plan != current_plan:
-            # Get user email for checkout
-            user_result = supabase.table("user_profiles").select("email").eq("id", user_id).execute()
-            email = user_result.data[0]["email"] if user_result.data else ""
-            
-            # Redirect to checkout for the new plan
-            session_kwargs = {
-                "mode": "subscription",
-                "line_items": [
-                    {
-                        "price": STRIPE_PLANS.get(new_plan, STRIPE_PLANS["standard"]),
-                        "quantity": 1,
-                    }
-                ],
-                "metadata": {"user_id": user_id, "plan": new_plan},
-                "subscription_data": {
-                    "metadata": {"user_id": user_id, "plan": new_plan},
-                },
-                "success_url": f"https://shopbrain-ai.onrender.com/#dashboard?success=true&session_id={{CHECKOUT_SESSION_ID}}",
-                "cancel_url": f"https://shopbrain-ai.onrender.com/#dashboard",
-            }
-
-            if stripe_customer_id:
-                session_kwargs["customer"] = stripe_customer_id
-            else:
-                session_kwargs["customer_email"] = email
-
-            session = stripe.checkout.Session.create(**session_kwargs)
-            
-            return {"success": True, "url": session.url}
-        else:
-            return {"success": True, "message": "Vous êtes déjà sur ce plan"}
-    except Exception as e:
-        print(f"Error changing plan: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    """Change the user's subscription plan.
+    Delegates to switch-plan (modifies existing Stripe sub) instead of
+    creating a new checkout session which would duplicate subscriptions."""
+    return await switch_plan_inline(request, _override_plan=payload.get("plan"))
 
 
 if __name__ == "__main__":
