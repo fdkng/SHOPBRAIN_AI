@@ -2214,7 +2214,7 @@ async def health():
     return {
         "status": "ok",
         "version": "3.0-fast-init",
-        "build": "20260406-next-renewal-switch-v8.3",
+        "build": "20260406-next-renewal-switch-v8.4",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
                 "openai": "configured" if OPENAI_API_KEY else "not_configured",
@@ -13630,6 +13630,21 @@ async def switch_plan_inline(request: Request):
         # Fallback 3: trial subscriptions
         if not current_period_end:
             current_period_end = _coerce_stripe_timestamp(_sg(stripe_sub, "trial_end")) or 0
+
+        # Fallback 4: upcoming invoice period end (most reliable billing-cycle source)
+        if not current_period_end:
+            try:
+                upcoming_invoice = stripe.Invoice.upcoming(subscription=stripe_sub_id)
+                current_period_end = _coerce_stripe_timestamp(_sg(upcoming_invoice, "period_end")) or 0
+                if not current_period_end:
+                    inv_lines = _sg(_sg(upcoming_invoice, "lines", {}), "data", [])
+                    if inv_lines:
+                        period_obj = _sg(inv_lines[0], "period", {})
+                        current_period_end = _coerce_stripe_timestamp(_sg(period_obj, "end")) or 0
+                if current_period_end:
+                    print(f"  ✅ [SWITCH-PLAN] Renewal date recovered from upcoming invoice: {current_period_end}")
+            except Exception as invoice_err:
+                print(f"  ⚠️ [SWITCH-PLAN] Upcoming invoice fallback warning: {invoice_err}")
 
         if not current_period_end:
             raise HTTPException(
