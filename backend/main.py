@@ -3344,27 +3344,51 @@ async def stripe_webhook(request: Request):
                                 if plan_tier and existing_plan and plan_tier != existing_plan:
                                     print(f"  🔄 [WEBHOOK] Scheduling plan change {existing_plan} → {plan_tier} on existing sub {existing_sub_id}")
                                     try:
-                                        # Use the existing subscription's schedule mechanism
                                         old_items = _sg(_sg(old_stripe_sub, "items", {}), "data", []) or []
-                                        if old_items:
-                                            new_price_id = STRIPE_PLANS.get(plan_tier)
-                                            if new_price_id:
-                                                stripe.Subscription.modify(
-                                                    existing_sub_id,
-                                                    items=[{
-                                                        "id": _sg(old_items[0], "id"),
-                                                        "price": new_price_id,
-                                                    }],
-                                                    proration_behavior="none",
-                                                    billing_cycle_anchor="unchanged",
-                                                    metadata={"user_id": user_id, "plan": plan_tier},
-                                                )
-                                                print(f"  ✅ [WEBHOOK] Switched existing sub to {plan_tier}")
-                                                # Update DB with the switch
-                                                payload_write["stripe_subscription_id"] = existing_sub_id
-                                                payload_write["plan_tier"] = plan_tier
-                                            else:
-                                                print(f"  ⚠️ [WEBHOOK] No price_id found for plan {plan_tier}")
+                                        old_item = old_items[0] if old_items else None
+                                        old_price_id = _sg(_sg(old_item, "price", {}), "id") if old_item else None
+                                        old_qty = int(_sg(old_item, "quantity") or 1) if old_item else 1
+                                        new_price_id = STRIPE_PLANS.get(plan_tier)
+                                        switch_at = _coerce_stripe_timestamp(_sg(old_stripe_sub, "current_period_end"))
+
+                                        if old_price_id and new_price_id and switch_at:
+                                            schedule_raw = _sg(old_stripe_sub, "schedule")
+                                            schedule_id = schedule_raw if isinstance(schedule_raw, str) else _sg(schedule_raw, "id")
+                                            effective_phase_start = "now"
+                                            if schedule_id:
+                                                try:
+                                                    existing_schedule = stripe.SubscriptionSchedule.retrieve(schedule_id)
+                                                    current_phase = _sg(existing_schedule, "current_phase", {}) or {}
+                                                    locked_start = _coerce_stripe_timestamp(_sg(current_phase, "start_date"))
+                                                    if locked_start:
+                                                        effective_phase_start = locked_start
+                                                except Exception as sched_read_err:
+                                                    print(f"  ⚠️ [WEBHOOK] schedule read warning: {sched_read_err}")
+                                            if not schedule_id:
+                                                created_schedule = stripe.SubscriptionSchedule.create(from_subscription=existing_sub_id)
+                                                schedule_id = _sg(created_schedule, "id")
+                                            stripe.SubscriptionSchedule.modify(
+                                                schedule_id,
+                                                end_behavior="release",
+                                                phases=[
+                                                    {
+                                                        "start_date": effective_phase_start,
+                                                        "end_date": switch_at,
+                                                        "items": [{"price": old_price_id, "quantity": old_qty}],
+                                                    },
+                                                    {
+                                                        "start_date": switch_at,
+                                                        "items": [{"price": new_price_id, "quantity": old_qty}],
+                                                    },
+                                                ],
+                                                metadata={"user_id": user_id, "pending_plan": plan_tier, "effective_at": str(switch_at)},
+                                            )
+                                            print(f"  ✅ [WEBHOOK] Scheduled switch on existing sub at renewal ({switch_at})")
+                                            payload_write["stripe_subscription_id"] = existing_sub_id
+                                            payload_write["plan_tier"] = existing_plan
+                                            payload_write["current_period_end"] = _stripe_ts_to_iso(switch_at)
+                                        else:
+                                            print(f"  ⚠️ [WEBHOOK] Missing data for scheduled switch old_price={old_price_id} new_price={new_price_id} switch_at={switch_at}")
                                     except Exception as switch_err:
                                         print(f"  ⚠️ [WEBHOOK] Plan switch on existing sub warning: {switch_err}")
                                 else:
@@ -3379,12 +3403,13 @@ async def stripe_webhook(request: Request):
 
             if plan_tier:
                 try:
+                    profile_plan = payload_write.get("plan_tier") or plan_tier
                     supabase.table("user_profiles").upsert({
                         "id": user_id,
                         "stripe_customer_id": stripe_customer_id,
-                        "stripe_subscription_id": normalized_sub_id,
-                        "subscription_tier": plan_tier,
-                        "subscription_plan": plan_tier,
+                        "stripe_subscription_id": payload_write.get("stripe_subscription_id") or normalized_sub_id,
+                        "subscription_tier": profile_plan,
+                        "subscription_plan": profile_plan,
                         "subscription_status": stored_status,
                         "updated_at": datetime.utcnow().isoformat(),
                     }, on_conflict="id").execute()

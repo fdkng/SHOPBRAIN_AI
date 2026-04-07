@@ -1237,12 +1237,18 @@ export default function Dashboard() {
         }
 
         // Shopify connection (multi-shop)
-        if (initData.shopify?.connection?.shop_domain) {
-          setShopifyUrl(initData.shopify.connection.shop_domain)
+        const nextConnections = Array.isArray(initData.shopify?.connections) ? initData.shopify.connections : []
+        setShopList(nextConnections)
+        const activeFromList = nextConnections.find((shop) => shop?.is_active) || nextConnections[0] || null
+        const activeDomain = initData.shopify?.connection?.shop_domain || activeFromList?.shop_domain || ''
+        if (activeDomain) {
+          setShopifyUrl(activeDomain)
           setShopifyConnected(true)
-        }
-        if (initData.shopify?.connections) {
-          setShopList(initData.shopify.connections)
+          localStorage.setItem('shopifyUrlCache', activeDomain)
+        } else {
+          setShopifyUrl('')
+          setShopifyConnected(false)
+          localStorage.removeItem('shopifyUrlCache')
         }
         if (initData.shopify?.shop_limit !== undefined) {
           setShopLimit(initData.shopify.shop_limit)
@@ -2544,13 +2550,18 @@ export default function Dashboard() {
       })
       if (resp.ok) {
         const data = await resp.json()
-        setShopList(data.connections || [])
+        const connections = Array.isArray(data.connections) ? data.connections : []
+        setShopList(connections)
         setShopLimit(data.shop_limit)
-        const active = data.connection
+        const active = data.connection || connections.find((shop) => shop?.is_active) || connections[0] || null
         if (active?.shop_domain) {
           setShopifyUrl(active.shop_domain)
           setShopifyConnected(true)
           localStorage.setItem('shopifyUrlCache', active.shop_domain)
+        } else {
+          setShopifyUrl('')
+          setShopifyConnected(false)
+          localStorage.removeItem('shopifyUrlCache')
         }
       }
     } catch (e) {
@@ -3938,6 +3949,9 @@ export default function Dashboard() {
           }
           setShopifyConnected(true)
         } else if (data.success && data.connected === false) {
+          if (shopList.length > 0 || shopifyUrl) {
+            return
+          }
           setShopifyConnected(false)
           setStatus('shopify', 'warning', t('shopifyConnectionExpired'))
         }
@@ -3952,7 +3966,7 @@ export default function Dashboard() {
     return () => {
       if (intervalId) window.clearInterval(intervalId)
     }
-  }, [user])
+  }, [user, shopList.length, shopifyUrl])
 
   const analyzeProducts = async () => {
     if (!products || products.length === 0) {
@@ -6784,7 +6798,6 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             onClick={() => startShopifyOAuth()}
                             className="w-full bg-[#96BF48] hover:bg-[#7FA83D] text-white font-bold py-3 px-4 rounded-lg flex items-center justify-center gap-2 shadow-sm"
                           >
-                            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M15.337 3.415c-.148-.18-.348-.26-.548-.26-.1 0-.2.02-.298.06-.898.38-1.497.84-1.897 1.4-.2-.12-.498-.22-.797-.3-.1-.36-.298-.72-.597-.98-.498-.44-1.197-.66-2.095-.66h-.05c-.598 0-2.394.32-3.792 2.36-.998 1.44-1.746 3.46-1.946 6.24l3.493-1.04c.05-.46.15-.92.299-1.34.348-.98.997-1.56 1.496-1.76.05-.02.1-.02.15-.02.1 0 .199.04.249.14.05.08.05.2-.05.36-.349.58-.498 1.2-.498 1.86v.16l3.593-1.06v-.18c0-.56.1-1.08.299-1.56.198-.5.497-.9.846-1.18.05-.04.15-.08.2-.08.048 0 .098.02.148.06.1.08.1.24.05.4-.15.46-.2.96-.2 1.48v.16l3.194-.94c-.05-1.24-.349-2.4-.997-3.08zm-6.234 9.365l-3.493 1.04c-.05 1.38.1 2.52.349 3.32.05.2.15.44.249.66l3.493-1.04c-.15-.18-.249-.44-.349-.7-.199-.78-.299-1.88-.249-3.28zm9.826-2.58l-3.194.94c.05 1.32-.05 2.4-.249 3.16-.1.36-.2.62-.349.8l3.194-.94c.199-.22.349-.52.449-.9.199-.78.249-1.82.149-3.06z"/></svg>
                             Connecter avec Shopify
                           </button>
                           <p className="text-xs text-[#8A8AA3] text-center">Connexion sécurisée via OAuth 2.0 — aucun token à copier.</p>
@@ -6865,7 +6878,6 @@ analytics.subscribe("product_added_to_cart", (event) => {
                                 onClick={() => startShopifyOAuth()}
                                 className="w-full bg-[#96BF48] hover:bg-[#7FA83D] text-white font-bold py-3 px-4 rounded-lg flex items-center justify-center gap-2 shadow-sm"
                               >
-                                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M15.337 3.415c-.148-.18-.348-.26-.548-.26-.1 0-.2.02-.298.06-.898.38-1.497.84-1.897 1.4-.2-.12-.498-.22-.797-.3-.1-.36-.298-.72-.597-.98-.498-.44-1.197-.66-2.095-.66h-.05c-.598 0-2.394.32-3.792 2.36-.998 1.44-1.746 3.46-1.946 6.24l3.493-1.04c.05-.46.15-.92.299-1.34.348-.98.997-1.56 1.496-1.76.05-.02.1-.02.15-.02.1 0 .199.04.249.14.05.08.05.2-.05.36-.349.58-.498 1.2-.498 1.86v.16l3.593-1.06v-.18c0-.56.1-1.08.299-1.56.198-.5.497-.9.846-1.18.05-.04.15-.08.2-.08.048 0 .098.02.148.06.1.08.1.24.05.4-.15.46-.2.96-.2 1.48v.16l3.194-.94c-.05-1.24-.349-2.4-.997-3.08zm-6.234 9.365l-3.493 1.04c-.05 1.38.1 2.52.349 3.32.05.2.15.44.249.66l3.493-1.04c-.15-.18-.249-.44-.349-.7-.199-.78-.299-1.88-.249-3.28zm9.826-2.58l-3.194.94c.05 1.32-.05 2.4-.249 3.16-.1.36-.2.62-.349.8l3.194-.94c.199-.22.349-.52.449-.9.199-.78.249-1.82.149-3.06z"/></svg>
                                 Connecter avec Shopify
                               </button>
                               <p className="text-xs text-[#8A8AA3] text-center">Connexion sécurisée via OAuth 2.0</p>
