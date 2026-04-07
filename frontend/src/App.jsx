@@ -142,16 +142,22 @@ export default function App() {
 
     // Hash-based routing (only on explicit hash change by user)
     const handleHashChange = () => {
+      if (window.location.hash.includes('dashboard')) {
+        setCurrentView('dashboard')
+        return
+      }
       if (window.location.hash.includes('success=true')) {
         setCurrentView('dashboard')
         return
       }
       if (window.location.hash === '#stripe-pricing') {
         setCurrentView('stripe-pricing')
+        return
       }
-      // Note: dashboard routing is handled by the auto-route effect below
+      setCurrentView('landing')
     }
     window.addEventListener('hashchange', handleHashChange)
+    handleHashChange()
 
     // Initial load: check user FIRST (may sign out), THEN check subscription
     const initLoad = async () => {
