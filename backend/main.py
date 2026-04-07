@@ -13760,25 +13760,49 @@ async def switch_plan_inline(request: Request):
             schedule_id = _sg(created_schedule, "id")
             existing_schedule = stripe.SubscriptionSchedule.retrieve(schedule_id)
 
-        # Never mutate current-phase start_date to avoid Stripe error:
-        # "You can not modify the start date of the current phase."
+        # ── Determine the REAL renewal date ──────────────────────────
+        # Priority: the Stripe subscription's current_period_end is the
+        # authoritative billing-cycle boundary.  A freshly-created schedule
+        # may echo "now + 1 month" which is NOT the real renewal date.
+        #
+        # We ONLY fall back to the schedule's current-phase end_date if
+        # the subscription object itself gave us nothing.
+        stripe_sub_period_end = _coerce_stripe_timestamp(_sg(stripe_sub, "current_period_end")) or 0
+        stripe_sub_period_start = _coerce_stripe_timestamp(_sg(stripe_sub, "current_period_start")) or 0
+
+        # The schedule's current phase start_date is IMMUTABLE (Stripe will
+        # reject any change), so we must re-use it exactly.
         locked_current_start = None
-        locked_current_end = None
         if existing_schedule:
             current_phase = _sg(existing_schedule, "current_phase", {}) or {}
             locked_current_start = _coerce_stripe_timestamp(_sg(current_phase, "start_date"))
-            locked_current_end = _coerce_stripe_timestamp(_sg(current_phase, "end_date"))
 
-        effective_current_start = locked_current_start or current_period_start or "now"
-        effective_switch_at = locked_current_end or current_period_end
+        # Renewal date: ALWAYS prefer the real subscription cycle over
+        # anything the schedule reports.
+        effective_switch_at = stripe_sub_period_end or current_period_end
+        if not effective_switch_at:
+            # Last-resort: check schedule current phase end (less reliable)
+            if existing_schedule:
+                current_phase = _sg(existing_schedule, "current_phase", {}) or {}
+                effective_switch_at = _coerce_stripe_timestamp(_sg(current_phase, "end_date")) or 0
         if not effective_switch_at:
             raise HTTPException(
                 status_code=400,
                 detail="Unable to determine current phase end date from Stripe. Please retry in 1 minute."
             )
 
-        # Keep canonical renewal timestamp aligned with schedule current phase
+        # Current-phase start: use the locked schedule value (immutable),
+        # else the real subscription period start.
+        effective_current_start = locked_current_start or stripe_sub_period_start or current_period_start or "now"
+
+        # Keep canonical renewal timestamp aligned with the REAL cycle
         current_period_end = effective_switch_at
+
+        print(
+            f"  📅 [SWITCH-PLAN] Phase boundaries: start={effective_current_start} "
+            f"switch_at={effective_switch_at} "
+            f"(stripe_sub.current_period_end={stripe_sub_period_end})"
+        )
 
         stripe.SubscriptionSchedule.modify(
             schedule_id,
