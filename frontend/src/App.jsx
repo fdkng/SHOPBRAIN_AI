@@ -250,11 +250,18 @@ export default function App() {
         if (resp.status === 401) {
           // Token expired — user needs to re-login, don't show scary plan message
           setHasSubscription(false)
+          setSubscriptionPlan(null)
           return
         }
-        // Server error — don't block user with "no plan" message, it might be a Render cold start
-        // The Dashboard has its own retry logic
-        setHasSubscription(false)
+        // Server error (cold start / transient): keep previous subscription state
+        // to avoid locking out already-paid users from the dashboard button.
+        setLandingStatusByKey((prev) => ({
+          ...prev,
+          dashboardHero: {
+            type: 'warning',
+            message: t('backendWaking') || 'Le backend démarre. Réessaie dans quelques secondes.'
+          }
+        }))
         return
       }
       const data = await resp.json()
@@ -279,9 +286,15 @@ export default function App() {
         }))
       }
     } catch (e) {
-      // Network error / Render cold start — don't show "no plan" error
+      // Network error / Render cold start — preserve previous state
       console.error('Subscription check error:', e)
-      setHasSubscription(false)
+      setLandingStatusByKey((prev) => ({
+        ...prev,
+        dashboardHero: {
+          type: 'warning',
+          message: t('backendWaking') || 'Le backend démarre. Réessaie dans quelques secondes.'
+        }
+      }))
     } finally {
       clearTimeout(timeoutId)
       subscriptionCheckInProgressRef.current = false
@@ -577,20 +590,14 @@ export default function App() {
                 </div>
                 <button
                   onClick={() => {
-                    if (hasSubscription) {
-                      setCurrentView('dashboard')
-                    } else {
-                      setLandingStatusByKey((prev) => ({
-                        ...prev,
-                        dashboardHero: { type: 'warning', message: t('subscriptionRequired') }
-                      }))
-                      window.location.hash = '#pricing'
-                    }
+                    checkSubscription()
+                    setCurrentView('dashboard')
+                    window.location.hash = '#dashboard'
                   }}
                   className={`px-4 md:px-5 py-2 rounded-full text-xs md:text-sm font-medium transition-all ${
                     hasSubscription
                       ? 'bg-[#1A1A2E] text-white hover:bg-[#2A2A42] shadow-sm'
-                      : 'bg-[#EFF1F5] text-[#8A8AA3] cursor-not-allowed'
+                      : 'bg-[#EFF1F5] text-[#6A6A85] hover:bg-[#E8E8EE]'
                   }`}
                 >
                   Dashboard
@@ -923,22 +930,14 @@ export default function App() {
             <div className="mt-16 flex flex-col items-center animate-fadeInUp stagger-2">
               <button
                 onClick={() => {
-                  if (hasSubscription) {
-                    setCurrentView('dashboard')
-                    window.location.hash = '#dashboard'
-                  } else {
-                    setLandingStatusByKey((prev) => ({
-                      ...prev,
-                      dashboardHero: { type: 'warning', message: t('subscriptionRequired') }
-                    }))
-                    document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' })
-                  }
+                  checkSubscription()
+                  setCurrentView('dashboard')
+                  window.location.hash = '#dashboard'
                 }}
-                disabled={!hasSubscription}
                 className={`px-12 py-4 text-base font-semibold rounded-full transition-all ${
                   hasSubscription
                     ? 'bg-[#FF6B35] text-white hover:bg-[#E85A28] hover:shadow-lg shadow-[0_8px_24px_rgba(255,107,53,0.25)]'
-                    : 'bg-[#EFF1F5] text-[#8A8AA3] cursor-not-allowed'
+                    : 'bg-[#EFF1F5] text-[#6A6A85] hover:bg-[#E8E8EE]'
                 }`}
               >
                 Accéder à mon Dashboard
