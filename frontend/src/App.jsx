@@ -266,9 +266,38 @@ export default function App() {
       }
       const data = await resp.json()
       console.log('Subscription check response:', data)
-      const hasSub = Boolean(data?.success && data?.has_subscription)
+      let hasSub = Boolean(data?.success && data?.has_subscription)
+      let resolvedPlan = hasSub ? (data?.plan || data?.plan_tier || null) : null
+
+      // Fallback safety: if status endpoint returns false, cross-check /api/init
+      // to avoid false negatives during transient webhook/DB sync windows.
+      if (!hasSub) {
+        try {
+          const initResp = await fetch('https://shopbrain-backend.onrender.com/api/init?force=1', {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${session.access_token}`,
+              'Content-Type': 'application/json'
+            },
+            signal: AbortSignal.timeout(120000)
+          })
+          if (initResp.ok) {
+            const initData = await initResp.json().catch(() => ({}))
+            const initSub = initData?.subscription || {}
+            const initHasSub = Boolean(initSub?.has_subscription || (initSub?.paid && (initSub?.status === 'active' || initSub?.status === 'cancelling')))
+            if (initHasSub) {
+              hasSub = true
+              resolvedPlan = initSub?.plan || initSub?.plan_tier || null
+              console.log('✅ Fallback /api/init recovered active subscription state')
+            }
+          }
+        } catch (fallbackErr) {
+          console.warn('Fallback /api/init subscription check failed:', fallbackErr)
+        }
+      }
+
       setHasSubscription(hasSub)
-      setSubscriptionPlan(hasSub ? (data?.plan || data?.plan_tier || null) : null)
+      setSubscriptionPlan(hasSub ? resolvedPlan : null)
       if (hasSub) {
         setLandingStatusByKey((prev) => {
           if (!prev?.dashboardHero) return prev

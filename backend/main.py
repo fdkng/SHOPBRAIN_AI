@@ -1448,7 +1448,14 @@ def _sub_upsert(supabase_client, user_id: str, data: dict):
     Resilience: if a write fails because a column doesn't exist in the live
     schema (PGRST204), the offending column is stripped and the write retried."""
     try:
-        existing = supabase_client.table("subscriptions").select("id,status,paid,stripe_subscription_id").eq("user_id", user_id).limit(1).execute()
+        existing = (
+            supabase_client.table("subscriptions")
+            .select("id,status,paid,stripe_subscription_id")
+            .eq("user_id", user_id)
+            .order("updated_at", desc=True)
+            .limit(1)
+            .execute()
+        )
         if existing.data:
             row = existing.data[0]
             incoming_status = str(data.get("status") or "").lower()
@@ -2568,7 +2575,7 @@ async def create_payment_link(payload: dict, request: Request):
     try:
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
             _supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-            _sub_check = _supabase.table("subscriptions").select("status,paid").eq("user_id", user_id).limit(1).execute()
+            _sub_check = _supabase.table("subscriptions").select("status,paid").eq("user_id", user_id).order("updated_at", desc=True).limit(1).execute()
             if _sub_check.data:
                 _r = _sub_check.data[0]
                 if _r.get("paid") and str(_r.get("status") or "").lower() in ("active", "cancelling", "trialing"):
@@ -2661,7 +2668,7 @@ async def create_checkout(payload: dict, request: Request):
     try:
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
             _supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-            _sub_check = _supabase.table("subscriptions").select("status,paid").eq("user_id", user_id).limit(1).execute()
+            _sub_check = _supabase.table("subscriptions").select("status,paid").eq("user_id", user_id).order("updated_at", desc=True).limit(1).execute()
             if _sub_check.data:
                 _r = _sub_check.data[0]
                 if _r.get("paid") and str(_r.get("status") or "").lower() in ("active", "cancelling", "trialing"):
@@ -13757,7 +13764,7 @@ async def switch_plan_inline(request: Request, _override_plan: str | None = None
                             }).eq("user_id", user_id).execute()
                             print(f"  🔧 [SWITCH-PLAN] Auto-healed inactive row: sub={recovered_sub_id}, plan={recovered_plan}")
                             # Re-fetch the now-active row
-                            healed_result = supabase.table("subscriptions").select("*").eq("user_id", user_id).limit(1).execute()
+                            healed_result = supabase.table("subscriptions").select("*").eq("user_id", user_id).order("updated_at", desc=True).limit(1).execute()
                             sub_row = healed_result.data[0] if healed_result.data else None
                     except Exception as heal_err:
                         print(f"  ⚠️ [SWITCH-PLAN] Auto-heal warning: {heal_err}")
