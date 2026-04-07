@@ -2186,6 +2186,39 @@ async def fast_init(request: Request):
                         except Exception as cust_err:
                             print(f"  ⚠️ [INIT-SUB] Customer sub lookup warning: {cust_err}")
 
+                    # Last-resort: search ALL Stripe customers by email (handles multi-customer accounts)
+                    if not stripe_sub_id or not str(stripe_sub_id).startswith("sub_"):
+                        try:
+                            profile_email = sub_row.get("email")
+                            if not profile_email and profile_data:
+                                profile_email = profile_data.get("email")
+                            if profile_email:
+                                customer_list = stripe.Customer.list(email=profile_email, limit=5)
+                                all_cust_ids = [_sg(c, "id") for c in (_sg(customer_list, "data", []) or []) if _sg(c, "id")]
+                                # First pass: active only
+                                for cid in all_cust_ids:
+                                    try:
+                                        active_subs = stripe.Subscription.list(customer=cid, status="active", limit=1)
+                                        if _sg(active_subs, "data"):
+                                            stripe_sub_id = _normalize_stripe_subscription_id(_sg(active_subs, "data")[0])
+                                            print(f"  🔍 [INIT-SUB] Recovered ACTIVE sub_id via email search ({cid}): {stripe_sub_id}")
+                                            break
+                                    except Exception:
+                                        pass
+                                # Second pass: trialing only
+                                if not stripe_sub_id or not str(stripe_sub_id).startswith("sub_"):
+                                    for cid in all_cust_ids:
+                                        try:
+                                            trial_subs = stripe.Subscription.list(customer=cid, status="trialing", limit=1)
+                                            if _sg(trial_subs, "data"):
+                                                stripe_sub_id = _normalize_stripe_subscription_id(_sg(trial_subs, "data")[0])
+                                                print(f"  🔍 [INIT-SUB] Recovered TRIALING sub_id via email search ({cid}): {stripe_sub_id}")
+                                                break
+                                        except Exception:
+                                            pass
+                        except Exception as email_heal_err:
+                            print(f"  ⚠️ [INIT-SUB] Email-based Stripe recovery warning: {email_heal_err}")
+
                     if stripe_sub_id and str(stripe_sub_id).startswith("sub_"):
                         try:
                             stripe_sub = stripe.Subscription.retrieve(stripe_sub_id)
@@ -2377,18 +2410,21 @@ async def repair_subscription(email: str = "", secret: str = ""):
         customers = stripe.Customer.list(email=email, limit=5)
         active_sub = None
         active_customer_id = None
+        # First pass: look for active subscriptions across ALL customers
         for cust in customers.data:
             subs = stripe.Subscription.list(customer=cust.id, status="active", limit=1)
             if subs.data:
                 active_sub = subs.data[0]
                 active_customer_id = cust.id
                 break
-            # Also check trialing
-            trialing = stripe.Subscription.list(customer=cust.id, status="trialing", limit=1)
-            if trialing.data:
-                active_sub = trialing.data[0]
-                active_customer_id = cust.id
-                break
+        # Second pass: only fall back to trialing if no active found
+        if not active_sub:
+            for cust in customers.data:
+                trialing = stripe.Subscription.list(customer=cust.id, status="trialing", limit=1)
+                if trialing.data:
+                    active_sub = trialing.data[0]
+                    active_customer_id = cust.id
+                    break
 
         if not active_sub:
             return {"error": "No active Stripe subscription found for this email", "customers": [c.id for c in customers.data]}
@@ -11950,20 +11986,35 @@ async def check_subscription_status(request: Request):
 
                         for customer_id in candidate_customers:
                             found_sub = None
-                            for target_status in ("active", "trialing"):
-                                try:
-                                    cust_subs = stripe.Subscription.list(customer=customer_id, status=target_status, limit=1)
-                                    subs_data = _sg(cust_subs, "data", []) or []
-                                    if subs_data:
-                                        found_sub = subs_data[0]
-                                        break
-                                except Exception:
-                                    pass
+                            # ONLY check active first — scan ALL customers before falling back to trialing
+                            try:
+                                cust_subs = stripe.Subscription.list(customer=customer_id, status="active", limit=1)
+                                subs_data = _sg(cust_subs, "data", []) or []
+                                if subs_data:
+                                    found_sub = subs_data[0]
+                            except Exception:
+                                pass
                             if found_sub:
                                 stripe_sub_id = _normalize_stripe_subscription_id(found_sub)
                                 if stripe_sub_id:
-                                    print(f"  🔍 [STATUS] Recovered sub_id via user_profiles ({customer_id}): {stripe_sub_id}")
+                                    print(f"  🔍 [STATUS] Recovered active sub_id via user_profiles ({customer_id}): {stripe_sub_id}")
                                     break
+                        # Second pass: only fall back to trialing if no active found across all customers
+                        if not stripe_sub_id:
+                            for customer_id in candidate_customers:
+                                found_sub = None
+                                try:
+                                    cust_subs = stripe.Subscription.list(customer=customer_id, status="trialing", limit=1)
+                                    subs_data = _sg(cust_subs, "data", []) or []
+                                    if subs_data:
+                                        found_sub = subs_data[0]
+                                except Exception:
+                                    pass
+                                if found_sub:
+                                    stripe_sub_id = _normalize_stripe_subscription_id(found_sub)
+                                    if stripe_sub_id:
+                                        print(f"  🔍 [STATUS] Recovered trialing sub_id via user_profiles ({customer_id}): {stripe_sub_id}")
+                                        break
                     except Exception as profile_recover_err:
                         print(f"  ⚠️ [STATUS] Profile-based Stripe recovery warning: {profile_recover_err}")
 

@@ -599,22 +599,25 @@ export default function Dashboard() {
     const tier = (typeof raw?.plan === 'string' && raw.plan !== 'free' && raw.plan !== 'true')
       ? raw.plan
       : (typeof raw?.plan_tier === 'string' ? raw.plan_tier : null)
-    // CRITICAL: Do NOT default to 'standard' — if tier is null, keep it null.
-    // The backend /api/init now verifies plan from Stripe live. A null plan means
-    // the plan couldn't be determined, NOT that it's standard.
     const validTiers = ['standard', 'pro', 'premium']
     const resolvedPlan = (tier && validTiers.includes(tier.toLowerCase())) ? tier.toLowerCase() : null
     const rawUpcoming = typeof raw?.upcoming_plan === 'string' ? raw.upcoming_plan.toLowerCase() : null
     const upcomingPlan = (rawUpcoming && validTiers.includes(rawUpcoming) && rawUpcoming !== resolvedPlan) ? rawUpcoming : null
+    // TRUST backend has_subscription if explicitly true — don't require resolvedPlan
+    // Backend already verified via Stripe. If plan is null the user still has access,
+    // we just can't determine the exact tier (fallback to 'standard').
+    const backendSaysActive = raw?.has_subscription === true
+    const isActive = backendSaysActive || (activePaid && !!resolvedPlan)
+    const effectivePlan = resolvedPlan || (isActive ? 'standard' : null)
     return {
-      has_subscription: activePaid && !!resolvedPlan,
-      paid: activePaid,
-      status: activePaid ? status : 'inactive',
-      subscription_status: activePaid ? status : 'inactive',
-      plan: activePaid ? resolvedPlan : null,
-      upcoming_plan: activePaid ? upcomingPlan : null,
-      upcoming_plan_effective_at: activePaid ? (raw?.upcoming_plan_effective_at || null) : null,
-      current_period_end: activePaid ? (raw?.current_period_end || null) : null,
+      has_subscription: isActive,
+      paid: isActive || activePaid,
+      status: isActive ? (status === 'inactive' ? 'active' : status) : 'inactive',
+      subscription_status: isActive ? (status === 'inactive' ? 'active' : status) : 'inactive',
+      plan: isActive ? effectivePlan : null,
+      upcoming_plan: isActive ? upcomingPlan : null,
+      upcoming_plan_effective_at: isActive ? (raw?.upcoming_plan_effective_at || null) : null,
+      current_period_end: isActive ? (raw?.current_period_end || null) : null,
       payment_date: raw?.payment_date || null,
       started_at: raw?.started_at || null,
       capabilities: raw?.capabilities || null,
@@ -1169,6 +1172,7 @@ export default function Dashboard() {
   // lastSwitchedPlanRef removed — backend now live-syncs plan from Stripe, no local override needed
   const initializeUser = async (forceFresh = false) => {
     try {
+      setError('')  // Clear any previous error on each attempt
       const initStart = performance.now()
       if (forceFresh) resetSubscriptionClientCaches()
       const session = await getCachedSession(forceFresh)
@@ -1281,7 +1285,7 @@ export default function Dashboard() {
             initRetryRef.current++
             const delay = Math.min(1500 * initRetryRef.current, 8000)
             console.log(`🔄 No subscription found, retrying in ${delay/1000}s (attempt ${initRetryRef.current}/8)...`)
-            setTimeout(() => initializeUser(), delay)
+            setTimeout(() => initializeUser(true), delay)
           }
           return subData
         }
@@ -1336,7 +1340,7 @@ export default function Dashboard() {
             initRetryRef.current++
             const delay = Math.min(1500 * initRetryRef.current, 8000)
             console.log(`🔄 Fallback: no subscription, retrying in ${delay/1000}s...`)
-            setTimeout(() => initializeUser(), delay)
+            setTimeout(() => initializeUser(true), delay)
           }
           return normalizedSub
         }
@@ -1351,14 +1355,30 @@ export default function Dashboard() {
         setSubscriptionReady(true)
         return subscription
       }
-      setError(t('authError'))
+      // Also check localStorage for cached subscription before giving up
+      try {
+        const cachedSub = JSON.parse(localStorage.getItem('subscriptionCache') || 'null')
+        if (cachedSub?.has_subscription) {
+          console.log('⚡ Init failed but localStorage subscription cache exists — showing dashboard')
+          setSubscription(cachedSub)
+          setLoading(false)
+          setSubscriptionMissing(false)
+          setSubscriptionReady(true)
+          return cachedSub
+        }
+      } catch {}
+      // Don't set permanent error — it persists across retries. Only set if max retries exhausted.
       setLoading(false)
+      setSubscriptionMissing(true)  // Let user see the sync/retry screen instead of infinite loading
       // Auto-retry on network errors
       if (initRetryRef.current < 8) {
         initRetryRef.current++
         const delay = Math.min(1500 * initRetryRef.current, 8000)
         console.log(`🔄 Init error, retrying in ${delay/1000}s...`)
-        setTimeout(() => initializeUser(), delay)
+        setTimeout(() => initializeUser(true), delay)
+      } else {
+        // Only show auth error after all retries exhausted
+        setError(t('authError'))
       }
     }
   }
@@ -4156,31 +4176,34 @@ export default function Dashboard() {
     )
   }
 
-  if (!user || ((!subscription || !subscription.has_subscription) && subscriptionMissing)) {
-    const maxRetriesReached = initRetryRef.current >= 8
+  // If no user at all, redirect to landing
+  if (!user) {
     return (
       <div className="min-h-screen bg-[#F7F8FA] flex items-center justify-center px-4">
         <div className="text-center text-[#1A1A2E] max-w-md w-full">
-          {!maxRetriesReached ? (
-            <>
-              <div className="w-10 h-10 border-2 border-[#D8D8E2] border-t-[#FF6B35] rounded-full animate-spin mx-auto mb-4"></div>
-              <div className="text-lg sm:text-xl mb-2">{t('subscriptionSync')}</div>
-              <div className="text-[#4A4A68] text-sm mb-2">{t('paymentDelay')}</div>
-              {initRetryRef.current > 0 && (
-                <div className="text-[#8A8AA3] text-xs mb-4">
-                  {t('retry')} {initRetryRef.current}/8...
-                </div>
-              )}
-            </>
-          ) : (
-            <>
-              <div className="text-3xl mb-3">⚠️</div>
-              <div className="text-lg sm:text-xl mb-2 font-semibold">{t('noActiveSubscription') || 'Aucun abonnement actif'}</div>
-              <div className="text-[#4A4A68] text-sm mb-4">{t('paymentDelay')}</div>
-            </>
-          )}
+          <div className="text-3xl mb-3">🔒</div>
+          <div className="text-lg sm:text-xl mb-2 font-semibold">Session expirée</div>
+          <div className="text-[#4A4A68] text-sm mb-4">Veuillez vous reconnecter.</div>
+          <button onClick={() => { window.location.hash = '#/' }} className="bg-[#FF6B35] hover:bg-[#E85A28] px-5 py-2.5 rounded-lg text-white text-sm font-medium transition-colors">Retour à l'accueil</button>
+        </div>
+      </div>
+    )
+  }
+
+  // Show sync screen ONLY during the first 3 retries. After that, show dashboard anyway
+  // with a warning banner (the user may genuinely have a subscription that backend can't find yet).
+  if ((!subscription || !subscription.has_subscription) && subscriptionMissing && initRetryRef.current < 4 && initRetryRef.current > 0) {
+    return (
+      <div className="min-h-screen bg-[#F7F8FA] flex items-center justify-center px-4">
+        <div className="text-center text-[#1A1A2E] max-w-md w-full">
+          <div className="w-10 h-10 border-2 border-[#D8D8E2] border-t-[#FF6B35] rounded-full animate-spin mx-auto mb-4"></div>
+          <div className="text-lg sm:text-xl mb-2">{t('subscriptionSync')}</div>
+          <div className="text-[#4A4A68] text-sm mb-2">{t('paymentDelay')}</div>
+          <div className="text-[#8A8AA3] text-xs mb-4">
+            {t('retry')} {initRetryRef.current}/4...
+          </div>
           <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 justify-center mt-4">
-            <button onClick={() => { initRetryRef.current = 0; initializeUser() }} className="bg-[#FF6B35] hover:bg-[#E85A28] px-5 py-2.5 rounded-lg text-white text-sm font-medium transition-colors">{t('retry')}</button>
+            <button onClick={() => { initRetryRef.current = 0; initializeUser(true) }} className="bg-[#FF6B35] hover:bg-[#E85A28] px-5 py-2.5 rounded-lg text-white text-sm font-medium transition-colors">{t('retry')}</button>
             <button onClick={() => { window.location.hash = '#stripe-pricing' }} className="bg-[#EFF1F5] hover:bg-[#E8E8EE] px-4 py-2.5 rounded-lg text-[#1A1A2E] text-sm">{t('viewPlans')}</button>
             <button onClick={() => { window.location.hash = '#/' }} className="bg-white hover:bg-[#EFF1F5] px-4 py-2.5 rounded-lg text-[#6A6A85] text-sm border border-[#E8E8EE]">{t('backToHome')}</button>
           </div>
@@ -4188,6 +4211,9 @@ export default function Dashboard() {
       </div>
     )
   }
+
+  // NOTE: If retries >= 4 and still no subscription, we fall through and show the dashboard
+  // anyway with the error banner (from setError). This prevents permanent lockout.
 
   return (
     <div className="min-h-screen bg-[#F7F8FA]">
