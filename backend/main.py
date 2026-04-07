@@ -1338,8 +1338,9 @@ def _is_stripe_not_found_error(err: Exception) -> bool:
     return False
 
 
-def _deactivate_subscription_row(supabase_client, row_id: str, reason: str = ""):
-    """Mark a subscription row as inactive in the DB (Stripe resource was deleted/not found)."""
+def _deactivate_subscription_row(supabase_client, row_id: str, reason: str = "", user_id: str = ""):
+    """Mark a subscription row as inactive in the DB (Stripe resource was deleted/not found).
+    Also cleans up stale subscription fields in user_profiles if user_id is provided."""
     try:
         supabase_client.table("subscriptions").update({
             "status": "inactive", "subscription_status": "inactive",
@@ -1349,6 +1350,16 @@ def _deactivate_subscription_row(supabase_client, row_id: str, reason: str = "")
         print(f"  🗑️ [SUB] Deactivated DB row {row_id}: {reason}")
     except Exception as e:
         print(f"  ⚠️ [SUB] Failed to deactivate row {row_id}: {e}")
+    # Also clean up user_profiles to prevent stale data
+    if user_id:
+        try:
+            supabase_client.table("user_profiles").update({
+                "subscription_plan": None, "subscription_tier": None,
+                "subscription_status": "inactive",
+                "updated_at": datetime.utcnow().isoformat()
+            }).eq("id", user_id).execute()
+        except Exception:
+            pass
 
 
 # Stripe price IDs - Mapping tier names to price IDs
@@ -2138,7 +2149,7 @@ async def fast_init(request: Request):
                             if _is_stripe_not_found_error(stripe_verify_err):
                                 # Subscription/customer was DELETED in Stripe — deny access
                                 print(f"  🗑️ [INIT-SUB] Stripe resource deleted: {stripe_verify_err}")
-                                _deactivate_subscription_row(supabase_client, sub_row.get("id"), f"Stripe resource deleted: {stripe_verify_err}")
+                                _deactivate_subscription_row(supabase_client, sub_row.get("id"), f"Stripe resource deleted: {stripe_verify_err}", user_id=user_id)
                                 subscription_data = _inactive_subscription_payload('Subscription no longer exists in Stripe.')
                                 plan = None  # Prevent granting access below
                             else:
@@ -2264,7 +2275,7 @@ async def fast_init(request: Request):
                         except Exception as stripe_err:
                             if _is_stripe_not_found_error(stripe_err):
                                 print(f"  🗑️ [INIT-SUB] Auto-heal: Stripe resource deleted: {stripe_err}")
-                                _deactivate_subscription_row(supabase_client, sub_row.get("id"), f"Auto-heal: Stripe resource deleted")
+                                _deactivate_subscription_row(supabase_client, sub_row.get("id"), f"Auto-heal: Stripe resource deleted", user_id=user_id)
                                 subscription_data = _inactive_subscription_payload('Subscription no longer exists in Stripe.')
                             else:
                                 print(f"  ⚠️ [INIT-SUB] Stripe auto-heal failed (transient, non-blocking): {stripe_err}")
@@ -2273,7 +2284,7 @@ async def fast_init(request: Request):
                     # Proactively deactivate stale DB row to prevent ghost subscriptions
                     if not healed and not (stripe_sub_id and str(stripe_sub_id).startswith("sub_")):
                         # We searched Stripe thoroughly and found nothing — clean up the stale DB row
-                        _deactivate_subscription_row(supabase_client, sub_row.get("id"), "No active Stripe subscription found after exhaustive search")
+                        _deactivate_subscription_row(supabase_client, sub_row.get("id"), "No active Stripe subscription found after exhaustive search", user_id=user_id)
                         subscription_data = _inactive_subscription_payload('No active subscription found in Stripe.')
 
                     elif not healed:
@@ -11936,7 +11947,7 @@ async def check_subscription_status(request: Request):
                         except Exception as stripe_verify_err:
                             if _is_stripe_not_found_error(stripe_verify_err):
                                 print(f"  🗑️ [STATUS] Stripe resource deleted: {stripe_verify_err}")
-                                _deactivate_subscription_row(supabase, subscription.get("id"), f"Stripe resource deleted: {stripe_verify_err}")
+                                _deactivate_subscription_row(supabase, subscription.get("id"), f"Stripe resource deleted: {stripe_verify_err}", user_id=user_id)
                                 return {
                                     'success': True,
                                     'has_subscription': False,
@@ -12092,7 +12103,7 @@ async def check_subscription_status(request: Request):
                     except Exception as stripe_err:
                         if _is_stripe_not_found_error(stripe_err):
                             print(f"  🗑️ [STATUS] Auto-heal: Stripe resource deleted: {stripe_err}")
-                            _deactivate_subscription_row(supabase, subscription.get("id"), f"Auto-heal: Stripe resource deleted")
+                            _deactivate_subscription_row(supabase, subscription.get("id"), f"Auto-heal: Stripe resource deleted", user_id=user_id)
                         else:
                             print(f"  ⚠️ [STATUS] Stripe auto-heal failed (transient, non-blocking): {stripe_err}")
 
