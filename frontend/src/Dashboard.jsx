@@ -446,6 +446,13 @@ export default function Dashboard() {
     })
   }
 
+  const tr = (key, fallback) => {
+    const translated = t(key)
+    if (!translated) return fallback
+    if (translated === key) return fallback
+    return translated
+  }
+
   const formatErrorDetail = (detail, fallback = t('error')) => {
     if (!detail) return fallback
     const str = typeof detail === 'string' ? detail : typeof detail?.message === 'string' ? detail.message : null
@@ -4226,7 +4233,7 @@ export default function Dashboard() {
                     {t('accountSettings')}
                   </button>
                   <button
-                    onClick={() => { setShowProfileMenu(false); setShowPlanMenu(true) }}
+                    onClick={() => { setShowProfileMenu(false); clearStatus('change-plan'); setPendingPlanConfirm(null); setShowPlanMenu(true) }}
                     className="w-full text-left px-3 py-2 rounded hover:bg-[#EFF1F5] flex items-center gap-2 text-sm text-[#1A1A2E]"
                   >
                     Abonnement et facturation
@@ -4321,30 +4328,30 @@ export default function Dashboard() {
 
       {/* Plan Change Menu — with confirmation step */}
       {showPlanMenu && (
-        <div className="fixed inset-0 bg-black/25 z-40 flex items-center justify-center" onClick={() => { if (!changePlanLoading) { setShowPlanMenu(false); setPendingPlanConfirm(null) } }}>
+        <div className="fixed inset-0 bg-black/25 z-40 flex items-center justify-center" onClick={() => { if (!changePlanLoading) { setShowPlanMenu(false); setPendingPlanConfirm(null); clearStatus('change-plan') } }}>
           <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 border border-[#E8E8EE]" onClick={(e) => e.stopPropagation()}>
             {pendingPlanConfirm ? (
               /* ── Confirmation step ── */
               <>
-                <h3 className="text-xl font-bold text-[#1A1A2E] mb-2">{t('confirmPlanChange') || 'Confirm Plan Change'}</h3>
+                <h3 className="text-xl font-bold text-[#1A1A2E] mb-2">{tr('confirmPlanChange', 'Confirm Plan Change')}</h3>
                 <div className="bg-[#FFF7ED] border border-[#FF6B35]/30 rounded-lg p-4 mb-4">
                   <p className="text-sm text-[#1A1A2E] mb-1">
-                    {t('youAreAboutToSwitch') || 'You are about to switch to:'}
+                    {tr('youAreAboutToSwitch', 'You Are About to Switch To:')}
                   </p>
                   <p className="text-lg font-bold text-[#FF6B35]">
-                    {pendingPlanConfirm.plan.toUpperCase()} — ${pendingPlanConfirm.price}/{t('month') || 'mo'}
+                    {pendingPlanConfirm.plan.toUpperCase()} — ${pendingPlanConfirm.price}/{tr('month', 'month')}
                   </p>
                   <p className="text-xs text-[#6A6A85] mt-2">
-                    {t('prorationNotice') || 'Your billing will be prorated. The difference will be charged or credited immediately via Stripe.'}
+                    {tr('prorationNotice', 'Your billing will be prorated. The difference will be charged or credited immediately via Stripe.')}
                   </p>
                 </div>
                 <div className="flex gap-3">
                   <button
-                    onClick={() => setPendingPlanConfirm(null)}
+                    onClick={() => { setPendingPlanConfirm(null); clearStatus('change-plan') }}
                     disabled={changePlanLoading}
                     className="flex-1 px-4 py-3 rounded-lg border border-[#E8E8EE] text-[#6A6A85] hover:bg-[#EFF1F5] disabled:opacity-50"
                   >
-                    {t('cancel') || 'Cancel'}
+                    {tr('cancel', 'Cancel')}
                   </button>
                   <button
                     onClick={async () => {
@@ -4354,7 +4361,7 @@ export default function Dashboard() {
                     disabled={changePlanLoading}
                     className="flex-1 px-4 py-3 rounded-lg bg-[#FF6B35] hover:bg-[#E85A28] text-white font-semibold disabled:opacity-50"
                   >
-                    {changePlanLoading ? (t('switching') || 'Switching...') : (t('confirmSwitch') || 'Confirm & Switch')}
+                    {changePlanLoading ? tr('switching', 'Switching...') : tr('confirmSwitch', 'Confirm & Switch')}
                   </button>
                 </div>
                 {renderStatus('change-plan')}
@@ -4362,26 +4369,26 @@ export default function Dashboard() {
             ) : (
               /* ── Plan selection step ── */
               <>
-                <h3 className="text-xl font-bold text-[#1A1A2E] mb-4">{t('changeYourPlan') || 'Change Your Plan'}</h3>
+                <h3 className="text-xl font-bold text-[#1A1A2E] mb-4">{tr('changeYourPlan', 'Change Your Plan')}</h3>
                 <div className="space-y-2">
                   {[{plan:'standard',price:'99',desc:'50 produits/mo'},{plan:'pro',price:'199',desc:'500 produits/mo + reports'},{plan:'premium',price:'299',desc:'Unlimited + auto actions'}].filter(p => p.plan !== subscription?.plan).map(opt => (
                     <button
                       key={opt.plan}
-                      onClick={() => setPendingPlanConfirm({ plan: opt.plan, price: opt.price })}
+                      onClick={() => { clearStatus('change-plan'); setPendingPlanConfirm({ plan: opt.plan, price: opt.price }) }}
                       disabled={changePlanLoading}
                       className="w-full text-left px-4 py-3 rounded-lg bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E] disabled:opacity-50"
                     >
-                      <div className="font-semibold">{opt.plan.toUpperCase()} - ${opt.price}/{t('month') || 'mois'}</div>
+                      <div className="font-semibold">{opt.plan.toUpperCase()} - ${opt.price}/{tr('month', 'month')}</div>
                       <div className="text-sm text-[#6A6A85]">{opt.desc}</div>
                     </button>
                   ))}
                   <div className="border-t border-[#D8D8E2] pt-2 mt-2">
                     <button
-                      onClick={() => { setShowPlanMenu(false); window.location.hash = '#stripe-pricing' }}
+                      onClick={() => { clearStatus('change-plan'); setShowPlanMenu(false); window.location.hash = '#stripe-pricing' }}
                       disabled={changePlanLoading}
                       className="w-full text-center px-4 py-2 rounded-lg text-[#0D9488] hover:bg-[#EFF1F5]"
                     >
-                      {t('viewAllPlans') || 'View All Plans'}
+                      {tr('viewAllPlans', 'View All Plans')}
                     </button>
                   </div>
                 </div>
@@ -6977,15 +6984,15 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                       {/* Inline plan switch buttons — with confirmation */}
                       <div className="mb-4">
-                        <p className="text-sm font-semibold text-[#1A1A2E] mb-2">{t('changeYourPlan') || 'Change Your Plan'}</p>
+                        <p className="text-sm font-semibold text-[#1A1A2E] mb-2">{tr('changeYourPlan', 'Change Your Plan')}</p>
                         {pendingPlanConfirm ? (
                           <div className="bg-[#FFF7ED] border border-[#FF6B35]/30 rounded-lg p-4 mb-2">
-                            <p className="text-sm text-[#1A1A2E] mb-1">{t('youAreAboutToSwitch') || 'Switch to:'}</p>
+                            <p className="text-sm text-[#1A1A2E] mb-1">{tr('youAreAboutToSwitch', 'You Are About to Switch To:')}</p>
                             <p className="text-lg font-bold text-[#FF6B35]">{pendingPlanConfirm.plan.toUpperCase()} — ${pendingPlanConfirm.price}/mo</p>
-                            <p className="text-xs text-[#6A6A85] mt-1 mb-3">{t('prorationNotice') || 'Billing will be prorated via Stripe.'}</p>
+                            <p className="text-xs text-[#6A6A85] mt-1 mb-3">{tr('prorationNotice', 'Billing will be prorated via Stripe.')}</p>
                             <div className="flex gap-2">
-                              <button onClick={() => setPendingPlanConfirm(null)} disabled={changePlanLoading} className="flex-1 px-3 py-2 rounded-lg border border-[#E8E8EE] text-[#6A6A85] hover:bg-[#EFF1F5] disabled:opacity-50 text-sm">{t('cancel') || 'Cancel'}</button>
-                              <button onClick={async () => { await handleChangePlan(pendingPlanConfirm.plan); setPendingPlanConfirm(null) }} disabled={changePlanLoading} className="flex-1 px-3 py-2 rounded-lg bg-[#FF6B35] hover:bg-[#E85A28] text-white font-semibold disabled:opacity-50 text-sm">{changePlanLoading ? '...' : (t('confirmSwitch') || 'Confirm & Switch')}</button>
+                              <button onClick={() => { setPendingPlanConfirm(null); clearStatus('change-plan') }} disabled={changePlanLoading} className="flex-1 px-3 py-2 rounded-lg border border-[#E8E8EE] text-[#6A6A85] hover:bg-[#EFF1F5] disabled:opacity-50 text-sm">{tr('cancel', 'Cancel')}</button>
+                              <button onClick={async () => { await handleChangePlan(pendingPlanConfirm.plan); setPendingPlanConfirm(null) }} disabled={changePlanLoading} className="flex-1 px-3 py-2 rounded-lg bg-[#FF6B35] hover:bg-[#E85A28] text-white font-semibold disabled:opacity-50 text-sm">{changePlanLoading ? '...' : tr('confirmSwitch', 'Confirm & Switch')}</button>
                             </div>
                           </div>
                         ) : (
@@ -6993,7 +7000,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             {['standard', 'pro', 'premium'].filter(p => p !== subscription?.plan).map(targetPlan => (
                               <button
                                 key={targetPlan}
-                                onClick={() => setPendingPlanConfirm({ plan: targetPlan, price: targetPlan === 'standard' ? '99' : targetPlan === 'pro' ? '199' : '299' })}
+                                onClick={() => { clearStatus('change-plan'); setPendingPlanConfirm({ plan: targetPlan, price: targetPlan === 'standard' ? '99' : targetPlan === 'pro' ? '199' : '299' }) }}
                                 disabled={changePlanLoading}
                                 className="flex-1 px-4 py-3 rounded-lg border border-[#E8E8EE] bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E] disabled:opacity-50 transition text-left"
                               >
@@ -7020,7 +7027,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     ) : (
                       <div className="bg-white rounded-lg p-6 border border-[#E8E8EE] text-center">
                         <p className="text-[#6A6A85] mb-4">{t('noActiveSubscription')}</p>
-                        <button onClick={() => { setShowSettingsModal(false); setShowPlanMenu(true) }} className="bg-[#FF6B35] hover:bg-[#E85A28] px-6 py-3 rounded-lg text-white font-semibold">
+                        <button onClick={() => { clearStatus('change-plan'); setPendingPlanConfirm(null); setShowSettingsModal(false); setShowPlanMenu(true) }} className="bg-[#FF6B35] hover:bg-[#E85A28] px-6 py-3 rounded-lg text-white font-semibold">
                           {t('subscribeToPlan')}
                         </button>
                       </div>
