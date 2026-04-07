@@ -1564,6 +1564,11 @@ def _coerce_stripe_timestamp(value) -> int | None:
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
             return int(dt.timestamp())
+        # Stripe SDK objects can sometimes wrap numeric values.
+        # Final fallback: attempt generic integer coercion.
+        coerced = int(value)
+        if coerced > 0:
+            return coerced
     except Exception:
         return None
     return None
@@ -2050,6 +2055,10 @@ async def fast_init(request: Request):
                     upcoming_change = {"upcoming_plan": None, "upcoming_plan_effective_at": None}
                     cancel_at_period_end = sub_status == 'cancelling'
                     cancel_at = None
+                    current_period_end_iso = _stripe_ts_to_iso(
+                        _coerce_stripe_timestamp(sub_row.get('current_period_end'))
+                        or _coerce_stripe_timestamp(sub_row.get('end_date'))
+                    )
                     stripe_sub_id_for_verify = _normalize_stripe_subscription_id(sub_row.get('stripe_subscription_id'))
                     if stripe_sub_id_for_verify:
                         try:
@@ -2061,8 +2070,10 @@ async def fast_init(request: Request):
                             if _sg(stripe_sub_obj, 'cancel_at_period_end'):
                                 cancel_at_period_end = True
                                 sub_status = 'cancelling'
-                            period_end = _sg(stripe_sub_obj, 'current_period_end')
-                            if cancel_at_period_end and period_end and isinstance(period_end, (int, float)):
+                            period_end = _coerce_stripe_timestamp(_sg(stripe_sub_obj, 'current_period_end'))
+                            if period_end:
+                                current_period_end_iso = _stripe_ts_to_iso(period_end)
+                            if cancel_at_period_end and period_end:
                                 cancel_at = datetime.utcfromtimestamp(period_end).isoformat()
                             # If Stripe says a different plan, update DB to stay in sync
                             if stripe_verified_plan and stripe_verified_plan != plan:
@@ -2104,6 +2115,7 @@ async def fast_init(request: Request):
                             'plan': plan,
                             'upcoming_plan': upcoming_change.get('upcoming_plan'),
                             'upcoming_plan_effective_at': upcoming_change.get('upcoming_plan_effective_at'),
+                            'current_period_end': current_period_end_iso,
                             'paid': True,
                             'status': sub_status,
                             'subscription_status': sub_status,
@@ -2144,10 +2156,12 @@ async def fast_init(request: Request):
                                     payment_date = sub_row.get('payment_date') or _resolve_payment_date(_sg(stripe_sub, "created"))
                                     # Update DB so next call is instant
                                     try:
+                                        healed_period_end = _coerce_stripe_timestamp(_sg(stripe_sub, "current_period_end"))
                                         supabase_client.table("subscriptions").update({
                                             "plan_tier": plan,
                                             "paid": True, "status": sub_status,
                                             "payment_date": payment_date,
+                                            "current_period_end": _stripe_ts_to_iso(healed_period_end) if healed_period_end else sub_row.get("current_period_end"),
                                             "updated_at": datetime.utcnow().isoformat()
                                         }).eq("id", sub_row.get("id")).execute()
                                         print(f"  ✅ [INIT-SUB] Auto-healed DB: paid=true, plan={plan}")
@@ -2159,6 +2173,7 @@ async def fast_init(request: Request):
                                         'plan': plan,
                                         'upcoming_plan': upcoming_change.get('upcoming_plan'),
                                         'upcoming_plan_effective_at': upcoming_change.get('upcoming_plan_effective_at'),
+                                        'current_period_end': _stripe_ts_to_iso(healed_period_end) if healed_period_end else sub_row.get('current_period_end'),
                                         'paid': True,
                                         'status': sub_status,
                                         'subscription_status': sub_status,
@@ -11648,6 +11663,10 @@ async def check_subscription_status(request: Request):
                     upcoming_change = {"upcoming_plan": None, "upcoming_plan_effective_at": None}
                     cancel_at_period_end = sub_status == 'cancelling'
                     cancel_at = None
+                    current_period_end_iso = _stripe_ts_to_iso(
+                        _coerce_stripe_timestamp(subscription.get('current_period_end'))
+                        or _coerce_stripe_timestamp(subscription.get('end_date'))
+                    )
                     stripe_sub_id_for_verify = _normalize_stripe_subscription_id(subscription.get('stripe_subscription_id'))
                     if stripe_sub_id_for_verify:
                         try:
@@ -11658,8 +11677,10 @@ async def check_subscription_status(request: Request):
                             if _sg(stripe_sub_obj, 'cancel_at_period_end'):
                                 cancel_at_period_end = True
                                 sub_status = 'cancelling'
-                            period_end = _sg(stripe_sub_obj, 'current_period_end')
-                            if cancel_at_period_end and period_end and isinstance(period_end, (int, float)):
+                            period_end = _coerce_stripe_timestamp(_sg(stripe_sub_obj, 'current_period_end'))
+                            if period_end:
+                                current_period_end_iso = _stripe_ts_to_iso(period_end)
+                            if cancel_at_period_end and period_end:
                                 cancel_at = datetime.utcfromtimestamp(period_end).isoformat()
                             # Sync DB if Stripe plan differs
                             if stripe_verified_plan and stripe_verified_plan != plan:
@@ -11704,6 +11725,7 @@ async def check_subscription_status(request: Request):
                         'plan': plan,
                         'upcoming_plan': upcoming_change.get('upcoming_plan'),
                         'upcoming_plan_effective_at': upcoming_change.get('upcoming_plan_effective_at'),
+                        'current_period_end': current_period_end_iso,
                         'paid': True,
                         'status': 'active' if not cancel_at_period_end else 'cancelling',
                         'subscription_status': 'active' if not cancel_at_period_end else 'cancelling',
@@ -11739,12 +11761,14 @@ async def check_subscription_status(request: Request):
                                 upcoming_change = _extract_upcoming_plan_change(stripe_sub)
                                 healed_payment_date = subscription.get('payment_date') or _resolve_payment_date(_sg(stripe_sub, "created"))
                                 try:
+                                    healed_period_end = _coerce_stripe_timestamp(_sg(stripe_sub, "current_period_end"))
                                     supabase.table("subscriptions").update({
                                         "plan_tier": healed_plan,
                                         "plan": True,
                                         "paid": True, "status": "active",
                                         "subscription_status": "active",
                                         "payment_date": healed_payment_date,
+                                        "current_period_end": _stripe_ts_to_iso(healed_period_end) if healed_period_end else subscription.get("current_period_end"),
                                         "stripe_customer_id": _sg(stripe_sub, "customer") or subscription.get("stripe_customer_id"),
                                         "stripe_subscription_id": stripe_sub_id,
                                         "updated_at": datetime.utcnow().isoformat(),
@@ -11763,6 +11787,7 @@ async def check_subscription_status(request: Request):
                                     'plan': healed_plan,
                                     'upcoming_plan': upcoming_change.get('upcoming_plan'),
                                     'upcoming_plan_effective_at': upcoming_change.get('upcoming_plan_effective_at'),
+                                    'current_period_end': _stripe_ts_to_iso(healed_period_end) if healed_period_end else subscription.get('current_period_end'),
                                     'paid': True,
                                     'status': 'active',
                                     'subscription_status': 'active',
@@ -13646,6 +13671,30 @@ async def switch_plan_inline(request: Request):
             except Exception as invoice_err:
                 print(f"  ⚠️ [SWITCH-PLAN] Upcoming invoice fallback warning: {invoice_err}")
 
+        # Fallback 5: latest existing invoice period end
+        if not current_period_end:
+            try:
+                latest_invoices = stripe.Invoice.list(subscription=stripe_sub_id, limit=1)
+                latest_data = _sg(latest_invoices, "data", []) or []
+                if latest_data:
+                    latest_invoice = latest_data[0]
+                    current_period_end = _coerce_stripe_timestamp(_sg(latest_invoice, "period_end")) or 0
+                    if not current_period_end:
+                        inv_lines = _sg(_sg(latest_invoice, "lines", {}), "data", []) or []
+                        if inv_lines:
+                            period_obj = _sg(inv_lines[0], "period", {})
+                            current_period_end = _coerce_stripe_timestamp(_sg(period_obj, "end")) or 0
+                if current_period_end:
+                    print(f"  ✅ [SWITCH-PLAN] Renewal date recovered from latest invoice: {current_period_end}")
+            except Exception as latest_invoice_err:
+                print(f"  ⚠️ [SWITCH-PLAN] Latest invoice fallback warning: {latest_invoice_err}")
+
+        # Fallback 6: DB period end (as persisted timestamp/ISO string)
+        if not current_period_end:
+            current_period_end = _coerce_stripe_timestamp(sub_row.get("current_period_end")) or 0
+            if current_period_end:
+                print(f"  ✅ [SWITCH-PLAN] Renewal date recovered from DB current_period_end: {current_period_end}")
+
         if not current_period_end:
             raise HTTPException(
                 status_code=400,
@@ -13673,6 +13722,42 @@ async def switch_plan_inline(request: Request):
             metadata={"user_id": user_id, "pending_plan": new_plan, "effective_at": str(current_period_end)},
         )
 
+        # Verify Stripe accepted the schedule update (target tier present in a future phase)
+        schedule_verify = stripe.SubscriptionSchedule.retrieve(schedule_id)
+        verify_phases = _sg(schedule_verify, "phases", []) or []
+        exact_amount_map = {9900: 'standard', 19900: 'pro', 29900: 'premium'}
+        has_target_future_phase = False
+        for phase in verify_phases:
+            phase_start = _coerce_stripe_timestamp(_sg(phase, "start_date"))
+            if phase_start is not None and phase_start < current_period_end:
+                continue
+            phase_items = _sg(phase, "items", []) or []
+            for phase_item in phase_items:
+                phase_price = _sg(phase_item, "price")
+                if isinstance(phase_price, str):
+                    phase_price_id = phase_price
+                    phase_amount = None
+                else:
+                    phase_price_id = _sg(phase_price, "id")
+                    phase_amount = _sg(phase_price, "unit_amount")
+                phase_tier = PRICE_TO_TIER.get(phase_price_id)
+                if not phase_tier and phase_amount is not None:
+                    try:
+                        phase_tier = exact_amount_map.get(int(phase_amount))
+                    except Exception:
+                        phase_tier = None
+                if phase_tier == new_plan:
+                    has_target_future_phase = True
+                    break
+            if has_target_future_phase:
+                break
+
+        if not has_target_future_phase:
+            raise HTTPException(
+                status_code=500,
+                detail="Stripe did not confirm the scheduled plan change. Please retry in 1 minute."
+            )
+
         # 4. Keep current plan in DB until renewal date; Stripe webhook will update on effective switch.
         now_iso = datetime.utcnow().isoformat()
         _sub_upsert(supabase, user_id, {
@@ -13684,6 +13769,8 @@ async def switch_plan_inline(request: Request):
             "subscription_status": "active",
             "stripe_subscription_id": stripe_sub_id,
             "stripe_customer_id": _sg(stripe_sub, "customer") or sub_row.get("stripe_customer_id"),
+            "current_period_end": datetime.utcfromtimestamp(current_period_end).isoformat(),
+            "end_date": datetime.utcfromtimestamp(current_period_end).isoformat(),
             "updated_at": now_iso,
         })
 
@@ -13697,6 +13784,7 @@ async def switch_plan_inline(request: Request):
             "scheduled_for_period_end": True,
             "current_plan": current_plan,
             "effective_at": datetime.utcfromtimestamp(current_period_end).isoformat(),
+            "renewal_date": datetime.utcfromtimestamp(current_period_end).isoformat(),
             "message": f"Plan change to {new_plan.upper()} scheduled for next renewal"
         }
 

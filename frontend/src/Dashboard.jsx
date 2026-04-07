@@ -614,6 +614,7 @@ export default function Dashboard() {
       plan: activePaid ? resolvedPlan : null,
       upcoming_plan: activePaid ? upcomingPlan : null,
       upcoming_plan_effective_at: activePaid ? (raw?.upcoming_plan_effective_at || null) : null,
+      current_period_end: activePaid ? (raw?.current_period_end || null) : null,
       payment_date: raw?.payment_date || null,
       started_at: raw?.started_at || null,
       capabilities: raw?.capabilities || null,
@@ -4347,7 +4348,9 @@ export default function Dashboard() {
                     {pendingPlanConfirm.plan.toUpperCase()} — ${pendingPlanConfirm.price}/{tr('month', 'month')}
                   </p>
                   <p className="text-xs text-[#6A6A85] mt-2">
-                    {tr('prorationNotice', 'Your billing will be prorated. The difference will be charged or credited immediately via Stripe.')}
+                    {subscription?.current_period_end
+                      ? `${tr('planChangeEffectiveOn', 'The change will take effect on your next renewal date')}: ${new Date(subscription.current_period_end).toLocaleDateString()}.`
+                      : tr('planChangeEffectiveAtNextRenewal', 'The change will take effect at your next renewal date.')}
                   </p>
                 </div>
                 <div className="flex gap-3">
@@ -7001,7 +7004,11 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           <div className="bg-[#FFF7ED] border border-[#FF6B35]/30 rounded-lg p-4 mb-2">
                             <p className="text-sm text-[#1A1A2E] mb-1">{tr('youAreAboutToSwitch', 'You Are About to Switch To:')}</p>
                             <p className="text-lg font-bold text-[#FF6B35]">{pendingPlanConfirm.plan.toUpperCase()} — ${pendingPlanConfirm.price}/mo</p>
-                            <p className="text-xs text-[#6A6A85] mt-1 mb-3">{tr('prorationNotice', 'Billing will be prorated via Stripe.')}</p>
+                            <p className="text-xs text-[#6A6A85] mt-1 mb-3">
+                              {subscription?.current_period_end
+                                ? `${tr('planChangeEffectiveOn', 'The change will take effect on your next renewal date')}: ${new Date(subscription.current_period_end).toLocaleDateString()}.`
+                                : tr('planChangeEffectiveAtNextRenewal', 'The change will take effect at your next renewal date.')}
+                            </p>
                             <div className="flex gap-2">
                               <button onClick={() => { setPendingPlanConfirm(null); clearStatus('change-plan') }} disabled={changePlanLoading} className="flex-1 px-3 py-2 rounded-lg border border-[#E8E8EE] text-[#6A6A85] hover:bg-[#EFF1F5] disabled:opacity-50 text-sm">{tr('cancel', 'Cancel')}</button>
                               <button onClick={async () => { await handleChangePlan(pendingPlanConfirm.plan); setPendingPlanConfirm(null) }} disabled={changePlanLoading} className="flex-1 px-3 py-2 rounded-lg bg-[#FF6B35] hover:bg-[#E85A28] text-white font-semibold disabled:opacity-50 text-sm">{changePlanLoading ? '...' : tr('confirmSwitch', 'Confirm & Switch')}</button>
