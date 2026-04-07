@@ -2081,7 +2081,7 @@ async def health():
     return {
         "status": "ok",
         "version": "3.0-fast-init",
-        "build": "20260406-stripe-source-of-truth-v7.1",
+        "build": "20260406-next-renewal-switch-v8",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
                 "openai": "configured" if OPENAI_API_KEY else "not_configured",
@@ -13439,51 +13439,62 @@ async def switch_plan_inline(request: Request):
         if current_price_id == new_price_id:
             return {"success": True, "plan": new_plan, "message": "Already on this plan", "changed": False}
 
-        # 3. Modify the Stripe subscription — swap price, prorate immediately
-        print(f"🔄 [SWITCH-PLAN] user={user_id} switching from price={current_price_id} to price={new_price_id} (plan={new_plan})")
-        updated_sub = stripe.Subscription.modify(
-            stripe_sub_id,
-            items=[{
-                "id": current_item_id,
-                "price": new_price_id,
-            }],
-            proration_behavior="create_prorations",
-            metadata={"user_id": user_id, "plan": new_plan},
-        )
-        new_status = str(_sg(updated_sub, "status") or "active").lower()
-        # VERIFY: Confirm Stripe actually applied the new price
-        verified_plan = _resolve_plan_from_stripe_subscription(updated_sub)
-        if verified_plan and verified_plan != new_plan:
-            print(f"⚠️ [SWITCH-PLAN] Stripe returned different plan: requested={new_plan}, got={verified_plan}")
-            new_plan = verified_plan  # Trust Stripe over the request
-        if new_status not in ("active", "trialing"):
-            raise HTTPException(status_code=400, detail=f"Stripe subscription status after modification: {new_status}")
-        print(f"✅ [SWITCH-PLAN] Stripe subscription modified & verified: status={new_status}, plan={new_plan}")
+        # 3. Schedule the switch for next renewal (period end), not immediate.
+        # This prevents giving a new tier at the old price in the same billing period.
+        current_period_start = int(_sg(stripe_sub, "current_period_start") or 0)
+        current_period_end = int(_sg(stripe_sub, "current_period_end") or 0)
+        if not current_period_end:
+            raise HTTPException(status_code=400, detail="Cannot determine current billing period end")
 
-        # 4. Immediately update DB so the frontend sees the change right away
+        current_plan = PRICE_TO_TIER.get(current_price_id) or _resolve_plan_from_stripe_subscription(stripe_sub) or sub_row.get("plan_tier")
+        quantity = int(_sg(current_item, "quantity") or 1)
+
+        print(
+            f"🗓️ [SWITCH-PLAN] user={user_id} scheduling switch at period end "
+            f"from price={current_price_id} to price={new_price_id} (target_plan={new_plan}, at={current_period_end})"
+        )
+
+        schedule_raw = _sg(stripe_sub, "schedule")
+        schedule_id = None
+        if schedule_raw:
+            if isinstance(schedule_raw, str):
+                schedule_id = schedule_raw
+            else:
+                schedule_id = _sg(schedule_raw, "id")
+
+        if not schedule_id:
+            created_schedule = stripe.SubscriptionSchedule.create(from_subscription=stripe_sub_id)
+            schedule_id = _sg(created_schedule, "id")
+
+        stripe.SubscriptionSchedule.modify(
+            schedule_id,
+            end_behavior="release",
+            phases=[
+                {
+                    "start_date": current_period_start or "now",
+                    "end_date": current_period_end,
+                    "items": [{"price": current_price_id, "quantity": quantity}],
+                },
+                {
+                    "items": [{"price": new_price_id, "quantity": quantity}],
+                },
+            ],
+            metadata={"user_id": user_id, "pending_plan": new_plan, "effective_at": str(current_period_end)},
+        )
+
+        # 4. Keep current plan in DB until renewal date; Stripe webhook will update on effective switch.
         now_iso = datetime.utcnow().isoformat()
         _sub_upsert(supabase, user_id, {
             "user_id": user_id,
-            "plan_tier": new_plan,
+            "plan_tier": current_plan,
             "plan": True,
             "paid": True,
             "status": "active",
             "subscription_status": "active",
             "stripe_subscription_id": stripe_sub_id,
-            "stripe_customer_id": _sg(updated_sub, "customer") or sub_row.get("stripe_customer_id"),
+            "stripe_customer_id": _sg(stripe_sub, "customer") or sub_row.get("stripe_customer_id"),
             "updated_at": now_iso,
         })
-
-        try:
-            supabase.table("user_profiles").upsert({
-                "id": user_id,
-                "subscription_tier": new_plan,
-                "subscription_plan": new_plan,
-                "subscription_status": "active",
-                "updated_at": now_iso,
-            }, on_conflict="id").execute()
-        except Exception as profile_err:
-            print(f"⚠️ [SWITCH-PLAN] user_profiles upsert warning: {profile_err}")
 
         # 5. Invalidate init cache
         _init_cache.pop(user_id, None)
@@ -13492,7 +13503,10 @@ async def switch_plan_inline(request: Request):
             "success": True,
             "plan": new_plan,
             "changed": True,
-            "message": f"Plan switched to {new_plan.upper()} successfully!"
+            "scheduled_for_period_end": True,
+            "current_plan": current_plan,
+            "effective_at": datetime.utcfromtimestamp(current_period_end).isoformat(),
+            "message": f"Plan change to {new_plan.upper()} scheduled for next renewal"
         }
 
     except HTTPException:

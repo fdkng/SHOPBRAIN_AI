@@ -1393,7 +1393,14 @@ export default function Dashboard() {
       const data = await resp.json().catch(() => ({}))
       if (data?.success && data?.plan) {
         // Do NOT update local state optimistically — wait for backend (Stripe-verified) refresh
-        setStatus('upgrade', 'success', `✅ Plan ${data.plan.toUpperCase()} ${t('activated') || 'activated'}!`)
+        if (data?.scheduled_for_period_end) {
+          const effectiveLabel = data?.effective_at
+            ? new Date(data.effective_at).toLocaleDateString()
+            : ''
+          setStatus('upgrade', 'success', `✅ ${formatPlan(data.plan)} ${tr('scheduledForNextRenewal', 'scheduled for next renewal')}${effectiveLabel ? ` (${effectiveLabel})` : ''}.`)
+        } else {
+          setStatus('upgrade', 'success', `✅ Plan ${data.plan.toUpperCase()} ${t('activated') || 'activated'}!`)
+        }
         resetSubscriptionClientCaches()
         // Immediately re-fetch from backend which now live-syncs with Stripe
         await initializeUser(true)
@@ -1476,7 +1483,14 @@ export default function Dashboard() {
       if (data?.success && data?.plan) {
         // Do NOT update local state optimistically — wait for backend (Stripe-verified) refresh
         setShowPlanMenu(false)
-        setStatus('change-plan', 'success', `✅ Plan ${data.plan.toUpperCase()} ${t('activated') || 'activated'}!`)
+        if (data?.scheduled_for_period_end) {
+          const effectiveLabel = data?.effective_at
+            ? new Date(data.effective_at).toLocaleDateString()
+            : ''
+          setStatus('change-plan', 'success', `✅ ${formatPlan(data.plan)} ${tr('scheduledForNextRenewal', 'scheduled for next renewal')}${effectiveLabel ? ` (${effectiveLabel})` : ''}.`)
+        } else {
+          setStatus('change-plan', 'success', `✅ Plan ${data.plan.toUpperCase()} ${t('activated') || 'activated'}!`)
+        }
         // Invalidate caches and immediately re-fetch from backend (Stripe-verified)
         resetSubscriptionClientCaches()
         await initializeUser(true)
