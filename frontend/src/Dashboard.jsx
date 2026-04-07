@@ -574,17 +574,22 @@ export default function Dashboard() {
     const status = String(raw?.subscription_status || raw?.status || 'inactive').toLowerCase().trim()
     const paid = raw?.paid === true || raw?.plan === true || raw?.has_subscription === true
     const activePaid = (status === 'active' || status === 'cancelling') && paid
-    // Plan tier: prefer explicit string plan from backend; never fall back to 'premium'
+    // Plan tier: prefer explicit string plan from backend (Stripe-verified)
     // raw.plan can be boolean (true) from DB, so check typeof; also check plan_tier field
     const tier = (typeof raw?.plan === 'string' && raw.plan !== 'free' && raw.plan !== 'true')
       ? raw.plan
       : (typeof raw?.plan_tier === 'string' ? raw.plan_tier : null)
+    // CRITICAL: Do NOT default to 'standard' — if tier is null, keep it null.
+    // The backend /api/init now verifies plan from Stripe live. A null plan means
+    // the plan couldn't be determined, NOT that it's standard.
+    const validTiers = ['standard', 'pro', 'premium']
+    const resolvedPlan = (tier && validTiers.includes(tier.toLowerCase())) ? tier.toLowerCase() : null
     return {
-      has_subscription: activePaid,
+      has_subscription: activePaid && !!resolvedPlan,
       paid: activePaid,
       status: activePaid ? status : 'inactive',
       subscription_status: activePaid ? status : 'inactive',
-      plan: activePaid ? (tier || 'standard') : null,
+      plan: activePaid ? resolvedPlan : null,
       payment_date: raw?.payment_date || null,
       started_at: raw?.started_at || null,
       capabilities: raw?.capabilities || null,
@@ -1136,7 +1141,7 @@ export default function Dashboard() {
   }, [])
 
   const initRetryRef = useRef(0)
-  const lastSwitchedPlanRef = useRef(null) // Protect against initializeUser overwriting a just-switched plan
+  // lastSwitchedPlanRef removed — backend now live-syncs plan from Stripe, no local override needed
   const initializeUser = async (forceFresh = false) => {
     try {
       const initStart = performance.now()
@@ -1223,21 +1228,8 @@ export default function Dashboard() {
         // ⚡ Load conversation history from Supabase in background
         loadConversationsFromServer()
 
-        // Subscription — no retry loop, trust the DB
+        // Subscription — trust the backend (Stripe-verified), never override locally
         const subData = normalizeSubscription(initData.subscription || {})
-        
-        // Protect against stale data overwriting a just-switched plan
-        const recentSwitch = lastSwitchedPlanRef?.current
-        if (recentSwitch && (Date.now() - recentSwitch.ts < 10000) && subData.has_subscription) {
-          // Within 10s of a plan switch — keep the switched plan if backend returned a different one
-          if (subData.plan !== recentSwitch.plan) {
-            console.log(`🛡️ Protecting just-switched plan: backend says "${subData.plan}" but we just switched to "${recentSwitch.plan}" — keeping switched plan`)
-            subData.plan = recentSwitch.plan
-          }
-        } else if (recentSwitch && (Date.now() - recentSwitch.ts >= 10000)) {
-          // Clear the protection after 10s
-          lastSwitchedPlanRef.current = null
-        }
         
         setSubscription(subData)
         setSubscriptionReady(true)
@@ -1298,15 +1290,6 @@ export default function Dashboard() {
 
         const data = subResp.ok ? await subResp.json() : null
         const normalizedSub = normalizeSubscription(data || {})
-        
-        // Protect against stale data overwriting a just-switched plan (fallback path)
-        const recentSwitchFb = lastSwitchedPlanRef?.current
-        if (recentSwitchFb && (Date.now() - recentSwitchFb.ts < 10000) && normalizedSub.has_subscription) {
-          if (normalizedSub.plan !== recentSwitchFb.plan) {
-            console.log(`🛡️ [fallback] Protecting just-switched plan: "${normalizedSub.plan}" → "${recentSwitchFb.plan}"`)
-            normalizedSub.plan = recentSwitchFb.plan
-          }
-        }
         
         setSubscription(normalizedSub)
         setSubscriptionReady(true)
@@ -1402,18 +1385,11 @@ export default function Dashboard() {
 
       const data = await resp.json().catch(() => ({}))
       if (data?.success && data?.plan) {
-        lastSwitchedPlanRef.current = { plan: data.plan, ts: Date.now() }
-        setSubscription(prev => ({
-          ...prev,
-          plan: data.plan,
-          has_subscription: true,
-          paid: true,
-          status: 'active',
-          subscription_status: 'active',
-        }))
+        // Do NOT update local state optimistically — wait for backend (Stripe-verified) refresh
         setStatus('upgrade', 'success', `✅ Plan ${data.plan.toUpperCase()} ${t('activated') || 'activated'}!`)
         resetSubscriptionClientCaches()
-        setTimeout(() => initializeUser(true), 1500)
+        // Immediately re-fetch from backend which now live-syncs with Stripe
+        await initializeUser(true)
       } else {
         // Fallback to checkout if switch-plan fails
         console.warn('switch-plan failed for upgrade, falling back:', data)
@@ -1439,6 +1415,7 @@ export default function Dashboard() {
   }
 
   const [changePlanLoading, setChangePlanLoading] = useState(false)
+  const [pendingPlanConfirm, setPendingPlanConfirm] = useState(null) // { plan, price } — awaits user confirmation
   const handleChangePlan = async (targetPlan) => {
     try {
       if (!targetPlan || targetPlan === subscription?.plan) return
@@ -1490,22 +1467,12 @@ export default function Dashboard() {
 
       const data = await resp.json().catch(() => ({}))
       if (data?.success && data?.plan) {
-        // Mark the plan as just-switched — protect it for 10s against stale initializeUser
-        lastSwitchedPlanRef.current = { plan: data.plan, ts: Date.now() }
-        // Immediately update local subscription state
-        setSubscription(prev => ({
-          ...prev,
-          plan: data.plan,
-          has_subscription: true,
-          paid: true,
-          status: 'active',
-          subscription_status: 'active',
-        }))
+        // Do NOT update local state optimistically — wait for backend (Stripe-verified) refresh
         setShowPlanMenu(false)
         setStatus('change-plan', 'success', `✅ Plan ${data.plan.toUpperCase()} ${t('activated') || 'activated'}!`)
-        // Invalidate caches and refresh from backend to confirm
+        // Invalidate caches and immediately re-fetch from backend (Stripe-verified)
         resetSubscriptionClientCaches()
-        setTimeout(() => initializeUser(true), 2000)
+        await initializeUser(true)
       } else if (data?.changed === false) {
         // Already on this plan
         setStatus('change-plan', 'info', data.message || 'Already on this plan')
@@ -4352,83 +4319,74 @@ export default function Dashboard() {
         <main className="flex-1 overflow-y-auto">
           <div className="min-h-full">
 
-      {/* Plan Change Menu (kept separate for billing changes) */}
+      {/* Plan Change Menu — with confirmation step */}
       {showPlanMenu && (
-        <div className="fixed inset-0 bg-black/25 z-40 flex items-center justify-center" onClick={() => !changePlanLoading && setShowPlanMenu(false)}>
+        <div className="fixed inset-0 bg-black/25 z-40 flex items-center justify-center" onClick={() => { if (!changePlanLoading) { setShowPlanMenu(false); setPendingPlanConfirm(null) } }}>
           <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 border border-[#E8E8EE]" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-xl font-bold text-[#1A1A2E] mb-4">{t('changeYourPlan') || 'Change Your Plan'}</h3>
-            <div className="space-y-2">
-              {subscription?.plan === 'standard' && (
-                <>
+            {pendingPlanConfirm ? (
+              /* ── Confirmation step ── */
+              <>
+                <h3 className="text-xl font-bold text-[#1A1A2E] mb-2">{t('confirmPlanChange') || 'Confirm Plan Change'}</h3>
+                <div className="bg-[#FFF7ED] border border-[#FF6B35]/30 rounded-lg p-4 mb-4">
+                  <p className="text-sm text-[#1A1A2E] mb-1">
+                    {t('youAreAboutToSwitch') || 'You are about to switch to:'}
+                  </p>
+                  <p className="text-lg font-bold text-[#FF6B35]">
+                    {pendingPlanConfirm.plan.toUpperCase()} — ${pendingPlanConfirm.price}/{t('month') || 'mo'}
+                  </p>
+                  <p className="text-xs text-[#6A6A85] mt-2">
+                    {t('prorationNotice') || 'Your billing will be prorated. The difference will be charged or credited immediately via Stripe.'}
+                  </p>
+                </div>
+                <div className="flex gap-3">
                   <button
-                    onClick={() => handleChangePlan('pro')}
+                    onClick={() => setPendingPlanConfirm(null)}
                     disabled={changePlanLoading}
-                    className="w-full text-left px-4 py-3 rounded-lg bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E] disabled:opacity-50"
+                    className="flex-1 px-4 py-3 rounded-lg border border-[#E8E8EE] text-[#6A6A85] hover:bg-[#EFF1F5] disabled:opacity-50"
                   >
-                    <div className="font-semibold">PRO - $199/{t('month') || 'mois'}</div>
-                    <div className="text-sm text-[#6A6A85]">500 produits/{t('month') || 'mois'} + {t('reports') || 'rapports'}</div>
+                    {t('cancel') || 'Cancel'}
                   </button>
                   <button
-                    onClick={() => handleChangePlan('premium')}
+                    onClick={async () => {
+                      await handleChangePlan(pendingPlanConfirm.plan)
+                      setPendingPlanConfirm(null)
+                    }}
                     disabled={changePlanLoading}
-                    className="w-full text-left px-4 py-3 rounded-lg bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E] disabled:opacity-50"
+                    className="flex-1 px-4 py-3 rounded-lg bg-[#FF6B35] hover:bg-[#E85A28] text-white font-semibold disabled:opacity-50"
                   >
-                    <div className="font-semibold">PREMIUM - $299/{t('month') || 'mois'}</div>
-                    <div className="text-sm text-[#6A6A85]">{t('unlimitedAutoActions')}</div>
+                    {changePlanLoading ? (t('switching') || 'Switching...') : (t('confirmSwitch') || 'Confirm & Switch')}
                   </button>
-                </>
-              )}
-              {subscription?.plan === 'pro' && (
-                <>
-                <button
-                  onClick={() => handleChangePlan('standard')}
-                  disabled={changePlanLoading}
-                  className="w-full text-left px-4 py-3 rounded-lg bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E] disabled:opacity-50"
-                >
-                  <div className="font-semibold">STANDARD - $99/{t('month') || 'mois'}</div>
-                  <div className="text-sm text-[#6A6A85]">50 produits/{t('month') || 'mois'}</div>
-                </button>
-                <button
-                  onClick={() => handleChangePlan('premium')}
-                  disabled={changePlanLoading}
-                  className="w-full text-left px-4 py-3 rounded-lg bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E] disabled:opacity-50"
-                >
-                  <div className="font-semibold">PREMIUM - $299/{t('month') || 'mois'}</div>
-                  <div className="text-sm text-[#6A6A85]">{t('unlimitedAutoActions')}</div>
-                </button>
-                </>
-              )}
-              {subscription?.plan === 'premium' && (
-                <>
-                <button
-                  onClick={() => handleChangePlan('standard')}
-                  disabled={changePlanLoading}
-                  className="w-full text-left px-4 py-3 rounded-lg bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E] disabled:opacity-50"
-                >
-                  <div className="font-semibold">STANDARD - $99/{t('month') || 'mois'}</div>
-                  <div className="text-sm text-[#6A6A85]">50 produits/{t('month') || 'mois'}</div>
-                </button>
-                <button
-                  onClick={() => handleChangePlan('pro')}
-                  disabled={changePlanLoading}
-                  className="w-full text-left px-4 py-3 rounded-lg bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E] disabled:opacity-50"
-                >
-                  <div className="font-semibold">PRO - $199/{t('month') || 'mois'}</div>
-                  <div className="text-sm text-[#6A6A85]">500 produits/{t('month') || 'mois'} + {t('reports') || 'rapports'}</div>
-                </button>
-                </>
-              )}
-              <div className="border-t border-[#D8D8E2] pt-2 mt-2">
-                <button
-                  onClick={() => { setShowPlanMenu(false); window.location.hash = '#stripe-pricing' }}
-                  disabled={changePlanLoading}
-                  className="w-full text-center px-4 py-2 rounded-lg text-[#0D9488] hover:bg-[#EFF1F5]"
-                >
-                  {t('viewAllPlans') || 'View All Plans'}
-                </button>
-              </div>
-            </div>
-            {renderStatus('change-plan')}
+                </div>
+                {renderStatus('change-plan')}
+              </>
+            ) : (
+              /* ── Plan selection step ── */
+              <>
+                <h3 className="text-xl font-bold text-[#1A1A2E] mb-4">{t('changeYourPlan') || 'Change Your Plan'}</h3>
+                <div className="space-y-2">
+                  {[{plan:'standard',price:'99',desc:'50 produits/mo'},{plan:'pro',price:'199',desc:'500 produits/mo + reports'},{plan:'premium',price:'299',desc:'Unlimited + auto actions'}].filter(p => p.plan !== subscription?.plan).map(opt => (
+                    <button
+                      key={opt.plan}
+                      onClick={() => setPendingPlanConfirm({ plan: opt.plan, price: opt.price })}
+                      disabled={changePlanLoading}
+                      className="w-full text-left px-4 py-3 rounded-lg bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E] disabled:opacity-50"
+                    >
+                      <div className="font-semibold">{opt.plan.toUpperCase()} - ${opt.price}/{t('month') || 'mois'}</div>
+                      <div className="text-sm text-[#6A6A85]">{opt.desc}</div>
+                    </button>
+                  ))}
+                  <div className="border-t border-[#D8D8E2] pt-2 mt-2">
+                    <button
+                      onClick={() => { setShowPlanMenu(false); window.location.hash = '#stripe-pricing' }}
+                      disabled={changePlanLoading}
+                      className="w-full text-center px-4 py-2 rounded-lg text-[#0D9488] hover:bg-[#EFF1F5]"
+                    >
+                      {t('viewAllPlans') || 'View All Plans'}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -7017,24 +6975,36 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         </div>
                       </div>
 
-                      {/* Inline plan switch buttons */}
+                      {/* Inline plan switch buttons — with confirmation */}
                       <div className="mb-4">
                         <p className="text-sm font-semibold text-[#1A1A2E] mb-2">{t('changeYourPlan') || 'Change Your Plan'}</p>
-                        <div className="flex flex-col sm:flex-row gap-2">
-                          {['standard', 'pro', 'premium'].filter(p => p !== subscription?.plan).map(targetPlan => (
-                            <button
-                              key={targetPlan}
-                              onClick={() => handleChangePlan(targetPlan)}
-                              disabled={changePlanLoading}
-                              className="flex-1 px-4 py-3 rounded-lg border border-[#E8E8EE] bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E] disabled:opacity-50 transition text-left"
-                            >
-                              <div className="font-semibold text-sm">{formatPlan(targetPlan)}</div>
-                              <div className="text-xs text-[#6A6A85]">
-                                ${targetPlan === 'standard' ? '99' : targetPlan === 'pro' ? '199' : '299'}/{t('month') || 'mo'}
-                              </div>
-                            </button>
-                          ))}
-                        </div>
+                        {pendingPlanConfirm ? (
+                          <div className="bg-[#FFF7ED] border border-[#FF6B35]/30 rounded-lg p-4 mb-2">
+                            <p className="text-sm text-[#1A1A2E] mb-1">{t('youAreAboutToSwitch') || 'Switch to:'}</p>
+                            <p className="text-lg font-bold text-[#FF6B35]">{pendingPlanConfirm.plan.toUpperCase()} — ${pendingPlanConfirm.price}/mo</p>
+                            <p className="text-xs text-[#6A6A85] mt-1 mb-3">{t('prorationNotice') || 'Billing will be prorated via Stripe.'}</p>
+                            <div className="flex gap-2">
+                              <button onClick={() => setPendingPlanConfirm(null)} disabled={changePlanLoading} className="flex-1 px-3 py-2 rounded-lg border border-[#E8E8EE] text-[#6A6A85] hover:bg-[#EFF1F5] disabled:opacity-50 text-sm">{t('cancel') || 'Cancel'}</button>
+                              <button onClick={async () => { await handleChangePlan(pendingPlanConfirm.plan); setPendingPlanConfirm(null) }} disabled={changePlanLoading} className="flex-1 px-3 py-2 rounded-lg bg-[#FF6B35] hover:bg-[#E85A28] text-white font-semibold disabled:opacity-50 text-sm">{changePlanLoading ? '...' : (t('confirmSwitch') || 'Confirm & Switch')}</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col sm:flex-row gap-2">
+                            {['standard', 'pro', 'premium'].filter(p => p !== subscription?.plan).map(targetPlan => (
+                              <button
+                                key={targetPlan}
+                                onClick={() => setPendingPlanConfirm({ plan: targetPlan, price: targetPlan === 'standard' ? '99' : targetPlan === 'pro' ? '199' : '299' })}
+                                disabled={changePlanLoading}
+                                className="flex-1 px-4 py-3 rounded-lg border border-[#E8E8EE] bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E] disabled:opacity-50 transition text-left"
+                              >
+                                <div className="font-semibold text-sm">{formatPlan(targetPlan)}</div>
+                                <div className="text-xs text-[#6A6A85]">
+                                  ${targetPlan === 'standard' ? '99' : targetPlan === 'pro' ? '199' : '299'}/{t('month') || 'mo'}
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
                         {renderStatus('change-plan')}
                       </div>
 

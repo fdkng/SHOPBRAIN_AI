@@ -1918,32 +1918,71 @@ async def fast_init(request: Request):
                 # Step 2: DECISION — if DB says paid=true + valid plan + active status → GRANT ACCESS
                 payment_date = sub_row.get('payment_date')
                 if paid_flag and plan and sub_status in ('active', 'cancelling'):
-                    # If cancelling, fetch cancel date from Stripe
+                    # CRITICAL: Always verify plan from Stripe (source of truth) when we have a sub ID
+                    # This prevents stale DB plan_tier from showing the wrong plan after upgrades/downgrades
+                    stripe_verified_plan = None
                     cancel_at_period_end = sub_status == 'cancelling'
                     cancel_at = None
-                    if cancel_at_period_end:
-                        stripe_sub_id_for_cancel = sub_row.get('stripe_subscription_id')
-                        if stripe_sub_id_for_cancel:
-                            try:
-                                stripe_sub_obj = stripe.Subscription.retrieve(stripe_sub_id_for_cancel)
-                                period_end = _sg(stripe_sub_obj, 'current_period_end')
-                                if period_end and isinstance(period_end, (int, float)):
-                                    cancel_at = datetime.utcfromtimestamp(period_end).isoformat()
-                            except Exception:
-                                pass
-                    print(f"  ✅ [INIT-SUB] ACCESS GRANTED from DB: paid={paid_flag}, plan={plan}, status={sub_status}, payment_date={payment_date}")
-                    subscription_data = {
-                        'has_subscription': True,
-                        'plan': plan,
-                        'paid': True,
-                        'status': sub_status,
-                        'subscription_status': sub_status,
-                        'payment_date': payment_date,
-                        'started_at': sub_row.get('start_date') or sub_row.get('created_at'),
-                        'capabilities': capabilities.get(plan, {}),
-                        'cancel_at_period_end': cancel_at_period_end,
-                        'cancel_at': cancel_at,
-                    }
+                    stripe_sub_id_for_verify = _normalize_stripe_subscription_id(sub_row.get('stripe_subscription_id'))
+                    if stripe_sub_id_for_verify:
+                        try:
+                            stripe_sub_obj = stripe.Subscription.retrieve(stripe_sub_id_for_verify, expand=['items'])
+                            stripe_verified_plan = _resolve_plan_from_stripe_subscription(stripe_sub_obj)
+                            stripe_live_status = str(_sg(stripe_sub_obj, 'status') or '').lower()
+                            # Update cancel info
+                            if _sg(stripe_sub_obj, 'cancel_at_period_end'):
+                                cancel_at_period_end = True
+                                sub_status = 'cancelling'
+                            period_end = _sg(stripe_sub_obj, 'current_period_end')
+                            if cancel_at_period_end and period_end and isinstance(period_end, (int, float)):
+                                cancel_at = datetime.utcfromtimestamp(period_end).isoformat()
+                            # If Stripe says a different plan, update DB to stay in sync
+                            if stripe_verified_plan and stripe_verified_plan != plan:
+                                print(f"  🔄 [INIT-SUB] Stripe plan '{stripe_verified_plan}' differs from DB plan '{plan}' — syncing DB")
+                                plan = stripe_verified_plan
+                                try:
+                                    supabase_client.table("subscriptions").update({
+                                        "plan_tier": plan,
+                                        "updated_at": datetime.utcnow().isoformat()
+                                    }).eq("id", sub_row.get("id")).execute()
+                                except Exception as sync_err:
+                                    print(f"  ⚠️ [INIT-SUB] DB sync warning: {sync_err}")
+                            elif stripe_verified_plan:
+                                plan = stripe_verified_plan  # Use Stripe value even if same (confirms accuracy)
+                            # If subscription is no longer active in Stripe, deny access
+                            if stripe_live_status not in ('active', 'trialing'):
+                                print(f"  ⚠️ [INIT-SUB] Stripe says status={stripe_live_status}, denying access")
+                                try:
+                                    supabase_client.table("subscriptions").update({
+                                        "status": "inactive", "subscription_status": "inactive",
+                                        "paid": False, "plan": False,
+                                        "updated_at": datetime.utcnow().isoformat()
+                                    }).eq("id", sub_row.get("id")).execute()
+                                except Exception:
+                                    pass
+                                subscription_data = _inactive_subscription_payload('Subscription no longer active in Stripe.')
+                                # Skip to end
+                                plan = None
+                        except Exception as stripe_verify_err:
+                            print(f"  ⚠️ [INIT-SUB] Stripe live-sync warning (non-blocking): {stripe_verify_err}")
+                            # Fall through with DB plan — don't block access on Stripe API errors
+                    elif cancel_at_period_end:
+                        # No sub ID to check cancel date
+                        pass
+                    if plan:  # Only grant if plan is still valid (not cleared by Stripe denial above)
+                        print(f"  ✅ [INIT-SUB] ACCESS GRANTED: paid={paid_flag}, plan={plan}, status={sub_status}, stripe_verified={stripe_verified_plan is not None}")
+                        subscription_data = {
+                            'has_subscription': True,
+                            'plan': plan,
+                            'paid': True,
+                            'status': sub_status,
+                            'subscription_status': sub_status,
+                            'payment_date': payment_date,
+                            'started_at': sub_row.get('start_date') or sub_row.get('created_at'),
+                            'capabilities': capabilities.get(plan, {}),
+                            'cancel_at_period_end': cancel_at_period_end,
+                            'cancel_at': cancel_at,
+                        }
                 else:
                     # Step 3: paid is False/NULL in DB — try Stripe auto-heal (best-effort, NOT blocking)
                     print(f"  🔄 [INIT-SUB] DB paid={paid_flag}, plan={plan}, status={sub_status}, attempting Stripe auto-heal...")
@@ -2042,7 +2081,7 @@ async def health():
     return {
         "status": "ok",
         "version": "3.0-fast-init",
-        "build": "20260406-sub-gate-fix-v6",
+        "build": "20260406-stripe-source-of-truth-v7",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
                 "openai": "configured" if OPENAI_API_KEY else "not_configured",
@@ -3003,10 +3042,10 @@ async def stripe_webhook(request: Request):
                     print(f"  ⚠️ [WEBHOOK] line_items fallback warning: {li_err}")
             if plan_tier:
                 plan_tier = {"99": "standard", "199": "pro", "299": "premium"}.get(str(plan_tier).lower(), str(plan_tier).lower())
-            # If still no plan, default to 'standard' so user isn't locked out
+            # If still no plan, do NOT default — log error and skip DB write to avoid wrong plan
             if not plan_tier:
-                print(f"  ⚠️ [WEBHOOK] Could not resolve plan_tier, defaulting to 'standard'")
-                plan_tier = "standard"
+                print(f"  ❌ [WEBHOOK] checkout.session.completed: Could not resolve plan_tier — skipping DB write to prevent wrong plan")
+                return {"received": True, "warning": "plan_tier_unresolvable", "event_type": event_type}
 
             payment_status_str = str(session.get("payment_status", "")).lower()
             paid_flag = payment_status_str in ("paid", "no_payment_required") or stripe_status in ("active", "trialing")
@@ -3193,8 +3232,8 @@ async def stripe_webhook(request: Request):
                 except Exception as fresh_err:
                     print(f"  ⚠️ [WEBHOOK] fresh subscription fetch warning: {fresh_err}")
             if not plan_tier:
-                print(f"  ⚠️ [WEBHOOK] {event_type} could not resolve plan_tier, defaulting to 'standard'")
-                plan_tier = "standard"
+                print(f"  ❌ [WEBHOOK] {event_type} could not resolve plan_tier — skipping DB write to prevent wrong plan")
+                return {"received": True, "warning": "plan_tier_unresolvable", "event_type": event_type}
 
             email = None
             try:
@@ -11468,23 +11507,62 @@ async def check_subscription_status(request: Request):
                 paid_flag = _is_paid_subscription_row(subscription)
                 plan = tier_map.get(str(raw_tier).lower()) if raw_tier else None
 
-                # Step 2: If DB says paid=true + valid plan → GRANT ACCESS
+                # Step 2: If DB says paid=true + valid plan → verify from Stripe (source of truth) then GRANT ACCESS
                 payment_date = subscription.get('payment_date')
                 if paid_flag and plan and sub_status in ('active', 'cancelling'):
-                    # If cancelling, fetch cancel date from Stripe
+                    # CRITICAL: Verify plan from Stripe live to prevent stale plan display
+                    stripe_verified_plan = None
                     cancel_at_period_end = sub_status == 'cancelling'
                     cancel_at = None
-                    if cancel_at_period_end:
-                        stripe_sub_id_for_cancel = subscription.get('stripe_subscription_id')
-                        if stripe_sub_id_for_cancel:
-                            try:
-                                stripe_sub_obj = stripe.Subscription.retrieve(stripe_sub_id_for_cancel)
-                                period_end = _sg(stripe_sub_obj, 'current_period_end')
-                                if period_end and isinstance(period_end, (int, float)):
-                                    cancel_at = datetime.utcfromtimestamp(period_end).isoformat()
-                            except Exception:
-                                pass
-                    print(f"  ✅ [STATUS] ACCESS GRANTED from DB: paid={paid_flag}, plan={plan}, status={sub_status}, payment_date={payment_date}, cancelling={cancel_at_period_end}")
+                    stripe_sub_id_for_verify = _normalize_stripe_subscription_id(subscription.get('stripe_subscription_id'))
+                    if stripe_sub_id_for_verify:
+                        try:
+                            stripe_sub_obj = stripe.Subscription.retrieve(stripe_sub_id_for_verify, expand=['items'])
+                            stripe_verified_plan = _resolve_plan_from_stripe_subscription(stripe_sub_obj)
+                            stripe_live_status = str(_sg(stripe_sub_obj, 'status') or '').lower()
+                            if _sg(stripe_sub_obj, 'cancel_at_period_end'):
+                                cancel_at_period_end = True
+                                sub_status = 'cancelling'
+                            period_end = _sg(stripe_sub_obj, 'current_period_end')
+                            if cancel_at_period_end and period_end and isinstance(period_end, (int, float)):
+                                cancel_at = datetime.utcfromtimestamp(period_end).isoformat()
+                            # Sync DB if Stripe plan differs
+                            if stripe_verified_plan and stripe_verified_plan != plan:
+                                print(f"  🔄 [STATUS] Stripe plan '{stripe_verified_plan}' differs from DB '{plan}' — syncing")
+                                plan = stripe_verified_plan
+                                try:
+                                    supabase.table("subscriptions").update({
+                                        "plan_tier": plan, "updated_at": datetime.utcnow().isoformat()
+                                    }).eq("id", subscription.get("id")).execute()
+                                except Exception:
+                                    pass
+                            elif stripe_verified_plan:
+                                plan = stripe_verified_plan
+                            # Deny if Stripe says inactive
+                            if stripe_live_status not in ('active', 'trialing'):
+                                print(f"  ⚠️ [STATUS] Stripe says status={stripe_live_status}, denying")
+                                try:
+                                    supabase.table("subscriptions").update({
+                                        "status": "inactive", "subscription_status": "inactive",
+                                        "paid": False, "plan": False,
+                                        "updated_at": datetime.utcnow().isoformat()
+                                    }).eq("id", subscription.get("id")).execute()
+                                except Exception:
+                                    pass
+                                return {
+                                    'success': True,
+                                    'has_subscription': False,
+                                    'plan': None,
+                                    'paid': False,
+                                    'status': 'inactive',
+                                    'subscription_status': 'inactive',
+                                    'message': 'Subscription no longer active in Stripe',
+                                }
+                        except Exception as stripe_verify_err:
+                            print(f"  ⚠️ [STATUS] Stripe live-sync warning: {stripe_verify_err}")
+                    elif cancel_at_period_end:
+                        pass
+                    print(f"  ✅ [STATUS] ACCESS GRANTED: paid={paid_flag}, plan={plan}, status={sub_status}, stripe_verified={stripe_verified_plan is not None}")
                     return {
                         'success': True,
                         'has_subscription': True,
@@ -13373,7 +13451,14 @@ async def switch_plan_inline(request: Request):
             metadata={"user_id": user_id, "plan": new_plan},
         )
         new_status = str(_sg(updated_sub, "status") or "active").lower()
-        print(f"✅ [SWITCH-PLAN] Stripe subscription modified: status={new_status}, new_plan={new_plan}")
+        # VERIFY: Confirm Stripe actually applied the new price
+        verified_plan = _resolve_plan_from_stripe_subscription(updated_sub)
+        if verified_plan and verified_plan != new_plan:
+            print(f"⚠️ [SWITCH-PLAN] Stripe returned different plan: requested={new_plan}, got={verified_plan}")
+            new_plan = verified_plan  # Trust Stripe over the request
+        if new_status not in ("active", "trialing"):
+            raise HTTPException(status_code=400, detail=f"Stripe subscription status after modification: {new_status}")
+        print(f"✅ [SWITCH-PLAN] Stripe subscription modified & verified: status={new_status}, plan={new_plan}")
 
         # 4. Immediately update DB so the frontend sees the change right away
         now_iso = datetime.utcnow().isoformat()
