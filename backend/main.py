@@ -339,13 +339,6 @@ async def get_shopify_bundles_legacy_v1(request: Request, range: str = "30d", li
         "orders_scanned": len(orders),
         "bundle_suggestions": suggestions,
     }
-    if code == "CAD":
-        return "dollars canadiens (CAD)"
-    if code == "USD":
-        return "dollars US (USD)"
-    if code == "EUR":
-        return "euros (EUR)"
-    return f"{code or 'devise inconnue'}"
 
 
 def _parse_price_and_currency(raw: str) -> tuple[float | None, str | None]:
@@ -1314,12 +1307,9 @@ def _ai_analyze_search_results(product_title: str, current_price: float, search_
         return None
 
 
-# Shopify OAuth credentials
-SHOPIFY_API_KEY = os.getenv("SHOPIFY_API_KEY")
-SHOPIFY_API_SECRET = os.getenv("SHOPIFY_API_SECRET")
-SHOPIFY_ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN")
-SHOPIFY_SCOPES = "read_products,write_products,read_orders,read_customers,read_analytics,read_script_tags"
-SHOPIFY_REDIRECT_URI = os.getenv("SHOPIFY_REDIRECT_URI", "https://shopbrain-backend.onrender.com/auth/shopify/callback")
+# Note: Shopify OAuth credentials, CORS middleware, and stripe/openai init
+# are configured once at the top of this file (lines 60-70).
+# Do NOT duplicate them here.
 
 if not OPENAI_API_KEY:
     print("Warning: OPENAI_API_KEY not set. /optimize will fail without it.")
@@ -1329,39 +1319,6 @@ else:
 
 if STRIPE_SECRET_KEY:
     stripe.api_key = STRIPE_SECRET_KEY
-
-print("\n🚀 ========== BACKEND STARTUP ==========")
-print(f"✅ FastAPI initializing...")
-# Do not re-create app here: keep the original instance so previously declared routes stay registered.
-
-# Allow CORS from configured frontend and local development
-allowed_origins = [
-    "https://fdkng.github.io",
-    "https://fdkng.github.io/SHOPBRAIN_AI",
-    "http://localhost:5173",
-    "http://localhost:3000",
-]
-
-frontend_origin = FRONTEND_ORIGIN
-if frontend_origin:
-    allowed_origins.append(frontend_origin)
-
-extra_origins = [
-    origin.strip()
-    for origin in os.getenv("FRONTEND_ORIGINS", "").split(",")
-    if origin.strip()
-]
-allowed_origins.extend(extra_origins)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_origin_regex=r"^https://.*$",
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-print(f"✅ CORS middleware configured")
 
 # Stripe price IDs - Mapping tier names to price IDs
 STRIPE_PLANS = {
@@ -6100,7 +6057,7 @@ async def get_shopify_insights(
     # Fetch shop currency
     shop_currency = "CAD"
     try:
-        shop_resp = httpx.get(
+        shop_resp = requests.get(
             f"https://{shop_domain}/admin/api/2024-01/shop.json",
             headers={"X-Shopify-Access-Token": access_token},
             timeout=8,
@@ -11670,23 +11627,23 @@ async def apply_recommendation_endpoint(req: ApplyRecommendationRequest, request
             result = action_engine.apply_price_change(req.product_id, new_price)
             if not result.get("success"):
                 raise HTTPException(status_code=400, detail=result.get("error", "Échec modification prix"))
-            rec_type = "prix"
 
-        if rec_type == "titre":
+        elif rec_type == "titre":
             engine = get_ai_engine()
             new_title = engine.content_gen.generate_title(product, tier)
             result = action_engine.update_product_content(req.product_id, title=new_title)
             if not result.get("success"):
                 raise HTTPException(status_code=400, detail=result.get("error", "Échec modification titre"))
-            rec_type = "titre"
 
-        if rec_type == "description":
+        elif rec_type == "description":
             engine = get_ai_engine()
             new_description = engine.content_gen.generate_description(product, tier)
             result = action_engine.update_product_content(req.product_id, description=new_description)
             if not result.get("success"):
                 raise HTTPException(status_code=400, detail=result.get("error", "Échec modification description"))
-            rec_type = "description"
+
+        else:
+            raise HTTPException(status_code=400, detail="Type de recommandation non supporté")
 
         # Fetch product (after) to verify change
         after_resp = requests.get(
@@ -11736,8 +11693,6 @@ async def apply_recommendation_endpoint(req: ApplyRecommendationRequest, request
                 "price": after_price
             }
         }
-
-        raise HTTPException(status_code=400, detail="Type de recommandation non supporté")
 
     except HTTPException:
         raise

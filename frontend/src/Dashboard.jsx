@@ -4557,7 +4557,7 @@ export default function Dashboard() {
                 {subscription?.plan !== 'premium' && (
                   <button
                     onClick={handleUpgrade}
-                    className="ml-4 bg-[#FF6B35] hover:bg-[#E85A28] text-black text-sm font-bold px-3 py-1 rounded-lg"
+                    className="ml-4 bg-[#FF6B35] hover:bg-[#E85A28] text-white text-sm font-bold px-3 py-1 rounded-lg"
                   >
                     Upgrade
                   </button>
@@ -6860,7 +6860,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                                 />
                                 <p className="text-xs text-[#8A8AA3] mt-2">Scopes requis: read_products, write_products, read_orders, read_customers, read_analytics.</p>
                               </div>
-                              <button onClick={connectShopify} className="w-full bg-[#FF6B35] hover:bg-[#E85A28] text-black font-bold py-2 px-4 rounded-lg">
+                              <button onClick={connectShopify} className="w-full bg-[#FF6B35] hover:bg-[#E85A28] text-white font-bold py-2 px-4 rounded-lg">
                                 Connecter manuellement
                               </button>
                             </div>
@@ -6972,7 +6972,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                                   onChange={(e) => setShopifyToken(e.target.value)}
                                   className="w-full bg-[#EFF1F5] text-[#1A1A2E] px-4 py-2 rounded-lg border border-[#D8D8E2]"
                                 />
-                                <button onClick={connectShopify} className="w-full bg-[#FF6B35] hover:bg-[#E85A28] text-black font-bold py-2 px-4 rounded-lg">
+                                <button onClick={connectShopify} className="w-full bg-[#FF6B35] hover:bg-[#E85A28] text-white font-bold py-2 px-4 rounded-lg">
                                   Mettre à jour
                                 </button>
                               </div>
