@@ -102,6 +102,7 @@ export default function App() {
   const [currentView, setCurrentView] = useState('landing')
   const [user, setUser] = useState(null)
   const [hasSubscription, setHasSubscription] = useState(false)
+  const [subscriptionPlan, setSubscriptionPlan] = useState(null)
 
   // ⚡ Prefetch Dashboard chunk in background after landing page loads
   useEffect(() => {
@@ -254,6 +255,7 @@ export default function App() {
       console.log('Subscription check response:', data)
       const hasSub = Boolean(data?.success && data?.has_subscription)
       setHasSubscription(hasSub)
+      setSubscriptionPlan(hasSub ? (data?.plan || data?.plan_tier || null) : null)
       if (hasSub) {
         setLandingStatusByKey((prev) => {
           if (!prev?.dashboardHero) return prev
@@ -527,7 +529,7 @@ export default function App() {
 
   // If viewing Stripe Pricing Table
   if (currentView === 'stripe-pricing' && user) {
-    return <Suspense fallback={<LazyFallback />}><StripePricingTable userEmail={user?.email} userId={user?.id} /></Suspense>
+    return <Suspense fallback={<LazyFallback />}><StripePricingTable userEmail={user?.email} userId={user?.id} hasActiveSubscription={hasSubscription} currentPlan={subscriptionPlan} /></Suspense>
   }
 
   // Otherwise show landing page

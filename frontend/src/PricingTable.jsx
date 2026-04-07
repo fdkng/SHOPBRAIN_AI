@@ -2,7 +2,7 @@ import React, { useEffect } from 'react'
 
 // Prefill email/client reference so Stripe checkout is smoother
 // Supports test mode via URL params: ?mode=test&pk=pk_test_...&ptid=prctbl_test_...
-export default function StripePricingTable({ userEmail, userId }) {
+export default function StripePricingTable({ userEmail, userId, hasActiveSubscription, currentPlan }) {
   const readyIdentity = Boolean(userId && userEmail)
 
   useEffect(() => {
@@ -31,6 +31,30 @@ export default function StripePricingTable({ userEmail, userId }) {
           </p>
         </div>
 
+        {/* GUARD: If user already has an active subscription, show warning + redirect */}
+        {hasActiveSubscription ? (
+          <div className="max-w-lg mx-auto rounded-2xl border-2 border-orange-300 bg-orange-50 p-8 text-center">
+            <div className="text-4xl mb-4">⚠️</div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-3">
+              Vous avez déjà un abonnement actif
+            </h2>
+            <p className="text-gray-600 mb-2">
+              Votre plan actuel : <strong className="text-orange-600">{(currentPlan || 'Pro').toUpperCase()}</strong>
+            </p>
+            <p className="text-gray-600 mb-6">
+              Pour changer de plan, utilisez le bouton "Changer de plan" dans votre dashboard.
+              Acheter un nouveau plan ici créerait un doublon de facturation.
+            </p>
+            <button
+              onClick={() => { window.location.hash = '#dashboard' }}
+              className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-[#FF6B35] text-white text-base font-semibold hover:bg-[#E85A28] transition shadow-lg"
+            >
+              Aller au Dashboard
+              <span aria-hidden>→</span>
+            </button>
+          </div>
+        ) : (
+        <>
         {/* Stripe Pricing Table Embed (supports overrides via URL params) */}
         <div id="stripe-pricing-table">
           {(() => {
@@ -87,6 +111,8 @@ export default function StripePricingTable({ userEmail, userId }) {
             <span aria-hidden>→</span>
           </button>
         </div>
+        </>
+        )}
       </div>
     </div>
   )

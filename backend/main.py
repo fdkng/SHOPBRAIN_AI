@@ -2564,6 +2564,20 @@ async def create_payment_link(payload: dict, request: Request):
     if plan not in plan_config:
         raise HTTPException(status_code=400, detail="Invalid plan. Must be: standard, pro, or premium")
     
+    # GUARD: prevent duplicate subscriptions
+    try:
+        if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+            _supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+            _sub_check = _supabase.table("subscriptions").select("status,paid").eq("user_id", user_id).limit(1).execute()
+            if _sub_check.data:
+                _r = _sub_check.data[0]
+                if _r.get("paid") and str(_r.get("status") or "").lower() in ("active", "cancelling", "trialing"):
+                    raise HTTPException(status_code=409, detail="You already have an active subscription. Use the plan switch in your dashboard.")
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+
     config = plan_config[plan]
     
     try:
@@ -3288,6 +3302,78 @@ async def stripe_webhook(request: Request):
                 "payment_date": payment_date,
                 "updated_at": datetime.utcnow().isoformat(),
             }
+
+            # ── DUPLICATE SUBSCRIPTION GUARD ──────────────────────────
+            # If this user already has a DIFFERENT active Stripe subscription,
+            # cancel the NEWLY created one and schedule a plan change on the
+            # existing subscription instead.  This prevents billing duplicates
+            # caused by the Stripe Pricing Table (which bypasses backend guards).
+            if normalized_sub_id and paid_flag:
+                try:
+                    existing_sub_row = supabase.table("subscriptions").select(
+                        "stripe_subscription_id,status,paid,plan_tier"
+                    ).eq("user_id", user_id).limit(1).execute()
+                    if existing_sub_row.data:
+                        existing_row = existing_sub_row.data[0]
+                        existing_sub_id = _normalize_stripe_subscription_id(existing_row.get("stripe_subscription_id"))
+                        existing_active = (
+                            existing_row.get("paid") is True
+                            and str(existing_row.get("status") or "").lower() in ("active", "cancelling", "trialing")
+                        )
+                        if (existing_active and existing_sub_id
+                                and existing_sub_id != normalized_sub_id):
+                            # Verify the existing sub is truly active in Stripe
+                            try:
+                                old_stripe_sub = stripe.Subscription.retrieve(existing_sub_id)
+                                old_status = str(_sg(old_stripe_sub, "status") or "").lower()
+                            except Exception:
+                                old_status = "unknown"
+
+                            if old_status in ("active", "trialing"):
+                                print(f"  🛡️ [WEBHOOK] DUPLICATE detected! user={user_id} "
+                                      f"existing_sub={existing_sub_id} (active) vs new_sub={normalized_sub_id}")
+                                # Cancel the NEW duplicate subscription immediately
+                                try:
+                                    stripe.Subscription.cancel(normalized_sub_id)
+                                    print(f"  ✅ [WEBHOOK] Cancelled duplicate new sub {normalized_sub_id}")
+                                except Exception as cancel_err:
+                                    print(f"  ⚠️ [WEBHOOK] Failed to cancel duplicate: {cancel_err}")
+
+                                # If the new plan is different, schedule a switch on the existing sub
+                                existing_plan = existing_row.get("plan_tier")
+                                if plan_tier and existing_plan and plan_tier != existing_plan:
+                                    print(f"  🔄 [WEBHOOK] Scheduling plan change {existing_plan} → {plan_tier} on existing sub {existing_sub_id}")
+                                    try:
+                                        # Use the existing subscription's schedule mechanism
+                                        old_items = _sg(_sg(old_stripe_sub, "items", {}), "data", []) or []
+                                        if old_items:
+                                            new_price_id = STRIPE_PLANS.get(plan_tier)
+                                            if new_price_id:
+                                                stripe.Subscription.modify(
+                                                    existing_sub_id,
+                                                    items=[{
+                                                        "id": _sg(old_items[0], "id"),
+                                                        "price": new_price_id,
+                                                    }],
+                                                    proration_behavior="none",
+                                                    billing_cycle_anchor="unchanged",
+                                                    metadata={"user_id": user_id, "plan": plan_tier},
+                                                )
+                                                print(f"  ✅ [WEBHOOK] Switched existing sub to {plan_tier}")
+                                                # Update DB with the switch
+                                                payload_write["stripe_subscription_id"] = existing_sub_id
+                                                payload_write["plan_tier"] = plan_tier
+                                            else:
+                                                print(f"  ⚠️ [WEBHOOK] No price_id found for plan {plan_tier}")
+                                    except Exception as switch_err:
+                                        print(f"  ⚠️ [WEBHOOK] Plan switch on existing sub warning: {switch_err}")
+                                else:
+                                    # Same plan — just keep existing, don't write the new sub to DB
+                                    payload_write["stripe_subscription_id"] = existing_sub_id
+                                    print(f"  ℹ️ [WEBHOOK] Same plan — keeping existing sub {existing_sub_id}")
+                except Exception as dedup_err:
+                    print(f"  ⚠️ [WEBHOOK] Dedup check warning (non-blocking): {dedup_err}")
+
             print(f"💾 [WEBHOOK] checkout.session.completed DB write: {payload_write}")
             _sub_upsert(supabase, user_id, payload_write)
 
