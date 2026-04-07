@@ -1268,6 +1268,10 @@ export default function Dashboard() {
         
         setSubscription(subData)
         setSubscriptionReady(true)
+        // Clear stale subscription cache when backend says no active subscription
+        if (!subData.has_subscription) {
+          try { localStorage.removeItem('subscriptionCache') } catch {}
+        }
         if (subData.has_subscription) {
           setSubscriptionMissing(false)
           initRetryRef.current = 0
@@ -1280,11 +1284,11 @@ export default function Dashboard() {
           return subData
         } else {
           setSubscriptionMissing(true)
-          // Auto-retry up to 5 times with increasing delay
-          if (initRetryRef.current < 8) {
+          // Auto-retry up to 3 times with increasing delay (for webhook propagation after payment)
+          if (initRetryRef.current < 3) {
             initRetryRef.current++
-            const delay = Math.min(1500 * initRetryRef.current, 8000)
-            console.log(`🔄 No subscription found, retrying in ${delay/1000}s (attempt ${initRetryRef.current}/8)...`)
+            const delay = Math.min(2000 * initRetryRef.current, 6000)
+            console.log(`🔄 No subscription found, retrying in ${delay/1000}s (attempt ${initRetryRef.current}/3)...`)
             setTimeout(() => initializeUser(true), delay)
           }
           return subData
@@ -1328,6 +1332,9 @@ export default function Dashboard() {
         
         setSubscription(normalizedSub)
         setSubscriptionReady(true)
+        if (!normalizedSub.has_subscription) {
+          try { localStorage.removeItem('subscriptionCache') } catch {}
+        }
         if (normalizedSub.has_subscription) {
           setSubscriptionMissing(false)
           initRetryRef.current = 0
@@ -1336,9 +1343,9 @@ export default function Dashboard() {
         } else {
           setSubscriptionMissing(true)
           // Auto-retry
-          if (initRetryRef.current < 8) {
+          if (initRetryRef.current < 3) {
             initRetryRef.current++
-            const delay = Math.min(1500 * initRetryRef.current, 8000)
+            const delay = Math.min(2000 * initRetryRef.current, 6000)
             console.log(`🔄 Fallback: no subscription, retrying in ${delay/1000}s...`)
             setTimeout(() => initializeUser(true), delay)
           }
@@ -1347,33 +1354,17 @@ export default function Dashboard() {
       }
     } catch (err) {
       console.error('Error:', err)
-      // If we have a cached subscription, don't block — just show dashboard
-      if (subscription) {
-        console.log('⚡ Init failed but cached subscription exists — showing dashboard')
-        setLoading(false)
-        setSubscriptionMissing(false)
-        setSubscriptionReady(true)
-        return subscription
-      }
-      // Also check localStorage for cached subscription before giving up
-      try {
-        const cachedSub = JSON.parse(localStorage.getItem('subscriptionCache') || 'null')
-        if (cachedSub?.has_subscription) {
-          console.log('⚡ Init failed but localStorage subscription cache exists — showing dashboard')
-          setSubscription(cachedSub)
-          setLoading(false)
-          setSubscriptionMissing(false)
-          setSubscriptionReady(true)
-          return cachedSub
-        }
-      } catch {}
+      // NEVER trust cached/localStorage subscription data as fallback.
+      // Stripe is the single source of truth — if backend is unreachable, show sync screen.
+      // Clear stale caches to prevent ghost subscriptions.
+      resetSubscriptionClientCaches()
       // Don't set permanent error — it persists across retries. Only set if max retries exhausted.
       setLoading(false)
       setSubscriptionMissing(true)  // Let user see the sync/retry screen instead of infinite loading
       // Auto-retry on network errors
-      if (initRetryRef.current < 8) {
+      if (initRetryRef.current < 3) {
         initRetryRef.current++
-        const delay = Math.min(1500 * initRetryRef.current, 8000)
+        const delay = Math.min(2000 * initRetryRef.current, 6000)
         console.log(`🔄 Init error, retrying in ${delay/1000}s...`)
         setTimeout(() => initializeUser(true), delay)
       } else {
@@ -4192,7 +4183,7 @@ export default function Dashboard() {
 
   // Show sync screen ONLY during the first 3 retries. After that, show dashboard anyway
   // with a warning banner (the user may genuinely have a subscription that backend can't find yet).
-  if ((!subscription || !subscription.has_subscription) && subscriptionMissing && initRetryRef.current < 4 && initRetryRef.current > 0) {
+  if ((!subscription || !subscription.has_subscription) && subscriptionMissing && initRetryRef.current < 3 && initRetryRef.current > 0) {
     return (
       <div className="min-h-screen bg-[#F7F8FA] flex items-center justify-center px-4">
         <div className="text-center text-[#1A1A2E] max-w-md w-full">
@@ -4200,7 +4191,7 @@ export default function Dashboard() {
           <div className="text-lg sm:text-xl mb-2">{t('subscriptionSync')}</div>
           <div className="text-[#4A4A68] text-sm mb-2">{t('paymentDelay')}</div>
           <div className="text-[#8A8AA3] text-xs mb-4">
-            {t('retry')} {initRetryRef.current}/4...
+            {t('retry')} {initRetryRef.current}/3...
           </div>
           <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 justify-center mt-4">
             <button onClick={() => { initRetryRef.current = 0; initializeUser(true) }} className="bg-[#FF6B35] hover:bg-[#E85A28] px-5 py-2.5 rounded-lg text-white text-sm font-medium transition-colors">{t('retry')}</button>

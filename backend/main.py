@@ -1320,6 +1320,37 @@ else:
 if STRIPE_SECRET_KEY:
     stripe.api_key = STRIPE_SECRET_KEY
 
+def _is_stripe_not_found_error(err: Exception) -> bool:
+    """Return True if the Stripe error means the resource (subscription/customer) was deleted.
+    These are NOT transient — they mean the object no longer exists in Stripe."""
+    err_str = str(err).lower()
+    # stripe.InvalidRequestError: No such subscription: sub_xxx / No such customer: cus_xxx
+    if "no such" in err_str or "resource_missing" in err_str or "does not exist" in err_str:
+        return True
+    # Also check for stripe.error.InvalidRequestError type
+    try:
+        if hasattr(err, 'http_status') and err.http_status == 404:
+            return True
+        if hasattr(err, 'code') and err.code == 'resource_missing':
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _deactivate_subscription_row(supabase_client, row_id: str, reason: str = ""):
+    """Mark a subscription row as inactive in the DB (Stripe resource was deleted/not found)."""
+    try:
+        supabase_client.table("subscriptions").update({
+            "status": "inactive", "subscription_status": "inactive",
+            "paid": False, "plan": False,
+            "updated_at": datetime.utcnow().isoformat()
+        }).eq("id", row_id).execute()
+        print(f"  🗑️ [SUB] Deactivated DB row {row_id}: {reason}")
+    except Exception as e:
+        print(f"  ⚠️ [SUB] Failed to deactivate row {row_id}: {e}")
+
+
 # Stripe price IDs - Mapping tier names to price IDs
 STRIPE_PLANS = {
     "standard": "price_1SQfzmPSvADOSbOzpxoK8hG3",
@@ -2104,8 +2135,15 @@ async def fast_init(request: Request):
                                 # Skip to end
                                 plan = None
                         except Exception as stripe_verify_err:
-                            print(f"  ⚠️ [INIT-SUB] Stripe live-sync warning (non-blocking): {stripe_verify_err}")
-                            # Fall through with DB plan — don't block access on Stripe API errors
+                            if _is_stripe_not_found_error(stripe_verify_err):
+                                # Subscription/customer was DELETED in Stripe — deny access
+                                print(f"  🗑️ [INIT-SUB] Stripe resource deleted: {stripe_verify_err}")
+                                _deactivate_subscription_row(supabase_client, sub_row.get("id"), f"Stripe resource deleted: {stripe_verify_err}")
+                                subscription_data = _inactive_subscription_payload('Subscription no longer exists in Stripe.')
+                                plan = None  # Prevent granting access below
+                            else:
+                                print(f"  ⚠️ [INIT-SUB] Stripe live-sync warning (transient, non-blocking): {stripe_verify_err}")
+                                # Fall through with DB plan — don't block access on transient Stripe API errors
                     elif cancel_at_period_end:
                         # No sub ID to check cancel date
                         pass
@@ -2224,9 +2262,22 @@ async def fast_init(request: Request):
                                         'capabilities': capabilities.get(plan, {})
                                     }
                         except Exception as stripe_err:
-                            print(f"  ⚠️ [INIT-SUB] Stripe auto-heal failed (non-blocking): {stripe_err}")
+                            if _is_stripe_not_found_error(stripe_err):
+                                print(f"  🗑️ [INIT-SUB] Auto-heal: Stripe resource deleted: {stripe_err}")
+                                _deactivate_subscription_row(supabase_client, sub_row.get("id"), f"Auto-heal: Stripe resource deleted")
+                                subscription_data = _inactive_subscription_payload('Subscription no longer exists in Stripe.')
+                            else:
+                                print(f"  ⚠️ [INIT-SUB] Stripe auto-heal failed (transient, non-blocking): {stripe_err}")
 
-                    if not healed:
+                    # If email search found zero customers at all, the Stripe account is empty
+                    # Proactively deactivate stale DB row to prevent ghost subscriptions
+                    if not healed and not (stripe_sub_id and str(stripe_sub_id).startswith("sub_")):
+                        # We searched Stripe thoroughly and found nothing — clean up the stale DB row
+                        _deactivate_subscription_row(supabase_client, sub_row.get("id"), "No active Stripe subscription found after exhaustive search")
+                        subscription_data = _inactive_subscription_payload('No active subscription found in Stripe.')
+
+                    elif not healed:
+                        # Sub ID was found but Stripe returned non-active status or retrieval failed
                         print(f"  ❌ [INIT-SUB] ACCESS DENIED: paid={paid_flag}, plan={plan}, stripe_sub_id={stripe_sub_id}")
                         subscription_data = _inactive_subscription_payload('Payment not yet validated. If you just paid, please wait a few seconds and refresh.')
                         subscription_data['status'] = sub_status or 'inactive'
@@ -11883,7 +11934,20 @@ async def check_subscription_status(request: Request):
                                     'message': 'Subscription no longer active in Stripe',
                                 }
                         except Exception as stripe_verify_err:
-                            print(f"  ⚠️ [STATUS] Stripe live-sync warning: {stripe_verify_err}")
+                            if _is_stripe_not_found_error(stripe_verify_err):
+                                print(f"  🗑️ [STATUS] Stripe resource deleted: {stripe_verify_err}")
+                                _deactivate_subscription_row(supabase, subscription.get("id"), f"Stripe resource deleted: {stripe_verify_err}")
+                                return {
+                                    'success': True,
+                                    'has_subscription': False,
+                                    'plan': None,
+                                    'paid': False,
+                                    'status': 'inactive',
+                                    'subscription_status': 'inactive',
+                                    'message': 'Subscription no longer exists in Stripe.',
+                                }
+                            else:
+                                print(f"  ⚠️ [STATUS] Stripe live-sync warning (transient): {stripe_verify_err}")
                     elif cancel_at_period_end:
                         pass
                     print(f"  ✅ [STATUS] ACCESS GRANTED: paid={paid_flag}, plan={plan}, status={sub_status}, stripe_verified={stripe_verified_plan is not None}")
@@ -12026,7 +12090,11 @@ async def check_subscription_status(request: Request):
                                     'capabilities': capabilities.get(healed_plan, {}),
                                 }
                     except Exception as stripe_err:
-                        print(f"  ⚠️ [STATUS] Stripe auto-heal failed (non-blocking): {stripe_err}")
+                        if _is_stripe_not_found_error(stripe_err):
+                            print(f"  🗑️ [STATUS] Auto-heal: Stripe resource deleted: {stripe_err}")
+                            _deactivate_subscription_row(supabase, subscription.get("id"), f"Auto-heal: Stripe resource deleted")
+                        else:
+                            print(f"  ⚠️ [STATUS] Stripe auto-heal failed (transient, non-blocking): {stripe_err}")
 
                 # Auto-heal failed or no stripe_sub_id → deny
                 print(f"  ❌ [STATUS] ACCESS DENIED: paid={paid_flag}, plan={plan}, stripe_sub_id={stripe_sub_id}")
