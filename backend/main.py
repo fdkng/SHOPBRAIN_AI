@@ -1639,6 +1639,103 @@ def _resolve_plan_from_stripe_subscription(subscription_obj) -> str | None:
 
     return None
 
+
+def _extract_upcoming_plan_change(subscription_obj) -> dict:
+    """Return upcoming scheduled plan change from Stripe subscription schedule.
+    Response shape: {"upcoming_plan": <tier|None>, "upcoming_plan_effective_at": <iso|None>}"""
+    result = {
+        "upcoming_plan": None,
+        "upcoming_plan_effective_at": None,
+    }
+    if not subscription_obj:
+        return result
+
+    try:
+        current_plan = _resolve_plan_from_stripe_subscription(subscription_obj)
+        now_ts = int(time.time())
+        exact_amount_map = {9900: 'standard', 19900: 'pro', 29900: 'premium'}
+
+        schedule_obj = _sg(subscription_obj, "schedule")
+        schedule_id = None
+        if schedule_obj:
+            if isinstance(schedule_obj, str):
+                schedule_id = schedule_obj
+                schedule_obj = None
+            else:
+                schedule_id = _sg(schedule_obj, "id")
+
+        # Retrieve full schedule if phases are missing
+        if (not schedule_obj or not _sg(schedule_obj, "phases")) and schedule_id:
+            try:
+                schedule_obj = stripe.SubscriptionSchedule.retrieve(schedule_id)
+            except Exception as schedule_err:
+                print(f"⚠️ [SUB-UPCOMING] schedule retrieve warning: {schedule_err}")
+
+        phases = _sg(schedule_obj, "phases", []) if schedule_obj else []
+        best_plan = None
+        best_start = None
+
+        for phase in phases or []:
+            phase_start_raw = _sg(phase, "start_date")
+            try:
+                phase_start = int(phase_start_raw) if phase_start_raw is not None else None
+            except Exception:
+                phase_start = None
+
+            items = _sg(phase, "items", []) or []
+            phase_plan = None
+            for item in items:
+                price_ref = _sg(item, "price")
+                if isinstance(price_ref, str):
+                    price_id = price_ref
+                    unit_amount = None
+                else:
+                    price_id = _sg(price_ref, "id")
+                    unit_amount = _sg(price_ref, "unit_amount")
+                phase_plan = PRICE_TO_TIER.get(price_id)
+                if not phase_plan and unit_amount is not None:
+                    try:
+                        phase_plan = exact_amount_map.get(int(unit_amount))
+                    except Exception:
+                        phase_plan = None
+                if phase_plan:
+                    break
+
+            if not phase_plan:
+                continue
+
+            # upcoming = first phase in the future that changes tier
+            if phase_start is not None and phase_start <= now_ts:
+                continue
+            if current_plan and phase_plan == current_plan:
+                continue
+
+            if best_start is None or (phase_start is not None and phase_start < best_start):
+                best_start = phase_start
+                best_plan = phase_plan
+
+        if best_plan:
+            result["upcoming_plan"] = best_plan
+            result["upcoming_plan_effective_at"] = _stripe_ts_to_iso(best_start)
+            return result
+
+        # Fallback to schedule metadata when phases parsing cannot determine the target
+        schedule_meta = _sg(schedule_obj, "metadata", {}) if schedule_obj else {}
+        pending_plan = _sg(schedule_meta, "pending_plan") if schedule_meta else None
+        effective_at_raw = _sg(schedule_meta, "effective_at") if schedule_meta else None
+        if pending_plan:
+            pending_plan_norm = str(pending_plan).strip().lower()
+            if pending_plan_norm in ("standard", "pro", "premium") and pending_plan_norm != current_plan:
+                result["upcoming_plan"] = pending_plan_norm
+                try:
+                    result["upcoming_plan_effective_at"] = _stripe_ts_to_iso(int(str(effective_at_raw))) if effective_at_raw else None
+                except Exception:
+                    result["upcoming_plan_effective_at"] = None
+    except Exception as e:
+        print(f"⚠️ [SUB-UPCOMING] extraction warning: {e}")
+
+    return result
+
 # Helper: get authenticated user from Authorization header or request body
 def get_user_id(request: Request) -> str:
     auth_header = request.headers.get("Authorization", "")
@@ -1921,6 +2018,7 @@ async def fast_init(request: Request):
                     # CRITICAL: Always verify plan from Stripe (source of truth) when we have a sub ID
                     # This prevents stale DB plan_tier from showing the wrong plan after upgrades/downgrades
                     stripe_verified_plan = None
+                    upcoming_change = {"upcoming_plan": None, "upcoming_plan_effective_at": None}
                     cancel_at_period_end = sub_status == 'cancelling'
                     cancel_at = None
                     stripe_sub_id_for_verify = _normalize_stripe_subscription_id(sub_row.get('stripe_subscription_id'))
@@ -1928,6 +2026,7 @@ async def fast_init(request: Request):
                         try:
                             stripe_sub_obj = stripe.Subscription.retrieve(stripe_sub_id_for_verify, expand=['items'])
                             stripe_verified_plan = _resolve_plan_from_stripe_subscription(stripe_sub_obj)
+                            upcoming_change = _extract_upcoming_plan_change(stripe_sub_obj)
                             stripe_live_status = str(_sg(stripe_sub_obj, 'status') or '').lower()
                             # Update cancel info
                             if _sg(stripe_sub_obj, 'cancel_at_period_end'):
@@ -1974,6 +2073,8 @@ async def fast_init(request: Request):
                         subscription_data = {
                             'has_subscription': True,
                             'plan': plan,
+                            'upcoming_plan': upcoming_change.get('upcoming_plan'),
+                            'upcoming_plan_effective_at': upcoming_change.get('upcoming_plan_effective_at'),
                             'paid': True,
                             'status': sub_status,
                             'subscription_status': sub_status,
@@ -2008,6 +2109,7 @@ async def fast_init(request: Request):
                                 # Resolve plan from Stripe
                                 healed_plan = _resolve_plan_from_stripe_subscription(stripe_sub)
                                 if healed_plan:
+                                    upcoming_change = _extract_upcoming_plan_change(stripe_sub)
                                     plan = healed_plan
                                     sub_status = 'active'
                                     payment_date = sub_row.get('payment_date') or _resolve_payment_date(_sg(stripe_sub, "created"))
@@ -2026,6 +2128,8 @@ async def fast_init(request: Request):
                                     subscription_data = {
                                         'has_subscription': True,
                                         'plan': plan,
+                                        'upcoming_plan': upcoming_change.get('upcoming_plan'),
+                                        'upcoming_plan_effective_at': upcoming_change.get('upcoming_plan_effective_at'),
                                         'paid': True,
                                         'status': sub_status,
                                         'subscription_status': sub_status,
@@ -2081,7 +2185,7 @@ async def health():
     return {
         "status": "ok",
         "version": "3.0-fast-init",
-        "build": "20260406-next-renewal-switch-v8.1",
+        "build": "20260406-next-renewal-switch-v8.2",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
                 "openai": "configured" if OPENAI_API_KEY else "not_configured",
@@ -11512,6 +11616,7 @@ async def check_subscription_status(request: Request):
                 if paid_flag and plan and sub_status in ('active', 'cancelling'):
                     # CRITICAL: Verify plan from Stripe live to prevent stale plan display
                     stripe_verified_plan = None
+                    upcoming_change = {"upcoming_plan": None, "upcoming_plan_effective_at": None}
                     cancel_at_period_end = sub_status == 'cancelling'
                     cancel_at = None
                     stripe_sub_id_for_verify = _normalize_stripe_subscription_id(subscription.get('stripe_subscription_id'))
@@ -11519,6 +11624,7 @@ async def check_subscription_status(request: Request):
                         try:
                             stripe_sub_obj = stripe.Subscription.retrieve(stripe_sub_id_for_verify, expand=['items'])
                             stripe_verified_plan = _resolve_plan_from_stripe_subscription(stripe_sub_obj)
+                            upcoming_change = _extract_upcoming_plan_change(stripe_sub_obj)
                             stripe_live_status = str(_sg(stripe_sub_obj, 'status') or '').lower()
                             if _sg(stripe_sub_obj, 'cancel_at_period_end'):
                                 cancel_at_period_end = True
@@ -11567,6 +11673,8 @@ async def check_subscription_status(request: Request):
                         'success': True,
                         'has_subscription': True,
                         'plan': plan,
+                        'upcoming_plan': upcoming_change.get('upcoming_plan'),
+                        'upcoming_plan_effective_at': upcoming_change.get('upcoming_plan_effective_at'),
                         'paid': True,
                         'status': 'active' if not cancel_at_period_end else 'cancelling',
                         'subscription_status': 'active' if not cancel_at_period_end else 'cancelling',
@@ -11599,6 +11707,7 @@ async def check_subscription_status(request: Request):
                         if stripe_status in ('active', 'trialing'):
                             healed_plan = _resolve_plan_from_stripe_subscription(stripe_sub)
                             if healed_plan:
+                                upcoming_change = _extract_upcoming_plan_change(stripe_sub)
                                 healed_payment_date = subscription.get('payment_date') or _resolve_payment_date(_sg(stripe_sub, "created"))
                                 try:
                                     supabase.table("subscriptions").update({
@@ -11623,6 +11732,8 @@ async def check_subscription_status(request: Request):
                                     'success': True,
                                     'has_subscription': True,
                                     'plan': healed_plan,
+                                    'upcoming_plan': upcoming_change.get('upcoming_plan'),
+                                    'upcoming_plan_effective_at': upcoming_change.get('upcoming_plan_effective_at'),
                                     'paid': True,
                                     'status': 'active',
                                     'subscription_status': 'active',

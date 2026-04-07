@@ -591,12 +591,16 @@ export default function Dashboard() {
     // the plan couldn't be determined, NOT that it's standard.
     const validTiers = ['standard', 'pro', 'premium']
     const resolvedPlan = (tier && validTiers.includes(tier.toLowerCase())) ? tier.toLowerCase() : null
+    const rawUpcoming = typeof raw?.upcoming_plan === 'string' ? raw.upcoming_plan.toLowerCase() : null
+    const upcomingPlan = (rawUpcoming && validTiers.includes(rawUpcoming) && rawUpcoming !== resolvedPlan) ? rawUpcoming : null
     return {
       has_subscription: activePaid && !!resolvedPlan,
       paid: activePaid,
       status: activePaid ? status : 'inactive',
       subscription_status: activePaid ? status : 'inactive',
       plan: activePaid ? resolvedPlan : null,
+      upcoming_plan: activePaid ? upcomingPlan : null,
+      upcoming_plan_effective_at: activePaid ? (raw?.upcoming_plan_effective_at || null) : null,
       payment_date: raw?.payment_date || null,
       started_at: raw?.started_at || null,
       capabilities: raw?.capabilities || null,
@@ -1397,7 +1401,7 @@ export default function Dashboard() {
           const effectiveLabel = data?.effective_at
             ? new Date(data.effective_at).toLocaleDateString()
             : ''
-          setStatus('upgrade', 'success', `✅ ${formatPlan(data.plan)} ${tr('scheduledForNextRenewal', 'scheduled for next renewal')}${effectiveLabel ? ` (${effectiveLabel})` : ''}.`)
+          setStatus('upgrade', 'success', `✅ ${tr('planWillUpdateAtRenewal', 'Your plan will be updated to')} ${formatPlan(data.plan)} ${tr('atNextRenewalDate', 'at the next renewal date')}${effectiveLabel ? ` (${effectiveLabel})` : ''}.`)
         } else {
           setStatus('upgrade', 'success', `✅ Plan ${data.plan.toUpperCase()} ${t('activated') || 'activated'}!`)
         }
@@ -1470,12 +1474,11 @@ export default function Dashboard() {
       const data = await resp.json().catch(() => ({}))
       if (data?.success && data?.plan) {
         // Do NOT update local state optimistically — wait for backend (Stripe-verified) refresh
-        setShowPlanMenu(false)
         if (data?.scheduled_for_period_end) {
           const effectiveLabel = data?.effective_at
             ? new Date(data.effective_at).toLocaleDateString()
             : ''
-          setStatus('change-plan', 'success', `✅ ${formatPlan(data.plan)} ${tr('scheduledForNextRenewal', 'scheduled for next renewal')}${effectiveLabel ? ` (${effectiveLabel})` : ''}.`)
+          setStatus('change-plan', 'success', `✅ ${tr('planWillUpdateAtRenewal', 'Your plan will be updated to')} ${formatPlan(data.plan)} ${tr('atNextRenewalDate', 'at the next renewal date')}${effectiveLabel ? ` (${effectiveLabel})` : ''}.`)
         } else {
           setStatus('change-plan', 'success', `✅ Plan ${data.plan.toUpperCase()} ${t('activated') || 'activated'}!`)
         }
@@ -4381,6 +4384,7 @@ export default function Dashboard() {
                     </button>
                   </div>
                 </div>
+                {renderStatus('change-plan')}
               </>
             )}
           </div>
@@ -6962,6 +6966,12 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           <h4 className="text-lg sm:text-xl font-bold text-[#1A1A2E]">{formatPlan(subscription?.plan)} Plan</h4>
                           {subscription?.started_at && new Date(subscription.started_at).getFullYear() > 1970 && (
                             <p className="text-[#6A6A85] text-sm mt-1">{t('activeSince')} {new Date(subscription.started_at).toLocaleDateString()}</p>
+                          )}
+                          {subscription?.upcoming_plan && (
+                            <p className="text-[#0D9488] text-sm mt-1 font-semibold">
+                              {tr('upcomingPlan', 'Upcoming plan')}: {formatPlan(subscription.upcoming_plan)}
+                              {subscription?.upcoming_plan_effective_at ? ` (${new Date(subscription.upcoming_plan_effective_at).toLocaleDateString()})` : ''}
+                            </p>
                           )}
                         </div>
                         <div className="sm:text-right">
