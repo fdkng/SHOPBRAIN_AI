@@ -13798,6 +13798,29 @@ async def switch_plan_inline(request: Request):
         # Keep canonical renewal timestamp aligned with the REAL cycle
         current_period_end = effective_switch_at
 
+        # ── Guard: if start >= end the current phase would be zero-length ──
+        # This happens when a previous switch attempt left a schedule whose
+        # current phase already starts at the renewal boundary.  In that case
+        # release the stale schedule and create a fresh one from the live sub.
+        start_ts = effective_current_start if isinstance(effective_current_start, int) else 0
+        if start_ts and start_ts >= effective_switch_at:
+            print(f"  ⚠️ [SWITCH-PLAN] Stale schedule detected (start={start_ts} >= end={effective_switch_at}). Releasing and re-creating.")
+            try:
+                stripe.SubscriptionSchedule.release(schedule_id)
+            except Exception as rel_err:
+                print(f"  ⚠️ [SWITCH-PLAN] Release warning: {rel_err}")
+            # Re-create from the live subscription
+            created_schedule = stripe.SubscriptionSchedule.create(from_subscription=stripe_sub_id)
+            schedule_id = _sg(created_schedule, "id")
+            existing_schedule = stripe.SubscriptionSchedule.retrieve(schedule_id)
+            current_phase = _sg(existing_schedule, "current_phase", {}) or {}
+            effective_current_start = _coerce_stripe_timestamp(_sg(current_phase, "start_date")) or "now"
+            # The fresh schedule's phase end should match the sub period end
+            fresh_end = _coerce_stripe_timestamp(_sg(current_phase, "end_date"))
+            if fresh_end and fresh_end > (effective_current_start if isinstance(effective_current_start, int) else 0):
+                effective_switch_at = fresh_end
+                current_period_end = effective_switch_at
+
         print(
             f"  📅 [SWITCH-PLAN] Phase boundaries: start={effective_current_start} "
             f"switch_at={effective_switch_at} "
