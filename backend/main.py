@@ -13638,6 +13638,7 @@ async def switch_plan_inline(request: Request):
             else:
                 schedule_id = _sg(schedule_raw, "id")
 
+        existing_schedule = None
         if schedule_id:
             try:
                 existing_schedule = stripe.SubscriptionSchedule.retrieve(schedule_id)
@@ -13704,18 +13705,39 @@ async def switch_plan_inline(request: Request):
         if not schedule_id:
             created_schedule = stripe.SubscriptionSchedule.create(from_subscription=stripe_sub_id)
             schedule_id = _sg(created_schedule, "id")
+            existing_schedule = stripe.SubscriptionSchedule.retrieve(schedule_id)
+
+        # Never mutate current-phase start_date to avoid Stripe error:
+        # "You can not modify the start date of the current phase."
+        locked_current_start = None
+        locked_current_end = None
+        if existing_schedule:
+            current_phase = _sg(existing_schedule, "current_phase", {}) or {}
+            locked_current_start = _coerce_stripe_timestamp(_sg(current_phase, "start_date"))
+            locked_current_end = _coerce_stripe_timestamp(_sg(current_phase, "end_date"))
+
+        effective_current_start = locked_current_start or current_period_start or "now"
+        effective_switch_at = locked_current_end or current_period_end
+        if not effective_switch_at:
+            raise HTTPException(
+                status_code=400,
+                detail="Unable to determine current phase end date from Stripe. Please retry in 1 minute."
+            )
+
+        # Keep canonical renewal timestamp aligned with schedule current phase
+        current_period_end = effective_switch_at
 
         stripe.SubscriptionSchedule.modify(
             schedule_id,
             end_behavior="release",
             phases=[
                 {
-                    "start_date": current_period_start or "now",
-                    "end_date": current_period_end,
+                    "start_date": effective_current_start,
+                    "end_date": effective_switch_at,
                     "items": [{"price": current_price_id, "quantity": quantity}],
                 },
                 {
-                    "start_date": current_period_end,
+                    "start_date": effective_switch_at,
                     "items": [{"price": new_price_id, "quantity": quantity}],
                 },
             ],
