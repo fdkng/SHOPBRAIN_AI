@@ -3151,8 +3151,8 @@ async def stripe_webhook(request: Request):
                     exact_amount_map = {9900: "standard", 19900: "pro", 29900: "premium"}
                     plan_tier = PRICE_TO_TIER.get(_sg(price, "id")) or exact_amount_map.get(int(amount) if amount is not None else None)
             if not plan_tier:
-                print(f"  ⚠️ [WEBHOOK] invoice.payment_succeeded could not resolve plan_tier, defaulting to 'standard'")
-                plan_tier = "standard"
+                print(f"  ❌ [WEBHOOK] invoice.payment_succeeded could not resolve plan_tier — skipping DB write to prevent wrong plan")
+                return {"received": True, "warning": "plan_tier_unresolvable", "event_type": event_type}
 
             status_transitions = invoice.get("status_transitions", {}) or {}
             payment_date = _resolve_payment_date(_sg(status_transitions, "paid_at"), invoice.get("created"))
