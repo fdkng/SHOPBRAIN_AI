@@ -1429,11 +1429,24 @@ def _stripe_obj_to_dict(obj):
         return obj
 
 
+# Columns that may not exist in older Supabase deployments.
+_SUB_OPTIONAL_COLS = {"end_date", "current_period_end"}
+
+
+def _safe_sub_payload(data: dict) -> dict:
+    """Return *data* without optional columns that are None/empty to reduce
+    chance of hitting missing-column errors on older schemas."""
+    return {k: v for k, v in data.items() if k not in _SUB_OPTIONAL_COLS or v not in (None, "")}
+
+
 def _sub_upsert(supabase_client, user_id: str, data: dict):
     """Insert or update a subscriptions row by user_id.
     CRITICAL: If the existing row has an ACTIVE subscription with a DIFFERENT
     stripe_subscription_id, and the incoming data wants to set inactive,
-    we SKIP the update to avoid a stale webhook clobbering a valid subscription."""
+    we SKIP the update to avoid a stale webhook clobbering a valid subscription.
+
+    Resilience: if a write fails because a column doesn't exist in the live
+    schema (PGRST204), the offending column is stripped and the write retried."""
     try:
         existing = supabase_client.table("subscriptions").select("id,status,paid,stripe_subscription_id").eq("user_id", user_id).limit(1).execute()
         if existing.data:
@@ -1450,14 +1463,38 @@ def _sub_upsert(supabase_client, user_id: str, data: dict):
                 print(f"  🛡️ [DB] SKIPPING inactive update: incoming sub {incoming_sub_id} != existing active sub {existing_sub_id} for user {user_id}")
                 return
 
-            supabase_client.table("subscriptions").update(data).eq("user_id", user_id).execute()
-            print(f"  ✅ [DB] Updated subscriptions for user {user_id}")
+            _sub_write(supabase_client, "update", data, user_id)
         else:
-            supabase_client.table("subscriptions").insert(data).execute()
-            print(f"  ✅ [DB] Inserted subscriptions for user {user_id}")
+            _sub_write(supabase_client, "insert", data, user_id)
     except Exception as e:
         print(f"  ❌ [DB] _sub_upsert error: {e}")
         raise
+
+
+def _sub_write(supabase_client, mode: str, data: dict, user_id: str):
+    """Perform the actual insert/update with automatic column-strip retry."""
+    payload = dict(data)
+    for attempt in range(3):
+        try:
+            if mode == "update":
+                supabase_client.table("subscriptions").update(payload).eq("user_id", user_id).execute()
+            else:
+                supabase_client.table("subscriptions").insert(payload).execute()
+            print(f"  ✅ [DB] {'Updated' if mode == 'update' else 'Inserted'} subscriptions for user {user_id}")
+            return
+        except Exception as e:
+            err_str = str(e)
+            # Supabase/PostgREST PGRST204: column not found in schema cache
+            if "PGRST204" in err_str or "schema cache" in err_str:
+                import re as _re
+                col_match = _re.search(r"the '(\w+)' column", err_str)
+                if col_match:
+                    bad_col = col_match.group(1)
+                    if bad_col in payload:
+                        print(f"  ⚠️ [DB] Column '{bad_col}' missing in live schema — retrying without it")
+                        payload.pop(bad_col)
+                        continue
+            raise
 
 
 def _normalize_stripe_subscription_id(value) -> str | None:
@@ -2157,13 +2194,21 @@ async def fast_init(request: Request):
                                     # Update DB so next call is instant
                                     try:
                                         healed_period_end = _coerce_stripe_timestamp(_sg(stripe_sub, "current_period_end"))
-                                        supabase_client.table("subscriptions").update({
+                                        heal_payload = {
                                             "plan_tier": plan,
                                             "paid": True, "status": sub_status,
                                             "payment_date": payment_date,
                                             "current_period_end": _stripe_ts_to_iso(healed_period_end) if healed_period_end else sub_row.get("current_period_end"),
                                             "updated_at": datetime.utcnow().isoformat()
-                                        }).eq("id", sub_row.get("id")).execute()
+                                        }
+                                        try:
+                                            supabase_client.table("subscriptions").update(heal_payload).eq("id", sub_row.get("id")).execute()
+                                        except Exception as col_err:
+                                            if "PGRST204" in str(col_err) or "schema cache" in str(col_err):
+                                                heal_payload.pop("current_period_end", None)
+                                                supabase_client.table("subscriptions").update(heal_payload).eq("id", sub_row.get("id")).execute()
+                                            else:
+                                                raise
                                         print(f"  ✅ [INIT-SUB] Auto-healed DB: paid=true, plan={plan}")
                                     except Exception as heal_err:
                                         print(f"  ⚠️ [INIT-SUB] Auto-heal DB write warning: {heal_err}")
@@ -11762,7 +11807,7 @@ async def check_subscription_status(request: Request):
                                 healed_payment_date = subscription.get('payment_date') or _resolve_payment_date(_sg(stripe_sub, "created"))
                                 try:
                                     healed_period_end = _coerce_stripe_timestamp(_sg(stripe_sub, "current_period_end"))
-                                    supabase.table("subscriptions").update({
+                                    heal_payload = {
                                         "plan_tier": healed_plan,
                                         "plan": True,
                                         "paid": True, "status": "active",
@@ -11772,7 +11817,15 @@ async def check_subscription_status(request: Request):
                                         "stripe_customer_id": _sg(stripe_sub, "customer") or subscription.get("stripe_customer_id"),
                                         "stripe_subscription_id": stripe_sub_id,
                                         "updated_at": datetime.utcnow().isoformat(),
-                                    }).eq("id", subscription.get("id")).execute()
+                                    }
+                                    try:
+                                        supabase.table("subscriptions").update(heal_payload).eq("id", subscription.get("id")).execute()
+                                    except Exception as col_err:
+                                        if "PGRST204" in str(col_err) or "schema cache" in str(col_err):
+                                            heal_payload.pop("current_period_end", None)
+                                            supabase.table("subscriptions").update(heal_payload).eq("id", subscription.get("id")).execute()
+                                        else:
+                                            raise
                                     supabase.table("user_profiles").update({
                                         "subscription_plan": healed_plan, "subscription_tier": healed_plan,
                                         "subscription_status": "active",
@@ -13792,7 +13845,6 @@ async def switch_plan_inline(request: Request):
             "stripe_subscription_id": stripe_sub_id,
             "stripe_customer_id": _sg(stripe_sub, "customer") or sub_row.get("stripe_customer_id"),
             "current_period_end": datetime.utcfromtimestamp(current_period_end).isoformat(),
-            "end_date": datetime.utcfromtimestamp(current_period_end).isoformat(),
             "updated_at": now_iso,
         })
 
