@@ -489,6 +489,19 @@ export default function Dashboard() {
     return message || fallback
   }
 
+  const formatPlanSwitchError = (detail) => {
+    const raw = String(detail || '').trim()
+    const lower = raw.toLowerCase()
+    if (!raw) return tr('unableToSchedulePlanChange', 'Unable to schedule plan change. Please try again.')
+    if (lower.includes('cannot determine current billing period end') || lower.includes('unable to determine renewal date')) {
+      return tr('unableToDetermineRenewalDate', 'Unable to determine your renewal date right now. Please retry in 1 minute.')
+    }
+    if (lower.includes('no active subscription found')) {
+      return tr('noActiveSubscription', 'No active subscription found.')
+    }
+    return raw
+  }
+
   // 🧹 Strip HTML tags from AI-generated suggestions (show clean text to user)
   const stripHtmlTags = (html) => {
     if (!html || typeof html !== 'string') return html || ''
@@ -1412,7 +1425,7 @@ export default function Dashboard() {
         // Never redirect active subscribers to checkout for plan switch failures.
         // Keep the current plan and show actionable error.
         console.warn('switch-plan failed for upgrade (no checkout fallback):', data)
-        setStatus('upgrade', 'error', data?.detail || tr('unableToSchedulePlanChange', 'Unable to schedule plan change. Please try again.'))
+        setStatus('upgrade', 'error', formatPlanSwitchError(data?.detail))
       }
     } catch (e) {
       console.error('Upgrade error:', e)
@@ -1491,7 +1504,7 @@ export default function Dashboard() {
       } else {
         // Never redirect active subscribers to checkout for plan switch failures.
         console.warn('switch-plan failed (no checkout fallback):', data)
-        setStatus('change-plan', 'error', data?.detail || tr('unableToSchedulePlanChange', 'Unable to schedule plan change. Please try again.'))
+        setStatus('change-plan', 'error', formatPlanSwitchError(data?.detail))
       }
     } catch (e) {
       console.error('Change plan error:', e)

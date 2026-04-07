@@ -20,7 +20,7 @@ import smtplib
 import ssl
 import requests
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, HTTPException, Request, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, StreamingResponse, HTMLResponse, JSONResponse
@@ -1540,6 +1540,35 @@ def _parse_iso_datetime(value: str | None):
         return None
 
 
+def _coerce_stripe_timestamp(value) -> int | None:
+    """Best-effort conversion of Stripe/DB timestamp inputs to epoch seconds."""
+    if value is None:
+        return None
+    try:
+        if isinstance(value, (int, float)):
+            return int(value)
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return None
+            if text.isdigit():
+                return int(text)
+            dt = _parse_iso_datetime(text)
+            if dt:
+                if dt.tzinfo is not None:
+                    return int(dt.timestamp())
+                return int(dt.replace(tzinfo=timezone.utc).timestamp())
+            return None
+        if isinstance(value, datetime):
+            dt = value
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return int(dt.timestamp())
+    except Exception:
+        return None
+    return None
+
+
 def _subscription_period_is_valid(row: dict | None) -> bool:
     if not row:
         return False
@@ -2185,7 +2214,7 @@ async def health():
     return {
         "status": "ok",
         "version": "3.0-fast-init",
-        "build": "20260406-next-renewal-switch-v8.2",
+        "build": "20260406-next-renewal-switch-v8.3",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
                 "openai": "configured" if OPENAI_API_KEY else "not_configured",
@@ -13551,10 +13580,22 @@ async def switch_plan_inline(request: Request):
 
         # 3. Schedule the switch for next renewal (period end), not immediate.
         # This prevents giving a new tier at the old price in the same billing period.
-        current_period_start = int(_sg(stripe_sub, "current_period_start") or 0)
-        current_period_end = int(_sg(stripe_sub, "current_period_end") or 0)
+        current_period_start = _coerce_stripe_timestamp(_sg(stripe_sub, "current_period_start")) or 0
+        current_period_end = _coerce_stripe_timestamp(_sg(stripe_sub, "current_period_end")) or 0
+
+        # Fallback 1: DB timestamps if Stripe sub payload lacks period values
         if not current_period_end:
-            raise HTTPException(status_code=400, detail="Cannot determine current billing period end")
+            current_period_end = (
+                _coerce_stripe_timestamp(sub_row.get("current_period_end"))
+                or _coerce_stripe_timestamp(sub_row.get("end_date"))
+                or 0
+            )
+        if not current_period_start:
+            current_period_start = (
+                _coerce_stripe_timestamp(sub_row.get("start_date"))
+                or _coerce_stripe_timestamp(sub_row.get("created_at"))
+                or 0
+            )
 
         current_plan = PRICE_TO_TIER.get(current_price_id) or _resolve_plan_from_stripe_subscription(stripe_sub) or sub_row.get("plan_tier")
         quantity = int(_sg(current_item, "quantity") or 1)
@@ -13576,10 +13617,25 @@ async def switch_plan_inline(request: Request):
             try:
                 existing_schedule = stripe.SubscriptionSchedule.retrieve(schedule_id)
                 schedule_status = str(_sg(existing_schedule, "status") or "").lower()
+                # Fallback 2: use current phase timing when subscription object has no period bounds
+                if not current_period_end:
+                    current_phase = _sg(existing_schedule, "current_phase", {})
+                    current_period_end = _coerce_stripe_timestamp(_sg(current_phase, "end_date")) or current_period_end
+                    current_period_start = _coerce_stripe_timestamp(_sg(current_phase, "start_date")) or current_period_start
                 if schedule_status in ("released", "completed", "canceled"):
                     schedule_id = None
             except Exception:
                 schedule_id = None
+
+        # Fallback 3: trial subscriptions
+        if not current_period_end:
+            current_period_end = _coerce_stripe_timestamp(_sg(stripe_sub, "trial_end")) or 0
+
+        if not current_period_end:
+            raise HTTPException(
+                status_code=400,
+                detail="Unable to determine renewal date from Stripe. Please retry in 1 minute or open Billing Portal."
+            )
 
         if not schedule_id:
             created_schedule = stripe.SubscriptionSchedule.create(from_subscription=stripe_sub_id)
