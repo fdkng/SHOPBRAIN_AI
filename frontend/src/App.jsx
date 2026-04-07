@@ -623,11 +623,7 @@ export default function App() {
                     setCurrentView('dashboard')
                     window.location.hash = '#dashboard'
                   }}
-                  className={`px-4 md:px-5 py-2 rounded-full text-xs md:text-sm font-medium transition-all ${
-                    hasSubscription
-                      ? 'bg-[#1A1A2E] text-white hover:bg-[#2A2A42] shadow-sm'
-                      : 'bg-[#EFF1F5] text-[#6A6A85] hover:bg-[#E8E8EE]'
-                  }`}
+                  className="px-4 md:px-5 py-2 rounded-full text-xs md:text-sm font-medium transition-all bg-[#1A1A2E] text-white hover:bg-[#2A2A42] shadow-sm"
                 >
                   Dashboard
                 </button>
@@ -963,15 +959,11 @@ export default function App() {
                   setCurrentView('dashboard')
                   window.location.hash = '#dashboard'
                 }}
-                className={`px-12 py-4 text-base font-semibold rounded-full transition-all ${
-                  hasSubscription
-                    ? 'bg-[#FF6B35] text-white hover:bg-[#E85A28] hover:shadow-lg shadow-[0_8px_24px_rgba(255,107,53,0.25)]'
-                    : 'bg-[#EFF1F5] text-[#6A6A85] hover:bg-[#E8E8EE]'
-                }`}
+                className="px-12 py-4 text-base font-semibold rounded-full transition-all bg-[#FF6B35] text-white hover:bg-[#E85A28] hover:shadow-lg shadow-[0_8px_24px_rgba(255,107,53,0.25)]"
               >
                 Accéder à mon Dashboard
               </button>
-              {renderLandingStatus('dashboardHero')}
+              {!hasSubscription && renderLandingStatus('dashboardHero')}
             </div>
           )}
           {!user && (

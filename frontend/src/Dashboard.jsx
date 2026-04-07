@@ -768,7 +768,7 @@ export default function Dashboard() {
             setStatus('shopify', 'success', `Boutique Shopify connectée avec succès${connectedShop ? ` (${connectedShop})` : ''} ! 🎉`)
           }, 500)
           // Refresh shop list and products
-          initializeUser().then(() => {
+          initializeUser(true).then(() => {
             refreshShopList()
             loadProducts()
           })
@@ -779,7 +779,7 @@ export default function Dashboard() {
           setTimeout(() => {
             setStatus('shopify', 'warning', `Limite de ${limit} boutique${limit > 1 ? 's' : ''} atteinte (plan ${plan}). Passez au plan supérieur pour en ajouter.`)
           }, 500)
-          initializeUser()
+          initializeUser(true)
         } else if (shopifyStatus === 'error') {
           const reason = hashParams.get('reason') || 'unknown'
           const reasonMessages = {
@@ -799,9 +799,9 @@ export default function Dashboard() {
           setTimeout(() => {
             setStatus('shopify', 'error', reasonMessages[reason] || `Erreur Shopify OAuth: ${reason}`)
           }, 500)
-          initializeUser()
+          initializeUser(true)
         } else {
-          initializeUser()
+          initializeUser(true)
         }
         // Clean up the hash params
         setTimeout(() => {
@@ -810,7 +810,7 @@ export default function Dashboard() {
         }, 1500)
       } else {
         // Normal initialization
-        initializeUser()
+        initializeUser(true)
       }
     }
   }, [])
