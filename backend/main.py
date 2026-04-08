@@ -3429,21 +3429,42 @@ async def stripe_webhook(request: Request):
                                             if not schedule_id:
                                                 created_schedule = stripe.SubscriptionSchedule.create(from_subscription=existing_sub_id)
                                                 schedule_id = _sg(created_schedule, "id")
+                                            # Read schedule to get immutable phase boundaries
+                                            sched_obj = stripe.SubscriptionSchedule.retrieve(schedule_id)
+                                            sched_phase = _sg(sched_obj, "current_phase", {}) or {}
+                                            locked_start = _coerce_stripe_timestamp(_sg(sched_phase, "start_date")) or effective_phase_start
+                                            locked_end = _coerce_stripe_timestamp(_sg(sched_phase, "end_date")) or switch_at
+                                            # Use real subscription renewal, not schedule echo
+                                            real_switch = _coerce_stripe_timestamp(_sg(old_stripe_sub, "current_period_end")) or switch_at
+                                            eff_start = locked_start if isinstance(locked_start, int) else effective_phase_start
+                                            eff_end = real_switch
+                                            # Guard: release stale schedule if start >= end
+                                            if isinstance(eff_start, int) and eff_start >= eff_end:
+                                                try:
+                                                    stripe.SubscriptionSchedule.release(schedule_id)
+                                                except Exception:
+                                                    pass
+                                                created_schedule = stripe.SubscriptionSchedule.create(from_subscription=existing_sub_id)
+                                                schedule_id = _sg(created_schedule, "id")
+                                                sched_obj = stripe.SubscriptionSchedule.retrieve(schedule_id)
+                                                sched_phase = _sg(sched_obj, "current_phase", {}) or {}
+                                                eff_start = _coerce_stripe_timestamp(_sg(sched_phase, "start_date")) or "now"
+                                                eff_end = _coerce_stripe_timestamp(_sg(sched_phase, "end_date")) or real_switch
                                             stripe.SubscriptionSchedule.modify(
                                                 schedule_id,
                                                 end_behavior="release",
                                                 phases=[
                                                     {
-                                                        "start_date": effective_phase_start,
-                                                        "end_date": switch_at,
+                                                        "start_date": eff_start,
+                                                        "end_date": eff_end,
                                                         "items": [{"price": old_price_id, "quantity": old_qty}],
                                                     },
                                                     {
-                                                        "start_date": switch_at,
+                                                        "start_date": eff_end,
                                                         "items": [{"price": new_price_id, "quantity": old_qty}],
                                                     },
                                                 ],
-                                                metadata={"user_id": user_id, "pending_plan": plan_tier, "effective_at": str(switch_at)},
+                                                metadata={"user_id": user_id, "pending_plan": plan_tier, "effective_at": str(eff_end)},
                                             )
                                             print(f"  ✅ [WEBHOOK] Scheduled switch on existing sub at renewal ({switch_at})")
                                             payload_write["stripe_subscription_id"] = existing_sub_id
@@ -13870,9 +13891,8 @@ async def cancel_subscription(request: Request):
                     stripe_subscription_id,
                     cancel_at_period_end=True
                 )
-                cancel_at = _sg(updated_sub, "current_period_end")
-                if cancel_at and isinstance(cancel_at, (int, float)):
-                    cancel_at = datetime.utcfromtimestamp(cancel_at).isoformat()
+                raw_cancel_ts = _coerce_stripe_timestamp(_sg(updated_sub, "current_period_end"))
+                cancel_at = datetime.utcfromtimestamp(raw_cancel_ts).isoformat() if raw_cancel_ts else None
                 print(f"✅ Stripe subscription set to cancel at period end: {stripe_subscription_id}, cancel_at={cancel_at}")
             except stripe.InvalidRequestError as stripe_err:
                 error_msg = str(stripe_err).lower()
@@ -14268,7 +14288,19 @@ async def switch_plan_inline(request: Request, _override_plan: str | None = None
         import traceback
         tb = traceback.format_exc()
         print(f"❌ [SWITCH-PLAN] Error: {e}\n{tb}")
-        raise HTTPException(status_code=500, detail=f"switch-plan error: {type(e).__name__}: {e}")
+        # Return user-friendly message instead of raw Stripe/internal error
+        err_str = str(e).lower()
+        if "start_date" in err_str and "current phase" in err_str:
+            friendly = "Plan switch temporarily unavailable due to a scheduling conflict. Please retry in 1 minute."
+        elif "phase" in err_str and ("minimum 1 second" in err_str or "same" in err_str):
+            friendly = "Plan switch temporarily unavailable. Please retry in 1 minute."
+        elif "no such subscription" in err_str:
+            friendly = "Your subscription was not found in Stripe. Please contact support."
+        elif "no such customer" in err_str:
+            friendly = "Your billing account was not found. Please contact support."
+        else:
+            friendly = "Unable to schedule plan change. Please retry in 1 minute or contact support."
+        raise HTTPException(status_code=500, detail=friendly)
 
 
 @app.post("/api/subscription/update-payment-method")

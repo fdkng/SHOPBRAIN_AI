@@ -499,7 +499,11 @@ export default function Dashboard() {
     if (lower.includes('no active subscription found')) {
       return tr('noActiveSubscription', 'No active subscription found.')
     }
-    return raw
+    // Never leak raw Stripe/API errors — check for known safe messages only
+    if (lower.includes('already on this plan')) return raw
+    if (lower.includes('please retry') || lower.includes('please contact support')) return raw
+    if (lower.includes('unable to') || lower.includes('plan change')) return raw
+    return tr('unableToSchedulePlanChange', 'Unable to schedule plan change. Please try again.')
   }
 
   // 🧹 Strip HTML tags from AI-generated suggestions (show clean text to user)
@@ -590,6 +594,23 @@ export default function Dashboard() {
 
   // Translations are now managed by LanguageContext
 
+  // Normalize a timestamp value that may be a Unix seconds integer, ISO string, or ms number
+  const normalizeTimestampValue = (val) => {
+    if (!val) return null
+    if (typeof val === 'string') {
+      // ISO string — return as-is if it parses to a valid date
+      const d = new Date(val)
+      if (!isNaN(d.getTime()) && d.getFullYear() > 1971) return val
+    }
+    const num = Number(val)
+    if (!num || isNaN(num)) return null
+    // If it looks like Unix seconds (< 1e12 → before year ~2001 in ms), convert to ISO
+    if (num > 0 && num < 2e10) return new Date(num * 1000).toISOString()
+    // Already milliseconds
+    if (num > 1e12) return new Date(num).toISOString()
+    return null
+  }
+
   const normalizeSubscription = (raw) => {
     const status = String(raw?.subscription_status || raw?.status || 'inactive').toLowerCase().trim()
     const paid = raw?.paid === true || raw?.plan === true || raw?.has_subscription === true
@@ -617,7 +638,7 @@ export default function Dashboard() {
       plan: isActive ? effectivePlan : null,
       upcoming_plan: isActive ? upcomingPlan : null,
       upcoming_plan_effective_at: isActive ? (raw?.upcoming_plan_effective_at || null) : null,
-      current_period_end: isActive ? (raw?.current_period_end || null) : null,
+      current_period_end: isActive ? normalizeTimestampValue(raw?.current_period_end) : null,
       payment_date: raw?.payment_date || null,
       started_at: raw?.started_at || null,
       capabilities: raw?.capabilities || null,
@@ -1379,7 +1400,10 @@ export default function Dashboard() {
     window.location.hash = '#/'
   }
 
+  const [upgradeLoading, setUpgradeLoading] = useState(false)
   const handleUpgrade = async () => {
+    if (upgradeLoading) return
+    setUpgradeLoading(true)
     try {
       const currentPlan = subscription?.plan
       const nextPlan = currentPlan === 'standard' ? 'pro' : currentPlan === 'pro' ? 'premium' : null
@@ -1448,6 +1472,8 @@ export default function Dashboard() {
     } catch (e) {
       console.error('Upgrade error:', e)
       setStatus('upgrade', 'error', t('anErrorOccurred'))
+    } finally {
+      setUpgradeLoading(false)
     }
   }
 
@@ -2412,8 +2438,7 @@ export default function Dashboard() {
       if (data.success && data.portal_url) {
         window.location.href = data.portal_url
       } else {
-        const detail = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || '')
-        setStatus('billing', 'error', t('error') + ': ' + (detail || t('error')))
+        setStatus('billing', 'error', formatErrorDetail(data.detail, t('errorPayment')))
       }
     } catch (err) {
       setStatus('billing', 'error', formatUserFacingError(err, t('errorPayment')))
@@ -4395,7 +4420,13 @@ export default function Dashboard() {
                   <button
                     onClick={async () => {
                       await handleChangePlan(pendingPlanConfirm.plan)
-                      setPendingPlanConfirm(null)
+                      // Only dismiss confirmation if switch succeeded
+                      if (!changePlanLoading) {
+                        const statusObj = statuses['change-plan']
+                        if (statusObj?.type === 'success' || statusObj?.type === 'info') {
+                          setPendingPlanConfirm(null)
+                        }
+                      }
                     }}
                     disabled={changePlanLoading}
                     className="flex-1 px-4 py-3 rounded-lg bg-[#FF6B35] hover:bg-[#E85A28] text-white font-semibold disabled:opacity-50"
@@ -7040,7 +7071,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             </p>
                             <div className="flex gap-2">
                               <button onClick={() => { setPendingPlanConfirm(null); clearStatus('change-plan') }} disabled={changePlanLoading} className="flex-1 px-3 py-2 rounded-lg border border-[#E8E8EE] text-[#6A6A85] hover:bg-[#EFF1F5] disabled:opacity-50 text-sm">{tr('cancel', 'Cancel')}</button>
-                              <button onClick={async () => { await handleChangePlan(pendingPlanConfirm.plan); setPendingPlanConfirm(null) }} disabled={changePlanLoading} className="flex-1 px-3 py-2 rounded-lg bg-[#FF6B35] hover:bg-[#E85A28] text-white font-semibold disabled:opacity-50 text-sm">{changePlanLoading ? '...' : tr('confirmSwitch', 'Confirm & Switch')}</button>
+                              <button onClick={async () => { await handleChangePlan(pendingPlanConfirm.plan); const s = statuses['change-plan']; if (s?.type === 'success' || s?.type === 'info') setPendingPlanConfirm(null) }} disabled={changePlanLoading} className="flex-1 px-3 py-2 rounded-lg bg-[#FF6B35] hover:bg-[#E85A28] text-white font-semibold disabled:opacity-50 text-sm">{changePlanLoading ? '...' : tr('confirmSwitch', 'Confirm & Switch')}</button>
                             </div>
                           </div>
                         ) : (
