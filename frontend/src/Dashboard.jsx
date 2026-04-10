@@ -684,7 +684,8 @@ export default function Dashboard() {
           'Authorization': `Bearer ${session.access_token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ session_id: sessionId })
+        body: JSON.stringify({ session_id: sessionId }),
+        signal: AbortSignal.timeout(120000) // 2min timeout for Render cold start
       })
 
       const data = await response.json()
@@ -722,7 +723,7 @@ export default function Dashboard() {
         // After verify completes, poll sequentially only if no subscription
         let pollCount = 0
         const doPoll = async () => {
-          if (pollCount >= 6) {
+          if (pollCount >= 12) {
             setIsProcessingPayment(false)
             return
           }
@@ -731,11 +732,13 @@ export default function Dashboard() {
           if (result?.has_subscription) {
             setIsProcessingPayment(false)
           } else {
-            setTimeout(doPoll, 2000)
+            // Increasing delay: 3s, 4s, 5s... up to 8s (backend cold start can take 2min)
+            const delay = Math.min(3000 + pollCount * 1000, 8000)
+            setTimeout(doPoll, delay)
           }
         }
-        // Small delay before first poll to let webhook arrive
-        setTimeout(doPoll, 2000)
+        // Wait 4s before first poll — backend needs time to wake up + process webhook
+        setTimeout(doPoll, 4000)
       })
       
       // Cleanup URL
@@ -744,10 +747,10 @@ export default function Dashboard() {
         window.history.replaceState({}, document.title, baseUrl)
       }, 1000)
       
-      // Safety timeout to stop processing indicator
+      // Safety timeout to stop processing indicator (2.5 min for cold start)
       setTimeout(() => {
         setIsProcessingPayment(false)
-      }, 15000)
+      }, 150000)
     } else if (hasHashSuccess) {
       // Fallback for hash-based success detection — single sequential flow
       resetSubscriptionClientCaches()
@@ -756,7 +759,7 @@ export default function Dashboard() {
       initializeUser(true).then(() => {
         let pollCount = 0
         const doPoll = async () => {
-          if (pollCount >= 5) {
+          if (pollCount >= 10) {
             setIsProcessingPayment(false)
             return
           }
@@ -765,16 +768,17 @@ export default function Dashboard() {
           if (result?.has_subscription) {
             setIsProcessingPayment(false)
           } else {
-            setTimeout(doPoll, 2000)
+            const delay = Math.min(3000 + pollCount * 1000, 8000)
+            setTimeout(doPoll, delay)
           }
         }
-        setTimeout(doPoll, 2000)
+        setTimeout(doPoll, 4000)
       })
       
       setTimeout(() => {
         setIsProcessingPayment(false)
         window.location.hash = window.location.hash.replace('success=true', '')
-      }, 12000)
+      }, 120000)
     } else {
       // ── Shopify OAuth return handler ──
       const shopifyStatus = hashParams.get('shopify')
@@ -1305,11 +1309,11 @@ export default function Dashboard() {
           return subData
         } else {
           setSubscriptionMissing(true)
-          // Auto-retry up to 3 times with increasing delay (for webhook propagation after payment)
-          if (initRetryRef.current < 3) {
+          // Auto-retry up to 6 times with increasing delay (for webhook propagation + cold start)
+          if (initRetryRef.current < 6) {
             initRetryRef.current++
-            const delay = Math.min(2000 * initRetryRef.current, 6000)
-            console.log(`🔄 No subscription found, retrying in ${delay/1000}s (attempt ${initRetryRef.current}/3)...`)
+            const delay = Math.min(3000 * initRetryRef.current, 10000)
+            console.log(`🔄 No subscription found, retrying in ${delay/1000}s (attempt ${initRetryRef.current}/6)...`)
             setTimeout(() => initializeUser(true), delay)
           }
           return subData
@@ -1364,9 +1368,9 @@ export default function Dashboard() {
         } else {
           setSubscriptionMissing(true)
           // Auto-retry
-          if (initRetryRef.current < 3) {
+          if (initRetryRef.current < 6) {
             initRetryRef.current++
-            const delay = Math.min(2000 * initRetryRef.current, 6000)
+            const delay = Math.min(3000 * initRetryRef.current, 10000)
             console.log(`🔄 Fallback: no subscription, retrying in ${delay/1000}s...`)
             setTimeout(() => initializeUser(true), delay)
           }
@@ -1383,14 +1387,14 @@ export default function Dashboard() {
       setLoading(false)
       setSubscriptionMissing(true)  // Let user see the sync/retry screen instead of infinite loading
       // Auto-retry on network errors
-      if (initRetryRef.current < 3) {
+      if (initRetryRef.current < 6) {
         initRetryRef.current++
-        const delay = Math.min(2000 * initRetryRef.current, 6000)
+        const delay = Math.min(3000 * initRetryRef.current, 10000)
         console.log(`🔄 Init error, retrying in ${delay/1000}s...`)
         setTimeout(() => initializeUser(true), delay)
       } else {
-        // Only show auth error after all retries exhausted
-        setError(t('authError'))
+        // Only show a soft warning after all retries exhausted — NOT a scary auth error
+        setError(t('backendStarting') || 'Le serveur est en cours de démarrage. Veuillez rafraîchir la page dans quelques secondes.')
       }
     }
   }
@@ -4206,9 +4210,9 @@ export default function Dashboard() {
     )
   }
 
-  // Show sync screen ONLY during the first 3 retries. After that, show dashboard anyway
+  // Show sync screen ONLY during the first 6 retries. After that, show dashboard anyway
   // with a warning banner (the user may genuinely have a subscription that backend can't find yet).
-  if ((!subscription || !subscription.has_subscription) && subscriptionMissing && initRetryRef.current < 3 && initRetryRef.current > 0) {
+  if ((!subscription || !subscription.has_subscription) && subscriptionMissing && initRetryRef.current < 6 && initRetryRef.current > 0) {
     return (
       <div className="min-h-screen bg-[#F7F8FA] flex items-center justify-center px-4">
         <div className="text-center text-[#1A1A2E] max-w-md w-full">
@@ -4216,7 +4220,7 @@ export default function Dashboard() {
           <div className="text-lg sm:text-xl mb-2">{t('subscriptionSync')}</div>
           <div className="text-[#4A4A68] text-sm mb-2">{t('paymentDelay')}</div>
           <div className="text-[#8A8AA3] text-xs mb-4">
-            {t('retry')} {initRetryRef.current}/3...
+            {t('retry')} {initRetryRef.current}/6...
           </div>
           <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 justify-center mt-4">
             <button onClick={() => { initRetryRef.current = 0; initializeUser(true) }} className="bg-[#FF6B35] hover:bg-[#E85A28] px-5 py-2.5 rounded-lg text-white text-sm font-medium transition-colors">{t('retry')}</button>

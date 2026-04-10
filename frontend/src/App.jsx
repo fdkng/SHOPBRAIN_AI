@@ -623,7 +623,11 @@ export default function App() {
                     setCurrentView('dashboard')
                     window.location.hash = '#dashboard'
                   }}
-                  className="px-4 md:px-5 py-2 rounded-full text-xs md:text-sm font-medium transition-all bg-[#1A1A2E] text-white hover:bg-[#2A2A42] shadow-sm"
+                  className={`px-4 md:px-5 py-2 rounded-full text-xs md:text-sm font-medium transition-all ${
+                    hasSubscription
+                      ? 'bg-[#1A1A2E] text-white hover:bg-[#2A2A42] shadow-sm'
+                      : 'border border-[#E8E8EE] text-[#4A4A68] hover:bg-[#F7F8FA]'
+                  }`}
                 >
                   Dashboard
                 </button>

@@ -364,6 +364,7 @@ const fr = {
   networkErrorUnavailable: 'Connexion au backend impossible pour le moment (serveur en réveil). Réessaie dans 10-20 secondes.',
   genericErrorOccurred: 'Une erreur est survenue',
   authError: "Erreur d'authentification",
+  backendStarting: 'Le serveur est en cours de démarrage. Veuillez rafraîchir la page dans quelques secondes.',
   sessionExpired: 'Session expirée, reconnecte-toi.',
   sessionExpiredReconnect: 'Session expirée, reconnectez-vous',
 
@@ -986,6 +987,7 @@ const en = {
   networkErrorUnavailable: 'Cannot connect to backend right now (server waking up). Retry in 10-20 seconds.',
   genericErrorOccurred: 'An error occurred',
   authError: 'Authentication error',
+  backendStarting: 'The server is starting up. Please refresh the page in a few seconds.',
   sessionExpired: 'Session expired, please log in again.',
   sessionExpiredReconnect: 'Session expired, please reconnect',
   newKeyGenerated: 'New key generated',
@@ -1580,6 +1582,7 @@ const es = generateFromEN({
   networkError: 'Error de red',
   genericErrorOccurred: 'Ocurrió un error',
   authError: 'Error de autenticación',
+  backendStarting: 'El servidor se está iniciando. Actualice la página en unos segundos.',
   sessionExpired: 'Sesión expirada, inicia sesión de nuevo.',
   sessionExpiredReconnect: 'Sesión expirada, reconéctate',
   newKeyGenerated: 'Nueva clave generada',
