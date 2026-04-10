@@ -200,15 +200,7 @@ export default function App() {
       hash.includes('success=true') ||
       hash.includes('session_id=')
 
-    // Force sign out on fresh page load so user must login each time
-    // BUT skip sign-out if user just came back from Stripe payment
-    const isFirstLoad = !sessionStorage.getItem('sb_session_active')
-    if (isFirstLoad && !isReturningFromPayment) {
-      await supabase.auth.signOut()
-      sessionStorage.setItem('sb_session_active', '1')
-      setUser(null)
-      return
-    }
+    // Keep user logged in across page reloads — Supabase handles session persistence
     sessionStorage.setItem('sb_session_active', '1')
     const { data: { session } } = await supabase.auth.getSession()
     if (session) {

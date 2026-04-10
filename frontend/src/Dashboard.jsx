@@ -120,6 +120,7 @@ export default function Dashboard() {
     return localStorage.getItem('settingsTab') || 'profile'
   })
   const [subscriptionMissing, setSubscriptionMissing] = useState(false)
+  const [loadingTimedOut, setLoadingTimedOut] = useState(false)
   const [showApplyModal, setShowApplyModal] = useState(false)
   const [selectedActions, setSelectedActions] = useState([])
   const [applyingActions, setApplyingActions] = useState(false)
@@ -1193,6 +1194,12 @@ export default function Dashboard() {
     fetch(`${API_URL}/health`, { signal: AbortSignal.timeout(120000) }).catch(() => {})
   }, [])
 
+  // Safety valve: if loading screen persists for 8s, fall through to dashboard
+  useEffect(() => {
+    const timer = setTimeout(() => setLoadingTimedOut(true), 8000)
+    return () => clearTimeout(timer)
+  }, [])
+
   const initRetryRef = useRef(0)
   // lastSwitchedPlanRef removed — backend now live-syncs plan from Stripe, no local override needed
   const initializeUser = async (forceFresh = false) => {
@@ -1385,7 +1392,11 @@ export default function Dashboard() {
       resetSubscriptionClientCaches()
       // Don't set permanent error — it persists across retries. Only set if max retries exhausted.
       setLoading(false)
-      setSubscriptionMissing(true)  // Let user see the sync/retry screen instead of infinite loading
+      // Only set subscriptionMissing during active payment processing.
+      // For normal returns (cold start), let the dashboard show with a warning banner.
+      if (isProcessingPayment) {
+        setSubscriptionMissing(true)
+      }
       // Auto-retry on network errors
       if (initRetryRef.current < 6) {
         initRetryRef.current++
@@ -4172,7 +4183,7 @@ export default function Dashboard() {
     }
   }
 
-  if ((loading && !user) || (!subscriptionReady && !isProcessingPayment && !subscriptionMissing)) {
+  if (!loadingTimedOut && ((loading && !user) || (!subscriptionReady && !isProcessingPayment && !subscriptionMissing))) {
     return (
       <div className="min-h-screen bg-[#F7F8FA] flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
@@ -4210,9 +4221,10 @@ export default function Dashboard() {
     )
   }
 
-  // Show sync screen ONLY during the first 6 retries. After that, show dashboard anyway
-  // with a warning banner (the user may genuinely have a subscription that backend can't find yet).
-  if ((!subscription || !subscription.has_subscription) && subscriptionMissing && initRetryRef.current < 6 && initRetryRef.current > 0) {
+  // Show blocking sync screen ONLY during active payment processing (just paid).
+  // For normal dashboard loads (returning user, cold start), fall through to show the dashboard
+  // with a soft inline banner — never block access.
+  if (isProcessingPayment && (!subscription || !subscription.has_subscription) && subscriptionMissing && initRetryRef.current < 6 && initRetryRef.current > 0) {
     return (
       <div className="min-h-screen bg-[#F7F8FA] flex items-center justify-center px-4">
         <div className="text-center text-[#1A1A2E] max-w-md w-full">
@@ -4231,9 +4243,6 @@ export default function Dashboard() {
       </div>
     )
   }
-
-  // NOTE: If retries >= 4 and still no subscription, we fall through and show the dashboard
-  // anyway with the error banner (from setError). This prevents permanent lockout.
 
   return (
     <div className="min-h-screen bg-[#F7F8FA]">
@@ -4498,6 +4507,14 @@ export default function Dashboard() {
         )}
 
         <div className="max-w-7xl mx-auto p-3 md:p-6">
+
+        {/* Soft inline banner when subscription is still loading (backend cold start) */}
+        {!subscriptionReady && !error && (
+          <div className="bg-white border border-[#E8E8EE] text-[#4A4A68] p-4 rounded-lg mb-6 flex items-center gap-3">
+            <div className="w-5 h-5 border-2 border-[#D8D8E2] border-t-[#FF6B35] rounded-full animate-spin shrink-0"></div>
+            <span className="text-sm">{t('backendStarting') || 'Le serveur démarre, vos données arrivent...'}</span>
+          </div>
+        )}
 
         {error && (
           <div className="bg-white border border-[#E85A28] text-[#FF8B60] p-4 rounded-lg mb-6">
