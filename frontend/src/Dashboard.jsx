@@ -13,11 +13,23 @@ const API_URL = 'https://shopbrain-backend.onrender.com'
 let _cachedSession = null
 let _cachedSessionTs = 0
 const SESSION_CACHE_TTL = 30_000 // 30 seconds
-const resetSubscriptionClientCaches = () => {
+const readStoredSubscription = () => {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = localStorage.getItem('subscriptionCache')
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    return (parsed && typeof parsed === 'object') ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+const resetSubscriptionClientCaches = ({ preserveLocal = false } = {}) => {
   _cachedSession = null
   _cachedSessionTs = 0
   _apiCache.clear()
-  if (typeof window !== 'undefined') {
+  if (!preserveLocal && typeof window !== 'undefined') {
     localStorage.removeItem('subscriptionCache')
     localStorage.removeItem('profileCache')
   }
@@ -53,6 +65,7 @@ const cachedFetch = async (url, options = {}, ttlMs = 60_000) => {
 }
 
 export default function Dashboard() {
+  const initialStoredSubscription = readStoredSubscription()
   const [user, setUser] = useState(null)
   const [profile, setProfile] = useState(() => {
     if (typeof window === 'undefined') return null
@@ -63,8 +76,8 @@ export default function Dashboard() {
       return null
     }
   })
-  const [subscription, setSubscription] = useState(null)
-  const [subscriptionReady, setSubscriptionReady] = useState(false)
+  const [subscription, setSubscription] = useState(initialStoredSubscription)
+  const [subscriptionReady, setSubscriptionReady] = useState(Boolean(initialStoredSubscription?.has_subscription))
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('overview')
   const [shopifyUrl, setShopifyUrl] = useState(() => {
@@ -1206,7 +1219,7 @@ export default function Dashboard() {
     try {
       setError('')  // Clear any previous error on each attempt
       const initStart = performance.now()
-      if (forceFresh) resetSubscriptionClientCaches()
+      if (forceFresh) resetSubscriptionClientCaches({ preserveLocal: true })
       const session = await getCachedSession(forceFresh)
       
       if (!session) {
@@ -1315,6 +1328,19 @@ export default function Dashboard() {
           ])
           return subData
         } else {
+          const cachedSub = readStoredSubscription()
+          if (cachedSub?.has_subscription) {
+            setSubscription(cachedSub)
+            setSubscriptionReady(true)
+            setSubscriptionMissing(false)
+            if (initRetryRef.current < 6) {
+              initRetryRef.current++
+              const delay = Math.min(3000 * initRetryRef.current, 10000)
+              console.log(`🔄 Backend returned no subscription; keeping cached plan and retrying in ${delay / 1000}s...`)
+              setTimeout(() => initializeUser(true), delay)
+            }
+            return cachedSub
+          }
           setSubscriptionMissing(true)
           // Auto-retry up to 6 times with increasing delay (for webhook propagation + cold start)
           if (initRetryRef.current < 6) {
@@ -1373,6 +1399,19 @@ export default function Dashboard() {
           Promise.all([loadProducts(), loadAnalytics(analyticsRange)])
           return normalizedSub
         } else {
+          const cachedSub = readStoredSubscription()
+          if (cachedSub?.has_subscription) {
+            setSubscription(cachedSub)
+            setSubscriptionReady(true)
+            setSubscriptionMissing(false)
+            if (initRetryRef.current < 6) {
+              initRetryRef.current++
+              const delay = Math.min(3000 * initRetryRef.current, 10000)
+              console.log(`🔄 Fallback no subscription; keeping cached plan and retrying in ${delay / 1000}s...`)
+              setTimeout(() => initializeUser(true), delay)
+            }
+            return cachedSub
+          }
           setSubscriptionMissing(true)
           // Auto-retry
           if (initRetryRef.current < 6) {
@@ -1386,12 +1425,16 @@ export default function Dashboard() {
       }
     } catch (err) {
       console.error('Error:', err)
-      // NEVER trust cached/localStorage subscription data as fallback.
-      // Stripe is the single source of truth — if backend is unreachable, show sync screen.
-      // Clear stale caches to prevent ghost subscriptions.
-      resetSubscriptionClientCaches()
+      // Backend may be cold. Keep local subscription cache to avoid plan disappearing.
+      resetSubscriptionClientCaches({ preserveLocal: true })
       // Don't set permanent error — it persists across retries. Only set if max retries exhausted.
       setLoading(false)
+      const cachedSub = readStoredSubscription()
+      if (cachedSub?.has_subscription) {
+        setSubscription(cachedSub)
+        setSubscriptionReady(true)
+        setSubscriptionMissing(false)
+      }
       // Only set subscriptionMissing during active payment processing.
       // For normal returns (cold start), let the dashboard show with a warning banner.
       if (isProcessingPayment) {
