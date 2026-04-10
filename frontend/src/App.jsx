@@ -2,9 +2,9 @@ import React, { useState, useEffect, lazy, Suspense } from 'react'
 import { useTranslation } from './LanguageContext'
 import ErrorBoundary from './ErrorBoundary'
 import { createClient } from '@supabase/supabase-js'
+import Dashboard from './Dashboard'
 
-// ⚡ Lazy load heavy components — Dashboard and PricingTable are only loaded when needed
-const Dashboard = lazy(() => import('./Dashboard'))
+// ⚡ Lazy load PricingTable only
 const StripePricingTable = lazy(() => import('./PricingTable'))
 
 // ⚡ Loading fallback for lazy components
@@ -104,13 +104,6 @@ export default function App() {
   const [hasSubscription, setHasSubscription] = useState(false)
   const [subscriptionPlan, setSubscriptionPlan] = useState(null)
 
-  // ⚡ Prefetch Dashboard chunk in background after landing page loads
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      import('./Dashboard') // Triggers chunk download in background
-    }, 2000) // Start after 2s to not compete with critical resources
-    return () => clearTimeout(timer)
-  }, [])
   const [landingStatusByKey, setLandingStatusByKey] = useState({})
   const [faqOpenIndex, setFaqOpenIndex] = useState(null)
   
@@ -564,7 +557,7 @@ export default function App() {
 
   // If user is logged in and on dashboard view, show Dashboard component
   if (currentView === 'dashboard' && user) {
-    return <ErrorBoundary><Suspense fallback={<LazyFallback />}><Dashboard /></Suspense></ErrorBoundary>
+    return <ErrorBoundary><Dashboard /></ErrorBoundary>
   }
 
   // If viewing Stripe Pricing Table
