@@ -5894,7 +5894,7 @@ async def get_shopify_analytics(request: Request, range: str = "30d"):
     }
 
     orders = []
-    next_url = f"https://{shop_domain}/admin/api/2024-10/orders.json?status=any&created_at_min={start_date}&limit=250&fields=id,created_at,total_price,subtotal_price,total_discounts,total_tax,financial_status,currency,line_items"
+    next_url = f"https://{shop_domain}/admin/api/2024-10/orders.json?status=any&created_at_min={start_date}&limit=250&fields=id,created_at,total_price,subtotal_price,total_discounts,total_tax,financial_status,currency,line_items,refunds"
     page_count = 0
 
     while next_url and page_count < 4:
@@ -5912,7 +5912,7 @@ async def get_shopify_analytics(request: Request, range: str = "30d"):
         page_count += 1
 
     gross_revenue = 0.0
-    total_sales = 0.0  # net: subtotal - discounts (what the merchant actually earned)
+    total_returns = 0.0  # sum of all refund amounts
     total_discounts = 0.0
     total_tax = 0.0
     currency = "USD"
@@ -5925,14 +5925,26 @@ async def get_shopify_analytics(request: Request, range: str = "30d"):
         subtotal_price = float(order.get("subtotal_price") or total_price)
         order_discounts = float(order.get("total_discounts") or 0)
         order_tax = float(order.get("total_tax") or 0)
-        # Net sales = subtotal - discounts (revenue the merchant keeps, before tax)
-        net_sale = subtotal_price - order_discounts
-        gross_revenue += total_price
-        total_sales += net_sale
+
+        # --- Calculate refunds for this order ---
+        order_refund_amount = 0.0
+        for refund in (order.get("refunds") or []):
+            for refund_line in (refund.get("refund_line_items") or []):
+                order_refund_amount += float(refund_line.get("subtotal") or 0)
+            # Also check transactions for the refund total (more reliable)
+            for txn in (refund.get("transactions") or []):
+                if txn.get("kind") == "refund" and txn.get("status") == "success":
+                    order_refund_amount = max(order_refund_amount, float(txn.get("amount") or 0))
+
+        gross_revenue += subtotal_price  # Gross sales = subtotal before discounts/returns
+        total_returns += order_refund_amount
         total_discounts += order_discounts
         total_tax += order_tax
         orders_count += 1
         currency = order.get("currency") or currency
+
+        # Net sale for this order (after discounts + refunds)
+        net_sale = subtotal_price - order_discounts - order_refund_amount
 
         created_at = order.get("created_at")
         try:
@@ -5967,6 +5979,10 @@ async def get_shopify_analytics(request: Request, range: str = "30d"):
         _cursor += timedelta(days=1)
 
     series = sorted(series_map.values(), key=lambda x: x["date"])
+    # Shopify formula: Net sales = Gross sales - Discounts - Returns
+    # Total sales = Net sales (+ shipping + tax, but Shopify shows them equal when shipping=0)
+    net_sales = gross_revenue - total_discounts - total_returns
+    total_sales = net_sales  # Shopify: total_sales = net_sales when shipping charges = 0
     aov = total_sales / orders_count if orders_count else 0
 
     top_products_list = sorted(top_products.values(), key=lambda x: x["revenue"], reverse=True)[:5]
@@ -5978,8 +5994,9 @@ async def get_shopify_analytics(request: Request, range: str = "30d"):
         "currency": currency,
         "totals": {
             "total_sales": round(total_sales, 2),
-            "revenue": round(gross_revenue, 2),
+            "net_sales": round(net_sales, 2),
             "gross_revenue": round(gross_revenue, 2),
+            "returns": round(total_returns, 2),
             "discounts": round(total_discounts, 2),
             "tax": round(total_tax, 2),
             "orders": orders_count,

@@ -4732,82 +4732,102 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* ── Metrics Row: Total Sales (hero) + secondary metrics ── */}
+              {/* ── Metrics: Total Sales Breakdown (matches Shopify Analytics) ── */}
               <div className="px-4 md:px-6 pt-4 pb-2">
-                <div className="flex flex-wrap items-end gap-x-8 gap-y-2">
-                  {/* Primary: Total Sales */}
+                <div className="flex flex-col gap-3">
+                  {/* Hero: Total Sales */}
                   <div>
-                    <p className="text-[11px] uppercase tracking-[0.2em] text-[#8A8AA3] mb-1">Ventes totales</p>
+                    <p className="text-[11px] uppercase tracking-[0.2em] text-[#8A8AA3] mb-1">Total sales over time</p>
                     <p className="text-3xl md:text-4xl font-extrabold text-[#1A1A2E] leading-none">
-                      {analyticsLoading ? <span className="inline-block w-32 h-9 bg-[#F0F0F5] rounded-lg animate-pulse" /> : formatCurrency(analyticsData?.totals?.total_sales ?? analyticsData?.totals?.revenue, analyticsData?.currency || 'CAD')}
+                      {analyticsLoading ? <span className="inline-block w-40 h-9 bg-[#F0F0F5] rounded-lg animate-pulse" /> : formatCurrency(analyticsData?.totals?.total_sales ?? analyticsData?.totals?.revenue, analyticsData?.currency || 'CAD')}
                     </p>
                   </div>
-                  {/* Secondary metrics */}
-                  <div className="flex flex-wrap gap-x-6 gap-y-1 pb-1">
-                    <div>
-                      <p className="text-[10px] uppercase tracking-[0.15em] text-[#B0B0C4]">Revenu brut</p>
-                      <p className="text-sm font-semibold text-[#6A6A85]">
-                        {analyticsLoading ? '...' : formatCurrency(analyticsData?.totals?.gross_revenue ?? analyticsData?.totals?.revenue, analyticsData?.currency || 'CAD')}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] uppercase tracking-[0.15em] text-[#B0B0C4]">Commandes</p>
-                      <p className="text-sm font-semibold text-[#6A6A85]">
-                        {analyticsLoading ? '...' : formatCompactNumber(analyticsData?.totals?.orders || 0)}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] uppercase tracking-[0.15em] text-[#B0B0C4]">Panier moyen</p>
-                      <p className="text-sm font-semibold text-[#6A6A85]">
-                        {analyticsLoading ? '...' : formatCurrency(analyticsData?.totals?.aov, analyticsData?.currency || 'CAD')}
+                  {/* Breakdown row — Shopify-style */}
+                  <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 border-t border-[#F0F0F5] pt-3">
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-1.5 h-1.5 rounded-full bg-[#1A1A2E]" />
+                      <p className="text-[10px] uppercase tracking-[0.12em] text-[#8A8AA3]">Ventes brutes</p>
+                      <p className="text-xs font-semibold text-[#1A1A2E] ml-1">
+                        {analyticsLoading ? '...' : formatCurrency(analyticsData?.totals?.gross_revenue, analyticsData?.currency || 'CAD')}
                       </p>
                     </div>
                     {(analyticsData?.totals?.discounts > 0) && (
-                      <div>
-                        <p className="text-[10px] uppercase tracking-[0.15em] text-[#B0B0C4]">Remises</p>
-                        <p className="text-sm font-semibold text-[#E85A28]">
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-1.5 h-1.5 rounded-full bg-[#FF6B35]" />
+                        <p className="text-[10px] uppercase tracking-[0.12em] text-[#8A8AA3]">Remises</p>
+                        <p className="text-xs font-semibold text-[#FF6B35] ml-1">
                           −{formatCurrency(analyticsData?.totals?.discounts, analyticsData?.currency || 'CAD')}
                         </p>
                       </div>
                     )}
+                    {(analyticsData?.totals?.returns > 0) && (
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-1.5 h-1.5 rounded-full bg-[#E85A28]" />
+                        <p className="text-[10px] uppercase tracking-[0.12em] text-[#8A8AA3]">Retours</p>
+                        <p className="text-xs font-semibold text-[#E85A28] ml-1">
+                          −{formatCurrency(analyticsData?.totals?.returns, analyticsData?.currency || 'CAD')}
+                        </p>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-1.5 h-1.5 rounded-full bg-[#6A6A85]" />
+                      <p className="text-[10px] uppercase tracking-[0.12em] text-[#8A8AA3]">Commandes</p>
+                      <p className="text-xs font-semibold text-[#1A1A2E] ml-1">
+                        {analyticsLoading ? '...' : (analyticsData?.totals?.orders || 0)}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-1.5 h-1.5 rounded-full bg-[#6A6A85]" />
+                      <p className="text-[10px] uppercase tracking-[0.12em] text-[#8A8AA3]">Panier moyen</p>
+                      <p className="text-xs font-semibold text-[#1A1A2E] ml-1">
+                        {analyticsLoading ? '...' : formatCurrency(analyticsData?.totals?.aov, analyticsData?.currency || 'CAD')}
+                      </p>
+                    </div>
                   </div>
                 </div>
               </div>
 
               {/* ── Chart: Total Sales Over Time ── */}
-              <div className="px-2 md:px-4 pb-4">
+              <div className="px-2 md:px-4 pb-5 pt-1">
                 {analyticsError && <p className="text-xs text-[#FF6B35] px-2 mb-1">{analyticsError}</p>}
                 <div className="relative">
                   {analyticsLoading ? (
-                    <div className="flex items-center justify-center py-16">
+                    <div className="flex items-center justify-center py-20">
                       <div className="flex flex-col items-center gap-2">
                         <div className="w-6 h-6 border-2 border-[#E8E8EE] border-t-[#FF6B35] rounded-full animate-spin" />
                         <p className="text-xs text-[#8A8AA3]">Chargement du graphique...</p>
                       </div>
                     </div>
                   ) : analyticsData?.series?.length ? (() => {
-                    const chartWidth = 580
-                    const chartHeight = 200
-                    const pad = { top: 15, bottom: 32, left: 55, right: 10 }
+                    const chartWidth = 620
+                    const chartHeight = 220
+                    const pad = { top: 20, bottom: 34, left: 58, right: 14 }
                     const { linePath, areaPath, points, yLabels, xLabels } = buildAreaChartPath(
                       analyticsData.series, chartWidth, chartHeight, 'total_sales', pad
                     )
                     const currency = analyticsData?.currency || 'CAD'
+                    // Format Y value for display
+                    const fmtY = (v) => {
+                      if (v >= 1000000) return `$${(v / 1000000).toFixed(1)}M`
+                      if (v >= 1000) return `$${(v / 1000).toFixed(0)}K`
+                      return `$${v.toFixed(0)}`
+                    }
+                    // Find peak for tooltip
+                    const peakIdx = points.reduce((best, pt, i) => pt.val > points[best].val ? i : best, 0)
                     return (
-                      <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="w-full" style={{ height: 'auto', minHeight: '180px', maxHeight: '260px' }} preserveAspectRatio="xMidYMid meet">
+                      <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="w-full" style={{ height: 'auto', minHeight: '200px', maxHeight: '280px' }} preserveAspectRatio="xMidYMid meet">
                         <defs>
-                          <linearGradient id="salesGradient" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor="#FF6B35" stopOpacity="0.25" />
-                            <stop offset="50%" stopColor="#FF6B35" stopOpacity="0.08" />
-                            <stop offset="100%" stopColor="#FF6B35" stopOpacity="0.01" />
+                          <linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#FF6B35" stopOpacity="0.18" />
+                            <stop offset="70%" stopColor="#FF6B35" stopOpacity="0.04" />
+                            <stop offset="100%" stopColor="#FF6B35" stopOpacity="0" />
                           </linearGradient>
-                          <linearGradient id="lineGradient" x1="0" y1="0" x2="1" y2="0">
+                          <linearGradient id="lineStroke" x1="0" y1="0" x2="1" y2="0">
                             <stop offset="0%" stopColor="#FF6B35" />
-                            <stop offset="50%" stopColor="#FF8B60" />
-                            <stop offset="100%" stopColor="#FF6B35" />
+                            <stop offset="100%" stopColor="#FF8B60" />
                           </linearGradient>
-                          <filter id="glow">
-                            <feGaussianBlur stdDeviation="2" result="blur" />
+                          <filter id="softGlow" x="-20%" y="-20%" width="140%" height="140%">
+                            <feGaussianBlur stdDeviation="1.5" result="blur" />
                             <feMerge>
                               <feMergeNode in="blur" />
                               <feMergeNode in="SourceGraphic" />
@@ -4815,64 +4835,58 @@ export default function Dashboard() {
                           </filter>
                         </defs>
 
-                        {/* Grid lines */}
+                        {/* Horizontal grid lines */}
                         {yLabels.map((yl, i) => (
-                          <line key={`grid-${i}`} x1={pad.left} y1={yl.y} x2={chartWidth - pad.right} y2={yl.y}
-                            stroke="#E8E8EE" strokeWidth="0.5" strokeDasharray="3,3" />
+                          <line key={`g-${i}`} x1={pad.left} y1={yl.y} x2={chartWidth - pad.right} y2={yl.y}
+                            stroke={i === yLabels.length - 1 ? '#D8D8E2' : '#F0F0F5'} strokeWidth={i === yLabels.length - 1 ? '0.8' : '0.5'} />
                         ))}
 
                         {/* Y-axis labels */}
                         {yLabels.map((yl, i) => (
-                          <text key={`ylabel-${i}`} x={pad.left - 6} y={yl.y + 3}
-                            textAnchor="end" fill="#B0B0C4" fontSize="8" fontFamily="system-ui, sans-serif">
-                            {yl.val >= 1000 ? `${(yl.val / 1000).toFixed(1)}k` : yl.val.toFixed(0)}
+                          <text key={`yl-${i}`} x={pad.left - 8} y={yl.y + 3.5}
+                            textAnchor="end" fill="#A0A0B8" fontSize="7.5" fontFamily="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" fontWeight="500">
+                            {fmtY(yl.val)}
                           </text>
                         ))}
 
                         {/* X-axis labels */}
                         {xLabels.map((xl, i) => (
-                          <text key={`xlabel-${i}`} x={xl.x} y={chartHeight - 6}
-                            textAnchor="middle" fill="#B0B0C4" fontSize="8" fontFamily="system-ui, sans-serif">
+                          <text key={`xl-${i}`} x={xl.x} y={chartHeight - 8}
+                            textAnchor="middle" fill="#A0A0B8" fontSize="7.5" fontFamily="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" fontWeight="500">
                             {xl.label}
                           </text>
                         ))}
 
                         {/* Area fill */}
-                        <path d={areaPath} fill="url(#salesGradient)" />
+                        <path d={areaPath} fill="url(#areaFill)" />
 
-                        {/* Line */}
-                        <path d={linePath} fill="none" stroke="url(#lineGradient)" strokeWidth="2.5"
-                          strokeLinecap="round" strokeLinejoin="round" filter="url(#glow)" />
+                        {/* Main line */}
+                        <path d={linePath} fill="none" stroke="url(#lineStroke)" strokeWidth="2"
+                          strokeLinecap="round" strokeLinejoin="round" filter="url(#softGlow)" />
 
-                        {/* Data points — only show dots on days with actual sales */}
-                        {(() => {
-                          // Find the peak point for tooltip
-                          const peakIdx = points.reduce((best, pt, i) => pt.val > points[best].val ? i : best, 0)
-                          // Only render dots for non-zero days (avoid 31 empty dots)
-                          return points.map((pt, i) => {
-                            if (pt.val === 0 && i !== 0 && i !== points.length - 1) return null
-                            const isPeak = i === peakIdx && pt.val > 0
-                            const isEndpoint = i === 0 || i === points.length - 1
-                            return (
-                              <g key={`pt-${i}`}>
-                                <circle cx={pt.x} cy={pt.y} r={isPeak ? 4 : isEndpoint ? 3 : 2.5}
-                                  fill={isPeak ? '#FF6B35' : pt.val > 0 ? '#FF6B35' : '#D8D8E2'} stroke="white" strokeWidth="1.5"
-                                  opacity={isPeak ? 1 : pt.val > 0 ? 0.7 : 0.3} />
-                                {/* Tooltip on peak value */}
-                                {isPeak && (
-                                  <g>
-                                    <rect x={pt.x - 30} y={pt.y - 24} width="60" height="18" rx="4"
-                                      fill="#1A1A2E" opacity="0.92" />
-                                    <text x={pt.x} y={pt.y - 12} textAnchor="middle"
-                                      fill="white" fontSize="8.5" fontWeight="600" fontFamily="system-ui, sans-serif">
-                                      {pt.val >= 1000 ? `${(pt.val / 1000).toFixed(1)}k` : pt.val.toFixed(0)} {currency}
-                                    </text>
-                                  </g>
-                                )}
-                              </g>
-                            )
-                          })
-                        })()}
+                        {/* Data dots — only on days with sales */}
+                        {points.map((pt, i) => {
+                          if (pt.val === 0) return null
+                          const isPeak = i === peakIdx
+                          return (
+                            <g key={`d-${i}`}>
+                              {isPeak && <circle cx={pt.x} cy={pt.y} r="7" fill="#FF6B35" opacity="0.12" />}
+                              <circle cx={pt.x} cy={pt.y} r={isPeak ? 3.5 : 2.5}
+                                fill="white" stroke="#FF6B35" strokeWidth={isPeak ? 2 : 1.5} />
+                              {/* Tooltip on peak */}
+                              {isPeak && (
+                                <g>
+                                  <rect x={Math.min(pt.x - 32, chartWidth - pad.right - 66)} y={pt.y - 26} width="64" height="19" rx="5"
+                                    fill="#1A1A2E" opacity="0.93" />
+                                  <text x={Math.min(pt.x, chartWidth - pad.right - 34)} y={pt.y - 13.5} textAnchor="middle"
+                                    fill="white" fontSize="8.5" fontWeight="600" fontFamily="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+                                    {fmtY(pt.val)} {currency}
+                                  </text>
+                                </g>
+                              )}
+                            </g>
+                          )
+                        })}
                       </svg>
                     )
                   })() : shopifyUrl ? (
