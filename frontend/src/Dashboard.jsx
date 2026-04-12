@@ -449,7 +449,7 @@ export default function Dashboard() {
     // ── X-axis labels: pick ~6 evenly spaced dates ──
     const formatDateLabel = (dateStr) => {
       const d = new Date(dateStr + 'T00:00:00')
-      return !isNaN(d.getTime()) ? d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short.' }) : dateStr.slice(5)
+      return !isNaN(d.getTime()) ? d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : dateStr.slice(5)
     }
     const targetLabels = Math.min(series.length, 7)
     const labelStep = Math.max(1, Math.floor((series.length - 1) / Math.max(targetLabels - 1, 1)))
