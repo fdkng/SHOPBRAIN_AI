@@ -2352,8 +2352,8 @@ async def health():
     """Health check endpoint for Render - MUST ALWAYS WORK"""
     return {
         "status": "ok",
-        "version": "3.0-fast-init",
-        "build": "20260406-next-renewal-switch-v8.4",
+        "version": "3.1-cors-fix",
+        "build": "20260412-cors-restore",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
                 "openai": "configured" if OPENAI_API_KEY else "not_configured",
