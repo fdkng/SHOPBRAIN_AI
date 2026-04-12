@@ -383,60 +383,84 @@ export default function Dashboard() {
   }
 
   // Build a smooth SVG area chart path (line + closed fill area)
-  const buildAreaChartPath = (series, width = 520, height = 180, field = 'total_sales', padding = { top: 10, bottom: 30, left: 0, right: 0 }) => {
-    if (!series || series.length === 0) return { linePath: '', areaPath: '', points: [], yLabels: [], xLabels: [] }
+  // Handles edge cases: 0 points, 1 point, flat line, etc.
+  const buildAreaChartPath = (series, width = 520, height = 180, field = 'total_sales', padding = { top: 15, bottom: 32, left: 55, right: 10 }) => {
+    const empty = { linePath: '', areaPath: '', points: [], yLabels: [], xLabels: [] }
+    if (!series || series.length === 0) return empty
+
     const chartW = width - padding.left - padding.right
     const chartH = height - padding.top - padding.bottom
-    const values = series.map((p) => Number(p[field] || p.revenue || 0))
-    const maxVal = Math.max(...values, 1)
-    const minVal = Math.min(...values, 0)
-    const valRange = maxVal - minVal || 1
-    const step = chartW / Math.max(series.length - 1, 1)
 
+    // ── Compute Y domain ──
+    const values = series.map((p) => Number(p[field] || p.revenue || 0))
+    let maxVal = Math.max(...values)
+    let minVal = Math.min(...values)
+    // If all values are the same (or zero), add headroom so the line isn't stuck at edge
+    if (maxVal === minVal) {
+      maxVal = maxVal > 0 ? maxVal * 1.3 : 100
+      minVal = 0
+    }
+    // Always start Y at 0 for area charts (Shopify-style)
+    if (minVal > 0) minVal = 0
+    const valRange = maxVal - minVal || 1
+
+    // ── Map series to pixel coords ──
+    const step = series.length > 1 ? chartW / (series.length - 1) : 0
     const pts = series.map((p, i) => {
       const val = Number(p[field] || p.revenue || 0)
-      const x = padding.left + i * step
+      const x = padding.left + (series.length > 1 ? i * step : chartW / 2)
       const y = padding.top + chartH - ((val - minVal) / valRange) * chartH
       return { x, y, val, date: p.date, orders: p.orders || 0 }
     })
 
-    // Smooth curve using cubic bezier
-    let linePath = `M ${pts[0].x} ${pts[0].y}`
-    for (let i = 1; i < pts.length; i++) {
-      const prev = pts[i - 1]
-      const cur = pts[i]
-      const cpx = (prev.x + cur.x) / 2
-      linePath += ` C ${cpx} ${prev.y}, ${cpx} ${cur.y}, ${cur.x} ${cur.y}`
+    // ── Build SVG path ──
+    let linePath = ''
+    if (pts.length === 1) {
+      // Single point: draw a short horizontal line so the area is visible
+      const pt = pts[0]
+      linePath = `M ${padding.left} ${pt.y} L ${padding.left + chartW} ${pt.y}`
+      // Override points to span the full width for area fill
+      pts.length = 0
+      pts.push({ ...pt, x: padding.left })
+      pts.push({ ...pt, x: padding.left + chartW })
+    } else {
+      // Smooth cubic bezier through all points
+      linePath = `M ${pts[0].x} ${pts[0].y}`
+      for (let i = 1; i < pts.length; i++) {
+        const prev = pts[i - 1]
+        const cur = pts[i]
+        const cpx = (prev.x + cur.x) / 2
+        linePath += ` C ${cpx} ${prev.y}, ${cpx} ${cur.y}, ${cur.x} ${cur.y}`
+      }
     }
 
-    // Area path: line + close to bottom
-    const areaPath = `${linePath} L ${pts[pts.length - 1].x} ${padding.top + chartH} L ${pts[0].x} ${padding.top + chartH} Z`
+    // Area path: line → close to bottom
+    const bottomY = padding.top + chartH
+    const areaPath = `${linePath} L ${pts[pts.length - 1].x} ${bottomY} L ${pts[0].x} ${bottomY} Z`
 
-    // Y-axis labels (4 ticks)
-    const yLabels = [0, 1, 2, 3].map(i => {
-      const val = minVal + (valRange * (3 - i)) / 3
-      const y = padding.top + (chartH * i) / 3
+    // ── Y-axis labels (5 ticks from 0 to max) ──
+    const yTickCount = 4
+    const yLabels = Array.from({ length: yTickCount + 1 }, (_, i) => {
+      const val = minVal + (valRange * (yTickCount - i)) / yTickCount
+      const y = padding.top + (chartH * i) / yTickCount
       return { val, y }
     })
 
-    // X-axis labels: spread evenly, max 6
-    const maxLabels = Math.min(series.length, 6)
-    const labelStep = Math.max(1, Math.floor((series.length - 1) / (maxLabels - 1)))
+    // ── X-axis labels: pick ~6 evenly spaced dates ──
+    const formatDateLabel = (dateStr) => {
+      const d = new Date(dateStr + 'T00:00:00')
+      return !isNaN(d.getTime()) ? d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short.' }) : dateStr.slice(5)
+    }
+    const targetLabels = Math.min(series.length, 7)
+    const labelStep = Math.max(1, Math.floor((series.length - 1) / Math.max(targetLabels - 1, 1)))
     const xLabels = []
     for (let i = 0; i < series.length; i += labelStep) {
-      const p = pts[i]
-      const dateStr = series[i].date || ''
-      const d = new Date(dateStr + 'T00:00:00')
-      const label = !isNaN(d.getTime()) ? d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : dateStr.slice(5)
-      xLabels.push({ x: p.x, label })
+      xLabels.push({ x: padding.left + (series.length > 1 ? i * step : chartW / 2), label: formatDateLabel(series[i].date) })
     }
-    // Always include last point
-    if (xLabels.length > 0 && xLabels[xLabels.length - 1].x !== pts[pts.length - 1].x) {
-      const last = pts[pts.length - 1]
-      const dateStr = series[series.length - 1].date || ''
-      const d = new Date(dateStr + 'T00:00:00')
-      const label = !isNaN(d.getTime()) ? d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : dateStr.slice(5)
-      xLabels.push({ x: last.x, label })
+    // Ensure last date is always shown
+    const lastX = padding.left + (series.length > 1 ? (series.length - 1) * step : chartW / 2)
+    if (xLabels.length === 0 || Math.abs(xLabels[xLabels.length - 1].x - lastX) > 20) {
+      xLabels.push({ x: lastX, label: formatDateLabel(series[series.length - 1].date) })
     }
 
     return { linePath, areaPath, points: pts, yLabels, xLabels }
@@ -4820,24 +4844,35 @@ export default function Dashboard() {
                         <path d={linePath} fill="none" stroke="url(#lineGradient)" strokeWidth="2.5"
                           strokeLinecap="round" strokeLinejoin="round" filter="url(#glow)" />
 
-                        {/* Data points on hover — show all as tiny dots, larger on endpoints */}
-                        {points.map((pt, i) => (
-                          <g key={`pt-${i}`}>
-                            <circle cx={pt.x} cy={pt.y} r={i === 0 || i === points.length - 1 ? 3.5 : 2}
-                              fill="#FF6B35" stroke="white" strokeWidth="1.5" opacity={i === 0 || i === points.length - 1 ? 1 : 0.4} />
-                            {/* Tooltip-like label on last point */}
-                            {i === points.length - 1 && (
-                              <g>
-                                <rect x={pt.x - 40} y={pt.y - 22} width="45" height="16" rx="4"
-                                  fill="#1A1A2E" opacity="0.9" />
-                                <text x={pt.x - 17.5} y={pt.y - 11} textAnchor="middle"
-                                  fill="white" fontSize="8" fontWeight="600" fontFamily="system-ui, sans-serif">
-                                  {pt.val >= 1000 ? `${(pt.val / 1000).toFixed(1)}k` : pt.val.toFixed(0)} {currency}
-                                </text>
+                        {/* Data points — only show dots on days with actual sales */}
+                        {(() => {
+                          // Find the peak point for tooltip
+                          const peakIdx = points.reduce((best, pt, i) => pt.val > points[best].val ? i : best, 0)
+                          // Only render dots for non-zero days (avoid 31 empty dots)
+                          return points.map((pt, i) => {
+                            if (pt.val === 0 && i !== 0 && i !== points.length - 1) return null
+                            const isPeak = i === peakIdx && pt.val > 0
+                            const isEndpoint = i === 0 || i === points.length - 1
+                            return (
+                              <g key={`pt-${i}`}>
+                                <circle cx={pt.x} cy={pt.y} r={isPeak ? 4 : isEndpoint ? 3 : 2.5}
+                                  fill={isPeak ? '#FF6B35' : pt.val > 0 ? '#FF6B35' : '#D8D8E2'} stroke="white" strokeWidth="1.5"
+                                  opacity={isPeak ? 1 : pt.val > 0 ? 0.7 : 0.3} />
+                                {/* Tooltip on peak value */}
+                                {isPeak && (
+                                  <g>
+                                    <rect x={pt.x - 30} y={pt.y - 24} width="60" height="18" rx="4"
+                                      fill="#1A1A2E" opacity="0.92" />
+                                    <text x={pt.x} y={pt.y - 12} textAnchor="middle"
+                                      fill="white" fontSize="8.5" fontWeight="600" fontFamily="system-ui, sans-serif">
+                                      {pt.val >= 1000 ? `${(pt.val / 1000).toFixed(1)}k` : pt.val.toFixed(0)} {currency}
+                                    </text>
+                                  </g>
+                                )}
                               </g>
-                            )}
-                          </g>
-                        ))}
+                            )
+                          })
+                        })()}
                       </svg>
                     )
                   })() : shopifyUrl ? (

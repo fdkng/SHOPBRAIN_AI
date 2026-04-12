@@ -5955,6 +5955,17 @@ async def get_shopify_analytics(request: Request, range: str = "30d"):
             top_products[title]["revenue"] += price * quantity
             top_products[title]["quantity"] += quantity
 
+    # ── Fill in ALL dates in the range so the chart always has a continuous series ──
+    from datetime import date as _date_type
+    _range_start = (datetime.utcnow() - timedelta(days=days)).date()
+    _range_end = datetime.utcnow().date()
+    _cursor = _range_start
+    while _cursor <= _range_end:
+        _dk = _cursor.strftime("%Y-%m-%d")
+        if _dk not in series_map:
+            series_map[_dk] = {"date": _dk, "revenue": 0.0, "total_sales": 0.0, "orders": 0}
+        _cursor += timedelta(days=1)
+
     series = sorted(series_map.values(), key=lambda x: x["date"])
     aov = total_sales / orders_count if orders_count else 0
 
