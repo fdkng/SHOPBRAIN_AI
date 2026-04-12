@@ -56,6 +56,26 @@ print("\n🚀 ========== BACKEND STARTUP ==========")
 print(f"✅ FastAPI initializing...")
 app = FastAPI()
 
+# ── CORS — Allow cross-origin requests from frontend (GitHub Pages + local dev) ──
+_cors_origins = [
+    "https://fdkng.github.io",
+    "http://localhost:5173",
+    "http://localhost:3000",
+]
+# Also allow a custom FRONTEND_ORIGIN env var (if set)
+_env_frontend_origin = os.getenv("FRONTEND_ORIGIN", "").strip().rstrip("/")
+if _env_frontend_origin and _env_frontend_origin not in _cors_origins:
+    _cors_origins.append(_env_frontend_origin)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+print(f"✅ CORS enabled for: {_cors_origins}")
+
 
 def _sanitize_url(raw: str | None, default: str = "") -> str:
     value = (raw or default or "").strip()
