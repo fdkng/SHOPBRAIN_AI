@@ -1214,11 +1214,40 @@ export default function Dashboard() {
   }, [])
 
   const initRetryRef = useRef(0)
+  const initInFlightRef = useRef(false)
+  const initBackgroundRetryTimerRef = useRef(null)
+
+  useEffect(() => {
+    return () => {
+      if (initBackgroundRetryTimerRef.current) {
+        clearTimeout(initBackgroundRetryTimerRef.current)
+      }
+    }
+  }, [])
+
+  const scheduleBackgroundInitRetry = (delayMs = 15000) => {
+    if (initBackgroundRetryTimerRef.current) return
+    initBackgroundRetryTimerRef.current = setTimeout(() => {
+      initBackgroundRetryTimerRef.current = null
+      initializeUser(true)
+    }, delayMs)
+  }
+
+  const clearBackgroundInitRetry = () => {
+    if (!initBackgroundRetryTimerRef.current) return
+    clearTimeout(initBackgroundRetryTimerRef.current)
+    initBackgroundRetryTimerRef.current = null
+  }
+
   // lastSwitchedPlanRef removed — backend now live-syncs plan from Stripe, no local override needed
   const initializeUser = async (forceFresh = false) => {
+    if (initInFlightRef.current) {
+      return subscription || readStoredSubscription() || null
+    }
+    initInFlightRef.current = true
     try {
       setError('')  // Clear any previous error on each attempt
-      const initStart = performance.now()
+      clearBackgroundInitRetry()
       if (forceFresh) resetSubscriptionClientCaches({ preserveLocal: true })
       const session = await getCachedSession(forceFresh)
       
@@ -1250,7 +1279,17 @@ export default function Dashboard() {
       // ⚡ FAST INIT — single API call replaces 5 separate calls
       // Pass force=1 when retrying (forceFresh) to bypass server-side cache
       const initUrl = forceFresh ? `${API_URL}/api/init?force=1` : `${API_URL}/api/init`
-      const initResp = await fetch(initUrl, { headers: authHeaders })
+      const initResp = await fetch(initUrl, {
+        headers: authHeaders,
+        signal: AbortSignal.timeout(30000)
+      })
+
+      if (initResp.status === 401) {
+        await supabase.auth.signOut()
+        setUser(null)
+        window.location.hash = '#/'
+        return null
+      }
 
       if (initResp.ok) {
         const initData = await initResp.json()
@@ -1320,6 +1359,7 @@ export default function Dashboard() {
         if (subData.has_subscription) {
           setSubscriptionMissing(false)
           initRetryRef.current = 0
+          clearBackgroundInitRetry()
           console.log(`⚡ Subscription: ${subData.plan} — loading products + analytics in parallel...`)
           // Load products and analytics IN PARALLEL
           Promise.all([
@@ -1348,18 +1388,28 @@ export default function Dashboard() {
             const delay = Math.min(3000 * initRetryRef.current, 10000)
             console.log(`🔄 No subscription found, retrying in ${delay/1000}s (attempt ${initRetryRef.current}/6)...`)
             setTimeout(() => initializeUser(true), delay)
+          } else {
+            setError(t('backendStarting') || 'Le serveur est en cours de démarrage. Veuillez rafraîchir la page dans quelques secondes.')
+            scheduleBackgroundInitRetry(15000)
           }
           return subData
         }
       } else {
         // Fallback to old method if /api/init fails
         console.warn('⚡ /api/init failed, falling back to individual calls...')
-        const profilePromise = fetch(`${API_URL}/api/auth/profile`, { headers: authHeaders })
-        const shopPromise = fetch(`${API_URL}/api/shopify/connection`, { headers: authHeaders })
+        const profilePromise = fetch(`${API_URL}/api/auth/profile`, {
+          headers: authHeaders,
+          signal: AbortSignal.timeout(30000)
+        })
+        const shopPromise = fetch(`${API_URL}/api/shopify/connection`, {
+          headers: authHeaders,
+          signal: AbortSignal.timeout(30000)
+        })
         const subPromise = fetch(`${API_URL}/api/subscription/status`, {
           method: 'POST',
           headers: authHeaders,
-          body: JSON.stringify({ user_id: session.user.id })
+          body: JSON.stringify({ user_id: session.user.id }),
+          signal: AbortSignal.timeout(30000)
         })
 
         const [profileResp, shopResp, subResp] = await Promise.all([
@@ -1396,6 +1446,7 @@ export default function Dashboard() {
         if (normalizedSub.has_subscription) {
           setSubscriptionMissing(false)
           initRetryRef.current = 0
+          clearBackgroundInitRetry()
           Promise.all([loadProducts(), loadAnalytics(analyticsRange)])
           return normalizedSub
         } else {
@@ -1419,6 +1470,9 @@ export default function Dashboard() {
             const delay = Math.min(3000 * initRetryRef.current, 10000)
             console.log(`🔄 Fallback: no subscription, retrying in ${delay/1000}s...`)
             setTimeout(() => initializeUser(true), delay)
+          } else {
+            setError(t('backendStarting') || 'Le serveur est en cours de démarrage. Veuillez rafraîchir la page dans quelques secondes.')
+            scheduleBackgroundInitRetry(15000)
           }
           return normalizedSub
         }
@@ -1449,7 +1503,10 @@ export default function Dashboard() {
       } else {
         // Only show a soft warning after all retries exhausted — NOT a scary auth error
         setError(t('backendStarting') || 'Le serveur est en cours de démarrage. Veuillez rafraîchir la page dans quelques secondes.')
+        scheduleBackgroundInitRetry(15000)
       }
+    } finally {
+      initInFlightRef.current = false
     }
   }
 
