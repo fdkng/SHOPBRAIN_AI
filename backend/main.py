@@ -5894,7 +5894,7 @@ async def get_shopify_analytics(request: Request, range: str = "30d"):
     }
 
     orders = []
-    next_url = f"https://{shop_domain}/admin/api/2024-10/orders.json?status=any&created_at_min={start_date}&limit=250&fields=id,created_at,total_price,financial_status,currency,line_items"
+    next_url = f"https://{shop_domain}/admin/api/2024-10/orders.json?status=any&created_at_min={start_date}&limit=250&fields=id,created_at,total_price,subtotal_price,total_discounts,total_tax,financial_status,currency,line_items"
     page_count = 0
 
     while next_url and page_count < 4:
@@ -5911,7 +5911,10 @@ async def get_shopify_analytics(request: Request, range: str = "30d"):
         next_url = _parse_shopify_next_link(response.headers.get("Link"))
         page_count += 1
 
-    revenue = 0.0
+    gross_revenue = 0.0
+    total_sales = 0.0  # net: subtotal - discounts (what the merchant actually earned)
+    total_discounts = 0.0
+    total_tax = 0.0
     currency = "USD"
     orders_count = 0
     series_map = {}
@@ -5919,7 +5922,15 @@ async def get_shopify_analytics(request: Request, range: str = "30d"):
 
     for order in orders:
         total_price = float(order.get("total_price") or 0)
-        revenue += total_price
+        subtotal_price = float(order.get("subtotal_price") or total_price)
+        order_discounts = float(order.get("total_discounts") or 0)
+        order_tax = float(order.get("total_tax") or 0)
+        # Net sales = subtotal - discounts (revenue the merchant keeps, before tax)
+        net_sale = subtotal_price - order_discounts
+        gross_revenue += total_price
+        total_sales += net_sale
+        total_discounts += order_discounts
+        total_tax += order_tax
         orders_count += 1
         currency = order.get("currency") or currency
 
@@ -5930,8 +5941,9 @@ async def get_shopify_analytics(request: Request, range: str = "30d"):
             date_key = datetime.utcnow().strftime("%Y-%m-%d")
 
         if date_key not in series_map:
-            series_map[date_key] = {"date": date_key, "revenue": 0.0, "orders": 0}
+            series_map[date_key] = {"date": date_key, "revenue": 0.0, "total_sales": 0.0, "orders": 0}
         series_map[date_key]["revenue"] += total_price
+        series_map[date_key]["total_sales"] += net_sale
         series_map[date_key]["orders"] += 1
 
         for item in order.get("line_items", []):
@@ -5944,7 +5956,7 @@ async def get_shopify_analytics(request: Request, range: str = "30d"):
             top_products[title]["quantity"] += quantity
 
     series = sorted(series_map.values(), key=lambda x: x["date"])
-    aov = revenue / orders_count if orders_count else 0
+    aov = total_sales / orders_count if orders_count else 0
 
     top_products_list = sorted(top_products.values(), key=lambda x: x["revenue"], reverse=True)[:5]
 
@@ -5954,7 +5966,11 @@ async def get_shopify_analytics(request: Request, range: str = "30d"):
         "range": range,
         "currency": currency,
         "totals": {
-            "revenue": round(revenue, 2),
+            "total_sales": round(total_sales, 2),
+            "revenue": round(gross_revenue, 2),
+            "gross_revenue": round(gross_revenue, 2),
+            "discounts": round(total_discounts, 2),
+            "tax": round(total_tax, 2),
             "orders": orders_count,
             "aov": round(aov, 2)
         },

@@ -366,20 +366,80 @@ export default function Dashboard() {
     return new Intl.NumberFormat('fr-FR', { notation: 'compact', maximumFractionDigits: 1 }).format(Number(value))
   }
 
-  const buildSparklinePoints = (series, width = 520, height = 140) => {
+  const buildSparklinePoints = (series, width = 520, height = 140, field = 'total_sales') => {
     if (!series || series.length === 0) return ''
-    const values = series.map((point) => Number(point.revenue || 0))
+    const values = series.map((point) => Number(point[field] || point.revenue || 0))
     const max = Math.max(...values)
     const min = Math.min(...values)
     const range = max - min || 1
     const step = width / Math.max(series.length - 1, 1)
 
     return series.map((point, index) => {
-      const value = Number(point.revenue || 0)
+      const value = Number(point[field] || point.revenue || 0)
       const x = index * step
       const y = height - ((value - min) / range) * height
       return `${x},${y}`
     }).join(' ')
+  }
+
+  // Build a smooth SVG area chart path (line + closed fill area)
+  const buildAreaChartPath = (series, width = 520, height = 180, field = 'total_sales', padding = { top: 10, bottom: 30, left: 0, right: 0 }) => {
+    if (!series || series.length === 0) return { linePath: '', areaPath: '', points: [], yLabels: [], xLabels: [] }
+    const chartW = width - padding.left - padding.right
+    const chartH = height - padding.top - padding.bottom
+    const values = series.map((p) => Number(p[field] || p.revenue || 0))
+    const maxVal = Math.max(...values, 1)
+    const minVal = Math.min(...values, 0)
+    const valRange = maxVal - minVal || 1
+    const step = chartW / Math.max(series.length - 1, 1)
+
+    const pts = series.map((p, i) => {
+      const val = Number(p[field] || p.revenue || 0)
+      const x = padding.left + i * step
+      const y = padding.top + chartH - ((val - minVal) / valRange) * chartH
+      return { x, y, val, date: p.date, orders: p.orders || 0 }
+    })
+
+    // Smooth curve using cubic bezier
+    let linePath = `M ${pts[0].x} ${pts[0].y}`
+    for (let i = 1; i < pts.length; i++) {
+      const prev = pts[i - 1]
+      const cur = pts[i]
+      const cpx = (prev.x + cur.x) / 2
+      linePath += ` C ${cpx} ${prev.y}, ${cpx} ${cur.y}, ${cur.x} ${cur.y}`
+    }
+
+    // Area path: line + close to bottom
+    const areaPath = `${linePath} L ${pts[pts.length - 1].x} ${padding.top + chartH} L ${pts[0].x} ${padding.top + chartH} Z`
+
+    // Y-axis labels (4 ticks)
+    const yLabels = [0, 1, 2, 3].map(i => {
+      const val = minVal + (valRange * (3 - i)) / 3
+      const y = padding.top + (chartH * i) / 3
+      return { val, y }
+    })
+
+    // X-axis labels: spread evenly, max 6
+    const maxLabels = Math.min(series.length, 6)
+    const labelStep = Math.max(1, Math.floor((series.length - 1) / (maxLabels - 1)))
+    const xLabels = []
+    for (let i = 0; i < series.length; i += labelStep) {
+      const p = pts[i]
+      const dateStr = series[i].date || ''
+      const d = new Date(dateStr + 'T00:00:00')
+      const label = !isNaN(d.getTime()) ? d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : dateStr.slice(5)
+      xLabels.push({ x: p.x, label })
+    }
+    // Always include last point
+    if (xLabels.length > 0 && xLabels[xLabels.length - 1].x !== pts[pts.length - 1].x) {
+      const last = pts[pts.length - 1]
+      const dateStr = series[series.length - 1].date || ''
+      const d = new Date(dateStr + 'T00:00:00')
+      const label = !isNaN(d.getTime()) ? d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : dateStr.slice(5)
+      xLabels.push({ x: last.x, label })
+    }
+
+    return { linePath, areaPath, points: pts, yLabels, xLabels }
   }
 
   const getInsightCount = (items) => (Array.isArray(items) ? items.length : 0)
@@ -4046,13 +4106,12 @@ export default function Dashboard() {
   }
 
   useEffect(() => {
-    // ⚡ Skip re-fetch if data is already loaded (instant tab switches)
+    // ⚡ Re-fetch analytics when range changes or tab becomes active
     if (activeTab === 'overview') {
-      if (!analyticsData) loadAnalytics(analyticsRange)
-      else if (analyticsRange !== '30d') loadAnalytics(analyticsRange)
+      loadAnalytics(analyticsRange)
     }
     if (activeTab === 'underperforming') {
-      if (!analyticsData) loadAnalytics(analyticsRange)
+      loadAnalytics(analyticsRange)
       if (!underperformingData) loadUnderperforming(analyticsRange)
     }
     if (activeTab === 'action-blockers') {
@@ -4626,19 +4685,22 @@ export default function Dashboard() {
         {activeTab === 'overview' && (
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
             <div className="xl:col-span-2 space-y-6">
-            <div className="bg-gradient-to-br from-white via-teal-50/50 to-orange-50/30 border border-[#E8E8EE] rounded-2xl p-4 md:p-6 shadow-sm">
-              <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+            <div className="bg-white border border-[#E8E8EE] rounded-2xl shadow-sm overflow-hidden">
+              {/* ── Header: Title + Range Selector ── */}
+              <div className="px-4 md:px-6 pt-4 md:pt-5 pb-0 flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.3em] text-[#FF6B35]/70">Performance</p>
-                  <h3 className="text-2xl font-bold text-[#1A1A2E] mt-2">Revenus & commandes en temps réel</h3>
-                  <p className="text-sm text-[#6A6A85] mt-2">Source Shopify · {analyticsData?.range || analyticsRange} · {getRangeLabel(analyticsData?.range || analyticsRange)}</p>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-[#FF6B35] animate-pulse" />
+                    <p className="text-xs uppercase tracking-[0.25em] text-[#FF6B35] font-semibold">Ventes en temps réel</p>
+                  </div>
+                  <p className="text-sm text-[#8A8AA3] mt-1">Source Shopify · {getRangeLabel(analyticsData?.range || analyticsRange)}</p>
                 </div>
-                <div className="flex items-center gap-1 md:gap-2 bg-white/70 border border-[#E8E8EE] rounded-full px-1.5 md:px-2 py-1">
+                <div className="flex items-center gap-1 bg-[#F7F8FA] border border-[#E8E8EE] rounded-lg px-1 py-0.5">
                   {['7d', '30d', '90d', '365d'].map((range) => (
                     <button
                       key={range}
                       onClick={() => setAnalyticsRange(range)}
-                      className={`px-3 md:px-3 py-1.5 md:py-1 rounded-full text-xs font-semibold transition ${analyticsRange === range ? 'bg-[#FF6B35] text-white' : 'text-[#4A4A68] hover:text-[#1A1A2E]'}`}
+                      className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${analyticsRange === range ? 'bg-[#FF6B35] text-white shadow-sm' : 'text-[#6A6A85] hover:text-[#1A1A2E] hover:bg-white'}`}
                     >
                       {range}
                     </button>
@@ -4646,48 +4708,154 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="bg-[#F7F8FA]/70 border border-[#E8E8EE] rounded-xl p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-[#8A8AA3]">Revenus</p>
-                  <p className="text-xl md:text-2xl font-bold text-[#1A1A2E] mt-2">
-                    {analyticsLoading ? 'Chargement...' : formatCurrency(analyticsData?.totals?.revenue, analyticsData?.currency || 'EUR')}
-                  </p>
-                </div>
-                <div className="bg-[#F7F8FA]/70 border border-[#E8E8EE] rounded-xl p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-[#8A8AA3]">Commandes</p>
-                  <p className="text-xl md:text-2xl font-bold text-[#1A1A2E] mt-2">
-                    {analyticsLoading ? '...' : formatCompactNumber(analyticsData?.totals?.orders || 0)}
-                  </p>
-                </div>
-                <div className="bg-[#F7F8FA]/70 border border-[#E8E8EE] rounded-xl p-4">
-                  <p className="text-xs uppercase tracking-[0.2em] text-[#8A8AA3]">AOV</p>
-                  <p className="text-xl md:text-2xl font-bold text-[#1A1A2E] mt-2">
-                    {analyticsLoading ? '...' : formatCurrency(analyticsData?.totals?.aov, analyticsData?.currency || 'EUR')}
-                  </p>
+              {/* ── Metrics Row: Total Sales (hero) + secondary metrics ── */}
+              <div className="px-4 md:px-6 pt-4 pb-2">
+                <div className="flex flex-wrap items-end gap-x-8 gap-y-2">
+                  {/* Primary: Total Sales */}
+                  <div>
+                    <p className="text-[11px] uppercase tracking-[0.2em] text-[#8A8AA3] mb-1">Ventes totales</p>
+                    <p className="text-3xl md:text-4xl font-extrabold text-[#1A1A2E] leading-none">
+                      {analyticsLoading ? <span className="inline-block w-32 h-9 bg-[#F0F0F5] rounded-lg animate-pulse" /> : formatCurrency(analyticsData?.totals?.total_sales ?? analyticsData?.totals?.revenue, analyticsData?.currency || 'CAD')}
+                    </p>
+                  </div>
+                  {/* Secondary metrics */}
+                  <div className="flex flex-wrap gap-x-6 gap-y-1 pb-1">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-[0.15em] text-[#B0B0C4]">Revenu brut</p>
+                      <p className="text-sm font-semibold text-[#6A6A85]">
+                        {analyticsLoading ? '...' : formatCurrency(analyticsData?.totals?.gross_revenue ?? analyticsData?.totals?.revenue, analyticsData?.currency || 'CAD')}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase tracking-[0.15em] text-[#B0B0C4]">Commandes</p>
+                      <p className="text-sm font-semibold text-[#6A6A85]">
+                        {analyticsLoading ? '...' : formatCompactNumber(analyticsData?.totals?.orders || 0)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase tracking-[0.15em] text-[#B0B0C4]">Panier moyen</p>
+                      <p className="text-sm font-semibold text-[#6A6A85]">
+                        {analyticsLoading ? '...' : formatCurrency(analyticsData?.totals?.aov, analyticsData?.currency || 'CAD')}
+                      </p>
+                    </div>
+                    {(analyticsData?.totals?.discounts > 0) && (
+                      <div>
+                        <p className="text-[10px] uppercase tracking-[0.15em] text-[#B0B0C4]">Remises</p>
+                        <p className="text-sm font-semibold text-[#E85A28]">
+                          −{formatCurrency(analyticsData?.totals?.discounts, analyticsData?.currency || 'CAD')}
+                        </p>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
-              <div className="mt-6 bg-[#F7F8FA] border border-[#E8E8EE] rounded-2xl p-4">
-                <div className="flex items-center justify-between">
-                  <p className="text-xs uppercase tracking-[0.2em] text-[#8A8AA3]">Ventes dans le temps</p>
-                  {analyticsError && <p className="text-xs text-[#FF6B35]">{analyticsError}</p>}
-                </div>
-                <div className="mt-3">
+              {/* ── Chart: Total Sales Over Time ── */}
+              <div className="px-2 md:px-4 pb-4">
+                {analyticsError && <p className="text-xs text-[#FF6B35] px-2 mb-1">{analyticsError}</p>}
+                <div className="relative">
                   {analyticsLoading ? (
-                    <div className="text-sm text-[#8A8AA3] py-6">Chargement des ventes...</div>
-                  ) : analyticsData?.series?.length ? (
-                    <svg viewBox="0 0 520 140" className="w-full h-32">
-                      <polyline
-                        fill="none"
-                        stroke="#2DD4BF"
-                        strokeWidth="3"
-                        points={buildSparklinePoints(analyticsData.series)}
-                      />
-                    </svg>
-                  ) : shopifyUrl ? (
-                    <div className="text-sm text-[#8A8AA3] py-6">Aucune vente sur la période sélectionnée.</div>
+                    <div className="flex items-center justify-center py-16">
+                      <div className="flex flex-col items-center gap-2">
+                        <div className="w-6 h-6 border-2 border-[#E8E8EE] border-t-[#FF6B35] rounded-full animate-spin" />
+                        <p className="text-xs text-[#8A8AA3]">Chargement du graphique...</p>
+                      </div>
+                    </div>
+                  ) : analyticsData?.series?.length ? (() => {
+                    const chartWidth = 580
+                    const chartHeight = 200
+                    const pad = { top: 15, bottom: 32, left: 55, right: 10 }
+                    const { linePath, areaPath, points, yLabels, xLabels } = buildAreaChartPath(
+                      analyticsData.series, chartWidth, chartHeight, 'total_sales', pad
+                    )
+                    const currency = analyticsData?.currency || 'CAD'
+                    return (
+                      <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="w-full" style={{ height: 'auto', minHeight: '180px', maxHeight: '260px' }} preserveAspectRatio="xMidYMid meet">
+                        <defs>
+                          <linearGradient id="salesGradient" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#FF6B35" stopOpacity="0.25" />
+                            <stop offset="50%" stopColor="#FF6B35" stopOpacity="0.08" />
+                            <stop offset="100%" stopColor="#FF6B35" stopOpacity="0.01" />
+                          </linearGradient>
+                          <linearGradient id="lineGradient" x1="0" y1="0" x2="1" y2="0">
+                            <stop offset="0%" stopColor="#FF6B35" />
+                            <stop offset="50%" stopColor="#FF8B60" />
+                            <stop offset="100%" stopColor="#FF6B35" />
+                          </linearGradient>
+                          <filter id="glow">
+                            <feGaussianBlur stdDeviation="2" result="blur" />
+                            <feMerge>
+                              <feMergeNode in="blur" />
+                              <feMergeNode in="SourceGraphic" />
+                            </feMerge>
+                          </filter>
+                        </defs>
+
+                        {/* Grid lines */}
+                        {yLabels.map((yl, i) => (
+                          <line key={`grid-${i}`} x1={pad.left} y1={yl.y} x2={chartWidth - pad.right} y2={yl.y}
+                            stroke="#E8E8EE" strokeWidth="0.5" strokeDasharray="3,3" />
+                        ))}
+
+                        {/* Y-axis labels */}
+                        {yLabels.map((yl, i) => (
+                          <text key={`ylabel-${i}`} x={pad.left - 6} y={yl.y + 3}
+                            textAnchor="end" fill="#B0B0C4" fontSize="8" fontFamily="system-ui, sans-serif">
+                            {yl.val >= 1000 ? `${(yl.val / 1000).toFixed(1)}k` : yl.val.toFixed(0)}
+                          </text>
+                        ))}
+
+                        {/* X-axis labels */}
+                        {xLabels.map((xl, i) => (
+                          <text key={`xlabel-${i}`} x={xl.x} y={chartHeight - 6}
+                            textAnchor="middle" fill="#B0B0C4" fontSize="8" fontFamily="system-ui, sans-serif">
+                            {xl.label}
+                          </text>
+                        ))}
+
+                        {/* Area fill */}
+                        <path d={areaPath} fill="url(#salesGradient)" />
+
+                        {/* Line */}
+                        <path d={linePath} fill="none" stroke="url(#lineGradient)" strokeWidth="2.5"
+                          strokeLinecap="round" strokeLinejoin="round" filter="url(#glow)" />
+
+                        {/* Data points on hover — show all as tiny dots, larger on endpoints */}
+                        {points.map((pt, i) => (
+                          <g key={`pt-${i}`}>
+                            <circle cx={pt.x} cy={pt.y} r={i === 0 || i === points.length - 1 ? 3.5 : 2}
+                              fill="#FF6B35" stroke="white" strokeWidth="1.5" opacity={i === 0 || i === points.length - 1 ? 1 : 0.4} />
+                            {/* Tooltip-like label on last point */}
+                            {i === points.length - 1 && (
+                              <g>
+                                <rect x={pt.x - 40} y={pt.y - 22} width="45" height="16" rx="4"
+                                  fill="#1A1A2E" opacity="0.9" />
+                                <text x={pt.x - 17.5} y={pt.y - 11} textAnchor="middle"
+                                  fill="white" fontSize="8" fontWeight="600" fontFamily="system-ui, sans-serif">
+                                  {pt.val >= 1000 ? `${(pt.val / 1000).toFixed(1)}k` : pt.val.toFixed(0)} {currency}
+                                </text>
+                              </g>
+                            )}
+                          </g>
+                        ))}
+                      </svg>
+                    )
+                  })() : shopifyUrl ? (
+                    <div className="flex flex-col items-center justify-center py-16 text-center">
+                      <div className="w-12 h-12 rounded-full bg-[#F7F8FA] flex items-center justify-center mb-3">
+                        <svg className="w-6 h-6 text-[#D8D8E2]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" /></svg>
+                      </div>
+                      <p className="text-sm text-[#8A8AA3]">Aucune vente sur cette période</p>
+                      <p className="text-xs text-[#B0B0C4] mt-1">Essaie une plage plus large</p>
+                    </div>
                   ) : (
-                    <div className="text-sm text-[#8A8AA3] py-6">Connecte Shopify pour afficher les ventes.</div>
+                    <div className="flex flex-col items-center justify-center py-16 text-center">
+                      <div className="w-12 h-12 rounded-full bg-[#FFF5F0] flex items-center justify-center mb-3">
+                        <span className="text-xl">🏪</span>
+                      </div>
+                      <p className="text-sm font-medium text-[#4A4A68]">Connecte ta boutique Shopify</p>
+                      <p className="text-xs text-[#8A8AA3] mt-1">pour afficher tes ventes en temps réel</p>
+                    </div>
                   )}
                 </div>
               </div>
@@ -4735,8 +4903,8 @@ export default function Dashboard() {
             <div className="hidden md:grid grid-cols-1 md:grid-cols-4 gap-4">
               {[
                 {
-                  label: t('revenue'),
-                  value: analyticsLoading ? '...' : formatCurrency(analyticsData?.totals?.revenue, analyticsData?.currency || 'EUR'),
+                  label: 'Ventes totales',
+                  value: analyticsLoading ? '...' : formatCurrency(analyticsData?.totals?.total_sales ?? analyticsData?.totals?.revenue, analyticsData?.currency || 'CAD'),
                   hint: analyticsRange
                 },
                 {
@@ -4746,7 +4914,7 @@ export default function Dashboard() {
                 },
                 {
                   label: t('aov'),
-                  value: analyticsLoading ? '...' : formatCurrency(analyticsData?.totals?.aov, analyticsData?.currency || 'EUR'),
+                  value: analyticsLoading ? '...' : formatCurrency(analyticsData?.totals?.aov, analyticsData?.currency || 'CAD'),
                   hint: 'panier moyen'
                 },
                 {
