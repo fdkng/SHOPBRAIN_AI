@@ -683,9 +683,33 @@ export default function Dashboard() {
           ? 'bg-white border-[#E85A28] text-[#FF8B60]'
           : 'bg-white border-[#E8E8EE] text-[#2A2A42]'
 
+    // Show a retry button when the error is a cold-start / network error
+    const isRetryable = status.type === 'error' && (
+      String(status.message || '').includes(t('backendWaking')?.slice(0, 20)) ||
+      /serveur|backend|wak|démarre|starting|connexion|connect|unreachable/i.test(status.message || '')
+    )
+    const retryAction = isRetryable ? {
+      'action-returns': () => runActionAnalysis('action-returns'),
+      'action-price': () => runActionAnalysis('action-price'),
+      'action-bundles': () => runActionAnalysis('action-bundles'),
+      'action-images': () => runActionAnalysis('action-images'),
+      'action-blockers': () => runActionAnalysis('action-blockers'),
+      'action-rewrite': () => runActionAnalysis('action-rewrite'),
+      'underperforming': () => loadUnderperforming(),
+    }[key] : null
+
     return (
-      <div className={`mt-3 p-3 rounded-lg border ${styles}`}>
-        {status.message}
+      <div className={`mt-3 p-3 rounded-lg border ${styles} ${isRetryable ? 'flex items-center justify-between gap-3' : ''}`}>
+        <span>{status.message}</span>
+        {retryAction && (
+          <button
+            onClick={retryAction}
+            disabled={insightsLoading}
+            className="shrink-0 bg-[#FF6B35] hover:bg-[#E85A28] text-white text-xs font-bold py-1.5 px-4 rounded-md disabled:opacity-50 transition-colors"
+          >
+            {t('retry') || 'Réessayer'}
+          </button>
+        )}
       </div>
     )
   }
@@ -3080,12 +3104,14 @@ export default function Dashboard() {
     }
 
     const retries = config.retries ?? 12
-    const retryDelayMs = config.retryDelayMs ?? 3000
+    const baseDelayMs = config.retryDelayMs ?? 3000
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
     let lastErr = null
     let wakePinged = false
+    let fastFailCount = 0  // Track CORS-blocked (instant) failures for adaptive delay
 
     for (let attempt = 0; attempt <= retries; attempt += 1) {
+      const t0 = Date.now()
       try {
         return await fetchBackendHealth({
           retries: 0,
@@ -3093,6 +3119,7 @@ export default function Dashboard() {
         })
       } catch (err) {
         lastErr = err
+        const elapsed = Date.now() - t0
 
         // Best-effort wake ping (opaque) to trigger Render cold-start without requiring CORS.
         if (!wakePinged) {
@@ -3105,7 +3132,13 @@ export default function Dashboard() {
         }
 
         if (attempt < retries) {
-          await sleep(retryDelayMs)
+          // If the request failed very fast (< 3s), it was likely a CORS block from Render's
+          // cold-start loading page. Use a longer delay to give the backend time to boot.
+          if (elapsed < 3000) {
+            fastFailCount++
+          }
+          const adaptiveDelay = fastFailCount >= 2 ? Math.min(baseDelayMs * 2.5, 8000) : baseDelayMs
+          await sleep(adaptiveDelay)
           continue
         }
       }
@@ -3121,7 +3154,7 @@ export default function Dashboard() {
     }
     const warmupUrl = `${API_URL}/api/shopify/keep-alive`
     try {
-      await waitForBackendReady({ retries: 4, retryDelayMs: 2000, timeoutMs: 15000 })
+      await waitForBackendReady({ retries: 8, retryDelayMs: 4000, timeoutMs: 30000 })
 
       await fetchJsonWithRetry(warmupUrl, {
         method: 'GET',
@@ -3152,7 +3185,9 @@ export default function Dashboard() {
       }
 
       // Ensure backend is reachable before authenticated calls.
-      await waitForBackendReady({ retries: 8, retryDelayMs: 2000, timeoutMs: 22000 })
+      // Render cold-start can take 50–90s; CORS-blocked requests fail instantly,
+      // so we need enough retries × delay to cover the full cold-start window.
+      await waitForBackendReady({ retries: 14, retryDelayMs: 4000, timeoutMs: 30000 })
 
       await warmupBackend(session.access_token)
 
@@ -3246,7 +3281,7 @@ export default function Dashboard() {
       setBundlesJobStatus('starting')
       const session = await getCachedSession()
       if (!session) throw new Error(t('sessionExpiredReconnect'))
-      await waitForBackendReady({ retries: 8, retryDelayMs: 2000, timeoutMs: 22000 })
+      await waitForBackendReady({ retries: 14, retryDelayMs: 4000, timeoutMs: 30000 })
       await warmupBackend(session.access_token)
       // Lancer le job async
       const resp = await fetch(`${API_URL}/api/shopify/bundles/async?range=${encodeURIComponent(analyticsRange)}&limit=10`, {
@@ -3343,7 +3378,7 @@ export default function Dashboard() {
       clearStatus('action-bundles')
       const session = await getCachedSession()
       if (!session) throw new Error(t('sessionExpiredReconnect'))
-      await waitForBackendReady({ retries: 8, retryDelayMs: 2000, timeoutMs: 22000 })
+      await waitForBackendReady({ retries: 14, retryDelayMs: 4000, timeoutMs: 30000 })
       await warmupBackend(session.access_token)
       const resp = await fetch(`${API_URL}/api/shopify/bundles/list`, {
         method: 'GET',
@@ -3407,7 +3442,7 @@ export default function Dashboard() {
         return
       }
 
-      await waitForBackendReady({ retries: 8, retryDelayMs: 2000, timeoutMs: 22000 })
+      await waitForBackendReady({ retries: 14, retryDelayMs: 4000, timeoutMs: 30000 })
       await warmupBackend(session.access_token)
 
       const { response, data } = await fetchJsonWithRetry(`${API_URL}/api/shopify/blockers?range=${rangeValue}`, {
@@ -3457,7 +3492,7 @@ export default function Dashboard() {
         setStatus('underperforming', 'error', t('sessionExpiredReconnect'))
         return
       }
-      await waitForBackendReady({ retries: 8, retryDelayMs: 2000, timeoutMs: 22000 })
+      await waitForBackendReady({ retries: 14, retryDelayMs: 4000, timeoutMs: 30000 })
       await warmupBackend(session.access_token)
       const { response, data } = await fetchJsonWithRetry(`${API_URL}/api/shopify/underperforming?range=${rangeValue}`, {
         method: 'GET',
@@ -3495,7 +3530,7 @@ export default function Dashboard() {
       setPixelLoading(true)
       const session = await getCachedSession()
       if (!session) return
-      await waitForBackendReady({ retries: 4, retryDelayMs: 2000, timeoutMs: 12000 })
+      await waitForBackendReady({ retries: 8, retryDelayMs: 4000, timeoutMs: 30000 })
       const resp = await fetch(`${API_URL}/api/shopify/pixel-status`, {
         method: 'GET',
         headers: {
@@ -3544,7 +3579,7 @@ export default function Dashboard() {
           if (!session) return []
 
           // Reduce cold-start failures before calling an authenticated endpoint.
-          await waitForBackendReady({ retries: 8, retryDelayMs: 2000, timeoutMs: 22000 })
+          await waitForBackendReady({ retries: 14, retryDelayMs: 4000, timeoutMs: 30000 })
           await warmupBackend(session.access_token)
 
           // Preferred: lightweight endpoint (if deployed).
@@ -3674,7 +3709,7 @@ export default function Dashboard() {
             return
           }
 
-          await waitForBackendReady({ retries: 10, retryDelayMs: 2500, timeoutMs: 45000 })
+          await waitForBackendReady({ retries: 14, retryDelayMs: 4000, timeoutMs: 45000 })
           await warmupBackend(session.access_token)
 
           const rangeValue = analyticsRange
