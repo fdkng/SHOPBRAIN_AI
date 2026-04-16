@@ -6190,6 +6190,45 @@ async def get_shopify_insights(
     product_id: str | None = None,
 ):
     """🧠 Insights: produits freins, images faibles, bundles, stocks, prix, retours"""
+    try:
+        return await _get_shopify_insights_impl(request, range, include_ai, product_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": True,
+                "partial": True,
+                "error_detail": str(exc)[:200],
+                "shop": "",
+                "range": range,
+                "tier": "unknown",
+                "plan_limits": {},
+                "benchmarks": {},
+                "has_pixel_data": False,
+                "blockers": [],
+                "rewrite_opportunities": [],
+                "rewrite_ai": {"enabled": False, "generated": 0, "notes": []},
+                "image_risks": [],
+                "bundle_suggestions": [],
+                "stock_risks": [],
+                "price_opportunities": [],
+                "price_analysis": {"items": [], "market_comparison": {}},
+                "market_comparison": {},
+                "return_risks": [],
+            },
+        )
+
+
+async def _get_shopify_insights_impl(
+    request: Request,
+    range: str = "30d",
+    include_ai: bool = False,
+    product_id: str | None = None,
+):
     user_id = get_user_id(request)
     tier = get_user_tier(user_id)
     shop_domain, access_token = _get_shopify_connection(user_id)
@@ -6200,7 +6239,7 @@ async def get_shopify_insights(
         shop_resp = requests.get(
             f"https://{shop_domain}/admin/api/2024-01/shop.json",
             headers={"X-Shopify-Access-Token": access_token},
-            timeout=8,
+            timeout=5,
         )
         if shop_resp.status_code == 200:
             shop_currency = ((shop_resp.json() or {}).get("shop") or {}).get("currency") or "CAD"
@@ -6240,8 +6279,7 @@ async def get_shopify_insights(
                 refunds_by_product[pid] = refunds_by_product.get(pid, 0) + 1
 
     # Fetch products for inventory + images — respect plan product limit
-    products_resp = get_shopify_products
-    products_payload = await products_resp(request)
+    products_payload = await get_shopify_products(request)
     products = products_payload.get("products", [])
     plan_product_limit = get_plan_product_limit(tier)
     if plan_product_limit is not None:
