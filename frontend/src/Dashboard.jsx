@@ -2966,8 +2966,7 @@ export default function Dashboard() {
       const response = await fetch(`${API_URL}/api/shopify/products`, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json'
+          'Authorization': `Bearer ${session.access_token}`
         }
       })
       
@@ -3015,8 +3014,7 @@ export default function Dashboard() {
       const response = await fetch(`${API_URL}/api/shopify/analytics?range=${rangeValue}`, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json'
+          'Authorization': `Bearer ${session.access_token}`
         }
       })
 
@@ -3053,8 +3051,18 @@ export default function Dashboard() {
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
 
       try {
+        const method = String(options?.method || 'GET').toUpperCase()
+        const hasBody = typeof options?.body !== 'undefined' && options?.body !== null
+        const headers = new Headers(options?.headers || {})
+
+        if ((method === 'GET' || method === 'HEAD') && !hasBody) {
+          headers.delete('Content-Type')
+        }
+
         const response = await fetch(url, {
           ...options,
+          method,
+          headers,
           signal: controller.signal
         })
 
@@ -3323,8 +3331,7 @@ export default function Dashboard() {
       const resp = await fetch(`${API_URL}/api/shopify/bundles/job/${jobId}`, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json'
+          'Authorization': `Bearer ${accessToken}`
         }
       })
       const data = await resp.json()
@@ -3388,8 +3395,7 @@ export default function Dashboard() {
       const resp = await fetch(`${API_URL}/api/shopify/bundles/list`, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json'
+          'Authorization': `Bearer ${session.access_token}`
         }
       })
       const data = await resp.json()
@@ -3539,8 +3545,7 @@ export default function Dashboard() {
       const resp = await fetch(`${API_URL}/api/shopify/pixel-status`, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json'
+          'Authorization': `Bearer ${session.access_token}`
         }
       })
       if (resp.ok) {
@@ -3774,8 +3779,7 @@ export default function Dashboard() {
         const response = await fetch(`${API_URL}/api/shopify/rewrite?product_id=${encodeURIComponent(options.productId)}${instructionsParam}`, {
           method: 'GET',
           headers: {
-            'Authorization': `Bearer ${session.access_token}`,
-            'Content-Type': 'application/json'
+            'Authorization': `Bearer ${session.access_token}`
           },
           signal: rewriteController.signal
         })
@@ -3983,8 +3987,7 @@ export default function Dashboard() {
       const response = await fetch(`${API_URL}/api/shopify/customers?limit=200`, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json'
+          'Authorization': `Bearer ${session.access_token}`
         }
       })
 
@@ -4016,8 +4019,7 @@ export default function Dashboard() {
       const response = await fetch(`${API_URL}/api/shopify/orders-list?limit=100`, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json'
+          'Authorization': `Bearer ${session.access_token}`
         }
       })
       if (!response.ok) {
