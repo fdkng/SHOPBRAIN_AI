@@ -1874,16 +1874,9 @@ def get_user_id(request: Request) -> str:
         except Exception as e:
             print(f"❌ API key auth error: {e}")
     
-    # Fallback: try to extract user_id from header (for dev/testing)
-    try:
-        user_id = request.headers.get("X-User-ID", "")
-        if user_id:
-            print(f"✅ User ID from header: {user_id}")
-            return user_id
-    except:
-        pass
+    # NOTE: X-User-ID header fallback REMOVED — it was an auth bypass vulnerability.
     
-    print(f"❌ Missing Bearer token or user_id. Headers: {dict(request.headers)}")
+    print(f"❌ Missing Bearer token or user_id.")
     raise HTTPException(status_code=401, detail="Missing or invalid token")
 
 
@@ -1923,7 +1916,7 @@ Keep outputs concise and use French language if inputs are French.
             temperature=0.8,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
     text = response.choices[0].message.content.strip()
 
@@ -1975,7 +1968,7 @@ async def get_products(request: Request):
         response = supabase.table("products").select("*").eq("user_id", user_id).order("created_at", desc=True).execute()
         return {"products": response.data}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ============ FAST INIT ENDPOINT — replaces 5 parallel calls with 1 ============
@@ -2344,7 +2337,7 @@ async def fast_init(request: Request):
 
     except Exception as e:
         print(f"❌ /api/init error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/health")
@@ -2775,10 +2768,10 @@ async def create_checkout(payload: dict, request: Request):
         return {"url": session.url}
     except Exception as e:
         print(f"❌ Checkout error: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail="Invalid request")
     except Exception as e:
         print(f"❌ Checkout error: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail="Invalid request")
 
 
 @app.get("/dev/force-persist")
@@ -2802,14 +2795,14 @@ async def dev_force_persist(session_id: str, user_id: str):
 
         # Persist to Supabase (use HTTP directly to avoid SDK UUID parsing issues)
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
-            plan = (session.metadata or {}).get("plan") or "standard"
+            plan = _sg(session, "metadata", {}).get("plan") or "standard"
 
             subscription_payload = {
                 "user_id": user_id,
-                "email": session.get("customer_email"),
-                "stripe_session_id": session.get("id"),
-                "stripe_subscription_id": session.get("subscription"),
-                "stripe_customer_id": session.get("customer"),
+                "email": _sg(session, "customer_email"),
+                "stripe_session_id": _sg(session, "id"),
+                "stripe_subscription_id": _sg(session, "subscription"),
+                "stripe_customer_id": _sg(session, "customer"),
                 "plan_tier": plan,
                 "status": "active",
             }
@@ -2856,7 +2849,7 @@ async def dev_force_persist(session_id: str, user_id: str):
 
     except Exception as e:
         print(f"Dev force-persist error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/dev/check-db")
@@ -2900,7 +2893,7 @@ async def dev_check_db(user_id: str):
 
     except Exception as e:
         print(f"Dev check-db error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/webhook")
@@ -2919,7 +2912,7 @@ async def stripe_webhook(request: Request):
             print("✅ [WEBHOOK] Signature verified")
         except Exception as e:
             print(f"❌ [WEBHOOK] Signature verification failed: {e}")
-            return {"received": True, "warning": "invalid_signature"}
+            raise HTTPException(status_code=400, detail="Invalid Stripe webhook signature")
     else:
         try:
             event = json.loads(payload)
@@ -3855,7 +3848,7 @@ async def get_profile(request: Request):
         
     except Exception as e:
         print(f"Error fetching profile: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.put("/api/auth/profile")
@@ -3882,7 +3875,7 @@ async def update_profile(payload: dict, request: Request):
         
     except Exception as e:
         print(f"Error updating profile: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/api/settings/avatar")
@@ -3927,7 +3920,7 @@ async def upload_avatar(request: Request, file: UploadFile = File(...)):
         return {"success": True, "avatar_url": avatar_url}
     except Exception as e:
         print(f"Error uploading avatar: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 def _generate_api_key() -> str:
@@ -3944,7 +3937,7 @@ async def list_api_keys(request: Request):
         return {"success": True, "keys": result.data or []}
     except Exception as e:
         print(f"Error listing api keys: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/api/settings/api-keys")
@@ -3986,7 +3979,7 @@ async def create_api_key(payload: dict, request: Request):
         }
     except Exception as e:
         print(f"Error creating api key: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/api/settings/api-keys/revoke")
@@ -4009,7 +4002,7 @@ async def revoke_api_key(payload: dict, request: Request):
         return {"success": True}
     except Exception as e:
         print(f"Error revoking api key: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/api/user/profile/update")
@@ -4889,7 +4882,7 @@ async def get_shopify_connection(request: Request):
         }
     except Exception as e:
         print(f"Error fetching Shopify connections: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/api/shopify/switch-shop")
@@ -5064,7 +5057,7 @@ async def get_shopify_shop(request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/api/shopify/test-connection")
@@ -9986,7 +9979,7 @@ async def shopify_orders_paid_webhook(request: Request):
     try:
         order = json.loads(raw_body.decode("utf-8"))
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid payload: {e}")
+        raise HTTPException(status_code=400, detail="Invalid request")
 
     shop_domain = request.headers.get("X-Shopify-Shop-Domain") or order.get("shop_domain")
     if not shop_domain:
@@ -10170,7 +10163,7 @@ Réponds uniquement avec du JSON valide, sans markdown ni commentaires."""
         
     except Exception as e:
         print(f"Error analyzing product: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 class ChatRequest(BaseModel):
@@ -10486,7 +10479,7 @@ async def save_conversations(req: ConversationSaveRequest, request: Request):
         return {"success": True, "saved": saved}
     except Exception as e:
         print(f"❌ Error saving conversations: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.delete("/api/conversations/{conversation_id}")
@@ -10499,7 +10492,7 @@ async def delete_conversation(conversation_id: str, request: Request):
         return {"success": True}
     except Exception as e:
         print(f"❌ Error deleting conversation: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ============================================================================
@@ -10844,7 +10837,8 @@ def get_user_tier(user_id: str) -> str:
     try:
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
             supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-            sub_result = supabase.table("subscriptions").select("plan_tier,status,paid,created_at").eq("user_id", user_id).eq("status", "active").eq("paid", True).order("created_at", desc=True).limit(1).execute()
+            # Include both "active" and "cancelling" — cancelling users paid until period end
+            sub_result = supabase.table("subscriptions").select("plan_tier,status,paid,created_at").eq("user_id", user_id).eq("paid", True).in_("status", ["active", "cancelling"]).order("created_at", desc=True).limit(1).execute()
             if sub_result.data:
                 raw = (sub_result.data[0].get("plan_tier") or "").lower()
                 plan = tier_map.get(raw)
@@ -11446,7 +11440,7 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
         raise
     except Exception as e:
         print(f"Error in price_opportunities_endpoint: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/api/ai/analyze-store")
@@ -11544,7 +11538,7 @@ async def analyze_store_endpoint(req: AnalyzeStoreRequest, request: Request):
     
     except Exception as e:
         print(f"Error in analyze_store: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 class OptimizeContentRequest(BaseModel):
@@ -11586,7 +11580,7 @@ async def optimize_content_endpoint(req: OptimizeContentRequest, request: Reques
     
     except Exception as e:
         print(f"Error optimizing content: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 class OptimizePriceRequest(BaseModel):
@@ -11618,7 +11612,7 @@ async def optimize_price_endpoint(req: OptimizePriceRequest, request: Request):
     
     except Exception as e:
         print(f"Error optimizing price: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 class RecommendationsRequest(BaseModel):
@@ -11657,7 +11651,7 @@ async def get_recommendations_endpoint(req: RecommendationsRequest, request: Req
     
     except Exception as e:
         print(f"Error generating recommendations: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 class ExecuteActionsRequest(BaseModel):
@@ -11705,7 +11699,7 @@ async def execute_actions_endpoint(req: ExecuteActionsRequest, request: Request)
     
     except Exception as e:
         print(f"Error executing actions: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 class ApplyRecommendationRequest(BaseModel):
@@ -11845,7 +11839,7 @@ async def apply_recommendation_endpoint(req: ApplyRecommendationRequest, request
         raise
     except Exception as e:
         print(f"Error applying recommendation: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 class GenerateReportRequest(BaseModel):
@@ -11887,7 +11881,7 @@ async def generate_report_endpoint(req: GenerateReportRequest, request: Request)
     
     except Exception as e:
         print(f"Error generating report: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/api/ai/capabilities/{tier}")
@@ -11906,7 +11900,7 @@ async def get_capabilities_endpoint(tier: str):
         }
     
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ============================================================================
@@ -12384,7 +12378,7 @@ async def create_checkout_session(req: CreateCheckoutSessionRequest, request: Re
     
     except Exception as e:
         print(f"Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 class VerifyCheckoutRequest(BaseModel):
@@ -12586,7 +12580,7 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
         import traceback
         tb = traceback.format_exc()
         print(f"❌ [VERIFY] Error: {e}\n{tb}")
-        raise HTTPException(status_code=500, detail=f"verify-session error: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail="Session verification failed")
 
 
 @app.get("/api/user/profile")
@@ -12622,7 +12616,7 @@ async def get_user_profile(request: Request):
     
     except Exception as e:
         print(f"Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 print(f"✅ All endpoints registered successfully")
@@ -13779,13 +13773,30 @@ async def update_password(payload: dict, request: Request):
     try:
         supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
+        # Verify current password by attempting a sign-in
+        try:
+            # Get the user's email first
+            user_resp = supabase.auth.admin.get_user_by_id(user_id)
+            user_email = user_resp.user.email if user_resp and user_resp.user else None
+            if not user_email:
+                raise HTTPException(status_code=400, detail="Impossible de vérifier l'utilisateur")
+            
+            # Attempt sign-in with current password to verify it
+            verify_client = create_client(SUPABASE_URL, os.getenv("SUPABASE_ANON_KEY", SUPABASE_SERVICE_KEY))
+            verify_client.auth.sign_in_with_password({"email": user_email, "password": current_password})
+        except HTTPException:
+            raise
+        except Exception as verify_err:
+            print(f"Password verification failed: {verify_err}")
+            raise HTTPException(status_code=403, detail="Mot de passe actuel incorrect")
+
         # Use admin API to update password for the authenticated user
         supabase.auth.admin.update_user_by_id(user_id, {"password": new_password})
         
         return {"success": True, "message": "Mot de passe mis à jour avec succès"}
     except Exception as e:
         print(f"Error updating password: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/api/settings/notifications")
@@ -13818,7 +13829,7 @@ async def update_notifications(payload: dict, request: Request):
         return {"success": True, "message": "Préférences mises à jour"}
     except Exception as e:
         print(f"Error updating notifications: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/api/settings/notifications")
@@ -13845,7 +13856,7 @@ async def get_notifications(request: Request):
         }
     except Exception as e:
         print(f"Error fetching notifications: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/api/settings/2fa/enable")
@@ -13865,7 +13876,7 @@ async def enable_2fa(request: Request):
         return {"success": True, "message": "2FA activée"}
     except Exception as e:
         print(f"Error enabling 2FA: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/api/settings/2fa/disable")
@@ -13884,7 +13895,7 @@ async def disable_2fa(request: Request):
         return {"success": True, "message": "2FA désactivée"}
     except Exception as e:
         print(f"Error disabling 2FA: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/api/settings/interface")
@@ -13909,7 +13920,7 @@ async def update_interface_settings(payload: dict, request: Request):
         return {"success": True, "message": "Paramètres d'interface mis à jour"}
     except Exception as e:
         print(f"Error updating interface settings: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/api/settings/interface")
@@ -13927,7 +13938,7 @@ async def get_interface_settings(request: Request):
         return {"success": True, "preferences": {"dark_mode": True, "language": "fr"}}
     except Exception as e:
         print(f"Error fetching interface settings: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/api/subscription/cancel")
@@ -13983,7 +13994,7 @@ async def cancel_subscription(request: Request):
         raise
     except Exception as e:
         print(f"Error cancelling subscription: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/api/subscription/switch-plan")
@@ -14405,7 +14416,7 @@ async def update_payment_method(request: Request):
         return {"success": True, "portal_url": session.url}
     except Exception as e:
         print(f"Error updating payment method: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/api/subscription/change-plan")

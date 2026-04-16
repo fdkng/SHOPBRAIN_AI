@@ -86,6 +86,7 @@ export default function Dashboard() {
   })
   const [shopifyToken, setShopifyToken] = useState('')
   const [shopifyConnected, setShopifyConnected] = useState(false)
+  const [shopifyConnecting, setShopifyConnecting] = useState(false)
   const [showShopifyToken, setShowShopifyToken] = useState(false)
   // ── Multi-shop state ──
   const [shopList, setShopList] = useState([])       // all connected shops [{shop_domain, is_active, created_at, updated_at}]
@@ -184,7 +185,7 @@ export default function Dashboard() {
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
-  const [darkMode] = useState(true)
+  const [darkMode, setDarkMode] = useState(true)
   const { t, language, setLanguage, LANGUAGES } = useTranslation()
   // Language is now managed by LanguageContext
   const [notifications, setNotifications] = useState({
@@ -2197,6 +2198,8 @@ export default function Dashboard() {
 
   // ============ CHAT SEND ============
   const sendChatMessage = async (directMessage) => {
+    // Guard: prevent double-send while already loading
+    if (chatLoading) return
     // Guard: if directMessage is a React event or non-string, ignore it
     const rawMessage = (typeof directMessage === 'string') ? directMessage : ''
     const messageToSend = rawMessage || chatInput.trim()
@@ -2584,6 +2587,7 @@ export default function Dashboard() {
       // Try backend save (best-effort — table may not exist yet)
       try {
         const session = await getCachedSession()
+        if (!session) throw new Error('No session')
         const response = await fetch(`${API_URL}/api/settings/interface`, {
           method: 'POST',
           headers: {
@@ -2620,6 +2624,7 @@ export default function Dashboard() {
       // Try backend save (best-effort)
       try {
         const session = await getCachedSession()
+        if (!session) throw new Error('No session')
         const response = await fetch(`${API_URL}/api/settings/notifications`, {
           method: 'POST',
           headers: {
@@ -2717,7 +2722,7 @@ export default function Dashboard() {
     }
     
     try {
-      setLoading(true)
+      setShopifyConnecting(true)
       setError('')
       
       const session = await getCachedSession()
@@ -2743,11 +2748,11 @@ export default function Dashboard() {
       })
       
       if (!testResponse.ok) {
-        const errorData = await testResponse.json()
+        const errorData = await testResponse.json().catch(() => ({}))
         throw new Error(errorData.detail || t('connectionTestFailed'))
       }
       
-      const testData = await testResponse.json()
+      const testData = await testResponse.json().catch(() => ({}))
       console.log('Test passed:', testData)
       
       if (!testData.ready_to_save) {
@@ -2771,11 +2776,11 @@ export default function Dashboard() {
       })
       
       if (!saveResponse.ok) {
-        const errorData = await saveResponse.json()
+        const errorData = await saveResponse.json().catch(() => ({}))
         throw new Error(errorData.detail || t('saveFailed'))
       }
       
-      const saveData = await saveResponse.json()
+      const saveData = await saveResponse.json().catch(() => ({}))
       
       if (saveData.success) {
         setStatus('shopify', 'success', `Shopify ${t('connected')}. ${testData.tests?.products_fetch?.product_count || 0} ${t('productsFound')}.`)
@@ -2795,7 +2800,7 @@ export default function Dashboard() {
       setStatus('shopify', 'error', message)
       setError(message)
     } finally {
-      setLoading(false)
+      setShopifyConnecting(false)
     }
   }
 
@@ -4357,7 +4362,7 @@ export default function Dashboard() {
     }
   }
 
-  const handleApplyRecommendation = async (productId, recommendationType) => {
+  const handleApplyRecommendation = async (productId, recommendationType, extraData = {}) => {
     // Standard can apply titles only, descriptions/images need Pro+
     if (recommendationType === 'description' && !canAccess('content_generation')) {
       setStatus(`rec-${productId}-${recommendationType}`, 'warning', 'Réécriture des descriptions réservée au plan Pro ou supérieur.')
@@ -4384,7 +4389,8 @@ export default function Dashboard() {
         },
         body: JSON.stringify({
           product_id: productId,
-          recommendation_type: recommendationType
+          recommendation_type: recommendationType,
+          ...extraData
         })
       })
       const data = await response.json()
@@ -4653,7 +4659,7 @@ export default function Dashboard() {
                       await handleChangePlan(pendingPlanConfirm.plan)
                       // Only dismiss confirmation if switch succeeded
                       if (!changePlanLoading) {
-                        const statusObj = statuses['change-plan']
+                        const statusObj = statusByKey['change-plan']
                         if (statusObj?.type === 'success' || statusObj?.type === 'info') {
                           setPendingPlanConfirm(null)
                         }
@@ -7444,7 +7450,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             </p>
                             <div className="flex gap-2">
                               <button onClick={() => { setPendingPlanConfirm(null); clearStatus('change-plan') }} disabled={changePlanLoading} className="flex-1 px-3 py-2 rounded-lg border border-[#E8E8EE] text-[#6A6A85] hover:bg-[#EFF1F5] disabled:opacity-50 text-sm">{tr('cancel', 'Cancel')}</button>
-                              <button onClick={async () => { await handleChangePlan(pendingPlanConfirm.plan); const s = statuses['change-plan']; if (s?.type === 'success' || s?.type === 'info') setPendingPlanConfirm(null) }} disabled={changePlanLoading} className="flex-1 px-3 py-2 rounded-lg bg-[#FF6B35] hover:bg-[#E85A28] text-white font-semibold disabled:opacity-50 text-sm">{changePlanLoading ? '...' : tr('confirmSwitch', 'Confirm & Switch')}</button>
+                              <button onClick={async () => { await handleChangePlan(pendingPlanConfirm.plan); const s = statusByKey['change-plan']; if (s?.type === 'success' || s?.type === 'info') setPendingPlanConfirm(null) }} disabled={changePlanLoading} className="flex-1 px-3 py-2 rounded-lg bg-[#FF6B35] hover:bg-[#E85A28] text-white font-semibold disabled:opacity-50 text-sm">{changePlanLoading ? '...' : tr('confirmSwitch', 'Confirm & Switch')}</button>
                             </div>
                           </div>
                         ) : (
