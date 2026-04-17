@@ -3247,6 +3247,58 @@ export default function Dashboard() {
     }
   }
 
+  const loadReturnRisks = async (rangeOverride, config = {}) => {
+    try {
+      const rangeValue = rangeOverride || analyticsRange
+      if (!config?.silent) setInsightsLoading(true)
+      if (!config?.silent) setInsightsError('')
+
+      const session = await getCachedSession()
+      if (!session) throw new Error(t('sessionExpiredReconnect'))
+
+      await waitForBackendReady({ retries: 14, retryDelayMs: 4000, timeoutMs: 30000 })
+      await warmupBackend(session.access_token)
+
+      const url = `${API_URL}/api/shopify/returns-risk?range=${encodeURIComponent(rangeValue)}`
+      const { response, data } = await fetchJsonWithRetry(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        }
+      }, {
+        retries: 4,
+        retryDelayMs: 2000,
+        timeoutMs: 90000,
+        retryStatuses: [429, 500, 502, 503, 504]
+      })
+
+      if (!response?.ok) {
+        const detail = data?.detail || data?.error
+        throw new Error(detail || `HTTP ${response?.status || 'ERR'}`)
+      }
+      if (!data?.success) {
+        throw new Error(data?.detail || t('analysisUnavailable'))
+      }
+
+      if (!config?.silent) {
+        setInsightsData(prev => ({
+          ...(prev || {}),
+          ...data,
+          return_risks: Array.isArray(data?.return_risks) ? data.return_risks : []
+        }))
+      }
+      setBackendHealthTs(Date.now())
+      return data
+    } catch (err) {
+      const errorMessage = normalizeNetworkErrorMessage(err)
+      if (!config?.silent) setInsightsError(errorMessage)
+      throw new Error(errorMessage)
+    } finally {
+      if (!config?.silent) setInsightsLoading(false)
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Stock Alert — chargement + auto-save multi-produit (zéro popup)
   // ---------------------------------------------------------------------------
@@ -3580,6 +3632,17 @@ export default function Dashboard() {
 
       if (actionKey === 'action-bundles') {
         await loadBundlesAsync()
+        return
+      }
+
+      if (actionKey === 'action-returns') {
+        const data = await loadReturnRisks(undefined)
+        const returnsList = Array.isArray(data?.return_risks) ? data.return_risks : []
+        if (returnsList.length === 0) {
+          setStatus(actionKey, 'info', 'Analyse terminée : aucun signal de retour détecté sur la période sélectionnée.')
+          return
+        }
+        setStatus(actionKey, 'success', t('analysisComplete'))
         return
       }
 

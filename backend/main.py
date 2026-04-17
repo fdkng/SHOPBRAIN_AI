@@ -6879,6 +6879,265 @@ async def _get_shopify_insights_impl(
     }
 
 
+@app.get("/api/shopify/returns-risk")
+async def get_shopify_returns_risk(request: Request, range: str = "30d"):
+    """Analyse dédiée Anti-retours: remboursements + signaux produit.
+
+    Endpoint volontairement isolé du gros endpoint insights pour éviter
+    qu'une erreur sur une autre section casse l'onglet Anti-retours.
+    """
+    user_id = get_user_id(request)
+    tier = get_user_tier(user_id)
+    ensure_feature_allowed(tier, "cross_sell")
+    shop_domain, access_token = _get_shopify_connection(user_id)
+
+    range_map = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}
+    days = range_map.get(range, 30)
+
+    orders = _fetch_shopify_orders(shop_domain, access_token, days)
+
+    product_stats: dict[str, dict] = {}
+    refunds_by_product: dict[str, int] = {}
+
+    for order in orders:
+        order_line_items = order.get("line_items", []) or []
+        line_item_by_id = {
+            str(item.get("id")): item
+            for item in order_line_items
+            if item.get("id") is not None
+        }
+
+        for item in order_line_items:
+            pid = str(item.get("product_id") or item.get("id") or "")
+            if not pid:
+                continue
+
+            if pid not in product_stats:
+                product_stats[pid] = {
+                    "product_id": pid,
+                    "title": item.get("title") or "Produit",
+                    "orders": 0,
+                    "quantity": 0,
+                    "revenue": 0.0,
+                }
+
+            qty = int(item.get("quantity") or 0)
+            price = _safe_float(item.get("price"), 0.0)
+            product_stats[pid]["orders"] += 1
+            product_stats[pid]["quantity"] += qty
+            product_stats[pid]["revenue"] += price * qty
+
+        for refund in order.get("refunds", []) or []:
+            for refund_line in refund.get("refund_line_items", []) or []:
+                line_item = refund_line.get("line_item") or {}
+                if not line_item:
+                    line_item_id = str(refund_line.get("line_item_id") or "")
+                    line_item = line_item_by_id.get(line_item_id, {})
+
+                pid = str(line_item.get("product_id") or line_item.get("id") or "")
+                if not pid:
+                    continue
+
+                refunded_qty = int(refund_line.get("quantity") or 1)
+                refunds_by_product[pid] = refunds_by_product.get(pid, 0) + max(1, refunded_qty)
+
+    products = []
+    try:
+        products_payload = await get_shopify_products(request)
+        products = products_payload.get("products", [])
+    except Exception as exc:
+        print(f"⚠️ [RETURNS-RISK] products fetch failed: {type(exc).__name__}: {str(exc)[:180]}")
+
+    plan_product_limit = get_plan_product_limit(tier)
+    if plan_product_limit is not None:
+        products = products[:plan_product_limit]
+
+    content_map: dict[str, dict] = {}
+    images_count_map: dict[str, int] = {}
+    price_map: dict[str, float] = {}
+
+    for product in products:
+        pid = str(product.get("id") or "")
+        if not pid:
+            continue
+
+        variants = product.get("variants", []) or []
+        images = product.get("images", []) or []
+        title = product.get("title") or ""
+        description_text = _strip_html(product.get("body_html") or "")
+
+        content_map[pid] = {
+            "title": title,
+            "description_len": len(description_text),
+        }
+        images_count_map[pid] = len(images)
+        price_map[pid] = _safe_float(variants[0].get("price"), 0.0) if variants else 0.0
+
+        if pid not in product_stats:
+            product_stats[pid] = {
+                "product_id": pid,
+                "title": title or "Produit",
+                "orders": 0,
+                "quantity": 0,
+                "revenue": 0.0,
+            }
+
+    if not product_stats:
+        return {
+            "success": True,
+            "shop": shop_domain,
+            "range": range,
+            "tier": tier,
+            "return_risks": [],
+            "diagnostics": {
+                "orders_count": 0,
+                "products_count": 0,
+                "refund_lines_count": 0,
+                "note": "Aucune donnée Shopify exploitable pour la période.",
+            },
+        }
+
+    order_counts = [p.get("orders", 0) for p in product_stats.values()]
+    median_orders = sorted(order_counts)[len(order_counts) // 2] if order_counts else 0
+    price_values = [value for value in price_map.values() if value and value > 0]
+    avg_price = (sum(price_values) / len(price_values)) if price_values else None
+
+    return_risks = []
+    for pid, stats in product_stats.items():
+        orders_count = int(stats.get("orders", 0) or 0)
+        sold_qty = int(stats.get("quantity", 0) or 0)
+        revenue = _safe_float(stats.get("revenue"), 0.0)
+        refund_qty = int(refunds_by_product.get(pid, 0) or 0)
+
+        refund_rate = (refund_qty / sold_qty) if sold_qty > 0 else None
+        current_price = _safe_float(price_map.get(pid), 0.0)
+        desc_len = int((content_map.get(pid) or {}).get("description_len", 0) or 0)
+        images_count = int(images_count_map.get(pid, 0) or 0)
+
+        score = 0.0
+        reasons = []
+        recommendations = []
+
+        # Règle explicite demandée
+        if refund_rate is not None and refund_rate >= 0.10:
+            score += 50
+            reasons.append(f"Taux de remboursement élevé ({round(refund_rate * 100)}%)")
+            recommendations.append("Corriger la fiche produit et analyser les motifs de retour")
+        elif refund_rate is not None and refund_rate >= 0.05:
+            score += 25
+            reasons.append(f"Taux de remboursement à surveiller ({round(refund_rate * 100)}%)")
+            recommendations.append("Surveiller ce produit et améliorer la clarté de la description")
+
+        if refund_qty >= 1:
+            score += min(20, refund_qty * 6)
+            reasons.append(f"{refund_qty} unité(s) remboursée(s)")
+
+        if desc_len == 0:
+            score += 12
+            reasons.append("Aucune description produit")
+            recommendations.append("Ajouter une description détaillée (taille, matière, usage)")
+        elif desc_len < 120:
+            score += 8
+            reasons.append(f"Description courte ({desc_len} caractères)")
+            recommendations.append("Enrichir la description pour réduire les attentes floues")
+
+        if images_count <= 1:
+            score += 8
+            reasons.append("Visuels insuffisants")
+            recommendations.append("Ajouter plusieurs photos réelles du produit")
+
+        if avg_price and current_price > avg_price * 1.35 and orders_count <= max(1, median_orders):
+            score += 7
+            reasons.append("Prix élevé vs moyenne avec faible traction")
+
+        if orders_count <= max(1, median_orders // 2):
+            score += 5
+            reasons.append("Produit sous-performant")
+
+        if score < 10:
+            continue
+
+        level = "élevé" if score >= 45 else ("modéré" if score >= 25 else "faible")
+
+        # Nettoyage recommandations (uniques)
+        unique_recommendations = []
+        for rec in recommendations:
+            if rec and rec not in unique_recommendations:
+                unique_recommendations.append(rec)
+
+        return_risks.append({
+            "product_id": pid,
+            "title": stats.get("title") or (content_map.get(pid) or {}).get("title") or "Produit",
+            "refunds": refund_qty,
+            "refund_rate": round(refund_rate, 4) if refund_rate is not None else None,
+            "risk_score": round(score, 1),
+            "risk_level": level,
+            "reasons": reasons,
+            "recommendations": unique_recommendations or ["Surveiller ce produit sur la période suivante"],
+            "signals": {
+                "orders": orders_count,
+                "quantity": sold_qty,
+                "revenue": round(revenue, 2),
+                "price": round(current_price, 2) if current_price else None,
+                "description_length": desc_len,
+                "images_count": images_count,
+            },
+        })
+
+    # Fallback anti-vide pour UX: si aucun signal fort, on renvoie les produits les plus fragiles
+    if not return_risks:
+        fragiles = sorted(
+            product_stats.values(),
+            key=lambda p: (
+                int((content_map.get(str(p.get("product_id")), {}) or {}).get("description_len", 0) or 0),
+                images_count_map.get(str(p.get("product_id")), 0),
+                int(p.get("orders", 0) or 0),
+            )
+        )
+        for p in fragiles[:6]:
+            pid = str(p.get("product_id") or "")
+            if not pid:
+                continue
+            return_risks.append({
+                "product_id": pid,
+                "title": p.get("title") or "Produit",
+                "refunds": int(refunds_by_product.get(pid, 0) or 0),
+                "refund_rate": None,
+                "risk_score": 18.0,
+                "risk_level": "modéré",
+                "reasons": [
+                    "Aucun retour explicite détecté, mais profil produit fragile",
+                    "Fallback anti-retours basé sur contenu/performance",
+                ],
+                "recommendations": [
+                    "Améliorer la fiche produit avant d'augmenter le trafic",
+                    "Vérifier les attentes client (images, détails, FAQ)",
+                ],
+                "signals": {
+                    "orders": int(p.get("orders", 0) or 0),
+                    "quantity": int(p.get("quantity", 0) or 0),
+                    "revenue": round(_safe_float(p.get("revenue"), 0.0), 2),
+                    "description_length": int((content_map.get(pid, {}) or {}).get("description_len", 0) or 0),
+                    "images_count": int(images_count_map.get(pid, 0) or 0),
+                },
+            })
+
+    return_risks = sorted(return_risks, key=lambda row: row.get("risk_score", 0), reverse=True)[:15]
+
+    return {
+        "success": True,
+        "shop": shop_domain,
+        "range": range,
+        "tier": tier,
+        "return_risks": return_risks,
+        "diagnostics": {
+            "orders_count": len(orders),
+            "products_count": len(product_stats),
+            "refund_lines_count": int(sum(refunds_by_product.values())),
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Stock Forecast / Rupture Prediction Endpoint
 # ---------------------------------------------------------------------------
