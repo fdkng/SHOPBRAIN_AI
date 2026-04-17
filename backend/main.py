@@ -6195,32 +6195,8 @@ async def get_shopify_insights(
     except HTTPException:
         raise
     except Exception as exc:
-        import traceback
-        traceback.print_exc()
-        return JSONResponse(
-            status_code=200,
-            content={
-                "success": True,
-                "partial": True,
-                "error_detail": str(exc)[:200],
-                "shop": "",
-                "range": range,
-                "tier": "unknown",
-                "plan_limits": {},
-                "benchmarks": {},
-                "has_pixel_data": False,
-                "blockers": [],
-                "rewrite_opportunities": [],
-                "rewrite_ai": {"enabled": False, "generated": 0, "notes": []},
-                "image_risks": [],
-                "bundle_suggestions": [],
-                "stock_risks": [],
-                "price_opportunities": [],
-                "price_analysis": {"items": [], "market_comparison": {}},
-                "market_comparison": {},
-                "return_risks": [],
-            },
-        )
+        print(f"❌ [INSIGHTS] Unexpected error: {type(exc).__name__}: {str(exc)[:250]}")
+        raise HTTPException(status_code=500, detail="Erreur interne lors de l'analyse anti-retours. Réessayez dans 30 secondes.")
 
 
 async def _get_shopify_insights_impl(
@@ -6256,7 +6232,14 @@ async def _get_shopify_insights_impl(
     refunds_by_product = {}
 
     for order in orders:
-        for item in order.get("line_items", []):
+        order_line_items = order.get("line_items", []) or []
+        line_item_by_id = {
+            str(item.get("id")): item
+            for item in order_line_items
+            if item.get("id") is not None
+        }
+
+        for item in order_line_items:
             pid = str(item.get("product_id") or item.get("id"))
             if pid not in product_stats:
                 product_stats[pid] = {
@@ -6275,12 +6258,25 @@ async def _get_shopify_insights_impl(
         for refund in order.get("refunds", []) or []:
             for refund_line in refund.get("refund_line_items", []) or []:
                 item = refund_line.get("line_item") or {}
-                pid = str(item.get("product_id") or item.get("id"))
-                refunds_by_product[pid] = refunds_by_product.get(pid, 0) + 1
+                if not item:
+                    line_item_id = str(refund_line.get("line_item_id") or "")
+                    item = line_item_by_id.get(line_item_id, {})
+
+                pid = str(item.get("product_id") or item.get("id") or "")
+                if not pid:
+                    continue
+
+                refunded_qty = int(refund_line.get("quantity") or 1)
+                refunds_by_product[pid] = refunds_by_product.get(pid, 0) + max(1, refunded_qty)
 
     # Fetch products for inventory + images — respect plan product limit
-    products_payload = await get_shopify_products(request)
-    products = products_payload.get("products", [])
+    products = []
+    try:
+        products_payload = await get_shopify_products(request)
+        products = products_payload.get("products", [])
+    except Exception as exc:
+        print(f"⚠️ [INSIGHTS] Shopify products fetch failed: {type(exc).__name__}: {str(exc)[:200]}")
+
     plan_product_limit = get_plan_product_limit(tier)
     if plan_product_limit is not None:
         products = products[:plan_product_limit]
@@ -6317,6 +6313,12 @@ async def _get_shopify_insights_impl(
                 "quantity": 0,
                 "revenue": 0.0,
             }
+
+    if not product_stats:
+        raise HTTPException(
+            status_code=424,
+            detail="Aucune donnée Shopify exploitable (commandes/produits). Vérifiez la connexion Shopify et réessayez.",
+        )
 
     event_counts = _fetch_shopify_event_counts(user_id, shop_domain, days)
 
@@ -6712,6 +6714,9 @@ async def _get_shopify_insights_impl(
         if refund_rate is not None and refund_rate >= 0.10:
             risk_score += 25
             reasons.append(f"Taux de retour élevé ({round(refund_rate * 100)}%)")
+        elif refund_rate is not None and refund_rate >= 0.05:
+            risk_score += 12
+            reasons.append(f"Taux de retour à surveiller ({round(refund_rate * 100)}%)")
 
         # 2. High price + low orders = buyer's remorse risk
         if avg_price_val and current_price > avg_price_val * 1.3 and orders_count <= max(1, median_orders):
@@ -6799,6 +6804,32 @@ async def _get_shopify_insights_impl(
             })
 
     return_risks = sorted(return_risks, key=lambda x: x.get("risk_score", 0), reverse=True)[:15]
+
+    if not return_risks and blockers:
+        for blocker in blockers[:8]:
+            pid = str(blocker.get("product_id") or "")
+            if not pid:
+                continue
+
+            return_risks.append({
+                "product_id": pid,
+                "title": blocker.get("title") or "Produit",
+                "refunds": refunds_by_product.get(pid, 0),
+                "refund_rate": None,
+                "risk_score": max(18.0, float(blocker.get("score") or 0) * 0.3),
+                "risk_level": "modéré",
+                "reasons": [
+                    blocker.get("reason") or "Sous-performance détectée",
+                    "Fallback anti-retours: profil similaire aux produits générant souvent des retours",
+                ],
+                "recommendations": [
+                    "Clarifier la promesse produit (titre + description)",
+                    "Ajouter visuels et précisions pour réduire les mauvaises attentes",
+                ],
+                "signals": blocker.get("signals") or {},
+            })
+
+        return_risks = sorted(return_risks, key=lambda x: x.get("risk_score", 0), reverse=True)[:15]
     print(f"🔄 [RETURN RISKS] Found {len(return_risks)} products at risk (from {len(product_stats)} total)")
     if return_risks:
         print(f"🔄 [RETURN RISKS] Top risk: {return_risks[0].get('title')} score={return_risks[0].get('risk_score')} reasons={return_risks[0].get('reasons')}")

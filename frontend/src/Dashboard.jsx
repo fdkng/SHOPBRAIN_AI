@@ -3893,7 +3893,11 @@ export default function Dashboard() {
 
         const maybeList = listByActionKey[actionKey]
         if (Array.isArray(maybeList) && maybeList.length === 0) {
-          setStatus(actionKey, 'warning', t('analysisNoOpportunity'))
+          if (actionKey === 'action-returns') {
+            setStatus(actionKey, 'info', 'Analyse terminée : aucun signal de retour détecté sur la période sélectionnée.')
+          } else {
+            setStatus(actionKey, 'warning', t('analysisNoOpportunity'))
+          }
           return
         }
       }
