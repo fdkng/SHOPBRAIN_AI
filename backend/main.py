@@ -2345,8 +2345,8 @@ async def health():
     """Health check endpoint for Render - MUST ALWAYS WORK"""
     return {
         "status": "ok",
-        "version": "3.1-cors-fix",
-        "build": "20260412-cors-restore",
+        "version": "3.2-anti-retours",
+        "build": "20260417-return-risks",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
                 "openai": "configured" if OPENAI_API_KEY else "not_configured",
@@ -6680,12 +6680,10 @@ async def _get_shopify_insights_impl(
         })
 
     # ── Return / chargeback risk analysis (predictive) ──
-    # Combine actual refund history with predictive signals:
-    #   • High refund rate or count
-    #   • High price + low sales (buyer's remorse risk)
-    #   • Very short product description (expectation mismatch)
-    #   • Low view-to-cart rate (browse but hesitate, impulse buys return more)
-    #   • Few images (customer doesn't know what they're getting)
+    print(f"🔄 [RETURN RISKS] Starting analysis: {len(product_stats)} products, {len(refunds_by_product)} with refunds, {len(products)} from Shopify")
+    print(f"🔄 [RETURN RISKS] content_map has {len(content_map)} entries, images_map has {len(images_map)} entries")
+    print(f"🔄 [RETURN RISKS] avg_price={avg_price}, median_orders={median_orders}")
+
     return_risks = []
     avg_price_val = avg_price if avg_price and avg_price > 0 else None
 
@@ -6698,65 +6696,85 @@ async def _get_shopify_insights_impl(
         content = content_map.get(pid, {})
         desc_len = content.get("description_len", 0)
         images_count = len(images_map.get(pid, []))
-        signals = event_counts.get(pid, {})
+        signals = event_counts.get(pid, {}) if event_counts else {}
         views = int(signals.get("views", 0))
         add_to_cart = int(signals.get("add_to_cart", 0))
         view_to_cart = (add_to_cart / views) if views > 0 else None
 
-        # --- Scoring ---
+        # --- Scoring (each product gets evaluated on ALL signals) ---
         risk_score = 0.0
         reasons = []
 
         # 1. Actual refunds (strongest signal)
         if refund_count >= 1:
-            risk_score += min(refund_count * 20, 60)
+            risk_score += min(refund_count * 25, 60)
             reasons.append(f"{refund_count} remboursement(s) enregistré(s)")
-        if refund_rate is not None and refund_rate >= 0.15:
+        if refund_rate is not None and refund_rate >= 0.10:
             risk_score += 25
             reasons.append(f"Taux de retour élevé ({round(refund_rate * 100)}%)")
 
         # 2. High price + low orders = buyer's remorse risk
-        if avg_price_val and current_price > avg_price_val * 1.5 and orders_count <= max(1, median_orders // 2):
+        if avg_price_val and current_price > avg_price_val * 1.3 and orders_count <= max(1, median_orders):
             risk_score += 15
-            reasons.append("Prix élevé avec peu de ventes (risque remords acheteur)")
+            reasons.append(f"Prix au-dessus de la moyenne ({round(current_price, 2)}$ vs moy. {round(avg_price_val, 2)}$)")
+        elif avg_price_val and current_price > avg_price_val * 1.8:
+            risk_score += 10
+            reasons.append(f"Prix très élevé ({round(current_price, 2)}$) — risque remords acheteur")
 
         # 3. Short / missing description = expectation mismatch
-        if desc_len < 80:
+        if desc_len == 0:
+            risk_score += 15
+            reasons.append("Aucune description (forte probabilité de mauvaise surprise)")
+        elif desc_len < 80:
             risk_score += 12
-            reasons.append("Description trop courte (risque de mauvaise surprise)")
-        elif desc_len < 150:
+            reasons.append(f"Description très courte ({desc_len} car.) — risque de mauvaise surprise")
+        elif desc_len < 200:
             risk_score += 5
-            reasons.append("Description courte")
+            reasons.append(f"Description courte ({desc_len} car.)")
 
         # 4. Few images = customer unsure of what they get
-        if images_count <= 1:
+        if images_count == 0:
+            risk_score += 15
+            reasons.append("Aucune image produit")
+        elif images_count <= 1:
             risk_score += 10
-            reasons.append("Peu d'images (le client ne voit pas bien le produit)")
+            reasons.append("Une seule image (le client ne voit pas bien le produit)")
+        elif images_count <= 2:
+            risk_score += 4
+            reasons.append(f"Seulement {images_count} images")
 
         # 5. Low view-to-cart with orders = impulse / mismatch risk
         if view_to_cart is not None and view_to_cart < 0.02 and orders_count >= 1:
             risk_score += 8
             reasons.append("Faible taux de conversion (possibles achats impulsifs)")
 
-        if risk_score >= 10 and reasons:
+        # 6. No orders but product exists = unknown risk
+        if orders_count == 0 and current_price and current_price > 0:
+            risk_score += 3
+            reasons.append("Aucune commande — impossible d'évaluer le taux de retour")
+
+        # Only include if there's at least one reason
+        if reasons:
             # Determine risk level
-            if risk_score >= 50:
+            if risk_score >= 40:
                 risk_level = "élevé"
-            elif risk_score >= 25:
+            elif risk_score >= 20:
                 risk_level = "modéré"
             else:
                 risk_level = "faible"
 
             # Recommendations
             recommendations = []
-            if desc_len < 150:
-                recommendations.append("Enrichir la description du produit avec plus de détails")
+            if desc_len < 200:
+                recommendations.append("Enrichir la description du produit avec plus de détails, dimensions, matières")
             if images_count <= 2:
                 recommendations.append("Ajouter plus de photos sous différents angles")
-            if refund_rate is not None and refund_rate >= 0.15:
+            if refund_count >= 1:
                 recommendations.append("Analyser les motifs de retour et ajuster la fiche produit")
-            if avg_price_val and current_price > avg_price_val * 1.5:
+            if avg_price_val and current_price > avg_price_val * 1.3:
                 recommendations.append("Vérifier si le prix correspond à la valeur perçue")
+            if orders_count == 0:
+                recommendations.append("Surveiller ce produit dès les premières ventes")
             if not recommendations:
                 recommendations.append("Surveiller ce produit et récolter les avis clients")
 
@@ -6781,6 +6799,9 @@ async def _get_shopify_insights_impl(
             })
 
     return_risks = sorted(return_risks, key=lambda x: x.get("risk_score", 0), reverse=True)[:15]
+    print(f"🔄 [RETURN RISKS] Found {len(return_risks)} products at risk (from {len(product_stats)} total)")
+    if return_risks:
+        print(f"🔄 [RETURN RISKS] Top risk: {return_risks[0].get('title')} score={return_risks[0].get('risk_score')} reasons={return_risks[0].get('reasons')}")
 
     # ── Plan-based response gating ──
     # Standard: no image_risks, no bundles, no return_risks (Pro+ only)
