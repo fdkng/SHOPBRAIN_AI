@@ -6679,20 +6679,108 @@ async def _get_shopify_insights_impl(
             "titles": [left or pair[0], right or pair[1]],
         })
 
-    # Return/chargeback risks: refund count
+    # ── Return / chargeback risk analysis (predictive) ──
+    # Combine actual refund history with predictive signals:
+    #   • High refund rate or count
+    #   • High price + low sales (buyer's remorse risk)
+    #   • Very short product description (expectation mismatch)
+    #   • Low view-to-cart rate (browse but hesitate, impulse buys return more)
+    #   • Few images (customer doesn't know what they're getting)
     return_risks = []
-    for pid, count in refunds_by_product.items():
-        stats = product_stats.get(pid, {})
+    avg_price_val = avg_price if avg_price and avg_price > 0 else None
+
+    for pid, stats in product_stats.items():
         orders_count = stats.get("orders", 0)
-        rate = (count / orders_count) if orders_count else None
-        if count >= 2:
+        revenue = stats.get("revenue", 0)
+        refund_count = refunds_by_product.get(pid, 0)
+        refund_rate = (refund_count / orders_count) if orders_count > 0 else None
+        current_price = price_map.get(pid, 0.0)
+        content = content_map.get(pid, {})
+        desc_len = content.get("description_len", 0)
+        images_count = len(images_map.get(pid, []))
+        signals = event_counts.get(pid, {})
+        views = int(signals.get("views", 0))
+        add_to_cart = int(signals.get("add_to_cart", 0))
+        view_to_cart = (add_to_cart / views) if views > 0 else None
+
+        # --- Scoring ---
+        risk_score = 0.0
+        reasons = []
+
+        # 1. Actual refunds (strongest signal)
+        if refund_count >= 1:
+            risk_score += min(refund_count * 20, 60)
+            reasons.append(f"{refund_count} remboursement(s) enregistré(s)")
+        if refund_rate is not None and refund_rate >= 0.15:
+            risk_score += 25
+            reasons.append(f"Taux de retour élevé ({round(refund_rate * 100)}%)")
+
+        # 2. High price + low orders = buyer's remorse risk
+        if avg_price_val and current_price > avg_price_val * 1.5 and orders_count <= max(1, median_orders // 2):
+            risk_score += 15
+            reasons.append("Prix élevé avec peu de ventes (risque remords acheteur)")
+
+        # 3. Short / missing description = expectation mismatch
+        if desc_len < 80:
+            risk_score += 12
+            reasons.append("Description trop courte (risque de mauvaise surprise)")
+        elif desc_len < 150:
+            risk_score += 5
+            reasons.append("Description courte")
+
+        # 4. Few images = customer unsure of what they get
+        if images_count <= 1:
+            risk_score += 10
+            reasons.append("Peu d'images (le client ne voit pas bien le produit)")
+
+        # 5. Low view-to-cart with orders = impulse / mismatch risk
+        if view_to_cart is not None and view_to_cart < 0.02 and orders_count >= 1:
+            risk_score += 8
+            reasons.append("Faible taux de conversion (possibles achats impulsifs)")
+
+        if risk_score >= 10 and reasons:
+            # Determine risk level
+            if risk_score >= 50:
+                risk_level = "élevé"
+            elif risk_score >= 25:
+                risk_level = "modéré"
+            else:
+                risk_level = "faible"
+
+            # Recommendations
+            recommendations = []
+            if desc_len < 150:
+                recommendations.append("Enrichir la description du produit avec plus de détails")
+            if images_count <= 2:
+                recommendations.append("Ajouter plus de photos sous différents angles")
+            if refund_rate is not None and refund_rate >= 0.15:
+                recommendations.append("Analyser les motifs de retour et ajuster la fiche produit")
+            if avg_price_val and current_price > avg_price_val * 1.5:
+                recommendations.append("Vérifier si le prix correspond à la valeur perçue")
+            if not recommendations:
+                recommendations.append("Surveiller ce produit et récolter les avis clients")
+
             return_risks.append({
                 "product_id": pid,
                 "title": stats.get("title"),
-                "refunds": count,
-                "refund_rate": round(rate, 4) if rate is not None else None,
+                "refunds": refund_count,
+                "refund_rate": round(refund_rate, 4) if refund_rate is not None else None,
+                "risk_score": round(risk_score, 1),
+                "risk_level": risk_level,
+                "reasons": reasons,
+                "recommendations": recommendations,
+                "signals": {
+                    "orders": orders_count,
+                    "revenue": round(revenue, 2),
+                    "price": round(current_price, 2) if current_price else None,
+                    "description_length": desc_len,
+                    "images_count": images_count,
+                    "views": views,
+                    "view_to_cart_rate": round(view_to_cart, 4) if view_to_cart is not None else None,
+                },
             })
-    return_risks = return_risks[:10]
+
+    return_risks = sorted(return_risks, key=lambda x: x.get("risk_score", 0), reverse=True)[:15]
 
     # ── Plan-based response gating ──
     # Standard: no image_risks, no bundles, no return_risks (Pro+ only)

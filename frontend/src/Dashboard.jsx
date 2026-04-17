@@ -6410,10 +6410,10 @@ analytics.subscribe("product_added_to_cart", (event) => {
           <div className="bg-white rounded-lg p-6 border border-[#E8E8EE] space-y-6">
             <div>
               <h2 className="text-[#1A1A2E] text-xl font-bold mb-2">Anti-retours</h2>
-              <p className="text-[#6A6A85]">Détecte les produits à risque de retours.</p>
+              <p className="text-[#6A6A85]">Identifie les produits les plus susceptibles d'être retournés selon l'historique de remboursements, le contenu et les signaux de performance.</p>
             </div>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <p className="text-sm text-[#6A6A85]">{getInsightCount(insightsData?.return_risks)} alertes</p>
+              <p className="text-sm text-[#6A6A85]">{getInsightCount(insightsData?.return_risks)} produits à risque</p>
               <button
                 onClick={() => runActionAnalysis('action-returns')}
                 disabled={insightsLoading}
@@ -6423,18 +6423,60 @@ analytics.subscribe("product_added_to_cart", (event) => {
               </button>
             </div>
             {renderStatus('action-returns')}
-            <div className="space-y-3">
+            <div className="space-y-4">
               {!insightsLoading && (!insightsData?.return_risks || insightsData.return_risks.length === 0) ? (
-                <p className="text-sm text-[#8A8AA3]">Aucun signal détecté.</p>
+                <div className="text-center py-8">
+                  <p className="text-[#8A8AA3]">Aucun produit à risque détecté pour le moment.</p>
+                  <p className="text-xs text-[#B0B0C0] mt-1">Cliquez sur « Analyser les produits » pour lancer l'analyse.</p>
+                </div>
               ) : (
-                insightsData?.return_risks?.slice(0, 8).map((item, index) => (
-                  <div key={item.product_id || index} className="bg-[#F7F8FA]/70 border border-[#E8E8EE] rounded-lg p-4">
-                    <p className="text-[#1A1A2E] font-semibold">{item.title || item.product_id}</p>
-                    <p className="text-xs text-[#8A8AA3]">
-                      {item.refunds || 0} retours{item.refund_rate !== null && item.refund_rate !== undefined ? ` • taux ${Math.round(item.refund_rate * 100)}%` : ''}
-                    </p>
-                  </div>
-                ))
+                insightsData?.return_risks?.slice(0, 10).map((item, index) => {
+                  const riskColor = item.risk_level === 'élevé' ? '#EF4444' : item.risk_level === 'modéré' ? '#F59E0B' : '#6B7280'
+                  const riskBg = item.risk_level === 'élevé' ? 'bg-red-50 border-red-200' : item.risk_level === 'modéré' ? 'bg-amber-50 border-amber-200' : 'bg-gray-50 border-gray-200'
+                  return (
+                    <div key={item.product_id || index} className={`${riskBg} border rounded-lg p-5`}>
+                      <div className="flex items-start justify-between gap-3 mb-3">
+                        <div className="flex-1">
+                          <p className="text-[#1A1A2E] font-bold text-base">{item.title || item.product_id}</p>
+                          <div className="flex flex-wrap items-center gap-3 mt-1 text-xs text-[#6A6A85]">
+                            {item.refunds > 0 && <span>🔄 {item.refunds} retour(s)</span>}
+                            {item.refund_rate !== null && item.refund_rate !== undefined && item.refund_rate > 0 && (
+                              <span>📊 Taux retour: {Math.round(item.refund_rate * 100)}%</span>
+                            )}
+                            {item.signals?.orders > 0 && <span>📦 {item.signals.orders} commande(s)</span>}
+                            {item.signals?.price > 0 && <span>💰 {item.signals.price}$</span>}
+                          </div>
+                        </div>
+                        <span
+                          className="text-xs font-bold px-3 py-1 rounded-full whitespace-nowrap"
+                          style={{ backgroundColor: riskColor + '20', color: riskColor }}
+                        >
+                          Risque {item.risk_level || 'inconnu'} {item.risk_score ? `(${Math.round(item.risk_score)})` : ''}
+                        </span>
+                      </div>
+
+                      {/* Raisons du risque */}
+                      {Array.isArray(item.reasons) && item.reasons.length > 0 && (
+                        <div className="mb-3">
+                          <p className="text-xs font-semibold text-[#1A1A2E] mb-1">⚠️ Signaux de risque :</p>
+                          <ul className="text-xs text-[#6A6A85] space-y-0.5 pl-4 list-disc">
+                            {item.reasons.map((r, i) => <li key={i}>{r}</li>)}
+                          </ul>
+                        </div>
+                      )}
+
+                      {/* Recommandations */}
+                      {Array.isArray(item.recommendations) && item.recommendations.length > 0 && (
+                        <div className="bg-white/60 rounded-md p-3">
+                          <p className="text-xs font-semibold text-[#0D9488] mb-1">💡 Recommandations :</p>
+                          <ul className="text-xs text-[#6A6A85] space-y-0.5 pl-4 list-disc">
+                            {item.recommendations.map((r, i) => <li key={i}>{r}</li>)}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })
               )}
             </div>
           </div>
