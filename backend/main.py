@@ -6897,9 +6897,12 @@ async def get_shopify_returns_risk(request: Request, range: str = "30d"):
     orders = _fetch_shopify_orders(shop_domain, access_token, days)
 
     product_stats: dict[str, dict] = {}
-    refunds_by_product: dict[str, int] = {}
+    refunded_items_by_product: dict[str, int] = {}
+    product_order_ids_by_product: dict[str, set[str]] = {}
+    returned_order_ids_by_product: dict[str, set[str]] = {}
 
     for order in orders:
+        order_id = str(order.get("id") or order.get("order_number") or "")
         order_line_items = order.get("line_items", []) or []
         line_item_by_id = {
             str(item.get("id")): item
@@ -6926,6 +6929,8 @@ async def get_shopify_returns_risk(request: Request, range: str = "30d"):
             product_stats[pid]["orders"] += 1
             product_stats[pid]["quantity"] += qty
             product_stats[pid]["revenue"] += price * qty
+            if order_id:
+                product_order_ids_by_product.setdefault(pid, set()).add(order_id)
 
         for refund in order.get("refunds", []) or []:
             for refund_line in refund.get("refund_line_items", []) or []:
@@ -6939,7 +6944,9 @@ async def get_shopify_returns_risk(request: Request, range: str = "30d"):
                     continue
 
                 refunded_qty = int(refund_line.get("quantity") or 1)
-                refunds_by_product[pid] = refunds_by_product.get(pid, 0) + max(1, refunded_qty)
+                refunded_items_by_product[pid] = refunded_items_by_product.get(pid, 0) + max(1, refunded_qty)
+                if order_id:
+                    returned_order_ids_by_product.setdefault(pid, set()).add(order_id)
 
     products = []
     try:
@@ -6982,6 +6989,11 @@ async def get_shopify_returns_risk(request: Request, range: str = "30d"):
                 "revenue": 0.0,
             }
 
+    for pid, stats in product_stats.items():
+        unique_orders_count = len(product_order_ids_by_product.get(pid, set()))
+        if unique_orders_count > 0:
+            stats["orders"] = unique_orders_count
+
     if not product_stats:
         return {
             "success": True,
@@ -7007,9 +7019,11 @@ async def get_shopify_returns_risk(request: Request, range: str = "30d"):
         orders_count = int(stats.get("orders", 0) or 0)
         sold_qty = int(stats.get("quantity", 0) or 0)
         revenue = _safe_float(stats.get("revenue"), 0.0)
-        refund_qty = int(refunds_by_product.get(pid, 0) or 0)
+        returned_items = int(refunded_items_by_product.get(pid, 0) or 0)
+        returned_orders = len(returned_order_ids_by_product.get(pid, set()))
 
-        refund_rate = (refund_qty / sold_qty) if sold_qty > 0 else None
+        return_rate_orders = (returned_orders / orders_count) if orders_count > 0 else None
+        return_rate_items = (returned_items / sold_qty) if sold_qty > 0 else None
         current_price = _safe_float(price_map.get(pid), 0.0)
         desc_len = int((content_map.get(pid) or {}).get("description_len", 0) or 0)
         images_count = int(images_count_map.get(pid, 0) or 0)
@@ -7019,18 +7033,21 @@ async def get_shopify_returns_risk(request: Request, range: str = "30d"):
         recommendations = []
 
         # Règle explicite demandée
-        if refund_rate is not None and refund_rate >= 0.10:
+        if return_rate_orders is not None and return_rate_orders >= 0.10:
             score += 50
-            reasons.append(f"Taux de remboursement élevé ({round(refund_rate * 100)}%)")
+            reasons.append(f"Taux de commandes retournées élevé ({round(return_rate_orders * 100)}%)")
             recommendations.append("Corriger la fiche produit et analyser les motifs de retour")
-        elif refund_rate is not None and refund_rate >= 0.05:
+        elif return_rate_orders is not None and return_rate_orders >= 0.05:
             score += 25
-            reasons.append(f"Taux de remboursement à surveiller ({round(refund_rate * 100)}%)")
+            reasons.append(f"Taux de commandes retournées à surveiller ({round(return_rate_orders * 100)}%)")
             recommendations.append("Surveiller ce produit et améliorer la clarté de la description")
 
-        if refund_qty >= 1:
-            score += min(20, refund_qty * 6)
-            reasons.append(f"{refund_qty} unité(s) remboursée(s)")
+        if returned_orders >= 1:
+            score += min(20, returned_orders * 8)
+            reasons.append(f"{returned_orders} commande(s) retournée(s)")
+
+        if returned_items > 0:
+            reasons.append(f"{returned_items} unité(s) remboursée(s)")
 
         if desc_len == 0:
             score += 12
@@ -7068,8 +7085,12 @@ async def get_shopify_returns_risk(request: Request, range: str = "30d"):
         return_risks.append({
             "product_id": pid,
             "title": stats.get("title") or (content_map.get(pid) or {}).get("title") or "Produit",
-            "refunds": refund_qty,
-            "refund_rate": round(refund_rate, 4) if refund_rate is not None else None,
+            "returned_orders": returned_orders,
+            "returned_items": returned_items,
+            "return_rate_orders": round(return_rate_orders, 4) if return_rate_orders is not None else None,
+            "return_rate_items": round(return_rate_items, 4) if return_rate_items is not None else None,
+            "refunds": returned_orders,
+            "refund_rate": round(return_rate_orders, 4) if return_rate_orders is not None else None,
             "risk_score": round(score, 1),
             "risk_level": level,
             "reasons": reasons,
@@ -7101,7 +7122,11 @@ async def get_shopify_returns_risk(request: Request, range: str = "30d"):
             return_risks.append({
                 "product_id": pid,
                 "title": p.get("title") or "Produit",
-                "refunds": int(refunds_by_product.get(pid, 0) or 0),
+                "returned_orders": len(returned_order_ids_by_product.get(pid, set())),
+                "returned_items": int(refunded_items_by_product.get(pid, 0) or 0),
+                "return_rate_orders": None,
+                "return_rate_items": None,
+                "refunds": len(returned_order_ids_by_product.get(pid, set())),
                 "refund_rate": None,
                 "risk_score": 18.0,
                 "risk_level": "modéré",
@@ -7133,7 +7158,8 @@ async def get_shopify_returns_risk(request: Request, range: str = "30d"):
         "diagnostics": {
             "orders_count": len(orders),
             "products_count": len(product_stats),
-            "refund_lines_count": int(sum(refunds_by_product.values())),
+            "returned_items_count": int(sum(refunded_items_by_product.values())),
+            "returned_orders_count": int(sum(len(values) for values in returned_order_ids_by_product.values())),
         },
     }
 

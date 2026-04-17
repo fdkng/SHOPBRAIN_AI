@@ -6500,15 +6500,19 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 insightsData?.return_risks?.slice(0, 10).map((item, index) => {
                   const riskColor = item.risk_level === 'élevé' ? '#EF4444' : item.risk_level === 'modéré' ? '#F59E0B' : '#6B7280'
                   const riskBg = item.risk_level === 'élevé' ? 'bg-red-50 border-red-200' : item.risk_level === 'modéré' ? 'bg-amber-50 border-amber-200' : 'bg-gray-50 border-gray-200'
+                  const returnedOrders = Number(item?.returned_orders ?? item?.refunds ?? 0)
+                  const returnedItems = Number(item?.returned_items ?? 0)
+                  const orderRate = (item?.return_rate_orders ?? item?.refund_rate)
                   return (
                     <div key={item.product_id || index} className={`${riskBg} border rounded-lg p-5`}>
                       <div className="flex items-start justify-between gap-3 mb-3">
                         <div className="flex-1">
                           <p className="text-[#1A1A2E] font-bold text-base">{item.title || item.product_id}</p>
                           <div className="flex flex-wrap items-center gap-3 mt-1 text-xs text-[#6A6A85]">
-                            {item.refunds > 0 && <span>🔄 {item.refunds} retour(s)</span>}
-                            {item.refund_rate !== null && item.refund_rate !== undefined && item.refund_rate > 0 && (
-                              <span>📊 Taux retour: {Math.round(item.refund_rate * 100)}%</span>
+                            {returnedOrders > 0 && <span>🔁 {returnedOrders} commande(s) retournée(s)</span>}
+                            {returnedItems > 0 && <span>📦 {returnedItems} item(s) remboursé(s)</span>}
+                            {orderRate !== null && orderRate !== undefined && Number(orderRate) > 0 && (
+                              <span>📊 Taux retour commandes: {Math.round(Number(orderRate) * 100)}%</span>
                             )}
                             {item.signals?.orders > 0 && <span>📦 {item.signals.orders} commande(s)</span>}
                             {item.signals?.price > 0 && <span>💰 {item.signals.price}$</span>}
