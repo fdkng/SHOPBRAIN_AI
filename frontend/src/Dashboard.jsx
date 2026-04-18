@@ -1115,6 +1115,7 @@ export default function Dashboard() {
 
   // Auto-load bundles when tab is opened (no button needed)
   const bundlesAutoLoadedRef = useRef(false)
+  const bundlesHistoryAutoLoadedRef = useRef(false)
   useEffect(() => {
     if (activeTab === 'action-bundles' && !bundlesAutoLoadedRef.current && !insightsLoading && subscription?.has_subscription) {
       // Only auto-load once per session, or if no data yet
@@ -1123,6 +1124,11 @@ export default function Dashboard() {
         bundlesAutoLoadedRef.current = true
         loadBundlesAsync().catch(() => {})
       }
+    }
+    // Auto-load history in background when tab opens
+    if (activeTab === 'action-bundles' && !bundlesHistoryAutoLoadedRef.current && subscription?.has_subscription) {
+      bundlesHistoryAutoLoadedRef.current = true
+      loadBundlesHistory().catch(() => {})
     }
   }, [activeTab])
 
