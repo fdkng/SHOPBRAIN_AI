@@ -1798,7 +1798,7 @@ export default function Dashboard() {
       ))
     } else if (chatMessages.length > 0 && !activeConversationId) {
       const firstUserMsg = chatMessages.find(m => m.role === 'user')
-      const tempTitle = firstUserMsg ? firstUserMsg.text.slice(0, 40) + (firstUserMsg.text.length > 40 ? '...' : '') : 'Nouvelle conversation'
+      const tempTitle = firstUserMsg ? firstUserMsg.text.slice(0, 40) + (firstUserMsg.text.length > 40 ? '...' : '') : t('newConversation')
       const newConvId = Date.now().toString()
       const newConv = {
         id: newConvId,
@@ -1906,8 +1906,8 @@ export default function Dashboard() {
   }, {})
 
   const activeConversationTitle = activeConversationId
-    ? (chatConversations.find(c => c.id === activeConversationId)?.title || 'Conversation')
-    : 'Nouvelle conversation'
+    ? (chatConversations.find(c => c.id === activeConversationId)?.title || t('conversation'))
+    : t('newConversation')
 
   // ============ ATTACHMENTS & VOICE ============
   useEffect(() => {
@@ -7731,7 +7731,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
               }, 100)
             }}
             className="fixed bottom-6 right-6 z-40 group"
-            title="Assistant IA"
+            title={t('aiAssistant')}
           >
             <div className="relative w-14 h-14 rounded-full bg-gradient-to-br from-[#FF6B35] to-[#0D9488] shadow-2xl shadow-[#FF6B35]/30 flex items-center justify-center border-2 border-[#2DD4BF]/40 transition-all duration-200 group-hover:scale-110 group-hover:shadow-[#FF6B35]/50">
               <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
@@ -7788,7 +7788,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             </svg>
                             <input
                               type="text"
-                              placeholder="Rechercher des conversations..."
+                              placeholder={t('searchConversations')}
                               value={conversationSearch}
                               onChange={(e) => setConversationSearch(e.target.value)}
                               className="w-full bg-[#F7F8FA] text-sm text-[#1A1A2E] pl-9 pr-8 py-2 rounded-lg border border-[#E8E8EE]/50 focus:border-[#FF6B35]/50 focus:outline-none placeholder:text-gray-600"
@@ -7806,7 +7806,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-[#4A4A68] hover:bg-[#EFF1F5]/60 transition-colors"
                           >
                             <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 3V13M3 8H13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-                            Nouvelle conversation
+                            {t('newConversation')}
                           </button>
                           {Object.entries(groupedConversations).map(([dateLabel, convs]) => (
                             <div key={dateLabel}>
@@ -7835,14 +7835,14 @@ analytics.subscribe("product_added_to_cart", (event) => {
                                   <button
                                     onClick={(e) => { e.stopPropagation(); setRenamingConversationId(conv.id); setRenamingValue(conv.title) }}
                                     className="opacity-0 group-hover:opacity-100 text-[#8A8AA3] hover:text-[#4A4A68] p-0.5 transition-opacity"
-                                    title="Renommer"
+                                    title={t('rename')}
                                   >
                                     <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M11 2L14 5L5 14H2V11L11 2Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/></svg>
                                   </button>
                                   <button
                                     onClick={(e) => { e.stopPropagation(); deleteConversation(conv.id) }}
                                     className="opacity-0 group-hover:opacity-100 text-[#8A8AA3] hover:text-red-500 p-0.5 transition-opacity"
-                                    title="Supprimer"
+                                    title={t('delete')}
                                   >
                                     <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
                                   </button>
@@ -7851,7 +7851,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             </div>
                           ))}
                           {filteredConversations.length === 0 && (
-                            <div className="px-4 py-6 text-center text-sm text-gray-600">Aucune conversation</div>
+                            <div className="px-4 py-6 text-center text-sm text-gray-600">t('noConversation')</div>
                           )}
                         </div>
                       </div>
@@ -7862,7 +7862,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     <button
                       onClick={startNewConversation}
                       className="p-2 text-[#6A6A85] hover:text-[#1A1A2E] rounded-lg hover:bg-[#EFF1F5]/60 transition-colors"
-                      title="Nouvelle conversation"
+                      title={t('newConversation')}
                     >
                       <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3V13M3 8H13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
                     </button>
@@ -7880,7 +7880,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     <button
                       onClick={() => setShowChatPanel(false)}
                       className="p-2 text-[#6A6A85] hover:text-[#1A1A2E] rounded-lg hover:bg-[#EFF1F5]/60 transition-colors"
-                      title="Fermer"
+                      title={t('close')}
                     >
                       <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
                     </button>
@@ -7903,13 +7903,13 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           <circle cx="24" cy="8" r="1.5" fill="#2DD4BF" opacity="0.7"/>
                         </svg>
                       </div>
-                      <p className="text-[#8A8AA3] text-sm mb-1">{getGreeting()}, {profile?.first_name || user?.user_metadata?.full_name?.split(' ')[0] || 'là'}</p>
-                      <h3 className="text-[#1A1A2E] text-lg font-semibold mb-6">Comment puis-je vous aider ?</h3>
+                      <p className="text-[#8A8AA3] text-sm mb-1">{getGreeting()}, {profile?.first_name || user?.user_metadata?.full_name?.split(' ')[0] || (language === 'fr' ? 'là' : 'there')}</p>
+                      <h3 className="text-[#1A1A2E] text-lg font-semibold mb-6">{t('howCanIHelp')}</h3>
                       <button
-                        onClick={() => sendChatMessage('Quoi de neuf ?')}
+                        onClick={() => sendChatMessage(t('whatsNew'))}
                         className="px-5 py-2 rounded-full border border-[#D8D8E2] text-[#6A6A85] text-sm hover:border-[#FF6B35]/50 hover:text-[#FF6B35] transition-all duration-200"
                       >
-                        Quoi de neuf ?
+                        {t('whatsNew')}
                       </button>
                     </div>
                   ) : (
@@ -7999,7 +7999,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           type="text"
                           value={productPickerSearch}
                           onChange={(e) => setProductPickerSearch(e.target.value)}
-                          placeholder="Rechercher un produit..."
+                          placeholder={t('searchProduct')}
                           className="w-full bg-white text-[#1A1A2E] px-3 py-2 rounded-lg border border-[#E8E8EE] text-sm placeholder:text-[#8A8AA3] outline-none focus:border-[#FF6B35]/40"
                           autoFocus
                         />
@@ -8106,7 +8106,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             className={`p-1.5 rounded-lg transition-colors ${
                               showAttachMenu ? 'text-[#FF6B35] bg-[#EFF1F5]/60' : 'text-[#8A8AA3] hover:text-[#4A4A68] hover:bg-[#EFF1F5]/30'
                             }`}
-                            title="Ajouter"
+                            title={t('add')}
                           >
                             {showAttachMenu ? (
                               <svg width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
@@ -8119,15 +8119,15 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             <div className="absolute bottom-full left-0 mb-2 w-60 bg-white border border-[#E8E8EE] rounded-xl shadow-2xl z-[60] overflow-hidden py-1">
                               <button onClick={() => { fileInputRef.current?.click() }} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#4A4A68] hover:bg-[#EFF1F5]/60 transition-colors">
                                 <svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-[#6A6A85]"><path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" stroke="currentColor" strokeWidth="1.5"/></svg>
-                                Fichiers
+                                {t('files')}
                               </button>
                               <button onClick={() => { fileInputRef.current?.click() }} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#4A4A68] hover:bg-[#EFF1F5]/60 transition-colors">
                                 <svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-[#6A6A85]"><path d="M5 15L10 5L15 15" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><circle cx="10" cy="3" r="1.5" fill="currentColor"/></svg>
-                                Charger depuis l'appareil
+                                {t('uploadFromDevice')}
                               </button>
                               <div className="border-t border-[#E8E8EE]/40 my-1"></div>
                               <button onClick={() => { setShowProductPicker(true); setShowAttachMenu(false); if (!products || products.length === 0) loadProducts() }} className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-[#FF6B35] hover:bg-[#FF6B35]/10 transition-colors">
-                                <span className="flex items-center gap-3"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-[#FF6B35]"><path d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17M17 17a2 2 0 100-4 2 2 0 000 4zM7 17a2 2 0 100-4 2 2 0 000 4z" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>Mentionner un produit</span>
+                                <span className="flex items-center gap-3"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-[#FF6B35]"><path d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17M17 17a2 2 0 100-4 2 2 0 000 4zM7 17a2 2 0 100-4 2 2 0 000 4z" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>{t('mentionProduct')}</span>
                                 <span className="text-xs text-[#E85A28]/70 bg-[#FFF4F0] px-1.5 py-0.5 rounded">🛍️</span>
                               </button>
                             </div>
@@ -8140,7 +8140,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     {voiceDictationMode ? (
                       voiceTranscribing ? (
                         <div className="flex-1 flex items-center justify-center h-11 px-1">
-                          <span className="text-sm text-[#4A4A68]">Retranscription en cours…</span>
+                          <span className="text-sm text-[#4A4A68]">{t('transcribing')}…</span>
                         </div>
                       ) : (
                         /* ChatGPT-style dense waveform across full width */
@@ -8201,14 +8201,14 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           <button
                             onClick={cancelDictation}
                             className="w-8 h-8 flex items-center justify-center text-[#4A4A68] hover:text-[#1A1A2E] bg-[#EFF1F5]/50 hover:bg-[#E8E8EE]/70 rounded-full transition-colors"
-                            title="Annuler"
+                            title={t('cancel')}
                           >
                             <span className="text-base font-semibold">✕</span>
                           </button>
                           <button
                             onClick={confirmDictation}
                             className="w-8 h-8 flex items-center justify-center text-white bg-[#0D9488]/80 hover:bg-[#0D9488] rounded-full transition-colors"
-                            title="Valider"
+                            title={t('confirm')}
                           >
                             <span className="text-base font-semibold">✓</span>
                           </button>
@@ -8220,7 +8220,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         onClick={() => sendChatMessage()}
                         disabled={chatLoading}
                         className="p-1.5 text-[#FF6B35] hover:text-[#FF6B35] disabled:text-gray-600 transition-colors shrink-0"
-                        title="Envoyer"
+                        title={t('send')}
                       >
                         <svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor">
                           <path d="M3.105 2.29a1 1 0 011.265-.42l13 6.5a1 1 0 010 1.79l-13 6.5A1 1 0 013 15.79V11.5l8-1.5-8-1.5V4.21a1 1 0 01.105-.92z"/>
@@ -8243,7 +8243,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                   </div>
 
                   <div className="flex items-center justify-center mt-2 px-1">
-                    <p className="text-[10px] text-gray-600">ShopBrain IA peut faire des erreurs. Vérifiez les informations importantes.</p>
+                    <p className="text-[10px] text-gray-600">{t('aiDisclaimer')}</p>
                   </div>
 
                   <input

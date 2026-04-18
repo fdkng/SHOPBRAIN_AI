@@ -984,6 +984,19 @@ const fr = {
   ctxBlockers: 'Bloqueurs de conversion',
   ctxImages: 'Assistance images IA',
   inactive: 'Inactive',
+  searchConversations: 'Rechercher des conversations...',
+  conversation: 'Conversation',
+  howCanIHelp: 'Comment puis-je vous aider ?',
+  whatsNew: "Quoi de neuf ?",
+  transcribing: 'Retranscription en cours…',
+  send: 'Envoyer',
+  add: 'Ajouter',
+  files: 'Fichiers',
+  uploadFromDevice: "Charger depuis l'appareil",
+  mentionProduct: 'Mentionner un produit',
+  searchProduct: 'Rechercher un produit...',
+  rename: 'Renommer',
+  delete: 'Supprimer',
 }
 
 // ---------------------------------------------------------------------------
@@ -1893,6 +1906,19 @@ const en = {
   ctxBlockers: 'Conversion blockers',
   ctxImages: 'AI image assistance',
   inactive: 'Inactive',
+  searchConversations: 'Search conversations...',
+  conversation: 'Conversation',
+  howCanIHelp: 'How can I help you?',
+  whatsNew: "What's new?",
+  transcribing: 'Transcribing…',
+  send: 'Send',
+  add: 'Add',
+  files: 'Files',
+  uploadFromDevice: 'Upload from device',
+  mentionProduct: 'Mention a product',
+  searchProduct: 'Search a product...',
+  rename: 'Rename',
+  delete: 'Delete',
 }
 
 // ---------------------------------------------------------------------------
