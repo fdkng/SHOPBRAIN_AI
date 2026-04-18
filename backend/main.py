@@ -10649,6 +10649,8 @@ class ChatRequest(BaseModel):
     message: str
     context: str = None  # Optionnel: contexte (ex: product_id, store info)
     images: list[str] = []  # Optional: base64 data URIs of images
+    language: str = "fr"  # User's UI language (fr, en, etc.)
+    dashboard_context: str = None  # Rich dashboard context
 
 
 @app.post("/api/ai/chat")
@@ -10675,6 +10677,17 @@ async def chat_with_ai(req: ChatRequest, request: Request):
     # Pas de limite stricte côté API pour permettre des messages longs
     
     system_prompt = SHOPBRAIN_EXPERT_SYSTEM or "Tu es un assistant expert en e-commerce Shopify."
+
+    # Inject language instruction
+    lang = getattr(req, 'language', 'fr') or 'fr'
+    if lang == 'en':
+        system_prompt += "\n\nIMPORTANT: You MUST respond entirely in English. The user's interface is set to English."
+    elif lang != 'fr':
+        system_prompt += f"\n\nIMPORTANT: You MUST respond entirely in the language with code '{lang}'. The user's interface is set to this language."
+
+    # Inject dashboard context if provided
+    if req.dashboard_context:
+        system_prompt += f"\n\n{req.dashboard_context}"
 
     try:
         # Construire le prompt avec contexte si fourni
