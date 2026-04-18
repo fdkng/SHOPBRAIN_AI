@@ -6305,13 +6305,69 @@ analytics.subscribe("product_added_to_cart", (event) => {
             </div>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <p className="text-sm text-[#6A6A85]">{insightsLoading ? t('analysisInProgress') : `${getInsightCount(insightsData?.bundle_suggestions)} suggestions`}</p>
-              <button
-                onClick={loadBundlesHistory}
-                disabled={bundlesHistoryLoading}
-                className="bg-[#0D9488] hover:bg-[#0F766E] text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
-              >
-                {bundlesHistoryLoading ? 'Chargement historique...' : 'Historique'}
-              </button>
+              <div className="relative">
+                <button
+                  onClick={() => {
+                    if (!bundlesHistoryOpen) loadBundlesHistory()
+                    else setBundlesHistoryOpen(false)
+                  }}
+                  disabled={bundlesHistoryLoading}
+                  className="flex items-center gap-1.5 text-sm text-[#2A2A42] hover:text-[#1A1A2E] font-medium transition-colors border border-[#E8E8EE] rounded-full px-4 py-2 hover:bg-[#F7F8FA]"
+                >
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" className={bundlesHistoryOpen ? 'rotate-45' : ''} style={{transition:'transform .2s', transformOrigin:'8px 8px'}}/></svg>
+                  <span>{bundlesHistoryLoading ? 'Chargement...' : 'Historique'}</span>
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="shrink-0">
+                    <path d={bundlesHistoryOpen ? "M3 7.5L6 4.5L9 7.5" : "M3 4.5L6 7.5L9 4.5"} stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </button>
+
+                {/* ── Dropdown historique bundles ── */}
+                {bundlesHistoryOpen && (
+                  <div className="absolute top-full right-0 mt-2 w-80 bg-white border border-[#E8E8EE] rounded-xl shadow-2xl z-[60] overflow-hidden">
+                    <div className="px-4 py-3 border-b border-[#E8E8EE]/40">
+                      <span className="text-sm font-semibold text-[#1A1A2E]">Historique des analyses</span>
+                    </div>
+                    <div className="max-h-72 overflow-y-auto">
+                      {bundlesHistory.length === 0 ? (
+                        <p className="px-4 py-4 text-sm text-[#8A8AA3]">Aucun ancien résultat.</p>
+                      ) : (
+                        bundlesHistory.map((job, idx) => {
+                          const isSelected = selectedBundlesHistoryJobId === (job.job_id || '')
+                          const raw = job.finished_at || job.started_at || job.created_at
+                          let dateStr = '—'
+                          if (raw) {
+                            const ts = typeof raw === 'number' ? (raw > 1e12 ? raw : raw * 1000) : Date.parse(raw)
+                            if (ts && !isNaN(ts)) dateStr = new Date(ts).toLocaleString('fr-CA', { dateStyle: 'medium', timeStyle: 'short' })
+                          }
+                          const count = (job.result?.bundle_suggestions || job.bundle_suggestions || []).length
+                          return (
+                            <button
+                              key={job.id || job.job_id || idx}
+                              onClick={() => { applyBundlesHistoryJob(job); setBundlesHistoryOpen(false) }}
+                              className={`w-full flex items-center justify-between px-4 py-3 text-left hover:bg-[#EFF1F5]/60 transition-colors border-b border-[#E8E8EE]/20 last:border-b-0 ${
+                                isSelected ? 'bg-[#EFF1F5]/40' : ''
+                              }`}
+                            >
+                              <div className="flex flex-col gap-0.5 min-w-0">
+                                <span className="text-sm text-[#2A2A42] font-medium truncate">{count} suggestion{count !== 1 ? 's' : ''}</span>
+                                <span className="text-xs text-[#8A8AA3]">{dateStr}</span>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                                  job.status === 'completed' ? 'bg-green-50 text-green-700' : job.status === 'failed' ? 'bg-red-50 text-red-600' : 'bg-yellow-50 text-yellow-700'
+                                }`}>{job.status === 'completed' ? '✓' : job.status === 'failed' ? '✗' : '…'}</span>
+                                {isSelected && (
+                                  <span className="w-1.5 h-1.5 rounded-full bg-[#0D9488]"></span>
+                                )}
+                              </div>
+                            </button>
+                          )
+                        })
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
             {bundlesJobStatus !== 'idle' && (
               <p className="text-xs text-[#6A6A85]">État job: {bundlesJobStatus}</p>
@@ -6374,41 +6430,6 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 ))
               )}
             </div>
-            {/* Historique des jobs bundles */}
-            {bundlesHistoryOpen && (
-              <div className="mt-6">
-                <h3 className="text-[#1A1A2E] font-bold mb-2">Historique des analyses</h3>
-                {bundlesHistory.length === 0 ? (
-                  <p className="text-sm text-[#8A8AA3]">Aucun ancien résultat disponible.</p>
-                ) : (
-                  <ul className="space-y-2">
-                    {bundlesHistory.map((job, idx) => (
-                      <li key={job.id || job.job_id || idx} className="bg-[#F7F8FA]/70 border border-[#E8E8EE] rounded-lg p-3 flex flex-col gap-2">
-                        <span className="text-xs text-[#6A6A85]">
-                          {(() => {
-                            const raw = job.finished_at || job.started_at || job.created_at
-                            if (!raw) return '—'
-                            const ts = typeof raw === 'number' ? (raw > 1e12 ? raw : raw * 1000) : Date.parse(raw)
-                            if (!ts || isNaN(ts)) return '—'
-                            return new Date(ts).toLocaleString('fr-CA', { dateStyle: 'medium', timeStyle: 'short' })
-                          })()} • {job.status || 'unknown'}
-                        </span>
-                        {(job.result?.bundle_suggestions || job.bundle_suggestions) && (
-                          <span className="text-sm text-[#1A1A2E]">{(job.result?.bundle_suggestions || job.bundle_suggestions || []).length} suggestions</span>
-                        )}
-                        <button
-                          onClick={() => applyBundlesHistoryJob(job)}
-                          className="self-start bg-[#0D9488] hover:bg-[#0F766E] text-white text-xs font-semibold py-1 px-3 rounded"
-                          type="button"
-                        >
-                          {selectedBundlesHistoryJobId && selectedBundlesHistoryJobId === (job.job_id || '') ? t('resultShown') : t('loadResult')}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
           </div>
         )}
 
