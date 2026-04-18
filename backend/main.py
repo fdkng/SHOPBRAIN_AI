@@ -2345,7 +2345,7 @@ async def health():
     """Health check endpoint for Render - MUST ALWAYS WORK"""
     return {
         "status": "ok",
-        "version": "3.2-anti-retours",
+        "version": "3.3-bundles-persist",
         "build": "20260417-return-risks",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
@@ -7848,8 +7848,10 @@ async def list_shopify_bundles_jobs(request: Request, limit: int = 20):
     if SUPABASE_URL and SUPABASE_SERVICE_KEY:
         try:
             supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+            print(f"📋 [BUNDLES LIST] Fetching from Supabase for shop={shop_domain}")
             rows = supabase.table("bundle_jobs").select("job_id,status,started_at,finished_at,result").eq("shop_domain", shop_domain).order("finished_at", desc=True).limit(limit).execute()
             raw_rows = rows.data or []
+            print(f"📋 [BUNDLES LIST] Got {len(raw_rows)} rows from Supabase")
             for row in raw_rows:
                 parsed = None
                 result_raw = row.get("result")
@@ -7867,7 +7869,8 @@ async def list_shopify_bundles_jobs(request: Request, limit: int = 20):
                     "finished_at": row.get("finished_at"),
                     "result": parsed,
                 })
-        except Exception:
+        except Exception as list_err:
+            print(f"⚠️ [BUNDLES LIST] Supabase fetch failed: {type(list_err).__name__}: {str(list_err)[:300]}")
             persisted = []
 
     combined_by_job_id: dict[str, dict] = {}
@@ -7901,6 +7904,9 @@ async def list_shopify_bundles_jobs(request: Request, limit: int = 20):
         "jobs": jobs_sorted,
         "local_jobs": jobs,
         "persisted_jobs": persisted,
+        "debug_local_count": len(jobs),
+        "debug_persisted_count": len(persisted),
+        "debug_combined_count": len(jobs_sorted),
     }
 
 
