@@ -7699,16 +7699,19 @@ def _run_bundles_worker(job_id: str, shop_domain: str, access_token: str, days: 
         try:
             if SUPABASE_URL and SUPABASE_SERVICE_KEY:
                 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+                started_ts = _BUNDLES_JOBS[job_id].get("started_at")
+                finished_ts = _BUNDLES_JOBS[job_id].get("finished_at")
                 supabase.table("bundle_jobs").insert({
                     "job_id": job_id,
                     "shop_domain": shop_domain,
                     "status": "completed",
-                    "started_at": datetime.utcfromtimestamp(_BUNDLES_JOBS[job_id].get("started_at")) if _BUNDLES_JOBS[job_id].get("started_at") else None,
-                    "finished_at": datetime.utcfromtimestamp(_BUNDLES_JOBS[job_id].get("finished_at")) if _BUNDLES_JOBS[job_id].get("finished_at") else None,
-                    "result": json.dumps(result),
+                    "started_at": datetime.utcfromtimestamp(started_ts).isoformat() if started_ts else None,
+                    "finished_at": datetime.utcfromtimestamp(finished_ts).isoformat() if finished_ts else None,
+                    "result": result,
                 }).execute()
-        except Exception:
-            pass
+                print(f"✅ [BUNDLES] Job {job_id} persisted to Supabase")
+        except Exception as persist_err:
+            print(f"⚠️ [BUNDLES] Failed to persist job {job_id}: {type(persist_err).__name__}: {str(persist_err)[:200]}")
     except Exception as e:
         with _BUNDLES_LOCK:
             _BUNDLES_JOBS[job_id]["status"] = "failed"
@@ -7718,16 +7721,18 @@ def _run_bundles_worker(job_id: str, shop_domain: str, access_token: str, days: 
         try:
             if SUPABASE_URL and SUPABASE_SERVICE_KEY:
                 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+                started_ts = _BUNDLES_JOBS[job_id].get("started_at")
+                finished_ts = _BUNDLES_JOBS[job_id].get("finished_at")
                 supabase.table("bundle_jobs").insert({
                     "job_id": job_id,
                     "shop_domain": shop_domain,
                     "status": "failed",
-                    "started_at": datetime.utcfromtimestamp(_BUNDLES_JOBS[job_id].get("started_at")) if _BUNDLES_JOBS[job_id].get("started_at") else None,
-                    "finished_at": datetime.utcfromtimestamp(_BUNDLES_JOBS[job_id].get("finished_at")) if _BUNDLES_JOBS[job_id].get("finished_at") else None,
+                    "started_at": datetime.utcfromtimestamp(started_ts).isoformat() if started_ts else None,
+                    "finished_at": datetime.utcfromtimestamp(finished_ts).isoformat() if finished_ts else None,
                     "error": str(e),
                 }).execute()
-        except Exception:
-            pass
+        except Exception as persist_err:
+            print(f"⚠️ [BUNDLES] Failed to persist failed job {job_id}: {type(persist_err).__name__}: {str(persist_err)[:200]}")
 
 
 @app.post("/api/shopify/bundles/async")
