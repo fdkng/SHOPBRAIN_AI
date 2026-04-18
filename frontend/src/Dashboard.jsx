@@ -6385,7 +6385,13 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     {bundlesHistory.map((job, idx) => (
                       <li key={job.id || job.job_id || idx} className="bg-[#F7F8FA]/70 border border-[#E8E8EE] rounded-lg p-3 flex flex-col gap-2">
                         <span className="text-xs text-[#6A6A85]">
-                          {job.finished_at || job.started_at || job.created_at || '—'} • {job.status || 'unknown'}
+                          {(() => {
+                            const raw = job.finished_at || job.started_at || job.created_at
+                            if (!raw) return '—'
+                            const ts = typeof raw === 'number' ? (raw > 1e12 ? raw : raw * 1000) : Date.parse(raw)
+                            if (!ts || isNaN(ts)) return '—'
+                            return new Date(ts).toLocaleString('fr-CA', { dateStyle: 'medium', timeStyle: 'short' })
+                          })()} • {job.status || 'unknown'}
                         </span>
                         {(job.result?.bundle_suggestions || job.bundle_suggestions) && (
                           <span className="text-sm text-[#1A1A2E]">{(job.result?.bundle_suggestions || job.bundle_suggestions || []).length} suggestions</span>
