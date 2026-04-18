@@ -6196,7 +6196,8 @@ async def get_shopify_insights(
         raise
     except Exception as exc:
         print(f"❌ [INSIGHTS] Unexpected error: {type(exc).__name__}: {str(exc)[:250]}")
-        raise HTTPException(status_code=500, detail="Erreur interne lors de l'analyse anti-retours. Réessayez dans 30 secondes.")
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Erreur interne lors de l'analyse. Réessayez dans 30 secondes.")
 
 
 async def _get_shopify_insights_impl(
@@ -6320,7 +6321,11 @@ async def _get_shopify_insights_impl(
             detail="Aucune donnée Shopify exploitable (commandes/produits). Vérifiez la connexion Shopify et réessayez.",
         )
 
-    event_counts = _fetch_shopify_event_counts(user_id, shop_domain, days)
+    event_counts = {}
+    try:
+        event_counts = _fetch_shopify_event_counts(user_id, shop_domain, days)
+    except Exception as exc:
+        print(f"⚠️ [INSIGHTS] Event counts fetch failed (non-fatal): {type(exc).__name__}: {str(exc)[:200]}")
 
     # Blockers: orders + pixel signals
     order_counts = [p.get("orders", 0) for p in product_stats.values()]
