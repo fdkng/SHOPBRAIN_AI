@@ -6323,7 +6323,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                 {/* ── Dropdown historique bundles ── */}
                 {bundlesHistoryOpen && (
-                  <div className="absolute top-full right-0 mt-2 w-80 bg-white border border-[#E8E8EE] rounded-xl shadow-2xl z-[60] overflow-hidden">
+                  <div className="absolute top-full right-0 mt-2 w-96 bg-white border border-[#E8E8EE] rounded-xl shadow-2xl z-[60] overflow-hidden">
                     <div className="px-4 py-3 border-b border-[#E8E8EE]/40">
                       <span className="text-sm font-semibold text-[#1A1A2E]">Historique des analyses</span>
                     </div>
@@ -6339,7 +6339,16 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             const ts = typeof raw === 'number' ? (raw > 1e12 ? raw : raw * 1000) : Date.parse(raw)
                             if (ts && !isNaN(ts)) dateStr = new Date(ts).toLocaleString('fr-CA', { dateStyle: 'medium', timeStyle: 'short' })
                           }
-                          const count = (job.result?.bundle_suggestions || job.bundle_suggestions || []).length
+                          const suggestions = job.result?.bundle_suggestions || job.bundle_suggestions || []
+                          const count = suggestions.length
+                          // Build a summary of product names in the bundles
+                          const bundleNames = suggestions.slice(0, 3).map(s => {
+                            const t0 = s.titles?.[0] || ''
+                            const t1 = s.titles?.[1] || ''
+                            // Shorten each title to ~25 chars
+                            const short = (t) => t.length > 25 ? t.slice(0, 23) + '…' : t
+                            return `${short(t0)} + ${short(t1)}`
+                          })
                           return (
                             <button
                               key={job.id || job.job_id || idx}
@@ -6348,9 +6357,13 @@ analytics.subscribe("product_added_to_cart", (event) => {
                                 isSelected ? 'bg-[#EFF1F5]/40' : ''
                               }`}
                             >
-                              <div className="flex flex-col gap-0.5 min-w-0">
-                                <span className="text-sm text-[#2A2A42] font-medium truncate">{count} suggestion{count !== 1 ? 's' : ''}</span>
-                                <span className="text-xs text-[#8A8AA3]">{dateStr}</span>
+                              <div className="flex flex-col gap-0.5 min-w-0 flex-1 mr-2">
+                                {bundleNames.length > 0 ? bundleNames.map((name, i) => (
+                                  <span key={i} className="text-sm text-[#2A2A42] font-medium truncate">{name}</span>
+                                )) : (
+                                  <span className="text-sm text-[#2A2A42] font-medium truncate">{count} suggestion{count !== 1 ? 's' : ''}</span>
+                                )}
+                                <span className="text-xs text-[#8A8AA3]">{dateStr} — {count} bundle{count !== 1 ? 's' : ''}</span>
                               </div>
                               <div className="flex items-center gap-2 shrink-0">
                                 <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
