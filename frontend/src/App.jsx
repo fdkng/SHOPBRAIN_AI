@@ -136,6 +136,7 @@ export default function App() {
     // Hash-based routing (only on explicit hash change by user)
     const handleHashChange = () => {
       if (window.location.hash.includes('dashboard')) {
+        // Only allow dashboard if user has subscription (checked after auth resolves)
         setCurrentView('dashboard')
         return
       }
@@ -555,9 +556,16 @@ export default function App() {
     )
   }
 
-  // If user is logged in and on dashboard view, show Dashboard component
-  if (currentView === 'dashboard' && user) {
+  // If user is logged in AND has active subscription, show Dashboard component
+  if (currentView === 'dashboard' && user && hasSubscription) {
     return <ErrorBoundary><Dashboard /></ErrorBoundary>
+  }
+
+  // If user tried to access dashboard without subscription, bounce back to landing
+  if (currentView === 'dashboard' && user && !hasSubscription) {
+    // Reset view to landing so they see the pricing/landing page
+    if (typeof window !== 'undefined') window.location.hash = ''
+    setCurrentView('landing')
   }
 
   // If viewing Stripe Pricing Table
@@ -604,14 +612,23 @@ export default function App() {
                 </div>
                 <button
                   onClick={() => {
-                    checkSubscription()
-                    setCurrentView('dashboard')
-                    window.location.hash = '#dashboard'
+                    if (hasSubscription) {
+                      setCurrentView('dashboard')
+                      window.location.hash = '#dashboard'
+                    } else {
+                      // No plan — scroll to pricing section
+                      document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' })
+                      setLandingStatusByKey((prev) => ({
+                        ...prev,
+                        pricing: { type: 'warning', message: t('mustSubscribeFirst') || 'You need an active plan to access the dashboard.' }
+                      }))
+                    }
                   }}
+                  disabled={!hasSubscription}
                   className={`px-4 md:px-5 py-2 rounded-full text-xs md:text-sm font-medium transition-all ${
                     hasSubscription
-                      ? 'bg-[#1A1A2E] text-white hover:bg-[#2A2A42] shadow-sm'
-                      : 'border border-[#E8E8EE] text-[#4A4A68] hover:bg-[#F7F8FA]'
+                      ? 'bg-[#1A1A2E] text-white hover:bg-[#2A2A42] shadow-sm cursor-pointer'
+                      : 'bg-white border border-[#E8E8EE] text-[#C0C0D0] cursor-not-allowed opacity-60'
                   }`}
                 >
                   Dashboard
