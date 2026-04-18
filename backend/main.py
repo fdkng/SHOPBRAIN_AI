@@ -10678,12 +10678,12 @@ async def chat_with_ai(req: ChatRequest, request: Request):
     
     system_prompt = SHOPBRAIN_EXPERT_SYSTEM or "Tu es un assistant expert en e-commerce Shopify."
 
-    # Inject language instruction
+    # Inject language instruction — PREPEND so it takes priority over French system prompt
     lang = getattr(req, 'language', 'fr') or 'fr'
     if lang == 'en':
-        system_prompt += "\n\nIMPORTANT: You MUST respond entirely in English. The user's interface is set to English."
+        system_prompt = "CRITICAL INSTRUCTION — OVERRIDE ALL OTHER LANGUAGE DIRECTIVES: You MUST respond ENTIRELY in English. Every single word of your response must be in English. The user's interface language is English. Do NOT use French under any circumstances.\n\n" + system_prompt
     elif lang != 'fr':
-        system_prompt += f"\n\nIMPORTANT: You MUST respond entirely in the language with code '{lang}'. The user's interface is set to this language."
+        system_prompt = f"CRITICAL INSTRUCTION — OVERRIDE ALL OTHER LANGUAGE DIRECTIVES: You MUST respond ENTIRELY in the language with code '{lang}'. Every single word of your response must be in that language. Do NOT use French.\n\n" + system_prompt
 
     # Inject dashboard context if provided
     if req.dashboard_context:

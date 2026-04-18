@@ -2276,10 +2276,10 @@ export default function Dashboard() {
       const tabNameMap = {
         overview: t('ctxOverview'),
         underperforming: t('ctxUnderperforming'),
-        'action-blockers': 'Bloqueurs de conversion',
+        'action-blockers': t('ctxBlockers'),
         'action-rewrite': t('ctxRewrite'),
         'action-price': t('ctxPriceOptimization'),
-        'action-images': 'Assistance images IA',
+        'action-images': t('ctxImages'),
         'action-bundles': t('ctxBundles'),
         'action-stock': t('ctxStockAlerts'),
         'action-returns': t('ctxReturns'),
@@ -2856,7 +2856,7 @@ export default function Dashboard() {
         setInsightsData(null)
         setProducts(null)
         setShopList(prev => prev.map(s => ({ ...s, is_active: s.shop_domain === domain })))
-        setStatus('shopify', 'success', `Boutique active: ${domain}`)
+        setStatus('shopify', 'success', `${t('activeShop')}: ${domain}`)
         await loadProducts()
       } else {
         const err = await resp.json().catch(() => ({}))
@@ -4633,7 +4633,7 @@ export default function Dashboard() {
           {/* ── Shop Switcher ── */}
           {shopList.length > 0 && (
             <div className="bg-[#F7F8FA] rounded-lg p-3">
-              <div className="text-xs text-[#6A6A85] mb-1.5">🏪 Boutique active</div>
+              <div className="text-xs text-[#6A6A85] mb-1.5">🏪 {t('activeShop')}</div>
               {shopList.length === 1 ? (
                 <div className="text-sm font-semibold text-[#1A1A2E] truncate">{shopifyUrl}</div>
               ) : (
@@ -7340,7 +7340,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               <div className="min-w-0">
                                 <p className="text-[#1A1A2E] font-semibold truncate">{shop.shop_domain}</p>
                                 <p className="text-xs text-[#8A8AA3]">
-                                  {shop.is_active ? '✅ Boutique active' : 'Inactive'}
+                                  {shop.is_active ? '✅ ' + t('activeShop') : t('inactive')}
                                   {shop.updated_at && ` · ${t('updatedAt')} ${new Date(shop.updated_at).toLocaleDateString()}`}
                                 </p>
                               </div>
@@ -8161,7 +8161,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     ) : (
                       <textarea
                         ref={chatTextareaRef}
-                        placeholder="Posez n'importe quelle question..."
+                        placeholder={t('chatPlaceholder')}
                         value={chatInput}
                         onChange={(e) => setChatInput(e.target.value)}
                         onFocus={() => {
