@@ -1129,7 +1129,7 @@ export default function Dashboard() {
     // Auto-load history in background when tab opens
     if (activeTab === 'action-bundles' && !bundlesHistoryAutoLoadedRef.current && subscription?.has_subscription) {
       bundlesHistoryAutoLoadedRef.current = true
-      loadBundlesHistory().catch(() => {})
+      loadBundlesHistory({ openDropdown: false }).catch(() => {})
     }
   }, [activeTab])
 
@@ -3453,11 +3453,11 @@ export default function Dashboard() {
     setBundlesDiagnostics(diagnostics)
   }
 
-  const loadBundlesHistory = async () => {
+  const loadBundlesHistory = async ({ openDropdown = false } = {}) => {
     try {
       setBundlesHistoryLoading(true)
       setInsightsError('')
-      setBundlesHistoryOpen(true)
+      if (openDropdown) setBundlesHistoryOpen(true)
       clearStatus('action-bundles')
       const session = await getCachedSession()
       if (!session) throw new Error(t('sessionExpiredReconnect'))
@@ -6327,7 +6327,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
               <div className="relative">
                 <button
                   onClick={() => {
-                    if (!bundlesHistoryOpen) loadBundlesHistory()
+                    if (!bundlesHistoryOpen) loadBundlesHistory({ openDropdown: true })
                     else setBundlesHistoryOpen(false)
                   }}
                   disabled={bundlesHistoryLoading}
