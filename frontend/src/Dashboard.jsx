@@ -1891,23 +1891,29 @@ export default function Dashboard() {
     yesterday.setDate(yesterday.getDate() - 1)
     if (date.toDateString() === today.toDateString()) return t('today')
     if (date.toDateString() === yesterday.toDateString()) return t('yesterday')
-    return date.toLocaleDateString(language === 'fr' ? 'fr-FR' : language === 'es' ? 'es-ES' : language === 'de' ? 'de-DE' : 'en-US', { day: 'numeric', month: 'long' })
+    return date.toLocaleDateString(language === 'fr' ? 'fr-FR' : 'en-US', { day: 'numeric', month: 'long' })
   }
 
-  const filteredConversations = chatConversations
-    .filter(c => !conversationSearch || c.title.toLowerCase().includes(conversationSearch.toLowerCase()))
-    .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
+  const filteredConversations = useMemo(() => (
+    chatConversations
+      .filter(c => !conversationSearch || c.title.toLowerCase().includes(conversationSearch.toLowerCase()))
+      .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
+  ), [chatConversations, conversationSearch])
 
-  const groupedConversations = filteredConversations.reduce((acc, conv) => {
-    const label = getConversationDateLabel(conv.updatedAt || conv.createdAt)
-    if (!acc[label]) acc[label] = []
-    acc[label].push(conv)
-    return acc
-  }, {})
+  const groupedConversations = useMemo(() => (
+    filteredConversations.reduce((acc, conv) => {
+      const label = getConversationDateLabel(conv.updatedAt || conv.createdAt)
+      if (!acc[label]) acc[label] = []
+      acc[label].push(conv)
+      return acc
+    }, {})
+  ), [filteredConversations, language])
 
-  const activeConversationTitle = activeConversationId
-    ? (chatConversations.find(c => c.id === activeConversationId)?.title || t('conversation'))
-    : t('newConversation')
+  const activeConversationTitle = useMemo(() => (
+    activeConversationId
+      ? (chatConversations.find(c => c.id === activeConversationId)?.title || t('conversation'))
+      : t('newConversation')
+  ), [activeConversationId, chatConversations, t])
 
   // ============ ATTACHMENTS & VOICE ============
   useEffect(() => {
@@ -5429,7 +5435,7 @@ export default function Dashboard() {
                         <span className="flex-shrink-0 w-6 h-6 rounded-full bg-red-50 text-red-500 flex items-center justify-center text-xs font-bold">1</span>
                         <div>
                           <p className="text-sm text-[#1A1A2E] font-medium">{t('pixelStep1Title')}</p>
-                          <p className="text-xs text-[#6A6A85]">{t('pixelStep2')} <span className="text-[#1A1A2E] font-mono bg-white px-1 rounded">Settings</span> (Paramètres) en bas à gauche.</p>
+                          <p className="text-xs text-[#6A6A85]">{t('pixelStep2')} <span className="text-[#1A1A2E] font-mono bg-white px-1 rounded">Settings</span> {t('pixelSettingsHint')}</p>
                         </div>
                       </div>
 
@@ -6515,7 +6521,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
             )}
 
             <div className="px-6 py-3 border-t border-[#E8E8EE] bg-[#F7F8FA]/30">
-              <p className="text-xs text-[#8A8AA3]">{t('serverChecksStock')} <span className="text-[#FF6B35]">{t('every5Minutes')}</span>, 24/7. Un email est envoyé quand le stock atteint le seuil configuré.</p>
+              <p className="text-xs text-[#8A8AA3]">{t('serverChecksStock')} <span className="text-[#FF6B35]">{t('every5Minutes')}</span>{t('stockAlertEmailNotice')}</p>
             </div>
           </div>
         )}
@@ -7326,7 +7332,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                       <span>🏪</span>
                       <span>
                         {shopList.length} {t('shopsConnected')}
-                        {shopLimit !== null ? ` / ${shopLimit} max` : ' (illimité)'}
+                        {shopLimit !== null ? ` / ${shopLimit} max` : ` (${t('unlimited')})`}
                       </span>
                     </div>
 

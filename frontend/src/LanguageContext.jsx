@@ -2,15 +2,22 @@ import React, { createContext, useContext, useState, useCallback } from 'react'
 import { translations, LANGUAGES } from './translations'
 
 const LanguageContext = createContext()
+const SUPPORTED_LANGUAGES = new Set(['fr', 'en'])
 
 export const LanguageProvider = ({ children }) => {
   const [language, setLanguageState] = useState(() => {
-    try { return localStorage.getItem('language') || 'en' } catch { return 'en' }
+    try {
+      const stored = localStorage.getItem('language') || 'en'
+      return SUPPORTED_LANGUAGES.has(stored) ? stored : 'en'
+    } catch {
+      return 'en'
+    }
   })
 
   const setLanguage = useCallback((lang) => {
-    setLanguageState(lang)
-    try { localStorage.setItem('language', lang) } catch {}
+    const next = SUPPORTED_LANGUAGES.has(lang) ? lang : 'en'
+    setLanguageState(next)
+    try { localStorage.setItem('language', next) } catch {}
   }, [])
 
   const t = useCallback((key) => {

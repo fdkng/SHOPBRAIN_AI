@@ -997,6 +997,9 @@ const fr = {
   searchProduct: 'Rechercher un produit...',
   rename: 'Renommer',
   delete: 'Supprimer',
+  pixelSettingsHint: '(Paramètres) en bas à gauche.',
+  stockAlertEmailNotice: ', 24/7. Un email est envoyé quand le stock atteint le seuil configuré.',
+  unlimited: 'illimité',
 }
 
 // ---------------------------------------------------------------------------
@@ -1919,6 +1922,9 @@ const en = {
   searchProduct: 'Search a product...',
   rename: 'Rename',
   delete: 'Delete',
+  pixelSettingsHint: '(bottom-left).',
+  stockAlertEmailNotice: ', 24/7. An email is sent when stock reaches the configured threshold.',
+  unlimited: 'unlimited',
 }
 
 // ---------------------------------------------------------------------------
