@@ -1260,6 +1260,12 @@ export default function Dashboard() {
   }, [showConversationMenu])
 
   useEffect(() => {
+    if (showChatPanel) {
+      setShowConversationMenu(false)
+    }
+  }, [showChatPanel])
+
+  useEffect(() => {
     if (typeof window !== 'undefined' && profile) {
       localStorage.setItem('profileCache', JSON.stringify(profile))
     }
