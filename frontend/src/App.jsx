@@ -2,10 +2,10 @@ import React, { useState, useEffect, lazy, Suspense } from 'react'
 import { useTranslation } from './LanguageContext'
 import ErrorBoundary from './ErrorBoundary'
 import { createClient } from '@supabase/supabase-js'
-import Dashboard from './Dashboard'
 
 // ⚡ Lazy load PricingTable only
 const StripePricingTable = lazy(() => import('./PricingTable'))
+const Dashboard = lazy(() => import('./Dashboard'))
 
 // ⚡ Loading fallback for lazy components
 const LazyFallback = () => {
@@ -179,6 +179,15 @@ export default function App() {
       authListener?.subscription?.unsubscribe()
     }
   }, []) // ← empty deps: runs once on mount only
+
+  // Prefetch dashboard chunk shortly after auth/subscription is ready
+  useEffect(() => {
+    if (!user || !hasSubscription) return
+    const timer = setTimeout(() => {
+      import('./Dashboard').catch(() => {})
+    }, 800)
+    return () => clearTimeout(timer)
+  }, [user, hasSubscription])
 
   // ── NO auto-route to dashboard — user must click "Access Dashboard" button ──
   // The dashboard is only shown when the user explicitly navigates via the button/hash
@@ -558,7 +567,13 @@ export default function App() {
 
   // If user is logged in AND has active subscription, show Dashboard component
   if (currentView === 'dashboard' && user && hasSubscription) {
-    return <ErrorBoundary><Dashboard /></ErrorBoundary>
+    return (
+      <ErrorBoundary>
+        <Suspense fallback={<LazyFallback />}>
+          <Dashboard />
+        </Suspense>
+      </ErrorBoundary>
+    )
   }
 
   // If user tried to access dashboard without subscription, bounce back to landing
