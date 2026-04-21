@@ -4168,7 +4168,7 @@ export default function Dashboard() {
       if (data.success) {
         setStatus('invoice', 'success', `${t('invoiceSentTo')} ${row.email}`)
       } else {
-        setStatus('invoice', 'error', 'Échec envoi facture')
+        setStatus('invoice', 'error', t('invoiceSendFailed'))
       }
     } catch (err) {
       console.error('Error sending invoice:', err)
@@ -4190,7 +4190,7 @@ export default function Dashboard() {
     }
     const product = (products || []).find((p) => String(p.id) === String(invoiceProductId))
     if (!product || !product.variants || product.variants.length === 0) {
-      setStatus('invoice', 'error', 'Produit invalide ou sans variante')
+      setStatus('invoice', 'error', t('invalidProductNoVariant'))
       return
     }
     const variant = product.variants[0]
@@ -4215,7 +4215,7 @@ export default function Dashboard() {
 
   const submitInvoice = async () => {
     if (!invoiceItems.length) {
-      setStatus('invoice', 'warning', 'Ajoute au moins un produit')
+      setStatus('invoice', 'warning', t('addAtLeastOneProduct'))
       return
     }
     if (!invoiceCustomerId && !invoiceCustomerEmail) {
@@ -4350,7 +4350,7 @@ export default function Dashboard() {
 
   const analyzeProducts = async () => {
     if (!products || products.length === 0) {
-      setStatus('analyze', 'warning', 'Charge tes produits d\'abord')
+      setStatus('analyze', 'warning', t('loadProductsFirst'))
       return
     }
     
@@ -4622,7 +4622,7 @@ export default function Dashboard() {
                   <button
                     onClick={() => setShowProfileMenu(false)}
                     className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center rounded-full hover:bg-[#EFF1F5] text-[#6A6A85] hover:text-[#1A1A2E] transition"
-                    aria-label="Fermer"
+                    aria-label={t('close')}
                   >✕</button>
                   <div className="font-semibold text-[#1A1A2E]">{profile?.full_name || user?.email}</div>
                   <div className="text-sm text-[#6A6A85]">{user?.email}</div>
@@ -4707,7 +4707,7 @@ export default function Dashboard() {
                   key={item.key}
                   onClick={() => {
                     if (locked) {
-                      setStatus('upgrade', 'warning', `${item.label} — ${t('featureReservedPlan')} ${planLabel(item.gate)} ${t('orHigher')}r.`)
+                      setStatus('upgrade', 'warning', `${item.label} — ${t('featureReservedPlan')} ${planLabel(item.gate)} ${t('orHigher')}.`)
                       return
                     }
                     setActiveTab(item.key); setMobileSidebarOpen(false)
@@ -5250,15 +5250,15 @@ export default function Dashboard() {
             {/* Orders List */}
             <div className="bg-white rounded-2xl p-4 md:p-6 border border-[#E8E8EE]">
               <h3 className="text-[#1A1A2E] text-lg font-semibold mb-4">
-                {ordersList.length > 0 ? `${ordersList.length} achat(s)` : 'Achats clients'}
+                {ordersList.length > 0 ? t('purchaseCount').replace('{count}', ordersList.length) : t('customerPurchases')}
               </h3>
 
               {ordersListLoading ? (
-                <div className="text-center py-8 text-[#8A8AA3] text-sm">⏳ Chargement des commandes Shopify...</div>
+                <div className="text-center py-8 text-[#8A8AA3] text-sm">{t('loadingShopifyOrders')}</div>
               ) : ordersList.length === 0 ? (
                 <div className="text-center py-8">
                   <p className="text-[#8A8AA3] text-sm">{t('noOrdersFound')}</p>
-                  <p className="text-gray-600 text-xs mt-1">{t('connectShopOrders')}tomatiquement.</p>
+                  <p className="text-gray-600 text-xs mt-1">{t('connectShopOrders')}</p>
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -5344,14 +5344,14 @@ export default function Dashboard() {
             <div className="bg-white rounded-2xl p-6 border border-[#E8E8EE]">
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.3em] text-amber-400">📉 Performance commerciale</p>
+                  <p className="text-xs uppercase tracking-[0.3em] text-amber-400">{t('commercialPerformance')}</p>
                   <h3 className="text-[#1A1A2E] text-2xl font-bold mt-2">{t('underperformingProducts')}</h3>
                   <p className="text-sm text-[#6A6A85] mt-1">{t('underperformingDesc')}</p>
                 </div>
                 <div className="text-right">
-                  <div className="text-xs text-[#8A8AA3]">{underperformingData?.underperforming_count ?? '—'} / {underperformingData?.total_products ?? '—'} produits</div>
+                  <div className="text-xs text-[#8A8AA3]">{underperformingData?.underperforming_count ?? '—'} / {underperformingData?.total_products ?? '—'} {t('products')}</div>
                   {underperformingData?.benchmarks && (
-                    <div className="text-xs text-gray-600 mt-1">Moy. commandes: {underperformingData.benchmarks.avg_orders} • Moy. CA: {formatCurrency(underperformingData.benchmarks.avg_revenue, underperformingData?.currency || 'EUR')}</div>
+                    <div className="text-xs text-gray-600 mt-1">{t('avgOrdersLabel')} {underperformingData.benchmarks.avg_orders} • {t('avgRevenueLabel')} {formatCurrency(underperformingData.benchmarks.avg_revenue, underperformingData?.currency || 'EUR')}</div>
                   )}
                 </div>
               </div>
@@ -5360,24 +5360,24 @@ export default function Dashboard() {
                 {underperformingLoading ? (
                   <div className="px-4 py-8 text-sm text-[#8A8AA3] text-center">⏳ {t('salesAnalysisInProgress')}</div>
                 ) : (!underperformingData?.underperformers || underperformingData.underperformers.length === 0) ? (
-                  <div className="px-4 py-8 text-sm text-[#8A8AA3] text-center">✅ Tous vos produits performent correctement.</div>
+                  <div className="px-4 py-8 text-sm text-[#8A8AA3] text-center">✅ {t('allProductsPerforming')}</div>
                 ) : (
                   underperformingData.underperformers.slice(0, 10).map((item) => (
                     <div key={item.product_id || item.title} className="bg-[#F7F8FA]/70 border border-[#E8E8EE] rounded-xl p-4">
                       <div className="flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-sm">{item.category}</span>
-                          <span className="text-xs bg-orange-100 text-[#E85A28] px-2 py-0.5 rounded-full">Score: {item.score}/100</span>
+                          <span className="text-xs bg-orange-100 text-[#E85A28] px-2 py-0.5 rounded-full">{t('score')}: {item.score}/100</span>
                         </div>
-                        <p className="text-[#1A1A2E] font-semibold mt-1">{item.title || 'Produit'}</p>
+                        <p className="text-[#1A1A2E] font-semibold mt-1">{item.title || t('productHeader')}</p>
                         <div className="flex flex-wrap gap-3 mt-2 text-xs text-[#6A6A85]">
-                          <span>🛒 {item.orders} cmd{item.orders !== 1 ? 's' : ''}</span>
+                          <span>🛒 {t('ordersCountShort').replace('{count}', item.orders)}</span>
                           <span>💰 CA: {formatCurrency(item.revenue, underperformingData?.currency || 'EUR')}</span>
-                          <span>📦 Stock: {item.inventory}</span>
+                          <span>📦 {t('stockHeader')}: {item.inventory}</span>
                           <span>🏷️ Prix: {formatCurrency(item.price, underperformingData?.currency || 'EUR')}</span>
-                          {item.daily_sales != null && <span>📊 {item.daily_sales}/jour</span>}
-                          {item.days_of_stock != null && <span>⏱️ {item.days_of_stock}j de stock</span>}
-                          {item.refund_count > 0 && <span className="text-red-500">↩️ {item.refund_count} retour{item.refund_count > 1 ? 's' : ''} ({(item.refund_rate * 100).toFixed(0)}%)</span>}
+                          {item.daily_sales != null && <span>📊 {item.daily_sales}{t('perDay')}</span>}
+                          {item.days_of_stock != null && <span>⏱️ {t('daysOfStock').replace('{days}', item.days_of_stock)}</span>}
+                          {item.refund_count > 0 && <span className="text-red-500">↩️ {t('returnsCountShort').replace('{count}', item.refund_count)} ({(item.refund_rate * 100).toFixed(0)}%)</span>}
                         </div>
                         {item.reasons?.length > 0 && (
                           <div className="mt-2 space-y-1">
@@ -5406,7 +5406,7 @@ export default function Dashboard() {
                   <p className="text-sm text-[#6A6A85] mt-1">{t('blockerProductsDesc')}</p>
                 </div>
                 <div className="text-right">
-                  <div className="text-xs text-[#8A8AA3]">{blockersData?.blockers?.length ?? '—'} produit{(blockersData?.blockers?.length ?? 0) > 1 ? 's' : ''} frein{(blockersData?.blockers?.length ?? 0) > 1 ? 's' : ''}</div>
+                  <div className="text-xs text-[#8A8AA3]">{blockersData?.blockers?.length ?? '—'} {t('blockerProductsLabel')}</div>
                 </div>
               </div>
 
@@ -5619,14 +5619,14 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-sm">{item.category || '⚠️ ' + t('blockerDetected')}</span>
                         </div>
-                        <p className="text-[#1A1A2E] font-semibold mt-1">{item.title || 'Produit'}</p>
+                        <p className="text-[#1A1A2E] font-semibold mt-1">{item.title || t('productHeader')}</p>
                         <div className="flex flex-wrap gap-3 mt-2 text-xs text-[#6A6A85]">
-                          <span>🛒 {item.orders} cmd{item.orders !== 1 ? 's' : ''}</span>
+                          <span>🛒 {t('ordersCountShort').replace('{count}', item.orders)}</span>
                           <span>💰 {formatCurrency(item.revenue, blockersData?.currency || analyticsData?.currency || 'EUR')}</span>
-                          {item.views > 0 && <span>👁️ {item.views} vues</span>}
-                          {item.add_to_cart > 0 && <span>🛒 {item.add_to_cart} ajouts panier</span>}
-                          {item.view_to_cart_rate != null && <span className={item.view_to_cart_rate < 0.03 ? 'text-red-500' : 'text-[#0D9488]'}>Vue→Panier: {(item.view_to_cart_rate * 100).toFixed(1)}%</span>}
-                          {item.cart_to_order_rate != null && <span className={item.cart_to_order_rate < 0.2 ? 'text-red-500' : 'text-[#0D9488]'}>Panier→Achat: {(item.cart_to_order_rate * 100).toFixed(1)}%</span>}
+                          {item.views > 0 && <span>👁️ {t('viewsCount').replace('{count}', item.views)}</span>}
+                          {item.add_to_cart > 0 && <span>🛒 {t('addToCartCount').replace('{count}', item.add_to_cart)}</span>}
+                          {item.view_to_cart_rate != null && <span className={item.view_to_cart_rate < 0.03 ? 'text-red-500' : 'text-[#0D9488]'}>{t('viewToCartRate').replace('{rate}', (item.view_to_cart_rate * 100).toFixed(1))}</span>}
+                          {item.cart_to_order_rate != null && <span className={item.cart_to_order_rate < 0.2 ? 'text-red-500' : 'text-[#0D9488]'}>{t('cartToOrderRate').replace('{rate}', (item.cart_to_order_rate * 100).toFixed(1))}</span>}
                         </div>
                       </div>
                     </div>
@@ -5668,7 +5668,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
               </div>
             </div>
             <div>
-              <label className="block text-sm font-medium text-[#6A6A85] mb-1">📝 {t('customInstructions')} (onnel)</label>
+              <label className="block text-sm font-medium text-[#6A6A85] mb-1">{t('customInstructions')}</label>
               <textarea
                 value={rewriteInstructions}
                 onChange={(e) => setRewriteInstructions(e.target.value)}
@@ -5676,7 +5676,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 className="w-full bg-[#F7F8FA] border border-[#E8E8EE] text-[#1A1A2E] text-sm rounded-lg px-3 py-2 min-h-[80px] resize-y placeholder-gray-600 focus:border-[#FF6B35] focus:ring-1 focus:ring-[#FF6B35] outline-none"
                 rows={3}
               />
-              <p className="text-xs text-gray-600 mt-1">{t('aiWillUseInstructions')}tre et la description.</p>
+              <p className="text-xs text-gray-600 mt-1">{t('aiWillUseInstructions')}</p>
             </div>
             {renderStatus('action-rewrite')}
             {insightsData?.rewrite_ai?.notes?.length ? (
@@ -5688,13 +5688,13 @@ analytics.subscribe("product_added_to_cart", (event) => {
               {!rewriteProductId ? (
                 <p className="text-sm text-[#8A8AA3]">{t('selectProductToAnalyze')}</p>
               ) : !insightsLoading && (!insightsData?.rewrite_opportunities || insightsData.rewrite_opportunities.length === 0) ? (
-                <p className="text-sm text-[#8A8AA3]">Aucune suggestion disponible pour l'instant.</p>
+                <p className="text-sm text-[#8A8AA3]">{t('noSuggestionsYet')}</p>
               ) : (
                 insightsData?.rewrite_opportunities?.slice(0, 1).map((item, index) => (
                   <div key={item.product_id || index} className="bg-[#F7F8FA]/70 border border-[#E8E8EE] rounded-lg p-6 space-y-4">
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <p className="text-[#1A1A2E] font-semibold text-lg">{item.title || 'Produit'}</p>
+                        <p className="text-[#1A1A2E] font-semibold text-lg">{item.title || t('productHeader')}</p>
                         <p className="text-sm text-[#6A6A85]">{(item.reasons || []).join(' · ')}</p>
                       </div>
                       <div className="flex gap-2">
@@ -5708,7 +5708,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             }`}
                             disabled={applyingBlockerActionId === `${item.product_id}-title`}
                           >
-                            Appliquer titre
+                            {t('applyTitle')}
                           </button>
                         )}
                         {(item.recommendations || []).includes('description') && (
@@ -5721,7 +5721,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             }`}
                             disabled={applyingBlockerActionId === `${item.product_id}-description`}
                           >
-                            Appliquer description
+                            {t('applyDescription')}
                           </button>
                         )}
                       </div>
@@ -5729,7 +5729,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                     <div className="grid md:grid-cols-2 gap-4">
                       <div className="bg-[#F7F8FA] border border-[#E8E8EE] rounded-lg p-4">
-                        <p className="text-sm font-semibold text-[#4A4A68] mb-2">Contenu actuel</p>
+                        <p className="text-sm font-semibold text-[#4A4A68] mb-2">{t('currentContent')}</p>
                         <div className="text-sm text-[#6A6A85] space-y-2">
                           <p><span className="text-[#8A8AA3]">Titre:</span> {item.current_title || '—'}</p>
                           <div className="max-h-56 overflow-y-auto pr-2 text-base text-[#4A4A68] whitespace-pre-wrap">
@@ -5738,7 +5738,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         </div>
                       </div>
                       <div className="bg-[#F7F8FA] border border-[#E8E8EE] rounded-lg p-4">
-                        <p className="text-sm font-semibold text-[#4A4A68] mb-2">Suggestions IA</p>
+                        <p className="text-sm font-semibold text-[#4A4A68] mb-2">{t('aiSuggestions')}</p>
                         <div className="text-sm text-[#4A4A68] space-y-3">
                           {item.suggested_title ? (
                             <p className="text-base"><span className="text-[#8A8AA3]">{t('suggestedTitle')}:</span> {stripHtmlTags(item.suggested_title)}</p>
@@ -6487,9 +6487,9 @@ analytics.subscribe("product_added_to_cart", (event) => {
           <div className="bg-white rounded-lg border border-[#E8E8EE]">
             <div className="px-6 py-5 border-b border-[#E8E8EE]">
               <h2 className="text-[#1A1A2E] text-xl font-bold flex items-center gap-2">
-                <span>📦</span> Alertes rupture de stock
+                {t('stockAlertTitle')}
               </h2>
-              <p className="text-[#6A6A85] text-sm mt-1">{t('enterThreshold')}st automatique. Vous recevrez un email si le stock atteint le seuil.</p>
+              <p className="text-[#6A6A85] text-sm mt-1">{t('stockAlertDesc')}</p>
             </div>
 
             {stockProductsLoading ? (
@@ -6506,9 +6506,9 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-[#E8E8EE] bg-[#F7F8FA]">
-                      <th className="text-left px-6 py-3 text-xs text-[#6A6A85] font-semibold uppercase">Produit</th>
-                      <th className="text-center px-4 py-3 text-xs text-[#6A6A85] font-semibold uppercase w-28">Stock</th>
-                      <th className="text-center px-4 py-3 text-xs text-[#6A6A85] font-semibold uppercase w-36">Seuil d'alerte</th>
+                      <th className="text-left px-6 py-3 text-xs text-[#6A6A85] font-semibold uppercase">{t('productHeader')}</th>
+                      <th className="text-center px-4 py-3 text-xs text-[#6A6A85] font-semibold uppercase w-28">{t('stockHeader')}</th>
+                      <th className="text-center px-4 py-3 text-xs text-[#6A6A85] font-semibold uppercase w-36">{t('alertThreshold')}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#E8E8EE]">
@@ -6553,11 +6553,11 @@ analytics.subscribe("product_added_to_cart", (event) => {
         {activeTab === 'action-returns' && (
           <div className="bg-white rounded-lg p-6 border border-[#E8E8EE] space-y-6">
             <div>
-              <h2 className="text-[#1A1A2E] text-xl font-bold mb-2">Anti-retours</h2>
-              <p className="text-[#6A6A85]">{t('antiReturnsDescription')}historique de remboursements, le contenu et les signaux de performance.</p>
+              <h2 className="text-[#1A1A2E] text-xl font-bold mb-2">{t('antiReturns')}</h2>
+              <p className="text-[#6A6A85]">{t('antiReturnsDescription')}</p>
             </div>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <p className="text-sm text-[#6A6A85]">{getInsightCount(insightsData?.return_risks)} {t('productsAtRisk')}e</p>
+              <p className="text-sm text-[#6A6A85]">{getInsightCount(insightsData?.return_risks)} {t('productsAtRisk')}</p>
               <button
                 onClick={() => runActionAnalysis('action-returns')}
                 disabled={insightsLoading}
@@ -6571,7 +6571,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
               {!insightsLoading && (!insightsData?.return_risks || insightsData.return_risks.length === 0) ? (
                 <div className="text-center py-8">
                   <p className="text-[#8A8AA3]">{t('noRiskProductsDetected')}</p>
-                  <p className="text-xs text-[#B0B0C0] mt-1">Cliquez sur « Analyser les produits » pour lancer l'analyse.</p>
+                  <p className="text-xs text-[#B0B0C0] mt-1">{t('clickAnalyzeToStart')}</p>
                 </div>
               ) : (
                 insightsData?.return_risks?.slice(0, 10).map((item, index) => {
@@ -6589,7 +6589,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             {returnedOrders > 0 && <span>🔁 {returnedOrders} {t('returnedOrders')}</span>}
                             {returnedItems > 0 && <span>📦 {returnedItems} {t('refundedItems')}</span>}
                             {orderRate !== null && orderRate !== undefined && Number(orderRate) > 0 && (
-                              <span>📊 Taux retour commandes: {Math.round(Number(orderRate) * 100)}%</span>
+                              <span>📊 {t('orderReturnRate')}: {Math.round(Number(orderRate) * 100)}%</span>
                             )}
                             {item.signals?.orders > 0 && <span>📦 {item.signals.orders} commande(s)</span>}
                             {item.signals?.price > 0 && <span>💰 {item.signals.price}$</span>}
@@ -6599,7 +6599,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           className="text-xs font-bold px-3 py-1 rounded-full whitespace-nowrap"
                           style={{ backgroundColor: riskColor + '20', color: riskColor }}
                         >
-                          Risque {item.risk_level || 'inconnu'} {item.risk_score ? `(${Math.round(item.risk_score)})` : ''}
+                          {t('riskLevel')} {item.risk_level || t('notSpecified')} {item.risk_score ? `(${Math.round(item.risk_score)})` : ''}
                         </span>
                       </div>
 
@@ -6616,7 +6616,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                       {/* Recommandations */}
                       {Array.isArray(item.recommendations) && item.recommendations.length > 0 && (
                         <div className="bg-white/60 rounded-md p-3">
-                          <p className="text-xs font-semibold text-[#0D9488] mb-1">💡 Recommandations :</p>
+                          <p className="text-xs font-semibold text-[#0D9488] mb-1">{t('recommendations')}</p>
                           <ul className="text-xs text-[#6A6A85] space-y-0.5 pl-4 list-disc">
                             {item.recommendations.map((r, i) => <li key={i}>{r}</li>)}
                           </ul>
@@ -6649,7 +6649,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 {renderStatus('analyze')}
               </div>
             ) : (
-              <p className="text-[#6A6A85]">Charge tes produits Shopify d'abord</p>
+              <p className="text-[#6A6A85]">{t('loadProductsFirst')}</p>
             )}
           </div>
         )}
@@ -6718,7 +6718,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         <div key={idx} className="bg-[#F7F8FA] p-4 rounded-lg">
                           <div className="flex items-start gap-3">
                             <div className="flex-1">
-                              <p className="text-[#FF6B35] font-bold text-sm mb-1">SÉVÉRITÉ: {issue.severity}</p>
+                              <p className="text-[#FF6B35] font-bold text-sm mb-1">{t('severity')}: {issue.severity}</p>
                               <p className="text-[#1A1A2E] font-bold mb-2">{issue.issue}</p>
                               <p className="text-[#4A4A68] text-sm mb-2">{issue.impact}</p>
                               <div className="bg-white p-3 rounded mt-2">
@@ -6732,7 +6732,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                                         <span key={pidx} className="inline-block bg-[#FFF4F0] text-[#E85A28] text-xs px-2 py-0.5 rounded-full border border-[#FF6B35]/20">{name}</span>
                                       ))}
                                       {issue.affected_products.length > 12 && (
-                                        <span className="text-[#6A6A85] text-xs">+{issue.affected_products.length - 12} autres</span>
+                                        <span className="text-[#6A6A85] text-xs">+{issue.affected_products.length - 12} {t('others')}</span>
                                       )}
                                     </div>
                                   </div>
@@ -6753,7 +6753,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     {analysisResults.immediate_actions?.map((action, idx) => (
                       <div key={idx} className="bg-teal-50/50 p-5 rounded-lg">
                         <div className="flex items-center gap-2 mb-3">
-                          <span className="bg-[#FF6B35] text-white font-bold px-3 py-1 rounded-full text-sm">PRIORITÉ {action.priority}</span>
+                          <span className="bg-[#FF6B35] text-white font-bold px-3 py-1 rounded-full text-sm">{t('priority')} {action.priority}</span>
                           <h3 className="text-[#1A1A2E] font-bold text-lg">{action.action}</h3>
                         </div>
                         <div className="space-y-2 mb-3">
@@ -6762,8 +6762,8 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           ))}
                         </div>
                         <div className="flex gap-4 text-sm">
-                          <span className="text-[#4A4A68]">Temps: {action.time_required}</span>
-                          <span className="text-[#FF6B35]">Impact: {action.expected_impact}</span>
+                          <span className="text-[#4A4A68]">{t('timeLabel')}: {action.time_required}</span>
+                          <span className="text-[#FF6B35]">{t('impactLabel')}: {action.expected_impact}</span>
                         </div>
                       </div>
                     ))}
@@ -6917,7 +6917,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           <div key={idx} className="bg-[#F7F8FA] p-4 rounded-lg border border-[#E8E8EE]">
                             <h4 className="text-[#FF6B35] font-bold mb-2">{upsell.strategy}</h4>
                             <p className="text-[#4A4A68] text-sm mb-2">{upsell.description}</p>
-                            {upsell.example && <p className="text-[#4A4A68] text-sm mb-2">Exemple: {upsell.example}</p>}
+                            {upsell.example && <p className="text-[#4A4A68] text-sm mb-2">{t('example')}: {upsell.example}</p>}
                             <p className="text-[#0D9488] text-sm font-bold">{upsell.expected_impact}</p>
                           </div>
                         ))}
@@ -6933,7 +6933,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           <div key={idx} className="bg-[#F7F8FA] p-4 rounded-lg border border-[#E8E8EE]">
                             <h4 className="text-[#FF6B35] font-bold mb-2">{bundle.bundle_name} (-{bundle.discount})</h4>
                             <div className="mb-2">
-                              <p className="text-[#6A6A85] text-sm mb-1">Produits inclus:</p>
+                              <p className="text-[#6A6A85] text-sm mb-1">{t('includedProducts')}:</p>
                               <ul className="list-disc list-inside text-[#4A4A68] text-sm">
                                 {bundle.products?.map((p, pidx) => (
                                   <li key={pidx}>{p}</li>
@@ -6948,7 +6948,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     </>
                   )}
 
-                  <h3 className="text-[#1A1A2E] font-bold mb-3">Triggers psychologiques:</h3>
+                  <h3 className="text-[#1A1A2E] font-bold mb-3">{t('psychologicalTriggers')}:</h3>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     {analysisResults.sales_strategies?.psychological_triggers?.map((trigger, idx) => (
                       <div key={idx} className="bg-[#EFF1F5] p-4 rounded-lg">
@@ -6973,11 +6973,11 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         <p className="text-[#2A2A42] mb-4">{opp.description}</p>
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
                           <div className="bg-white p-3 rounded">
-                            <p className="text-[#6A6A85] text-xs mb-1">Investissement</p>
+                            <p className="text-[#6A6A85] text-xs mb-1">{t('investment')}</p>
                             <p className="text-[#1A1A2E] font-bold">{opp.investment}</p>
                           </div>
                           <div className="bg-white p-3 rounded">
-                            <p className="text-[#6A6A85] text-xs mb-1">Retour attendu</p>
+                            <p className="text-[#6A6A85] text-xs mb-1">{t('expectedReturn')}</p>
                             <p className="text-[#0D9488] font-bold">{opp.expected_return}</p>
                           </div>
                           <div className="bg-white p-3 rounded">
@@ -6992,7 +6992,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                 {/* Recommandations par produit */}
                 <div className="bg-white rounded-lg p-6 border border-[#E8E8EE]">
-                  <h2 className="text-[#1A1A2E] text-2xl font-bold mb-4">🎨 Recommandations par produit (Top 10)</h2>
+                  <h2 className="text-[#1A1A2E] text-2xl font-bold mb-4">{t('productRecommendationsTop10')}</h2>
                   <div className="space-y-4">
                     {analysisResults.product_recommendations?.map((rec, idx) => (
                       <div key={idx} className="bg-[#EFF1F5] p-5 rounded-lg">
@@ -8021,7 +8021,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                   {showProductPicker && (
                     <div className="mb-3 bg-white border border-[#FF6B35]/30 rounded-xl overflow-hidden" ref={productPickerRef}>
                       <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#E8E8EE]">
-                        <span className="text-sm font-semibold text-[#FF6B35]">🛍️ Mentionner un produit</span>
+                        <span className="text-sm font-semibold text-[#FF6B35]">🛍️ {t('mentionProduct')}</span>
                         <button onClick={() => { setShowProductPicker(false); setProductPickerSearch('') }} className="text-[#6A6A85] hover:text-[#1A1A2E] text-lg">✕</button>
                       </div>
                       <div className="px-3 py-2">

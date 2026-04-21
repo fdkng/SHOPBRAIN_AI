@@ -688,39 +688,50 @@ def _market_reason_text(
     suggested_price: float,
     snapshot: dict,
     currency_code: str | None,
+    language: str = "en",
 ) -> str:
     count = int(snapshot.get("count") or 0)
     curr_label = _currency_label(currency_code)
+    lang = "fr" if (language or "").strip().lower() == "fr" else "en"
 
     if count < 3:
         seen = snapshot.get("seen_currencies")
         if isinstance(seen, list) and seen and currency_code and currency_code.upper() not in seen:
             return (
-                f"Je n’ai pas trouvé assez d’offres comparables dans la même devise ({curr_label}). "
-                "Je garde donc le prix pour éviter une recommandation hasardeuse."
+                (f"I did not find enough comparable offers in the same currency ({curr_label}). I keep the current price to avoid unreliable advice.")
+                if lang == "en"
+                else (f"Je n’ai pas trouvé assez d’offres comparables dans la même devise ({curr_label}). Je garde donc le prix pour éviter une recommandation hasardeuse.")
             )
         return (
-            "Je n’ai pas trouvé assez d’offres comparables fiables (moins de 3). "
-            "Je garde donc le prix pour éviter une recommandation hasardeuse."
+            "I did not find enough reliable comparable offers (fewer than 3). I keep the current price to avoid unreliable advice."
+            if lang == "en"
+            else "Je n’ai pas trouvé assez d’offres comparables fiables (moins de 3). Je garde donc le prix pour éviter une recommandation hasardeuse."
         )
 
     median = snapshot.get("median")
     if not isinstance(median, (int, float)) or median <= 0:
-        return "Les résultats marché ne contiennent pas de prix exploitable; je garde le prix actuel."
+        return (
+            "Market results do not contain usable prices; keeping current price."
+            if lang == "en"
+            else "Les résultats marché ne contiennent pas de prix exploitable; je garde le prix actuel."
+        )
 
     if action == "keep":
         return (
-            f"Sur {count} offres similaires ({curr_label}), ton prix est déjà dans la zone du marché. "
-            "Aucun changement recommandé."
+            (f"Across {count} similar offers ({curr_label}), your current price is already within market range. No change recommended.")
+            if lang == "en"
+            else (f"Sur {count} offres similaires ({curr_label}), ton prix est déjà dans la zone du marché. Aucun changement recommandé.")
         )
     if action == "increase":
         return (
-            f"Sur {count} offres similaires ({curr_label}), ton prix est plutôt en dessous du niveau du marché. "
-            f"Je recommande d’augmenter vers {round(float(suggested_price), 2)} pour mieux s’aligner."
+            (f"Across {count} similar offers ({curr_label}), your price appears below market level. I recommend increasing toward {round(float(suggested_price), 2)} for better alignment.")
+            if lang == "en"
+            else (f"Sur {count} offres similaires ({curr_label}), ton prix est plutôt en dessous du niveau du marché. Je recommande d’augmenter vers {round(float(suggested_price), 2)} pour mieux s’aligner.")
         )
     return (
-        f"Sur {count} offres similaires ({curr_label}), ton prix est plutôt au-dessus du niveau du marché. "
-        f"Je recommande de baisser vers {round(float(suggested_price), 2)} pour mieux s’aligner."
+        (f"Across {count} similar offers ({curr_label}), your price appears above market level. I recommend decreasing toward {round(float(suggested_price), 2)} for better alignment.")
+        if lang == "en"
+        else (f"Sur {count} offres similaires ({curr_label}), ton prix est plutôt au-dessus du niveau du marché. Je recommande de baisser vers {round(float(suggested_price), 2)} pour mieux s’aligner.")
     )
 
 
@@ -11483,10 +11494,11 @@ class AnalyzeStoreRequest(BaseModel):
     products: list
     analytics: dict
     tier: str  # standard, pro, premium
+    language: str = "en"
 
 
 @app.get("/api/ai/price-opportunities")
-async def price_opportunities_endpoint(request: Request, limit: int = 50, instructions: str = "", product_id: str = ""):
+async def price_opportunities_endpoint(request: Request, limit: int = 50, instructions: str = "", product_id: str = "", language: str = "en"):
     """💰 Retourne des opportunités de prix (léger, sans gros payload).
 
     Objectif: éviter que le frontend doive POST une liste complète de produits
@@ -11495,6 +11507,7 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
     """
     user_id = get_user_id(request)
     tier = get_user_tier(user_id)
+    lang = "fr" if (language or "").strip().lower() == "fr" else "en"
     ensure_feature_allowed(tier, "price_suggestions")
 
     if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
@@ -11577,7 +11590,7 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
             candidates.append(
                 {
                     "product_id": str(p.get("id") or ""),
-                    "title": p.get("title") or "Produit",
+                    "title": p.get("title") or ("Produit" if lang == "fr" else "Product"),
                     "vendor": p.get("vendor") or "",
                     "product_type": p.get("product_type") or "",
                     "tags": p.get("tags") or "",
@@ -11846,11 +11859,11 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
                         delta_pct = 0.0
 
                     if action == "keep":
-                        suggestion = "Prix aligné au marché"
+                        suggestion = "Price aligned with market" if lang == "en" else "Prix aligné au marché"
                     elif action == "increase":
-                        suggestion = "Prix trop bas vs marché"
+                        suggestion = "Price too low vs market" if lang == "en" else "Prix trop bas vs marché"
                     else:
-                        suggestion = "Prix trop haut vs marché"
+                        suggestion = "Price too high vs market" if lang == "en" else "Prix trop haut vs marché"
 
                     reason = _market_reason_text(
                         action=action,
@@ -11858,6 +11871,7 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
                         suggested_price=float(suggested),
                         snapshot=snapshot,
                         currency_code=shop_currency,
+                        language=lang,
                     )
 
                     opportunities.append(
@@ -11996,11 +12010,11 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
                     {
                         "product_id": item["product_id"] or f"shopify-{len(opportunities)+1}",
                         "title": item["title"],
-                        "suggestion": "Ajustement recommandé (heuristique)",
+                        "suggestion": ("Recommended adjustment (heuristic)" if lang == "en" else "Ajustement recommandé (heuristique)"),
                         "current_price": round(current_price, 2),
                         "suggested_price": suggested_price,
                         "target_delta_pct": target_delta_pct,
-                        "reason": "SERP API non configurée: suggestion heuristique (+25%).",
+                        "reason": ("SERP API not configured: heuristic suggestion (+25%)." if lang == "en" else "SERP API non configurée: suggestion heuristique (+25%)."),
                         "source": "heuristic",
                         "currency_code": shop_currency,
                     }
@@ -12030,6 +12044,7 @@ async def analyze_store_endpoint(req: AnalyzeStoreRequest, request: Request):
     """
     try:
         user_id = get_user_id(request)
+        lang = "fr" if (getattr(req, "language", "en") or "en").strip().lower() == "fr" else "en"
         tier = get_user_tier(user_id)
         engine = get_ai_engine()
 
@@ -12053,7 +12068,7 @@ async def analyze_store_endpoint(req: AnalyzeStoreRequest, request: Request):
                         continue
 
                     # Best-effort: default to Canada context; if frontend passes currency later, it will be used.
-                    snapshot = _serpapi_price_snapshot(title, gl="ca", hl="fr", currency_code="CAD")
+                    snapshot = _serpapi_price_snapshot(title, gl="ca", hl=("fr" if lang == "fr" else "en"), currency_code="CAD")
                     if snapshot.get("count", 0) < 3:
                         continue
 
@@ -12084,8 +12099,13 @@ async def analyze_store_endpoint(req: AnalyzeStoreRequest, request: Request):
                             suggested_price=float(suggested),
                             snapshot=snapshot,
                             currency_code="CAD",
+                            language=lang,
                         )
-                        opt["expected_impact"] = "Prix jugé correct vs produits similaires: pas de changement recommandé."
+                        opt["expected_impact"] = (
+                            "Price considered aligned vs similar products: no change recommended."
+                            if lang == "en"
+                            else "Prix jugé correct vs produits similaires: pas de changement recommandé."
+                        )
                     elif action == "increase":
                         opt["reason"] = _market_reason_text(
                             action="increase",
@@ -12093,8 +12113,13 @@ async def analyze_store_endpoint(req: AnalyzeStoreRequest, request: Request):
                             suggested_price=float(suggested),
                             snapshot=snapshot,
                             currency_code="CAD",
+                            language=lang,
                         )
-                        opt["expected_impact"] = "Augmenter pour se rapprocher du marché et améliorer la marge, à valider avec vos conversions."
+                        opt["expected_impact"] = (
+                            "Increase to align with market and improve margin, then validate against conversion impact."
+                            if lang == "en"
+                            else "Augmenter pour se rapprocher du marché et améliorer la marge, à valider avec vos conversions."
+                        )
                     else:
                         opt["reason"] = _market_reason_text(
                             action="decrease",
@@ -12102,8 +12127,13 @@ async def analyze_store_endpoint(req: AnalyzeStoreRequest, request: Request):
                             suggested_price=float(suggested),
                             snapshot=snapshot,
                             currency_code="CAD",
+                            language=lang,
                         )
-                        opt["expected_impact"] = "Baisser pour se rapprocher du marché et réduire le risque de perte de conversion."
+                        opt["expected_impact"] = (
+                            "Decrease to align with market and reduce conversion-loss risk."
+                            if lang == "en"
+                            else "Baisser pour se rapprocher du marché et réduire le risque de perte de conversion."
+                        )
             except Exception as e:
                 print(f"SERP enrichment warning: {e}")
         
