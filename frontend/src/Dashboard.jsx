@@ -187,6 +187,7 @@ export default function Dashboard() {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [darkMode, setDarkMode] = useState(true)
   const { t, language, setLanguage, LANGUAGES } = useTranslation()
+  const [interfaceLanguageDraft, setInterfaceLanguageDraft] = useState(language)
   // Language is now managed by LanguageContext
   const [notifications, setNotifications] = useState({
     email_notifications: true,
@@ -994,6 +995,12 @@ export default function Dashboard() {
     }
   }, [showSettingsModal, settingsTab])
 
+  useEffect(() => {
+    if (showSettingsModal && settingsTab === 'interface') {
+      setInterfaceLanguageDraft(language)
+    }
+  }, [showSettingsModal, settingsTab, language])
+
   const loadApiKeys = async () => {
     try {
       setApiLoading(true)
@@ -1433,6 +1440,7 @@ export default function Dashboard() {
         if (initData.interface) {
           if (initData.interface.language) {
             setLanguage(initData.interface.language)
+            setInterfaceLanguageDraft(initData.interface.language)
           }
         }
 
@@ -2599,8 +2607,11 @@ export default function Dashboard() {
   const handleSaveInterface = async () => {
     try {
       setSaveLoading(true)
+      const nextLanguage = (interfaceLanguageDraft === 'fr' || interfaceLanguageDraft === 'en')
+        ? interfaceLanguageDraft
+        : language
       // Always save locally first (works immediately)
-      localStorage.setItem('language', language)
+      localStorage.setItem('language', nextLanguage)
       localStorage.setItem('darkMode', JSON.stringify(darkMode))
 
       // Try backend save (best-effort — table may not exist yet)
@@ -2615,7 +2626,7 @@ export default function Dashboard() {
           },
           body: JSON.stringify({
             dark_mode: darkMode,
-            language: language
+            language: nextLanguage
           })
         })
         const data = await response.json()
@@ -2625,6 +2636,8 @@ export default function Dashboard() {
       } catch (backendErr) {
         console.warn('Backend interface save unavailable (using localStorage):', backendErr.message)
       }
+
+      setLanguage(nextLanguage)
 
       setStatus('interface', 'success', t('settingsUpdated'))
     } catch (err) {
@@ -7320,7 +7333,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     <div className="space-y-4">
                       <div className="bg-white rounded-lg p-4 border border-[#E8E8EE]">
                         <h4 className="text-[#1A1A2E] font-semibold mb-2">{t('language')}</h4>
-                        <select value={language} onChange={(e) => setLanguage(e.target.value)} className="w-full bg-[#EFF1F5] border border-[#D8D8E2] rounded-lg px-4 py-2 text-[#1A1A2E]">
+                        <select value={interfaceLanguageDraft} onChange={(e) => setInterfaceLanguageDraft(e.target.value)} className="w-full bg-[#EFF1F5] border border-[#D8D8E2] rounded-lg px-4 py-2 text-[#1A1A2E]">
                           {LANGUAGES.map(l => (
                             <option key={l.code} value={l.code}>{l.flag} {l.name}</option>
                           ))}

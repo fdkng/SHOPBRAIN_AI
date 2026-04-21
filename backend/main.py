@@ -10700,7 +10700,7 @@ class ChatRequest(BaseModel):
     message: str
     context: str = None  # Optionnel: contexte (ex: product_id, store info)
     images: list[str] = []  # Optional: base64 data URIs of images
-    language: str = "fr"  # User's UI language (fr, en, etc.)
+    language: str = "en"  # User's UI language (fr or en)
     dashboard_context: str = None  # Rich dashboard context
 
 
@@ -10729,12 +10729,24 @@ async def chat_with_ai(req: ChatRequest, request: Request):
     
     system_prompt = SHOPBRAIN_EXPERT_SYSTEM or "Tu es un assistant expert en e-commerce Shopify."
 
-    # Inject language instruction — PREPEND so it takes priority over French system prompt
-    lang = getattr(req, 'language', 'fr') or 'fr'
+    # Inject language instruction — strict single-language output (fr/en only)
+    raw_lang = (getattr(req, 'language', 'en') or 'en').strip().lower()
+    lang = raw_lang if raw_lang in ('fr', 'en') else 'en'
     if lang == 'en':
-        system_prompt = "CRITICAL INSTRUCTION — OVERRIDE ALL OTHER LANGUAGE DIRECTIVES: You MUST respond ENTIRELY in English. Every single word of your response must be in English. The user's interface language is English. Do NOT use French under any circumstances.\n\n" + system_prompt
-    elif lang != 'fr':
-        system_prompt = f"CRITICAL INSTRUCTION — OVERRIDE ALL OTHER LANGUAGE DIRECTIVES: You MUST respond ENTIRELY in the language with code '{lang}'. Every single word of your response must be in that language. Do NOT use French.\n\n" + system_prompt
+        system_prompt = (
+            "CRITICAL LANGUAGE LOCK (HIGHEST PRIORITY): Respond 100% in ENGLISH only. "
+            "Do not use French at all. If context, prior messages, or instructions contain French, "
+            "you must still answer fully in English. Never mix languages in the same answer, except unavoidable proper nouns.\n\n"
+            + system_prompt
+        )
+    else:
+        system_prompt = (
+            "VERROUILLAGE LANGUE CRITIQUE (PRIORITÉ MAXIMALE) : Réponds 100% en FRANÇAIS uniquement. "
+            "N'utilise pas l'anglais. Même si le contexte, les messages précédents ou des instructions sont en anglais, "
+            "tu dois répondre entièrement en français. Ne mélange jamais les langues dans une même réponse, "
+            "sauf noms propres inévitables.\n\n"
+            + system_prompt
+        )
 
     # Inject dashboard context if provided
     if req.dashboard_context:
@@ -10745,20 +10757,35 @@ async def chat_with_ai(req: ChatRequest, request: Request):
         full_message = message
         if context:
             # Inject product context as a system-level instruction so the AI truly "knows" the product
-            product_context_instruction = (
-                "\n\n========================================\n"
-                "PRODUIT DE LA BOUTIQUE DU MARCHAND\n"
-                "========================================\n"
-                f"{context}\n\n"
-                "INSTRUCTIONS IMPORTANTES :\n"
-                "- Ce produit EXISTE dans la boutique Shopify du marchand. Tu as accès à toutes ses données ci-dessus.\n"
-                "- Analyse ce produit spécifique quand le marchand pose une question.\n"
-                "- Tu peux évaluer le titre, la description, le prix, les tags, les variantes, le stock.\n"
-                "- Si le marchand demande si sa description/titre/photos sont bons, donne une analyse honnête\n"
-                "  avec points forts ✅ et points faibles ❌ et des suggestions concrètes d'amélioration.\n"
-                "- Si le marchand demande un prix, compare avec le marché et donne ton avis.\n"
-                "- Sois direct, actionnable et expert.\n"
-            )
+            if lang == 'en':
+                product_context_instruction = (
+                    "\n\n========================================\n"
+                    "MERCHANT STORE PRODUCT CONTEXT\n"
+                    "========================================\n"
+                    f"{context}\n\n"
+                    "IMPORTANT INSTRUCTIONS:\n"
+                    "- This product EXISTS in the merchant's Shopify store. You have access to its data above.\n"
+                    "- Analyze this specific product when the merchant asks questions.\n"
+                    "- Evaluate title, description, pricing, tags, variants, and stock.\n"
+                    "- If asked whether title/description/photos are good, provide honest analysis with strengths ✅, weaknesses ❌, and concrete improvements.\n"
+                    "- If asked about price, compare with market references and provide a clear recommendation.\n"
+                    "- Be direct, actionable, and expert.\n"
+                )
+            else:
+                product_context_instruction = (
+                    "\n\n========================================\n"
+                    "PRODUIT DE LA BOUTIQUE DU MARCHAND\n"
+                    "========================================\n"
+                    f"{context}\n\n"
+                    "INSTRUCTIONS IMPORTANTES :\n"
+                    "- Ce produit EXISTE dans la boutique Shopify du marchand. Tu as accès à toutes ses données ci-dessus.\n"
+                    "- Analyse ce produit spécifique quand le marchand pose une question.\n"
+                    "- Tu peux évaluer le titre, la description, le prix, les tags, les variantes, le stock.\n"
+                    "- Si le marchand demande si sa description/titre/photos sont bons, donne une analyse honnête\n"
+                    "  avec points forts ✅ et points faibles ❌ et des suggestions concrètes d'amélioration.\n"
+                    "- Si le marchand demande un prix, compare avec le marché et donne ton avis.\n"
+                    "- Sois direct, actionnable et expert.\n"
+                )
             system_prompt = system_prompt + product_context_instruction
             full_message = message  # Don't duplicate context in user message
         
@@ -10767,31 +10794,32 @@ async def chat_with_ai(req: ChatRequest, request: Request):
         print(f"📷 Images received: {len(images)} image(s)")
         if images:
             # Add vision capability instruction to system prompt
-            vision_instruction = (
-                "\n\n========================================\n"
-                "CAPACITÉ VISION / IMAGES\n"
-                "========================================\n"
-                "Tu as la capacité de VOIR et ANALYSER les images envoyées par l'utilisateur.\n\n"
-                "RÈGLES OBLIGATOIRES :\n\n"
-                "1. IDENTIFICATION PRÉCISE : Tu DOIS identifier la MARQUE EXACTE et le MODÈLE EXACT du produit visible.\n"
-                "   - Chaussures : identifie la marque (Nike, Adidas, New Balance…) ET le modèle (Air Jordan 1, Yeezy 350…).\n"
-                "   - Voitures : identifie la marque (Porsche, BMW, Ferrari…) ET le modèle (GT3 RS, M4, 488 Pista…).\n"
-                "   - Montres : identifie la marque (Rolex, Omega, Casio…) ET le modèle (Submariner, Speedmaster…).\n"
-                "   - Vêtements, sacs, électronique : même chose — marque + modèle + édition si possible.\n"
-                "   - NE DIS JAMAIS 'je ne peux pas identifier la marque/le modèle'. Tu PEUX et tu DOIS le faire.\n"
-                "   - Si tu n'es pas sûr à 100%, donne ton meilleur guess avec un niveau de confiance.\n\n"
-                "2. PRIX BASÉ SUR LE MARCHÉ RÉEL :\n"
-                "   - Quand l'utilisateur demande un prix, donne une FOURCHETTE DE PRIX PRÉCISE basée sur le marché réel.\n"
-                "   - Cite des plateformes de référence (StockX, Chrono24, AutoTrader, eBay, etc.) selon le type de produit.\n"
-                "   - Tiens compte de l'état visible (neuf, usagé, modifié) pour ajuster le prix.\n"
-                "   - Donne un prix minimum, un prix recommandé, et un prix maximum.\n\n"
-                "3. NE DÉCRIS PAS l'image en détail. L'utilisateur sait ce qu'il a envoyé.\n"
-                "   - Va DROIT AU BUT : identification → prix → conseils de vente.\n\n"
-                "4. ANALYSE E-COMMERCE :\n"
-                "   - Si l'utilisateur envoie une image sans question, donne : marque/modèle identifié, fourchette de prix,\n"
-                "     positionnement marché, et 2-3 conseils de vente concrets.\n\n"
-                "5. NE JAMAIS dire que tu ne peux pas voir ou analyser les images — tu PEUX les voir en haute résolution.\n"
-            )
+            if lang == 'en':
+                vision_instruction = (
+                    "\n\n========================================\n"
+                    "VISION / IMAGE CAPABILITIES\n"
+                    "========================================\n"
+                    "You can SEE and ANALYZE user images.\n\n"
+                    "MANDATORY RULES:\n\n"
+                    "1. PRECISE IDENTIFICATION: identify exact brand and model when possible.\n"
+                    "2. REAL-MARKET PRICING: provide a concrete price range with references and condition adjustments.\n"
+                    "3. BE CONCISE: go straight to identification → pricing → actionable sales advice.\n"
+                    "4. E-COMMERCE FOCUS: if no explicit question, provide market position and 2-3 practical recommendations.\n"
+                    "5. Never claim you cannot analyze the image.\n"
+                )
+            else:
+                vision_instruction = (
+                    "\n\n========================================\n"
+                    "CAPACITÉ VISION / IMAGES\n"
+                    "========================================\n"
+                    "Tu as la capacité de VOIR et ANALYSER les images envoyées par l'utilisateur.\n\n"
+                    "RÈGLES OBLIGATOIRES :\n\n"
+                    "1. IDENTIFICATION PRÉCISE : Tu DOIS identifier la MARQUE EXACTE et le MODÈLE EXACT du produit visible.\n"
+                    "2. PRIX BASÉ SUR LE MARCHÉ RÉEL : donne une fourchette de prix concrète, ajustée à l'état.\n"
+                    "3. SOIS CONCIS : va droit au but (identification → prix → conseils).\n"
+                    "4. ORIENTATION E-COMMERCE : sans question explicite, donne positionnement + 2-3 recommandations actionnables.\n"
+                    "5. Ne dis jamais que tu ne peux pas analyser l'image.\n"
+                )
             system_prompt = system_prompt + vision_instruction
             
             user_content = []
@@ -10817,28 +10845,32 @@ async def chat_with_ai(req: ChatRequest, request: Request):
                 print(f"⚠️ Web search failed (non-blocking): {ws_err}")
         
         if web_search_context:
-            web_search_instruction = (
-                "\n\n========================================\n"
-                "🌐 RÉSULTATS DE RECHERCHE INTERNET (DONNÉES EN TEMPS RÉEL)\n"
-                "========================================\n"
-                "Tu as accès à Internet. Voici les résultats de recherche les plus récents :\n\n"
-                f"{web_search_context}\n\n"
-                "INSTRUCTIONS IMPORTANTES :\n"
-                "- Utilise ces données RÉELLES et RÉCENTES pour répondre à l'utilisateur.\n"
-                "- INCLUS LES LIENS (URLs) dans ta réponse ! Quand tu mentionnes un produit, un site, un article ou une ressource, \n"
-                "  donne le lien COMPLET pour que l'utilisateur puisse cliquer dessus.\n"
-                "- Format des liens dans ta réponse : [Nom du site ou du produit](URL_COMPLÈTE)\n"
-                "- Exemples :\n"
-                "  • 🔗 [Voir sur Amazon](https://www.amazon.ca/dp/...)\n"
-                "  • 🔗 [Article complet sur Shopify Blog](https://www.shopify.com/blog/...)\n"
-                "  • 🛒 [Nike Air Force 1 — 129.99$](https://www.nike.com/...)\n"
-                "- Si les résultats contiennent des liens 🔗, tu DOIS les inclure dans ta réponse.\n"
-                "- Si les résultats contiennent des produits 🛒 avec prix et liens, présente-les dans un format clair.\n"
-                "- Si les résultats parlent de tendances TikTok, Instagram, etc., résume les tendances clés avec les sources.\n"
-                "- Donne des recommandations CONCRÈTES et ACTIONNABLES basées sur ces données.\n"
-                "- Ne dis JAMAIS que tu n'as pas accès à Internet ou aux données en temps réel — TU AS CET ACCÈS.\n"
-                "- Présente les infos de façon structurée avec des émojis et du formatage clair.\n"
-            )
+            if lang == 'en':
+                web_search_instruction = (
+                    "\n\n========================================\n"
+                    "🌐 WEB SEARCH RESULTS (REAL-TIME DATA)\n"
+                    "========================================\n"
+                    "You have internet access. Here are the latest search results:\n\n"
+                    f"{web_search_context}\n\n"
+                    "IMPORTANT INSTRUCTIONS:\n"
+                    "- Use these real and recent data points in your answer.\n"
+                    "- Include clickable URLs when referencing sources/products.\n"
+                    "- Use clear, actionable recommendations with concise structure.\n"
+                    "- Never claim you lack internet access in this context.\n"
+                )
+            else:
+                web_search_instruction = (
+                    "\n\n========================================\n"
+                    "🌐 RÉSULTATS DE RECHERCHE INTERNET (DONNÉES EN TEMPS RÉEL)\n"
+                    "========================================\n"
+                    "Tu as accès à Internet. Voici les résultats de recherche les plus récents :\n\n"
+                    f"{web_search_context}\n\n"
+                    "INSTRUCTIONS IMPORTANTES :\n"
+                    "- Utilise ces données réelles et récentes pour répondre.\n"
+                    "- Inclus des URLs cliquables quand tu cites des sources/produits.\n"
+                    "- Donne des recommandations claires et actionnables.\n"
+                    "- Ne dis jamais que tu n'as pas accès à Internet dans ce contexte.\n"
+                )
             system_prompt = system_prompt + web_search_instruction
             print(f"🌐 Web search context injected ({len(web_search_context)} chars)")
         
