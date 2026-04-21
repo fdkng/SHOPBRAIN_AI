@@ -4159,7 +4159,12 @@ export default function Dashboard() {
       }
     } catch (err) {
       console.error('Error sending invoice:', err)
-      setStatus('invoice', 'error', formatUserFacingError(err, t('errorSendingInvoice')))
+      const invoiceErrMsg = String(err?.message || '')
+      if (/gmail oauth2 refresh failed|invalid_grant|connexion gmail expirée|refresh token invalide/i.test(invoiceErrMsg)) {
+        setStatus('invoice', 'error', t('invoiceEmailAuthExpired'))
+      } else {
+        setStatus('invoice', 'error', formatUserFacingError(err, t('errorSendingInvoice')))
+      }
     } finally {
       setSendingInvoiceFor(null)
     }

@@ -5828,6 +5828,45 @@ async def send_invoice_email_endpoint(request: Request, payload: InvoiceEmailReq
         f"Facture générée par ShopBrain AI"
     )
 
+    def _send_invoice_via_smtp_fallback() -> tuple[bool, str]:
+        smtp_host = os.getenv("SMTP_HOST")
+        smtp_user = os.getenv("SMTP_USER")
+        smtp_pass = os.getenv("SMTP_PASS")
+        smtp_from = os.getenv("SMTP_FROM") or smtp_user
+        smtp_port = int(os.getenv("SMTP_PORT", "587"))
+        smtp_secure = (os.getenv("SMTP_SECURE") or "tls").lower()
+
+        if not all([smtp_host, smtp_user, smtp_pass, smtp_from]):
+            return False, "SMTP fallback not configured"
+
+        try:
+            smtp_msg = email.message.EmailMessage()
+            smtp_msg["From"] = f"ShopBrain AI <{smtp_from}>"
+            smtp_msg["Reply-To"] = smtp_from
+            smtp_msg["To"] = payload.to_email
+            smtp_msg["Subject"] = subject
+            smtp_msg["X-Mailer"] = "ShopBrain AI Invoicing"
+            smtp_msg["Message-ID"] = f"<invoice-{int(datetime.utcnow().timestamp())}@shopbrain.ai>"
+            smtp_msg.set_content(text_body)
+
+            context = ssl.create_default_context()
+            if smtp_secure == "ssl":
+                with smtplib.SMTP_SSL(smtp_host, smtp_port, context=context) as server:
+                    server.login(smtp_user, smtp_pass)
+                    server.send_message(smtp_msg)
+            else:
+                with smtplib.SMTP(smtp_host, smtp_port) as server:
+                    server.ehlo()
+                    if smtp_secure in ("tls", "starttls"):
+                        server.starttls(context=context)
+                        server.ehlo()
+                    server.login(smtp_user, smtp_pass)
+                    server.send_message(smtp_msg)
+
+            return True, ""
+        except Exception as smtp_err:
+            return False, str(smtp_err)
+
     try:
         access_token = _get_gmail_access_token()
 
@@ -5836,7 +5875,6 @@ async def send_invoice_email_endpoint(request: Request, payload: InvoiceEmailReq
         msg["Reply-To"] = GMAIL_SENDER_EMAIL
         msg["To"] = payload.to_email
         msg["Subject"] = subject
-        # Priority headers to help land in inbox
         msg["X-Priority"] = "1"
         msg["X-MSMail-Priority"] = "High"
         msg["Importance"] = "High"
@@ -5855,15 +5893,28 @@ async def send_invoice_email_endpoint(request: Request, payload: InvoiceEmailReq
         if resp.status_code == 200:
             msg_id = resp.json().get("id", "")
             print(f"✅ [INVOICE EMAIL] Facture envoyée à {payload.to_email} (id={msg_id})")
-            return {"success": True, "message": f"Facture envoyée à {payload.to_email}", "gmail_id": msg_id}
-        else:
-            print(f"❌ [INVOICE EMAIL] Erreur {resp.status_code}: {resp.text[:300]}")
-            raise HTTPException(status_code=500, detail=f"Erreur envoi email: {resp.status_code}")
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"❌ [INVOICE EMAIL] Exception: {e}")
-        raise HTTPException(status_code=500, detail=f"Erreur envoi facture: {str(e)}")
+            return {"success": True, "message": f"Facture envoyée à {payload.to_email}", "gmail_id": msg_id, "mode": "gmail_api_oauth2"}
+
+        print(f"❌ [INVOICE EMAIL] Gmail API erreur {resp.status_code}: {resp.text[:300]}")
+        raise RuntimeError(f"Gmail API send failed: {resp.status_code}")
+
+    except Exception as gmail_err:
+        print(f"⚠️ [INVOICE EMAIL] Gmail path failed, trying SMTP fallback: {gmail_err}")
+
+        smtp_ok, smtp_err = _send_invoice_via_smtp_fallback()
+        if smtp_ok:
+            print(f"✅ [INVOICE EMAIL] Facture envoyée à {payload.to_email} via SMTP fallback")
+            return {"success": True, "message": f"Facture envoyée à {payload.to_email}", "mode": "smtp_fallback"}
+
+        err_text = str(gmail_err or "")
+        err_lower = err_text.lower()
+        if "oauth2 refresh failed: 400" in err_lower or "invalid_grant" in err_lower:
+            raise HTTPException(
+                status_code=503,
+                detail="Connexion Gmail expirée côté serveur (refresh token invalide). Reconnectez Gmail ou configurez SMTP."
+            )
+
+        raise HTTPException(status_code=500, detail=f"Erreur envoi facture: {err_text}")
 
 
 @app.get("/api/shopify/analytics")
