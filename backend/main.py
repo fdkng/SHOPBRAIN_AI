@@ -7436,7 +7436,7 @@ async def save_stock_alert_threshold(request: Request):
 
 
 @app.get("/api/shopify/bundles")
-async def get_shopify_bundles(request: Request, range: str = "30d", limit: int = 10):
+async def get_shopify_bundles(request: Request, range: str = "30d", limit: int = 10, language: str = "en"):
     """🧩 Bundles & cross-sell suggestions based on order co-occurrence.
 
     Lightweight alternative to /api/shopify/insights when you only need bundles.
@@ -7446,6 +7446,7 @@ async def get_shopify_bundles(request: Request, range: str = "30d", limit: int =
     ensure_feature_allowed(tier, "cross_sell")
     shop_domain, access_token = _get_shopify_connection(user_id)
 
+    lang = "fr" if (language or "").strip().lower() == "fr" else "en"
     range_map = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}
     days = range_map.get(range, 30)
 
@@ -7527,10 +7528,10 @@ async def get_shopify_bundles(request: Request, range: str = "30d", limit: int =
 
     def _confidence_label(count: int) -> str:
         if count >= 8:
-            return "forte"
+            return "high" if lang == "en" else "forte"
         if count >= 4:
-            return "moyenne"
-        return "faible"
+            return "medium" if lang == "en" else "moyenne"
+        return "low" if lang == "en" else "faible"
 
     suggestions: list[dict] = []
     for (a, b), count in top_pairs:
@@ -7544,18 +7545,18 @@ async def get_shopify_bundles(request: Request, range: str = "30d", limit: int =
             "titles": [left, right],
             "discount_range_pct": [low, high],
             "placements": [
-                "page_produit (bloc: Souvent achetés ensemble)",
-                "panier / drawer (cross-sell avant checkout)",
-                "checkout (si supporté par le thème/app)",
+                "product page (block: Frequently bought together)" if lang == "en" else "page_produit (bloc: Souvent achetés ensemble)",
+                "cart / drawer (cross-sell before checkout)" if lang == "en" else "panier / drawer (cross-sell avant checkout)",
+                "checkout (if supported by theme/app)" if lang == "en" else "checkout (si supporté par le thème/app)",
             ],
             "offer": {
                 "type": "bundle",
                 "name": f"Bundle: {left} + {right}"[:120],
-                "message": f"Ajoute {right} et économise {low}–{high}% sur le pack.",
+                "message": (f"Add {right} and save {low}–{high}% on the bundle." if lang == "en" else f"Ajoute {right} et économise {low}–{high}% sur le pack."),
             },
             "copy": [
-                f"Complète ton achat avec {right}.",
-                f"Le duo le plus fréquent: {left} + {right}.",
+                (f"Complete your purchase with {right}." if lang == "en" else f"Complète ton achat avec {right}."),
+                (f"Most frequent duo: {left} + {right}." if lang == "en" else f"Le duo le plus fréquent: {left} + {right}."),
             ],
         })
 
@@ -7568,12 +7569,13 @@ async def get_shopify_bundles(request: Request, range: str = "30d", limit: int =
     }
 
 
-def _compute_bundles_suggestions(shop_domain: str, access_token: str, days: int, limit: int = 10) -> dict:
+def _compute_bundles_suggestions(shop_domain: str, access_token: str, days: int, limit: int = 10, language: str = "en") -> dict:
     """Compute bundle suggestions (same logic as endpoint) and return result dict.
 
     This function is synchronous and suitable to run in a background thread.
     """
     orders = _fetch_shopify_orders(shop_domain, access_token, days)
+    lang = "fr" if (language or "").strip().lower() == "fr" else "en"
     min_pair_count = max(1, int(os.getenv("BUNDLES_MIN_PAIR_COUNT", "2")))
     pair_counts: dict[tuple[str, str], int] = {}
     orders_with_2plus_items = 0
@@ -7659,10 +7661,10 @@ def _compute_bundles_suggestions(shop_domain: str, access_token: str, days: int,
 
     def _confidence_label(count: int) -> str:
         if count >= 8:
-            return "forte"
+            return "high" if lang == "en" else "forte"
         if count >= 4:
-            return "moyenne"
-        return "faible"
+            return "medium" if lang == "en" else "moyenne"
+        return "low" if lang == "en" else "faible"
 
     suggestions: list[dict] = []
     for (a, b), count in top_pairs:
@@ -7676,40 +7678,40 @@ def _compute_bundles_suggestions(shop_domain: str, access_token: str, days: int,
             "titles": [left, right],
             "discount_range_pct": [low, high],
             "placements": [
-                "page_produit (bloc: Souvent achetés ensemble)",
-                "panier / drawer (cross-sell avant checkout)",
-                "checkout (si supporté par le thème/app)",
+                "product page (block: Frequently bought together)" if lang == "en" else "page_produit (bloc: Souvent achetés ensemble)",
+                "cart / drawer (cross-sell before checkout)" if lang == "en" else "panier / drawer (cross-sell avant checkout)",
+                "checkout (if supported by theme/app)" if lang == "en" else "checkout (si supporté par le thème/app)",
             ],
             "offer": {
                 "type": "bundle",
                 "name": f"Bundle: {left} + {right}"[:120],
-                "message": f"Ajoute {right} et économise {low}–{high}% sur le pack.",
+                "message": (f"Add {right} and save {low}–{high}% on the bundle." if lang == "en" else f"Ajoute {right} et économise {low}–{high}% sur le pack."),
             },
             "copy": [
-                f"Complète ton achat avec {right}.",
-                f"Le duo le plus fréquent: {left} + {right}.",
+                (f"Complete your purchase with {right}." if lang == "en" else f"Complète ton achat avec {right}."),
+                (f"Most frequent duo: {left} + {right}." if lang == "en" else f"Le duo le plus fréquent: {left} + {right}."),
             ],
         })
 
     no_result_reason = None
     recommendations: list[str] = []
     if not orders:
-        no_result_reason = "Aucune commande trouvée sur la période sélectionnée."
+        no_result_reason = "No orders found in the selected period." if lang == "en" else "Aucune commande trouvée sur la période sélectionnée."
         recommendations = [
-            "Essayez la période 90j ou 365j.",
-            "Vérifiez que la boutique a des commandes payées.",
+            "Try 90d or 365d range." if lang == "en" else "Essayez la période 90j ou 365j.",
+            "Verify the store has paid orders." if lang == "en" else "Vérifiez que la boutique a des commandes payées.",
         ]
     elif orders_with_2plus_items == 0:
-        no_result_reason = "Les commandes ont surtout un seul article, impossible de détecter des paires."
+        no_result_reason = "Orders mostly contain a single item; pair detection is not possible yet." if lang == "en" else "Les commandes ont surtout un seul article, impossible de détecter des paires."
         recommendations = [
-            "Créer des offres multi-articles pour générer des co-achats.",
-            "Ajouter des upsells dans le panier pour augmenter les paniers à 2+ articles.",
+            "Create multi-item offers to generate co-purchases." if lang == "en" else "Créer des offres multi-articles pour générer des co-achats.",
+            "Add cart upsells to increase 2+ item carts." if lang == "en" else "Ajouter des upsells dans le panier pour augmenter les paniers à 2+ articles.",
         ]
     elif not top_pairs:
-        no_result_reason = f"Des co-achats existent, mais aucun n'atteint le seuil minimum ({min_pair_count})."
+        no_result_reason = (f"Co-purchases exist, but none reaches the minimum threshold ({min_pair_count})." if lang == "en" else f"Des co-achats existent, mais aucun n'atteint le seuil minimum ({min_pair_count}).")
         recommendations = [
-            "Réduire temporairement le seuil via BUNDLES_MIN_PAIR_COUNT=1.",
-            "Attendre plus de volume de commandes pour fiabiliser les recommandations.",
+            "Temporarily reduce threshold with BUNDLES_MIN_PAIR_COUNT=1." if lang == "en" else "Réduire temporairement le seuil via BUNDLES_MIN_PAIR_COUNT=1.",
+            "Wait for more order volume to improve recommendation confidence." if lang == "en" else "Attendre plus de volume de commandes pour fiabiliser les recommandations.",
         ]
 
     diagnostics = {
@@ -7731,7 +7733,7 @@ def _compute_bundles_suggestions(shop_domain: str, access_token: str, days: int,
     }
 
 
-def _run_bundles_worker(job_id: str, shop_domain: str, access_token: str, days: int, limit: int):
+def _run_bundles_worker(job_id: str, shop_domain: str, access_token: str, days: int, limit: int, language: str = "en"):
     try:
         with _BUNDLES_LOCK:
             _BUNDLES_JOBS[job_id]["status"] = "running"
@@ -7739,7 +7741,7 @@ def _run_bundles_worker(job_id: str, shop_domain: str, access_token: str, days: 
             _BUNDLES_JOBS[job_id]["shop_domain"] = shop_domain
             _BUNDLES_JOBS[job_id]["days"] = int(days)
             _BUNDLES_JOBS[job_id]["limit"] = int(limit)
-        result = _compute_bundles_suggestions(shop_domain, access_token, days, limit)
+        result = _compute_bundles_suggestions(shop_domain, access_token, days, limit, language)
         with _BUNDLES_LOCK:
             _BUNDLES_JOBS[job_id]["status"] = "completed"
             _BUNDLES_JOBS[job_id]["finished_at"] = time.time()
@@ -7787,12 +7789,13 @@ def _run_bundles_worker(job_id: str, shop_domain: str, access_token: str, days: 
 
 
 @app.post("/api/shopify/bundles/async")
-async def start_shopify_bundles_job(request: Request, range: str = "30d", limit: int = 10):
+async def start_shopify_bundles_job(request: Request, range: str = "30d", limit: int = 10, language: str = "en"):
     user_id = get_user_id(request)
     tier = get_user_tier(user_id)
     ensure_feature_allowed(tier, "cross_sell")
     shop_domain, access_token = _get_shopify_connection(user_id)
 
+    lang = "fr" if (language or "").strip().lower() == "fr" else "en"
     range_map = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}
     days = range_map.get(range, 30)
 
@@ -7806,9 +7809,10 @@ async def start_shopify_bundles_job(request: Request, range: str = "30d", limit:
             "shop_domain": shop_domain,
             "days": int(days),
             "limit": int(limit or 10),
+            "language": lang,
         }
 
-    thread = threading.Thread(target=_run_bundles_worker, args=(job_id, shop_domain, access_token, days, int(limit or 10)), daemon=True)
+    thread = threading.Thread(target=_run_bundles_worker, args=(job_id, shop_domain, access_token, days, int(limit or 10), lang), daemon=True)
     thread.start()
 
     return {

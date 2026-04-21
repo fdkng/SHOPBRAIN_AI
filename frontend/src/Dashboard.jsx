@@ -3381,7 +3381,7 @@ export default function Dashboard() {
       await waitForBackendReady({ retries: 14, retryDelayMs: 4000, timeoutMs: 30000 })
       await warmupBackend(session.access_token)
       // Lancer le job async
-      const resp = await fetch(`${API_URL}/api/shopify/bundles/async?range=${encodeURIComponent(analyticsRange)}&limit=10`, {
+      const resp = await fetch(`${API_URL}/api/shopify/bundles/async?range=${encodeURIComponent(analyticsRange)}&limit=10&language=${encodeURIComponent(language)}`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
@@ -3476,7 +3476,7 @@ export default function Dashboard() {
       if (!session) throw new Error(t('sessionExpiredReconnect'))
       await waitForBackendReady({ retries: 14, retryDelayMs: 4000, timeoutMs: 30000 })
       await warmupBackend(session.access_token)
-      const resp = await fetch(`${API_URL}/api/shopify/bundles/list`, {
+      const resp = await fetch(`${API_URL}/api/shopify/bundles/list?language=${encodeURIComponent(language)}`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${session.access_token}`
@@ -6420,12 +6420,12 @@ analytics.subscribe("product_added_to_cart", (event) => {
               </div>
             </div>
             {bundlesJobStatus !== 'idle' && (
-              <p className="text-xs text-[#6A6A85]">État job: {bundlesJobStatus}</p>
+              <p className="text-xs text-[#6A6A85]">{t('jobStatusLabel')}: {bundlesJobStatus}</p>
             )}
             {renderStatus('action-bundles')}
             {bundlesDiagnostics && (
               <div className="bg-[#F7F8FA]/60 border border-[#E8E8EE] rounded-lg p-4 text-sm">
-                <div className="text-[#1A1A2E] font-semibold mb-1">Diagnostic analyse</div>
+                <div className="text-[#1A1A2E] font-semibold mb-1">{t('analysisDiagnostics')}</div>
                 <div className="text-[#4A4A68]">
                   {bundlesDiagnostics.orders_scanned || 0} {t('ordersScanned')} • {bundlesDiagnostics.orders_with_2plus_items || 0} {t('multiItemOrders')} • {bundlesDiagnostics.pairs_found || 0} {t('pairsFound')}
                 </div>
@@ -6449,15 +6449,15 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           {item.titles?.[0] || `#${item.pair?.[0] || 'A'}`} + {item.titles?.[1] || `#${item.pair?.[1] || 'B'}`}
                         </p>
                         <p className="text-xs text-[#8A8AA3]">
-                          {item.count || 0} commandes
-                          {item.confidence ? ` • confiance ${item.confidence}` : ''}
-                          {Array.isArray(item.discount_range_pct) && item.discount_range_pct.length >= 2 ? ` • remise ${item.discount_range_pct[0]}–${item.discount_range_pct[1]}%` : ''}
+                          {item.count || 0} {t('orders')?.toLowerCase() || 'orders'}
+                          {item.confidence ? ` • ${t('confidenceLabel')} ${item.confidence}` : ''}
+                          {Array.isArray(item.discount_range_pct) && item.discount_range_pct.length >= 2 ? ` • ${t('discountLabel')} ${item.discount_range_pct[0]}–${item.discount_range_pct[1]}%` : ''}
                         </p>
                       </div>
 
                       {item.offer?.message ? (
                         <div className="text-sm text-[#4A4A68]">
-                          <div className="text-[#1A1A2E] font-semibold">Offre</div>
+                          <div className="text-[#1A1A2E] font-semibold">{t('offer')}</div>
                           <div className="text-[#4A4A68]">{item.offer.message}</div>
                         </div>
                       ) : null}
@@ -6471,7 +6471,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                       {Array.isArray(item.copy) && item.copy.length > 0 ? (
                         <div className="text-sm text-[#4A4A68]">
-                          <div className="text-[#1A1A2E] font-semibold">Copy (exemples)</div>
+                          <div className="text-[#1A1A2E] font-semibold">{t('copyExamples')}</div>
                           <div className="text-[#6A6A85]">{item.copy.slice(0, 2).join(' · ')}</div>
                         </div>
                       ) : null}
