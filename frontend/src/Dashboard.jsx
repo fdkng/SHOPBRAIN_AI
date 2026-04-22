@@ -265,6 +265,10 @@ export default function Dashboard() {
   const [analyticsData, setAnalyticsData] = useState(null)
   const [analyticsLoading, setAnalyticsLoading] = useState(false)
   const [analyticsError, setAnalyticsError] = useState('')
+  const analyticsCacheRef = useRef(new Map())
+  const analyticsInFlightRef = useRef(new Set())
+  const ANALYTICS_CACHE_TTL_MS = 60_000
+  const ANALYTICS_POLL_MS = 10_000
   const [insightsData, setInsightsData] = useState(null)
   const [insightsLoading, setInsightsLoading] = useState(false)
   const [insightsError, setInsightsError] = useState('')
@@ -3031,15 +3035,81 @@ export default function Dashboard() {
     }
   }
 
-  const loadAnalytics = async (rangeOverride) => {
+  const buildAnalyticsCacheKey = (rangeValue) => {
+    const uid = user?.id || 'anon'
+    const shop = shopifyUrl || 'no-shop'
+    return `${uid}::${shop}::${rangeValue}`
+  }
+
+  const readAnalyticsCache = (cacheKey) => {
+    const memoryHit = analyticsCacheRef.current.get(cacheKey)
+    if (memoryHit && (Date.now() - (memoryHit.ts || 0) < ANALYTICS_CACHE_TTL_MS)) {
+      return memoryHit
+    }
+    if (typeof window === 'undefined') return null
+    try {
+      const raw = localStorage.getItem(`analyticsCache:${cacheKey}`)
+      if (!raw) return null
+      const parsed = JSON.parse(raw)
+      if (!parsed?.data || !parsed?.ts) return null
+      if (Date.now() - parsed.ts > ANALYTICS_CACHE_TTL_MS) return null
+      analyticsCacheRef.current.set(cacheKey, parsed)
+      return parsed
+    } catch {
+      return null
+    }
+  }
+
+  const writeAnalyticsCache = (cacheKey, payload) => {
+    const entry = { data: payload, ts: Date.now() }
+    analyticsCacheRef.current.set(cacheKey, entry)
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(`analyticsCache:${cacheKey}`, JSON.stringify(entry))
+      } catch {
+      }
+    }
+  }
+
+  const loadAnalytics = async (rangeOverride, opts = {}) => {
     try {
       const rangeValue = rangeOverride || analyticsRange
-      setAnalyticsLoading(true)
+      const options = {
+        silent: false,
+        force: false,
+        useCache: true,
+        ...opts
+      }
+      const cacheKey = buildAnalyticsCacheKey(rangeValue)
+      const hasVisibleData = !!(analyticsData?.totals)
+
+      if (options.useCache) {
+        const cached = readAnalyticsCache(cacheKey)
+        if (cached?.data) {
+          setAnalyticsData(cached.data)
+          if (!options.force && !options.silent) {
+            setAnalyticsLoading(false)
+          }
+          if (!options.force) {
+            return cached.data
+          }
+        }
+      }
+
+      if (!options.silent && !hasVisibleData) {
+        setAnalyticsLoading(true)
+      }
       setAnalyticsError('')
+
+      if (analyticsInFlightRef.current.has(cacheKey)) {
+        return
+      }
+      analyticsInFlightRef.current.add(cacheKey)
       const session = await getCachedSession()
 
       if (!session) {
         setAnalyticsError(t('sessionExpiredReconnect'))
+        analyticsInFlightRef.current.delete(cacheKey)
         return
       }
 
@@ -3057,7 +3127,17 @@ export default function Dashboard() {
 
       const data = await response.json()
       if (data.success) {
-        setAnalyticsData(data)
+        writeAnalyticsCache(cacheKey, data)
+        setAnalyticsData((prev) => {
+          if (!prev) return data
+          try {
+            const prevStr = JSON.stringify(prev)
+            const nextStr = JSON.stringify(data)
+            return prevStr === nextStr ? prev : data
+          } catch {
+            return data
+          }
+        })
       } else {
         setAnalyticsError(t('analyticsUnavailable'))
       }
@@ -3065,7 +3145,12 @@ export default function Dashboard() {
       console.error('Error loading analytics:', err)
       setAnalyticsError(formatUserFacingError(err, t('errorAnalytics')))
     } finally {
-      setAnalyticsLoading(false)
+      const rangeValue = rangeOverride || analyticsRange
+      const cacheKey = buildAnalyticsCacheKey(rangeValue)
+      analyticsInFlightRef.current.delete(cacheKey)
+      if (!opts?.silent) {
+        setAnalyticsLoading(false)
+      }
     }
   }
 
@@ -4278,10 +4363,10 @@ export default function Dashboard() {
   useEffect(() => {
     // ⚡ Re-fetch analytics when range changes or tab becomes active
     if (activeTab === 'overview') {
-      loadAnalytics(analyticsRange)
+      loadAnalytics(analyticsRange, { silent: !!analyticsData, useCache: true })
     }
     if (activeTab === 'underperforming') {
-      loadAnalytics(analyticsRange)
+      loadAnalytics(analyticsRange, { silent: !!analyticsData, useCache: true })
       if (!underperformingData) loadUnderperforming(analyticsRange)
     }
     if (activeTab === 'action-blockers') {
@@ -4289,6 +4374,22 @@ export default function Dashboard() {
       if (!pixelStatus) loadPixelStatus()
     }
   }, [activeTab, analyticsRange])
+
+  useEffect(() => {
+    if (activeTab !== 'overview') return
+    let stopped = false
+
+    const poll = async () => {
+      if (stopped) return
+      await loadAnalytics(analyticsRange, { silent: true, force: true, useCache: true })
+    }
+
+    const intervalId = window.setInterval(poll, ANALYTICS_POLL_MS)
+    return () => {
+      stopped = true
+      window.clearInterval(intervalId)
+    }
+  }, [activeTab, analyticsRange, shopifyUrl, user?.id])
 
   useEffect(() => {
     if (activeTab === 'invoices' && customers.length === 0) {
