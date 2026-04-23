@@ -128,6 +128,16 @@ export default function Dashboard() {
   const [showPlanMenu, setShowPlanMenu] = useState(false)
   const [showProfileMenu, setShowProfileMenu] = useState(false)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
+  const [isMobileView, setIsMobileView] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return window.matchMedia('(max-width: 767px)').matches
+  })
+  const [showMobileExperiencePopup, setShowMobileExperiencePopup] = useState(() => {
+    if (typeof window === 'undefined') return false
+    const hasDismissed = localStorage.getItem('mobileExperiencePopupDismissed') === 'true'
+    const isMobile = window.matchMedia('(max-width: 767px)').matches
+    return isMobile && !hasDismissed
+  })
   const [showSettingsModal, setShowSettingsModal] = useState(false)
   const [settingsTab, setSettingsTab] = useState(() => {
     if (typeof window === 'undefined') return 'profile'
@@ -209,6 +219,7 @@ export default function Dashboard() {
   const chatEndRef = useRef(null)
   const [showChatPanel, setShowChatPanel] = useState(false)
   const [chatExpanded, setChatExpanded] = useState(false)
+  const hasLoadedRemoteConversationsRef = useRef(false)
   const [chatConversations, setChatConversations] = useState(() => {
     if (typeof window === 'undefined') return []
     try {
@@ -268,7 +279,7 @@ export default function Dashboard() {
   const analyticsCacheRef = useRef(new Map())
   const analyticsInFlightRef = useRef(new Set())
   const ANALYTICS_CACHE_TTL_MS = 60_000
-  const ANALYTICS_POLL_MS = 10_000
+  const ANALYTICS_POLL_MS = isMobileView ? 20_000 : 10_000
   const [insightsData, setInsightsData] = useState(null)
   const [insightsLoading, setInsightsLoading] = useState(false)
   const [insightsError, setInsightsError] = useState('')
@@ -1277,6 +1288,33 @@ export default function Dashboard() {
   }, [showChatPanel])
 
   useEffect(() => {
+    if (typeof window === 'undefined') return
+    const mediaQuery = window.matchMedia('(max-width: 767px)')
+    const onChange = (event) => {
+      setIsMobileView(event.matches)
+      if (!event.matches) {
+        setShowMobileExperiencePopup(false)
+      } else {
+        const hasDismissed = localStorage.getItem('mobileExperiencePopupDismissed') === 'true'
+        if (!hasDismissed) setShowMobileExperiencePopup(true)
+      }
+    }
+    setIsMobileView(mediaQuery.matches)
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener('change', onChange)
+      return () => mediaQuery.removeEventListener('change', onChange)
+    }
+    mediaQuery.addListener(onChange)
+    return () => mediaQuery.removeListener(onChange)
+  }, [])
+
+  useEffect(() => {
+    if (!showChatPanel || hasLoadedRemoteConversationsRef.current) return
+    hasLoadedRemoteConversationsRef.current = true
+    loadConversationsFromServer()
+  }, [showChatPanel, loadConversationsFromServer])
+
+  useEffect(() => {
     if (typeof window !== 'undefined' && profile) {
       localStorage.setItem('profileCache', JSON.stringify(profile))
     }
@@ -1337,8 +1375,9 @@ export default function Dashboard() {
 
   // ⚡ Warmup: ping backend immediately so cold start happens in parallel
   useEffect(() => {
+    if (isMobileView) return
     fetch(`${API_URL}/health`, { signal: AbortSignal.timeout(120000) }).catch(() => {})
-  }, [])
+  }, [isMobileView])
 
   // Safety valve: if loading screen persists for 8s, fall through to dashboard
   useEffect(() => {
@@ -1478,9 +1517,6 @@ export default function Dashboard() {
 
         setLoading(false)
 
-        // ⚡ Load conversation history from Supabase in background
-        loadConversationsFromServer()
-
         // Subscription — trust the backend (Stripe-verified), never override locally
         const subData = normalizeSubscription(initData.subscription || {})
         
@@ -1495,11 +1531,17 @@ export default function Dashboard() {
           initRetryRef.current = 0
           clearBackgroundInitRetry()
           console.log(`⚡ Subscription: ${subData.plan} — loading products + analytics in parallel...`)
-          // Load products and analytics IN PARALLEL
-          Promise.all([
-            loadProducts(),
+          if (isMobileView) {
             loadAnalytics(analyticsRange)
-          ])
+            setTimeout(() => {
+              loadProducts()
+            }, 600)
+          } else {
+            Promise.all([
+              loadProducts(),
+              loadAnalytics(analyticsRange)
+            ])
+          }
           return subData
         } else {
           const cachedSub = readStoredSubscription()
@@ -1581,7 +1623,14 @@ export default function Dashboard() {
           setSubscriptionMissing(false)
           initRetryRef.current = 0
           clearBackgroundInitRetry()
-          Promise.all([loadProducts(), loadAnalytics(analyticsRange)])
+          if (isMobileView) {
+            loadAnalytics(analyticsRange)
+            setTimeout(() => {
+              loadProducts()
+            }, 600)
+          } else {
+            Promise.all([loadProducts(), loadAnalytics(analyticsRange)])
+          }
           return normalizedSub
         } else {
           const cachedSub = readStoredSubscription()
@@ -2263,7 +2312,7 @@ export default function Dashboard() {
       setChatInput('')
       // Shrink textarea back to default
       setChatTextareaFocused(false)
-      if (chatTextareaRef.current) chatTextareaRef.current.style.height = '44px'
+      if (chatTextareaRef.current) chatTextareaRef.current.style.height = '48px'
       
       // Auto-create conversation on first message
       let isNewConversation = false
@@ -4380,7 +4429,7 @@ export default function Dashboard() {
     let stopped = false
 
     const poll = async () => {
-      if (stopped) return
+      if (stopped || document.hidden) return
       await loadAnalytics(analyticsRange, { silent: true, force: true, useCache: true })
     }
 
@@ -4389,7 +4438,7 @@ export default function Dashboard() {
       stopped = true
       window.clearInterval(intervalId)
     }
-  }, [activeTab, analyticsRange, shopifyUrl, user?.id])
+  }, [activeTab, analyticsRange, shopifyUrl, user?.id, ANALYTICS_POLL_MS])
 
   useEffect(() => {
     if (activeTab === 'invoices' && customers.length === 0) {
@@ -4442,12 +4491,22 @@ export default function Dashboard() {
     }
 
     checkShopifyConnection()
-    intervalId = window.setInterval(checkShopifyConnection, 10 * 60 * 1000)  // ⚡ Every 10 min instead of 5
+    intervalId = window.setInterval(
+      checkShopifyConnection,
+      isMobileView ? 15 * 60 * 1000 : 10 * 60 * 1000
+    )
 
     return () => {
       if (intervalId) window.clearInterval(intervalId)
     }
-  }, [user, shopList.length, shopifyUrl])
+  }, [user, shopList.length, shopifyUrl, isMobileView])
+
+  const dismissMobileExperiencePopup = () => {
+    setShowMobileExperiencePopup(false)
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('mobileExperiencePopupDismissed', 'true')
+    }
+  }
 
   const analyzeProducts = async () => {
     if (!products || products.length === 0) {
@@ -4676,7 +4735,29 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F7F8FA]">
+    <div className="min-h-screen bg-[#F7F8FA] overflow-x-hidden w-full max-w-full">
+      {showMobileExperiencePopup && isMobileView && (
+        <div className="fixed inset-0 z-[70] bg-black/35 backdrop-blur-[2px] flex items-center justify-center px-4">
+          <div className="w-full max-w-sm bg-white rounded-2xl border border-[#E8E8EE] shadow-2xl p-5 relative animate-scaleIn">
+            <button
+              onClick={dismissMobileExperiencePopup}
+              className="absolute top-3 right-3 w-8 h-8 rounded-full text-[#8A8AA3] hover:text-[#1A1A2E] hover:bg-[#F7F8FA] transition"
+              aria-label={t('close')}
+            >
+              ✕
+            </button>
+            <p className="text-[11px] font-semibold tracking-[0.12em] text-[#8A8AA3] uppercase mb-2">ShopBrain</p>
+            <h3 className="text-[#1A1A2E] text-lg font-semibold leading-snug mb-2">{t('mobileExperienceTitle')}</h3>
+            <p className="text-sm text-[#4A4A68] leading-relaxed mb-5">{t('mobileExperienceMessage')}</p>
+            <button
+              onClick={dismissMobileExperiencePopup}
+              className="w-full bg-[#1A1A2E] hover:bg-[#2A2A42] text-white text-sm font-medium rounded-xl py-3 transition"
+            >
+              {t('continueOnMobile')}
+            </button>
+          </div>
+        </div>
+      )}
       {/* Mobile header with hamburger */}
       <div className="md:hidden flex items-center justify-between bg-white border-b border-[#E8E8EE] px-4 py-3 sticky top-0 z-40">
         <button onClick={() => setMobileSidebarOpen(true)} className="text-[#1A1A2E] p-1">
@@ -4691,7 +4772,7 @@ export default function Dashboard() {
         <div className="fixed inset-0 bg-black/30 z-50 md:hidden" onClick={() => setMobileSidebarOpen(false)} />
       )}
 
-      <div className="flex h-screen overflow-hidden">
+      <div className="flex h-screen overflow-hidden w-full max-w-full">
         <aside className={`${
           mobileSidebarOpen ? 'fixed inset-y-0 left-0 z-50' : 'hidden'
         } md:sticky md:top-0 md:flex md:h-screen w-64 bg-white border-r border-[#E8E8EE] p-4 flex flex-col gap-4 overflow-y-auto shrink-0`}>
@@ -4829,7 +4910,7 @@ export default function Dashboard() {
           </nav>
         </aside>
 
-        <main className="flex-1 overflow-y-auto">
+        <main className="flex-1 overflow-y-auto overflow-x-hidden w-full max-w-full">
           <div className="min-h-full">
 
       {/* Plan Change Menu — with confirmation step */}
@@ -8224,7 +8305,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     </div>
                   )}
 
-                  <div className={`flex items-end gap-2 bg-[#F7F8FA] border border-[#E8E8EE] rounded-xl px-3 py-2 transition-colors ${
+                  <div className={`flex items-end gap-2 bg-[#F7F8FA] border border-[#E8E8EE] rounded-xl px-3 md:px-4 py-2.5 min-h-[56px] transition-colors ${
                     voiceDictationMode ? 'border-[#E8E8EE]/50' : 'focus-within:border-[#FF6B35]/40'
                   }`}>
                     {/* Left buttons: + (always visible) */}
@@ -8305,7 +8386,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         onBlur={() => {
                           if (!chatInput.trim()) {
                             setChatTextareaFocused(false)
-                            if (chatTextareaRef.current) chatTextareaRef.current.style.height = '44px'
+                            if (chatTextareaRef.current) chatTextareaRef.current.style.height = '48px'
                           }
                         }}
                         onKeyDown={(e) => {
@@ -8316,8 +8397,8 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         }}
                         disabled={chatLoading}
                         rows={1}
-                        className="flex-1 resize-none bg-transparent text-[#2A2A42] text-sm placeholder:text-gray-600 outline-none py-2 overflow-y-auto"
-                        style={{ minHeight: '44px', maxHeight: '168px', height: chatTextareaFocused ? undefined : '44px' }}
+                        className="flex-1 resize-none bg-transparent text-[#2A2A42] text-sm leading-6 placeholder:text-gray-600 outline-none py-2.5 pr-1 overflow-y-auto"
+                        style={{ minHeight: '48px', maxHeight: '168px', height: chatTextareaFocused ? undefined : '48px' }}
                         onInput={(e) => {
                           e.target.style.height = 'auto'
                           e.target.style.height = Math.min(e.target.scrollHeight, 168) + 'px'
