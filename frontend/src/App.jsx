@@ -99,6 +99,16 @@ export default function App() {
   })
   const [authMessage, setAuthMessage] = useState('')
   const [scrolled, setScrolled] = useState(false)
+  const [isMobileView, setIsMobileView] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return window.matchMedia('(max-width: 767px)').matches
+  })
+  const [showMobileExperiencePopup, setShowMobileExperiencePopup] = useState(() => {
+    if (typeof window === 'undefined') return false
+    const isMobile = window.matchMedia('(max-width: 767px)').matches
+    const dismissed = localStorage.getItem('landingMobileExperiencePopupDismissed') === 'true'
+    return isMobile && !dismissed
+  })
   const [currentView, setCurrentView] = useState('landing')
   const [user, setUser] = useState(null)
   const [hasSubscription, setHasSubscription] = useState(false)
@@ -179,6 +189,47 @@ export default function App() {
       authListener?.subscription?.unsubscribe()
     }
   }, []) // ← empty deps: runs once on mount only
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const mediaQuery = window.matchMedia('(max-width: 767px)')
+
+    const onChange = (event) => {
+      setIsMobileView(event.matches)
+      if (!event.matches) {
+        setShowMobileExperiencePopup(false)
+        return
+      }
+      const dismissed = localStorage.getItem('landingMobileExperiencePopupDismissed') === 'true'
+      if (!dismissed && currentView === 'landing') {
+        setShowMobileExperiencePopup(true)
+      }
+    }
+
+    setIsMobileView(mediaQuery.matches)
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener('change', onChange)
+      return () => mediaQuery.removeEventListener('change', onChange)
+    }
+    mediaQuery.addListener(onChange)
+    return () => mediaQuery.removeListener(onChange)
+  }, [currentView])
+
+  useEffect(() => {
+    if (!isMobileView || currentView !== 'landing') {
+      setShowMobileExperiencePopup(false)
+      return
+    }
+    const dismissed = localStorage.getItem('landingMobileExperiencePopupDismissed') === 'true'
+    setShowMobileExperiencePopup(!dismissed)
+  }, [isMobileView, currentView])
+
+  const dismissLandingMobilePopup = () => {
+    setShowMobileExperiencePopup(false)
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('landingMobileExperiencePopupDismissed', 'true')
+    }
+  }
 
   // Prefetch dashboard chunk shortly after auth/subscription is ready
   useEffect(() => {
@@ -591,6 +642,28 @@ export default function App() {
   // Otherwise show landing page
   return (
     <div className="min-h-screen bg-white">
+      {showMobileExperiencePopup && !showAuthModal && (
+        <div className="fixed inset-0 z-[70] bg-black/35 backdrop-blur-[2px] flex items-center justify-center px-4">
+          <div className="w-full max-w-sm bg-white rounded-2xl border border-[#E8E8EE] shadow-2xl p-5 relative animate-scaleIn">
+            <button
+              onClick={dismissLandingMobilePopup}
+              className="absolute top-3 right-3 w-8 h-8 rounded-full text-[#8A8AA3] hover:text-[#1A1A2E] hover:bg-[#F7F8FA] transition"
+              aria-label={t('close')}
+            >
+              ✕
+            </button>
+            <p className="text-[11px] font-semibold tracking-[0.12em] text-[#8A8AA3] uppercase mb-2">ShopBrain</p>
+            <h3 className="text-[#1A1A2E] text-lg font-semibold leading-snug mb-2">{t('mobileExperienceTitle')}</h3>
+            <p className="text-sm text-[#4A4A68] leading-relaxed mb-5">{t('mobileExperienceMessage')}</p>
+            <button
+              onClick={dismissLandingMobilePopup}
+              className="w-full bg-[#1A1A2E] hover:bg-[#2A2A42] text-white text-sm font-medium rounded-xl py-3 transition"
+            >
+              {t('continueOnMobile')}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ═══════════════════ NAVIGATION ═══════════════════ */}
       <nav className={`fixed top-0 w-full z-50 transition-all duration-300 ${

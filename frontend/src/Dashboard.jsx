@@ -132,12 +132,6 @@ export default function Dashboard() {
     if (typeof window === 'undefined') return false
     return window.matchMedia('(max-width: 767px)').matches
   })
-  const [showMobileExperiencePopup, setShowMobileExperiencePopup] = useState(() => {
-    if (typeof window === 'undefined') return false
-    const hasDismissed = localStorage.getItem('mobileExperiencePopupDismissed') === 'true'
-    const isMobile = window.matchMedia('(max-width: 767px)').matches
-    return isMobile && !hasDismissed
-  })
   const [showSettingsModal, setShowSettingsModal] = useState(false)
   const [settingsTab, setSettingsTab] = useState(() => {
     if (typeof window === 'undefined') return 'profile'
@@ -1292,12 +1286,6 @@ export default function Dashboard() {
     const mediaQuery = window.matchMedia('(max-width: 767px)')
     const onChange = (event) => {
       setIsMobileView(event.matches)
-      if (!event.matches) {
-        setShowMobileExperiencePopup(false)
-      } else {
-        const hasDismissed = localStorage.getItem('mobileExperiencePopupDismissed') === 'true'
-        if (!hasDismissed) setShowMobileExperiencePopup(true)
-      }
     }
     setIsMobileView(mediaQuery.matches)
     if (mediaQuery.addEventListener) {
@@ -4501,13 +4489,6 @@ export default function Dashboard() {
     }
   }, [user, shopList.length, shopifyUrl, isMobileView])
 
-  const dismissMobileExperiencePopup = () => {
-    setShowMobileExperiencePopup(false)
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('mobileExperiencePopupDismissed', 'true')
-    }
-  }
-
   const analyzeProducts = async () => {
     if (!products || products.length === 0) {
       setStatus('analyze', 'warning', t('loadProductsFirst'))
@@ -4736,28 +4717,6 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-[#F7F8FA] overflow-x-hidden w-full max-w-full">
-      {showMobileExperiencePopup && isMobileView && (
-        <div className="fixed inset-0 z-[70] bg-black/35 backdrop-blur-[2px] flex items-center justify-center px-4">
-          <div className="w-full max-w-sm bg-white rounded-2xl border border-[#E8E8EE] shadow-2xl p-5 relative animate-scaleIn">
-            <button
-              onClick={dismissMobileExperiencePopup}
-              className="absolute top-3 right-3 w-8 h-8 rounded-full text-[#8A8AA3] hover:text-[#1A1A2E] hover:bg-[#F7F8FA] transition"
-              aria-label={t('close')}
-            >
-              ✕
-            </button>
-            <p className="text-[11px] font-semibold tracking-[0.12em] text-[#8A8AA3] uppercase mb-2">ShopBrain</p>
-            <h3 className="text-[#1A1A2E] text-lg font-semibold leading-snug mb-2">{t('mobileExperienceTitle')}</h3>
-            <p className="text-sm text-[#4A4A68] leading-relaxed mb-5">{t('mobileExperienceMessage')}</p>
-            <button
-              onClick={dismissMobileExperiencePopup}
-              className="w-full bg-[#1A1A2E] hover:bg-[#2A2A42] text-white text-sm font-medium rounded-xl py-3 transition"
-            >
-              {t('continueOnMobile')}
-            </button>
-          </div>
-        </div>
-      )}
       {/* Mobile header with hamburger */}
       <div className="md:hidden flex items-center justify-between bg-white border-b border-[#E8E8EE] px-4 py-3 sticky top-0 z-40">
         <button onClick={() => setMobileSidebarOpen(true)} className="text-[#1A1A2E] p-1">
