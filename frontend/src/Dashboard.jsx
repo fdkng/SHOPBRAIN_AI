@@ -1125,6 +1125,14 @@ export default function Dashboard() {
   }, [activeTab])
 
   useEffect(() => {
+    if (typeof window === 'undefined') return
+    const pendingTab = localStorage.getItem('dashboardRouteTab')
+    if (!pendingTab) return
+    setActiveTab(pendingTab)
+    localStorage.removeItem('dashboardRouteTab')
+  }, [])
+
+  useEffect(() => {
     if (typeof window !== 'undefined') {
       localStorage.setItem('settingsTab', settingsTab)
     }
@@ -4992,6 +5000,40 @@ export default function Dashboard() {
             {error}
           </div>
         )}
+
+        <div className="bg-white border border-[#E8E8EE] rounded-2xl p-4 md:p-5 mb-6 shadow-sm flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.14em] text-[#8A8AA3] font-semibold mb-2">TRUTH</p>
+            <h2 className="text-xl md:text-2xl font-semibold text-[#1A1A2E]">{t('truthTitle')}</h2>
+            <p className="text-sm text-[#6A6A85] mt-1 max-w-2xl">{t('truthDashboardCta')}</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => setActiveTab('overview')}
+              className="px-4 py-2 rounded-full border border-[#E8E8EE] text-sm font-medium text-[#1A1A2E] hover:bg-[#F7F8FA]"
+            >
+              {t('truthNavDashboard')}
+            </button>
+            <button
+              onClick={() => setActiveTab('underperforming')}
+              className="px-4 py-2 rounded-full border border-[#E8E8EE] text-sm font-medium text-[#1A1A2E] hover:bg-[#F7F8FA]"
+            >
+              {t('truthNavProducts')}
+            </button>
+            <button
+              onClick={() => { window.location.hash = '#truth' }}
+              className="px-4 py-2 rounded-full border border-[#E8E8EE] text-sm font-medium text-[#1A1A2E] hover:bg-[#F7F8FA]"
+            >
+              {t('truthNavAds')}
+            </button>
+            <button
+              onClick={() => { window.location.hash = '#truth' }}
+              className="px-4 py-2 rounded-full bg-[#1A1A2E] text-white text-sm font-medium shadow-sm"
+            >
+              {t('truthNavTruth')}
+            </button>
+          </div>
+        </div>
 
         {/* Overview Tab */}
         {activeTab === 'overview' && (

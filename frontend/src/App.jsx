@@ -6,6 +6,7 @@ import { createClient } from '@supabase/supabase-js'
 // ⚡ Lazy load PricingTable only
 const StripePricingTable = lazy(() => import('./PricingTable'))
 const Dashboard = lazy(() => import('./Dashboard'))
+const TruthPage = lazy(() => import('./TruthPage'))
 
 // ⚡ Loading fallback for lazy components
 const LazyFallback = () => {
@@ -145,6 +146,10 @@ export default function App() {
 
     // Hash-based routing (only on explicit hash change by user)
     const handleHashChange = () => {
+      if (window.location.hash.includes('truth')) {
+        setCurrentView('truth')
+        return
+      }
       if (window.location.hash.includes('dashboard')) {
         // Only allow dashboard if user has subscription (checked after auth resolves)
         setCurrentView('dashboard')
@@ -236,6 +241,7 @@ export default function App() {
     if (!user || !hasSubscription) return
     const timer = setTimeout(() => {
       import('./Dashboard').catch(() => {})
+      import('./TruthPage').catch(() => {})
     }, 800)
     return () => clearTimeout(timer)
   }, [user, hasSubscription])
@@ -627,9 +633,24 @@ export default function App() {
     )
   }
 
+  if (currentView === 'truth' && user && hasSubscription) {
+    return (
+      <ErrorBoundary>
+        <Suspense fallback={<LazyFallback />}>
+          <TruthPage />
+        </Suspense>
+      </ErrorBoundary>
+    )
+  }
+
   // If user tried to access dashboard without subscription, bounce back to landing
   if (currentView === 'dashboard' && user && !hasSubscription) {
     // Reset view to landing so they see the pricing/landing page
+    if (typeof window !== 'undefined') window.location.hash = ''
+    setCurrentView('landing')
+  }
+
+  if (currentView === 'truth' && user && !hasSubscription) {
     if (typeof window !== 'undefined') window.location.hash = ''
     setCurrentView('landing')
   }

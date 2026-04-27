@@ -20,6 +20,7 @@ import smtplib
 import ssl
 import requests
 import threading
+from urllib.parse import urlparse, parse_qs
 from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, HTTPException, Request, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
@@ -5617,6 +5618,7 @@ def _get_user_id_by_shop_domain(shop_domain: str) -> str | None:
 
 
 _ORDERS_CACHE: dict[tuple[str, int, str], tuple[float, list[dict]]] = {}
+_TRUTH_ADS_CACHE: dict[tuple[str, int], tuple[float, list[dict], dict]] = {}
 
 # Bundles job store: simple in-memory registry for async jobs
 _BUNDLES_JOBS: dict[str, dict] = {}
@@ -5670,7 +5672,7 @@ def _fetch_shopify_orders(shop_domain: str, access_token: str, range_days: int =
     next_url = (
         f"https://{shop_domain}/admin/api/2024-10/orders.json"
         f"?status=any&created_at_min={start_date}&limit=250"
-        f"&fields=id,created_at,total_price,financial_status,currency,line_items,refunds,order_number,name"
+        f"&fields=id,created_at,total_price,financial_status,currency,line_items,refunds,order_number,name,note_attributes,landing_site,referring_site,source_name,customer"
     )
     page_count = 0
     max_pages = int(os.getenv("SHOPIFY_ORDERS_MAX_PAGES", "3"))
@@ -5692,6 +5694,574 @@ def _fetch_shopify_orders(shop_domain: str, access_token: str, range_days: int =
 
     _cache_set_orders(shop_domain, range_days, access_token, orders)
     return orders
+
+
+def _truth_range_to_days(range_value: str) -> int:
+    mapping = {
+        "7d": 7,
+        "30d": 30,
+        "90d": 90,
+    }
+    return mapping.get(str(range_value or "30d").lower(), 30)
+
+
+def _truth_float(value, default: float = 0.0) -> float:
+    try:
+        if value in (None, ""):
+            return default
+        return float(value)
+    except Exception:
+        return default
+
+
+def _truth_safe_div(numerator: float, denominator: float) -> float | None:
+    if not denominator:
+        return None
+    try:
+        return numerator / denominator
+    except Exception:
+        return None
+
+
+def _truth_slug(value: str | None) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+
+def _truth_normalize_platform(source: str | None) -> str:
+    normalized = str(source or "").strip().lower()
+    if normalized in {"meta", "facebook", "fb", "instagram", "ig"}:
+        return "Meta"
+    if normalized in {"tiktok", "tt", "tik_tok"}:
+        return "TikTok"
+    return "Unknown"
+
+
+def _truth_extract_utm(order: dict) -> dict:
+    payload = {
+        "utm_source": None,
+        "utm_campaign": None,
+        "utm_content": None,
+    }
+
+    for attr in order.get("note_attributes") or []:
+        name = str(attr.get("name") or attr.get("key") or "").strip().lower()
+        value = str(attr.get("value") or "").strip()
+        if name in payload and value:
+            payload[name] = value
+
+    for raw_url in [order.get("landing_site"), order.get("referring_site")]:
+        if not raw_url:
+            continue
+        try:
+            query = parse_qs(urlparse(str(raw_url)).query)
+        except Exception:
+            query = {}
+        for key in payload.keys():
+            if payload.get(key):
+                continue
+            values = query.get(key)
+            if values:
+                payload[key] = str(values[0]).strip() or None
+
+    return payload
+
+
+def _truth_cache_get_ads(platform: str, range_days: int) -> tuple[list[dict], dict] | None:
+    ttl = int(os.getenv("TRUTH_ADS_CACHE_TTL", "300"))
+    if ttl <= 0:
+        return None
+    key = (platform.lower(), int(range_days))
+    entry = _TRUTH_ADS_CACHE.get(key)
+    if not entry:
+        return None
+    ts, rows, meta = entry
+    if time.time() - ts > ttl:
+        _TRUTH_ADS_CACHE.pop(key, None)
+        return None
+    return rows, meta
+
+
+def _truth_cache_set_ads(platform: str, range_days: int, rows: list[dict], meta: dict) -> None:
+    ttl = int(os.getenv("TRUTH_ADS_CACHE_TTL", "300"))
+    if ttl <= 0:
+        return
+    key = (platform.lower(), int(range_days))
+    _TRUTH_ADS_CACHE[key] = (time.time(), rows, meta)
+
+
+def _truth_range_dates(range_days: int) -> tuple[str, str]:
+    end_dt = datetime.utcnow().date()
+    start_dt = end_dt - timedelta(days=max(int(range_days) - 1, 0))
+    return start_dt.isoformat(), end_dt.isoformat()
+
+
+def _truth_meta_reported_revenue(item: dict, spend: float) -> float | None:
+    action_value_types = {
+        "purchase",
+        "omni_purchase",
+        "offsite_conversion.fb_pixel_purchase",
+        "onsite_web_purchase",
+    }
+    total = 0.0
+    found = False
+    for row in item.get("action_values") or []:
+        action_type = str(row.get("action_type") or "").strip().lower()
+        if action_type in action_value_types:
+            total += _truth_float(row.get("value"))
+            found = True
+    if found:
+        return total
+
+    for key in ("purchase_roas", "website_purchase_roas"):
+        for row in item.get(key) or []:
+            action_type = str(row.get("action_type") or "").strip().lower()
+            if not action_type or action_type in action_value_types:
+                return _truth_float(row.get("value")) * spend
+    return None
+
+
+def _truth_fetch_meta_ads_rows(range_days: int) -> tuple[list[dict], dict]:
+    cached = _truth_cache_get_ads("meta", range_days)
+    if cached:
+        return cached
+
+    access_token = os.getenv("TRUTH_META_ACCESS_TOKEN", "").strip()
+    ad_account_id = os.getenv("TRUTH_META_AD_ACCOUNT_ID", "").strip().replace("act_", "")
+    api_version = os.getenv("TRUTH_META_API_VERSION", "v20.0").strip()
+
+    if not access_token or not ad_account_id:
+        meta = {
+            "connected": False,
+            "configured": False,
+            "source": "api",
+            "error": "Missing TRUTH_META_ACCESS_TOKEN or TRUTH_META_AD_ACCOUNT_ID",
+        }
+        _truth_cache_set_ads("meta", range_days, [], meta)
+        return [], meta
+
+    start_date, end_date = _truth_range_dates(range_days)
+    rows: list[dict] = []
+    url = f"https://graph.facebook.com/{api_version}/act_{ad_account_id}/insights"
+    params = {
+        "level": "campaign",
+        "limit": 200,
+        "time_range": json.dumps({"since": start_date, "until": end_date}),
+        "fields": "campaign_id,campaign_name,spend,clicks,impressions,ctr,cpc,purchase_roas,website_purchase_roas,actions,action_values",
+        "access_token": access_token,
+    }
+    try:
+        page_count = 0
+        next_url = url
+        next_params = params
+        while next_url and page_count < 5:
+            response = requests.get(next_url, params=next_params, timeout=20)
+            if response.status_code != 200:
+                raise HTTPException(status_code=response.status_code, detail=f"Meta Ads API error: {response.text[:300]}")
+            payload = response.json() or {}
+            for item in payload.get("data") or []:
+                spend = _truth_float(item.get("spend"))
+                clicks = int(_truth_float(item.get("clicks")))
+                impressions = int(_truth_float(item.get("impressions")))
+                rows.append({
+                    "platform": "Meta",
+                    "campaign_id": str(item.get("campaign_id") or _truth_slug(item.get("campaign_name")) or uuid.uuid4()),
+                    "campaign_name": str(item.get("campaign_name") or "Untitled campaign").strip(),
+                    "spend": spend,
+                    "clicks": clicks,
+                    "impressions": impressions,
+                    "ctr": _truth_float(item.get("ctr")) if item.get("ctr") not in (None, "") else (_truth_safe_div(clicks, impressions) * 100 if impressions else None),
+                    "cpc": _truth_float(item.get("cpc")) if item.get("cpc") not in (None, "") else (_truth_safe_div(spend, clicks) if clicks else None),
+                    "platform_revenue": _truth_meta_reported_revenue(item, spend),
+                })
+            paging = payload.get("paging") or {}
+            next_url = paging.get("next")
+            next_params = None
+            page_count += 1
+
+        meta = {
+            "connected": True,
+            "configured": True,
+            "source": "api",
+            "campaigns": len(rows),
+            "error": None,
+        }
+        _truth_cache_set_ads("meta", range_days, rows, meta)
+        return rows, meta
+    except Exception as exc:
+        meta = {
+            "connected": False,
+            "configured": True,
+            "source": "api",
+            "error": str(exc),
+        }
+        _truth_cache_set_ads("meta", range_days, [], meta)
+        return [], meta
+
+
+def _truth_tiktok_get_value(item: dict, key: str):
+    if key in item:
+        return item.get(key)
+    dimensions = item.get("dimensions") or {}
+    metrics = item.get("metrics") or {}
+    return metrics.get(key) if key in metrics else dimensions.get(key)
+
+
+def _truth_fetch_tiktok_ads_rows(range_days: int) -> tuple[list[dict], dict]:
+    cached = _truth_cache_get_ads("tiktok", range_days)
+    if cached:
+        return cached
+
+    access_token = os.getenv("TRUTH_TIKTOK_ACCESS_TOKEN", "").strip()
+    advertiser_id = os.getenv("TRUTH_TIKTOK_ADVERTISER_ID", "").strip()
+    api_version = os.getenv("TRUTH_TIKTOK_API_VERSION", "v1.3").strip().lstrip("/")
+
+    if not access_token or not advertiser_id:
+        meta = {
+            "connected": False,
+            "configured": False,
+            "source": "api",
+            "error": "Missing TRUTH_TIKTOK_ACCESS_TOKEN or TRUTH_TIKTOK_ADVERTISER_ID",
+        }
+        _truth_cache_set_ads("tiktok", range_days, [], meta)
+        return [], meta
+
+    start_date, end_date = _truth_range_dates(range_days)
+    rows: list[dict] = []
+    url = f"https://business-api.tiktok.com/open_api/{api_version}/report/integrated/get/"
+    base_params = {
+        "advertiser_id": advertiser_id,
+        "service_type": "AUCTION",
+        "report_type": "BASIC",
+        "data_level": "AUCTION_CAMPAIGN",
+        "start_date": start_date,
+        "end_date": end_date,
+        "dimensions": json.dumps(["campaign_id", "campaign_name"]),
+        "metrics": json.dumps(["spend", "clicks", "impressions", "ctr", "cpc", "conversion", "conversion_rate", "real_time_conversion_value"]),
+        "page_size": 100,
+    }
+    headers = {
+        "Access-Token": access_token,
+        "Content-Type": "application/json",
+    }
+
+    try:
+        page = 1
+        while page <= 10:
+            params = {**base_params, "page": page}
+            response = requests.get(url, params=params, headers=headers, timeout=20)
+            if response.status_code != 200:
+                raise HTTPException(status_code=response.status_code, detail=f"TikTok Ads API error: {response.text[:300]}")
+            payload = response.json() or {}
+            if payload.get("code") not in (0, "0"):
+                raise HTTPException(status_code=502, detail=f"TikTok Ads API error: {payload.get('message') or payload}")
+            data = payload.get("data") or {}
+            items = data.get("list") or data.get("rows") or []
+            if not items:
+                break
+            for item in items:
+                spend = _truth_float(_truth_tiktok_get_value(item, "spend"))
+                clicks = int(_truth_float(_truth_tiktok_get_value(item, "clicks")))
+                impressions = int(_truth_float(_truth_tiktok_get_value(item, "impressions")))
+                rows.append({
+                    "platform": "TikTok",
+                    "campaign_id": str(_truth_tiktok_get_value(item, "campaign_id") or uuid.uuid4()),
+                    "campaign_name": str(_truth_tiktok_get_value(item, "campaign_name") or "Untitled campaign").strip(),
+                    "spend": spend,
+                    "clicks": clicks,
+                    "impressions": impressions,
+                    "ctr": _truth_float(_truth_tiktok_get_value(item, "ctr")) if _truth_tiktok_get_value(item, "ctr") not in (None, "") else (_truth_safe_div(clicks, impressions) * 100 if impressions else None),
+                    "cpc": _truth_float(_truth_tiktok_get_value(item, "cpc")) if _truth_tiktok_get_value(item, "cpc") not in (None, "") else (_truth_safe_div(spend, clicks) if clicks else None),
+                    "platform_revenue": _truth_float(_truth_tiktok_get_value(item, "real_time_conversion_value")) if _truth_tiktok_get_value(item, "real_time_conversion_value") not in (None, "") else None,
+                })
+            page_info = data.get("page_info") or {}
+            total_pages = int(page_info.get("total_page") or page_info.get("total_pages") or page)
+            if page >= total_pages:
+                break
+            page += 1
+
+        meta = {
+            "connected": True,
+            "configured": True,
+            "source": "api",
+            "campaigns": len(rows),
+            "error": None,
+        }
+        _truth_cache_set_ads("tiktok", range_days, rows, meta)
+        return rows, meta
+    except Exception as exc:
+        meta = {
+            "connected": False,
+            "configured": True,
+            "source": "api",
+            "error": str(exc),
+        }
+        _truth_cache_set_ads("tiktok", range_days, [], meta)
+        return [], meta
+
+
+def _truth_parse_ads_env_rows() -> list[dict]:
+    config = [
+        ("Meta", os.getenv("TRUTH_META_ADS_JSON", "")),
+        ("TikTok", os.getenv("TRUTH_TIKTOK_ADS_JSON", "")),
+    ]
+    rows: list[dict] = []
+    for default_platform, raw in config:
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except Exception as exc:
+            print(f"⚠️ [TRUTH] invalid ads JSON for {default_platform}: {exc}")
+            continue
+
+        items = payload.get("campaigns") if isinstance(payload, dict) else payload
+        if not isinstance(items, list):
+            continue
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            campaign_name = str(item.get("campaign_name") or item.get("name") or "Untitled campaign").strip()
+            spend = _truth_float(item.get("spend"))
+            clicks = int(_truth_float(item.get("clicks")))
+            impressions = int(_truth_float(item.get("impressions")))
+            ctr = item.get("ctr")
+            cpc = item.get("cpc")
+            platform_revenue = item.get("platform_revenue")
+            roas = item.get("roas")
+            if platform_revenue in (None, "") and roas not in (None, ""):
+                platform_revenue = _truth_float(roas) * spend
+
+            rows.append({
+                "platform": str(item.get("platform") or default_platform),
+                "campaign_id": str(item.get("campaign_id") or _truth_slug(campaign_name) or str(uuid.uuid4())),
+                "campaign_name": campaign_name,
+                "spend": spend,
+                "clicks": clicks,
+                "impressions": impressions,
+                "ctr": _truth_float(ctr) if ctr not in (None, "") else (_truth_safe_div(clicks, impressions) * 100 if impressions else None),
+                "cpc": _truth_float(cpc) if cpc not in (None, "") else (_truth_safe_div(spend, clicks) if clicks else None),
+                "platform_revenue": _truth_float(platform_revenue) if platform_revenue not in (None, "") else None,
+            })
+    return rows
+
+
+def _truth_collect_ads_rows(range_days: int) -> tuple[list[dict], dict]:
+    meta_rows, meta_info = _truth_fetch_meta_ads_rows(range_days)
+    tiktok_rows, tiktok_info = _truth_fetch_tiktok_ads_rows(range_days)
+    env_rows = _truth_parse_ads_env_rows()
+
+    rows = [*meta_rows, *tiktok_rows]
+    if env_rows:
+        for row in env_rows:
+            platform = _truth_normalize_platform(row.get("platform"))
+            has_real = any(_truth_normalize_platform(existing.get("platform")) == platform for existing in rows)
+            if not has_real:
+                rows.append(row)
+                if platform == "Meta" and not meta_info.get("connected"):
+                    meta_info = {**meta_info, "source": "env_json", "configured": True}
+                if platform == "TikTok" and not tiktok_info.get("connected"):
+                    tiktok_info = {**tiktok_info, "source": "env_json", "configured": True}
+
+    return rows, {
+        "meta": meta_info,
+        "tiktok": tiktok_info,
+    }
+
+
+def _truth_status_from_roas(roas: float | None) -> tuple[str, str]:
+    if roas is None:
+        return ("UNKNOWN", "slate")
+    if roas < 1:
+        return ("LOSS", "red")
+    if roas <= 2:
+        return ("BREAK EVEN", "amber")
+    return ("PROFITABLE", "emerald")
+
+
+@app.get("/api/truth/dashboard")
+async def get_truth_dashboard(request: Request, range: str = "30d"):
+    user_id = get_user_id(request)
+    shop_domain, access_token = _get_shopify_connection(user_id)
+    days = _truth_range_to_days(range)
+    orders = _fetch_shopify_orders(shop_domain, access_token, days)
+    ads_rows, ads_integrations = _truth_collect_ads_rows(days)
+
+    campaigns: dict[str, dict] = {}
+    unattributed_orders = 0
+
+    for ad_row in ads_rows:
+        key = f"{_truth_normalize_platform(ad_row.get('platform'))}::{_truth_slug(ad_row.get('campaign_name'))}"
+        campaigns[key] = {
+            "platform": _truth_normalize_platform(ad_row.get("platform")),
+            "campaign_id": ad_row.get("campaign_id"),
+            "campaign_name": ad_row.get("campaign_name") or "Unknown campaign",
+            "spend": _truth_float(ad_row.get("spend")),
+            "clicks": int(_truth_float(ad_row.get("clicks"))),
+            "impressions": int(_truth_float(ad_row.get("impressions"))),
+            "ctr": ad_row.get("ctr"),
+            "cpc": ad_row.get("cpc"),
+            "orders": 0,
+            "revenue_real": 0.0,
+            "profit_real": 0.0,
+            "roas_real": None,
+            "platform_revenue": ad_row.get("platform_revenue"),
+            "platform_roas": None,
+            "error_percent": None,
+            "conversion_rate": None,
+            "status": "UNKNOWN",
+            "status_tone": "slate",
+            "attribution_source": "utm_campaign",
+            "attributed_orders": [],
+            "utm_source": None,
+            "utm_content": None,
+          }
+
+    for order in orders:
+        utm = _truth_extract_utm(order)
+        campaign_name = utm.get("utm_campaign") or "unknown"
+        platform = _truth_normalize_platform(utm.get("utm_source"))
+        key = f"{platform}::{_truth_slug(campaign_name)}"
+        revenue = _truth_float(order.get("total_price"))
+        customer = order.get("customer") or {}
+        if campaign_name == "unknown":
+            unattributed_orders += 1
+
+        campaign_row = campaigns.setdefault(key, {
+            "platform": platform,
+            "campaign_id": _truth_slug(campaign_name) or str(order.get("id") or uuid.uuid4()),
+            "campaign_name": campaign_name,
+            "spend": 0.0,
+            "clicks": 0,
+            "impressions": 0,
+            "ctr": None,
+            "cpc": None,
+            "orders": 0,
+            "revenue_real": 0.0,
+            "profit_real": 0.0,
+            "roas_real": None,
+            "platform_revenue": None,
+            "platform_roas": None,
+            "error_percent": None,
+            "conversion_rate": None,
+            "status": "UNKNOWN",
+            "status_tone": "slate",
+            "attribution_source": "utm_campaign" if utm.get("utm_campaign") else "unknown",
+            "attributed_orders": [],
+            "utm_source": utm.get("utm_source"),
+            "utm_content": utm.get("utm_content"),
+        })
+
+        campaign_row["orders"] += 1
+        campaign_row["revenue_real"] += revenue
+        campaign_row["utm_source"] = campaign_row.get("utm_source") or utm.get("utm_source")
+        campaign_row["utm_content"] = campaign_row.get("utm_content") or utm.get("utm_content")
+        campaign_row["attributed_orders"].append({
+            "order_id": order.get("id"),
+            "order_name": order.get("name") or f"#{order.get('order_number')}",
+            "created_at": order.get("created_at"),
+            "revenue": revenue,
+            "customer_id": customer.get("id"),
+            "customer_email": customer.get("email") or order.get("email"),
+            "utm_source": utm.get("utm_source"),
+            "utm_campaign": utm.get("utm_campaign"),
+            "utm_content": utm.get("utm_content"),
+        })
+
+    for row in campaigns.values():
+        spend = _truth_float(row.get("spend"))
+        clicks = int(_truth_float(row.get("clicks")))
+        impressions = int(_truth_float(row.get("impressions")))
+        revenue_real = _truth_float(row.get("revenue_real"))
+        platform_revenue = row.get("platform_revenue")
+        if row.get("ctr") is None and impressions:
+            row["ctr"] = _truth_safe_div(clicks, impressions) * 100
+        if row.get("cpc") is None and clicks:
+            row["cpc"] = _truth_safe_div(spend, clicks)
+        row["profit_real"] = revenue_real - spend
+        row["roas_real"] = _truth_safe_div(revenue_real, spend)
+        row["platform_roas"] = _truth_safe_div(_truth_float(platform_revenue), spend) if platform_revenue is not None else None
+        row["conversion_rate"] = _truth_safe_div(row.get("orders", 0), clicks) * 100 if clicks else None
+        if platform_revenue is not None and revenue_real > 0:
+            row["error_percent"] = ((_truth_float(platform_revenue) - revenue_real) / revenue_real) * 100
+        row["status"], row["status_tone"] = _truth_status_from_roas(row.get("roas_real"))
+
+    campaign_rows = sorted(
+        campaigns.values(),
+        key=lambda item: (_truth_float(item.get("profit_real")), _truth_float(item.get("revenue_real"))),
+        reverse=True,
+    )
+
+    total_revenue = sum(_truth_float(row.get("revenue_real")) for row in campaign_rows)
+    total_spend = sum(_truth_float(row.get("spend")) for row in campaign_rows)
+    total_profit = total_revenue - total_spend
+    total_roas = _truth_safe_div(total_revenue, total_spend)
+
+    insights: list[str] = []
+    alerts: list[str] = []
+    for row in campaign_rows[:6]:
+        campaign_name = row.get("campaign_name") or "Unknown"
+        profit = _truth_float(row.get("profit_real"))
+        roas = row.get("roas_real")
+        if roas is not None and roas < 1:
+            insights.append(f"Campaign {campaign_name} is losing money")
+            alerts.append(f"You are losing ${abs(profit) / max(days, 1):.2f}/day on {campaign_name}")
+        elif roas is not None and roas > 2:
+            insights.append(f"Campaign {campaign_name} is profitable")
+            alerts.append(f"Campaign {campaign_name} is profitable, consider scaling")
+
+    platform_summary: dict[str, dict] = {}
+    for row in campaign_rows:
+        platform = row.get("platform") or "Unknown"
+        platform_bucket = platform_summary.setdefault(platform, {"real": 0.0, "reported": 0.0})
+        platform_bucket["real"] += _truth_float(row.get("revenue_real"))
+        platform_bucket["reported"] += _truth_float(row.get("platform_revenue"))
+
+    for platform, totals in platform_summary.items():
+        if totals["real"] <= 0 or totals["reported"] <= 0:
+            continue
+        error_pct = ((totals["reported"] - totals["real"]) / totals["real"]) * 100
+        if error_pct >= 1:
+            insights.append(f"{platform} is overreporting by {error_pct:.1f}%")
+        elif error_pct <= -1:
+            insights.append(f"{platform} is underreporting by {abs(error_pct):.1f}%")
+
+    if not ads_rows:
+        insights.append("Meta and TikTok spend are not connected yet — revenue is real, spend is incomplete")
+
+    return {
+        "success": True,
+        "range": range,
+        "range_days": days,
+        "shop": shop_domain,
+        "summary": {
+            "total_revenue_real": total_revenue,
+            "total_ad_spend": total_spend,
+            "total_profit": total_profit,
+            "real_roas": total_roas,
+            "campaign_count": len(campaign_rows),
+            "unattributed_orders": unattributed_orders,
+        },
+        "campaigns": campaign_rows,
+        "insights": insights[:8],
+        "alerts": alerts[:6],
+        "integrations": {
+            "shopify": {"connected": True, "configured": True, "source": "api"},
+            "meta": {
+                **ads_integrations.get("meta", {}),
+                "connected": bool(ads_integrations.get("meta", {}).get("connected")) or any(row.get("platform") == "Meta" and _truth_float(row.get("spend")) > 0 for row in campaign_rows),
+            },
+            "tiktok": {
+                **ads_integrations.get("tiktok", {}),
+                "connected": bool(ads_integrations.get("tiktok", {}).get("connected")) or any(row.get("platform") == "TikTok" and _truth_float(row.get("spend")) > 0 for row in campaign_rows),
+            },
+        },
+        "tracking": {
+            "utm_required": True,
+            "script_path": "/truth-utm-tracker.js",
+            "attribution_rule": "If utm_campaign exists, assign order to campaign; otherwise unknown.",
+        },
+    }
 
 
 @app.get("/api/shopify/customers")
