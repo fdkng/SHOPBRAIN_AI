@@ -26,6 +26,13 @@ const formatPercent = (value) => {
   return `${numeric.toFixed(1)}%`
 }
 
+const formatSync = (value) => {
+  if (!value) return '—'
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value
+  return parsed.toLocaleString()
+}
+
 const getStatusClasses = (status) => {
   switch (status) {
     case 'LOSS':
@@ -36,6 +43,28 @@ const getStatusClasses = (status) => {
       return 'bg-emerald-50 text-emerald-700 border-emerald-200'
     default:
       return 'bg-slate-50 text-slate-600 border-slate-200'
+  }
+}
+
+const getTruthScoreClasses = (label) => {
+  switch (label) {
+    case 'VERIFIED':
+      return 'bg-emerald-50 text-emerald-700 border-emerald-200'
+    case 'PARTIAL':
+      return 'bg-amber-50 text-amber-700 border-amber-200'
+    default:
+      return 'bg-red-50 text-red-700 border-red-200'
+  }
+}
+
+const getProfitTypeClasses = (type) => {
+  switch (type) {
+    case 'VERIFIED':
+      return 'bg-emerald-50 text-emerald-700 border-emerald-200'
+    case 'ESTIMATED':
+      return 'bg-amber-50 text-amber-700 border-amber-200'
+    default:
+      return 'bg-slate-100 text-slate-700 border-slate-200'
   }
 }
 
@@ -59,6 +88,7 @@ export default function TruthPage() {
         if (!session) {
           throw new Error(t('sessionExpiredReconnect'))
         }
+
         const response = await fetch(`${API_URL}/api/truth/dashboard?range=${encodeURIComponent(range)}`, {
           headers: {
             Authorization: `Bearer ${session.access_token}`,
@@ -68,6 +98,7 @@ export default function TruthPage() {
         if (!response.ok) {
           throw new Error(payload?.detail || t('truthLoadError'))
         }
+
         if (alive) {
           setData(payload)
           setSelectedRow((previous) => {
@@ -90,17 +121,35 @@ export default function TruthPage() {
     }
   }, [range, t])
 
-  const summaryCards = useMemo(() => {
-    const summary = data?.summary || {}
-    return [
-      { label: t('truthTotalRevenue'), value: formatCurrency(summary.total_revenue_real) },
-      { label: t('truthTotalAdSpend'), value: formatCurrency(summary.total_ad_spend) },
-      { label: t('truthTotalProfit'), value: formatCurrency(summary.total_profit) },
-      { label: t('truthRealRoas'), value: summary.real_roas ? `${Number(summary.real_roas).toFixed(2)}x` : '—' },
-    ]
-  }, [data, t])
-
+  const summary = data?.summary || {}
+  const truthScore = data?.truth_score || {}
+  const truthBlock = data?.truth_block || { allowed: true, missing_sources: [] }
+  const profitEngine = data?.profit_engine || {}
+  const systemFlags = data?.system_flags || {}
+  const anomalies = data?.anomalies || []
+  const insights = data?.insights || []
+  const campaignRows = data?.campaigns || []
+  const sourceStatuses = Object.entries(data?.data_sources_status || {})
+  const metricMode = systemFlags?.metric_mode || 'hidden'
   const snippet = `<script src="/truth-utm-tracker.js" defer></script>`
+
+  const renderProfitValue = (engine) => {
+    if (systemFlags?.hide_real_profit) return t('truthMetricHidden')
+    if (engine?.value == null) return '—'
+    return formatCurrency(engine.value)
+  }
+
+  const summaryCards = useMemo(() => ([
+    { label: t('truthTotalRevenue'), value: formatCurrency(summary.total_revenue_real) },
+    { label: t('truthTotalAdSpend'), value: formatCurrency(summary.total_ad_spend) },
+    { label: t('truthProfitEngine'), value: renderProfitValue(profitEngine), helper: profitEngine?.type || 'UNKNOWN' },
+    { label: t('truthScoreTitle'), value: `${formatNumber(truthScore.value || 0)}/100`, helper: truthScore?.label || 'UNVERIFIED' },
+  ]), [summary.total_revenue_real, summary.total_ad_spend, profitEngine, truthScore, t])
+
+  const warningLines = []
+  if (!truthBlock.allowed) warningLines.push(truthBlock.reason || t('truthBlockedReasonDefault'))
+  if (profitEngine?.warning) warningLines.push(profitEngine.warning)
+  if (systemFlags?.hide_real_profit && (truthScore?.value || 0) < 60) warningLines.push(t('truthLowConfidenceBanner'))
 
   const copySnippet = async () => {
     try {
@@ -125,11 +174,6 @@ export default function TruthPage() {
     document.getElementById('truth-campaign-table')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
-  const campaignRows = data?.campaigns || []
-  const integrationWarnings = []
-  if (data?.integrations?.meta?.connected === false) integrationWarnings.push(t('truthMetaMissing'))
-  if (data?.integrations?.tiktok?.connected === false) integrationWarnings.push(t('truthTikTokMissing'))
-
   return (
     <div className="min-h-screen bg-[#F7F8FA] text-[#1A1A2E] overflow-x-hidden">
       <div className="sticky top-0 z-30 bg-white/92 backdrop-blur-md border-b border-[#E8E8EE]">
@@ -137,7 +181,15 @@ export default function TruthPage() {
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="text-[11px] uppercase tracking-[0.14em] text-[#8A8AA3] font-semibold">TRUTH</p>
-              <h1 className="text-2xl md:text-3xl font-semibold">{t('truthTitle')}</h1>
+              <div className="flex flex-wrap items-center gap-2 mt-1">
+                <h1 className="text-2xl md:text-3xl font-semibold">{t('truthTitle')}</h1>
+                <span className={`inline-flex items-center px-3 py-1 rounded-full border text-xs font-semibold ${getTruthScoreClasses(truthScore?.label)}`}>
+                  {truthScore?.label || 'UNVERIFIED'}
+                </span>
+                <span className={`inline-flex items-center px-3 py-1 rounded-full border text-xs font-semibold ${getProfitTypeClasses(profitEngine?.type)}`}>
+                  {profitEngine?.type || 'UNKNOWN'}
+                </span>
+              </div>
               <p className="text-sm text-[#6A6A85] mt-1">{t('truthSubtitle')}</p>
             </div>
             <button
@@ -158,17 +210,31 @@ export default function TruthPage() {
       </div>
 
       <main className="max-w-7xl mx-auto px-4 md:px-6 py-6 space-y-6">
-        {integrationWarnings.length > 0 && (
-          <div className="bg-white border border-[#E8E8EE] rounded-2xl p-4 md:p-5 shadow-sm">
-            <p className="text-sm font-semibold mb-2">{t('truthDataCoverage')}</p>
-            <div className="flex flex-wrap gap-2">
-              {integrationWarnings.map((warning) => (
-                <span key={warning} className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">
-                  {warning}
-                </span>
-              ))}
+        {systemFlags?.show_warning_banner && warningLines.length > 0 && (
+          <section className="bg-white border border-amber-200 rounded-2xl p-5 shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-[#1A1A2E]">{t('truthBannerTitle')}</h2>
+                <div className="space-y-1 mt-2 text-sm text-[#7C2D12]">
+                  {warningLines.map((line) => (
+                    <p key={line}>{line}</p>
+                  ))}
+                </div>
+              </div>
+              <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                {metricMode === 'verified' ? t('truthModeVerified') : metricMode === 'estimated' ? t('truthModeEstimated') : t('truthModeHidden')}
+              </span>
             </div>
-          </div>
+            {!truthBlock.allowed && truthBlock?.missing_sources?.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {truthBlock.missing_sources.map((source) => (
+                  <span key={source} className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-red-50 text-red-700 border border-red-200">
+                    {source}
+                  </span>
+                ))}
+              </div>
+            )}
+          </section>
         )}
 
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -208,11 +274,61 @@ export default function TruthPage() {
                 <div key={card.label} className="bg-white border border-[#E8E8EE] rounded-2xl p-5 shadow-sm">
                   <p className="text-sm text-[#8A8AA3] mb-2">{card.label}</p>
                   <p className="text-2xl font-semibold text-[#1A1A2E]">{card.value}</p>
+                  {card.helper && <p className="text-xs text-[#8A8AA3] mt-2">{card.helper}</p>}
                 </div>
               ))}
             </section>
 
-            <section className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.6fr)_minmax(320px,0.9fr)] gap-6 items-start">
+            <section className="grid grid-cols-1 xl:grid-cols-4 gap-4">
+              <div className="bg-white border border-[#E8E8EE] rounded-2xl p-5 shadow-sm">
+                <p className="text-sm text-[#8A8AA3] mb-2">{t('truthAdCoverage')}</p>
+                <p className="text-2xl font-semibold">{formatNumber(systemFlags?.ad_coverage || 0)}%</p>
+              </div>
+              <div className="bg-white border border-[#E8E8EE] rounded-2xl p-5 shadow-sm">
+                <p className="text-sm text-[#8A8AA3] mb-2">{t('truthAttributionAccuracy')}</p>
+                <p className="text-2xl font-semibold">{formatNumber(systemFlags?.attribution_accuracy || 0)}%</p>
+              </div>
+              <div className="bg-white border border-[#E8E8EE] rounded-2xl p-5 shadow-sm">
+                <p className="text-sm text-[#8A8AA3] mb-2">{t('truthDataCompleteness')}</p>
+                <p className="text-2xl font-semibold">{formatNumber(systemFlags?.data_completeness || 0)}%</p>
+              </div>
+              <div className="bg-white border border-[#E8E8EE] rounded-2xl p-5 shadow-sm">
+                <p className="text-sm text-[#8A8AA3] mb-2">{t('truthConsistencyScore')}</p>
+                <p className="text-2xl font-semibold">{formatNumber(systemFlags?.consistency_score || 0)}%</p>
+              </div>
+            </section>
+
+            <section className="bg-white border border-[#E8E8EE] rounded-2xl shadow-sm p-5">
+              <div className="flex items-center justify-between gap-3 mb-4">
+                <div>
+                  <h2 className="text-lg font-semibold">{t('truthSourcesTitle')}</h2>
+                  <p className="text-sm text-[#8A8AA3]">{t('truthSourcesSubtitle')}</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {sourceStatuses.map(([key, status]) => (
+                  <div key={key} className="rounded-2xl border border-[#E8E8EE] p-4 bg-[#FCFCFD]">
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div>
+                        <p className="font-semibold text-[#1A1A2E]">{status.name}</p>
+                        <p className="text-xs text-[#8A8AA3] mt-1">{status.connected ? t('truthSourceConnected') : t('truthSourceDisconnected')}</p>
+                      </div>
+                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full border text-[11px] font-semibold ${status.connected ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
+                        {status.connected ? t('truthConnected') : t('truthDisconnected')}
+                      </span>
+                    </div>
+                    <div className="space-y-2 text-sm text-[#4A4A68]">
+                      <p><span className="text-[#8A8AA3]">{t('truthCompletenessLabel')}:</span> {formatNumber(status.completeness)}%</p>
+                      <p><span className="text-[#8A8AA3]">{t('truthReliabilityLabel')}:</span> {formatNumber(status.reliability)}%</p>
+                      <p><span className="text-[#8A8AA3]">{t('truthLastSyncLabel')}:</span> {formatSync(status.last_sync)}</p>
+                      {status.error && <p className="text-xs text-red-600">{status.error}</p>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.7fr)_minmax(340px,1fr)] gap-6 items-start">
               <div id="truth-campaign-table" className="bg-white border border-[#E8E8EE] rounded-2xl shadow-sm overflow-hidden">
                 <div className="px-5 py-4 border-b border-[#E8E8EE] flex items-center justify-between gap-3">
                   <div>
@@ -222,8 +338,8 @@ export default function TruthPage() {
                   <span className="text-xs text-[#8A8AA3]">{campaignRows.length} {t('truthCampaignRows')}</span>
                 </div>
 
-                <div className="hidden lg:block overflow-x-auto">
-                  <table className="min-w-[1380px] w-full text-sm">
+                <div className="hidden xl:block overflow-x-auto">
+                  <table className="min-w-[1180px] w-full text-sm">
                     <thead className="bg-[#F7F8FA] text-[#6A6A85]">
                       <tr>
                         {[
@@ -231,14 +347,11 @@ export default function TruthPage() {
                           t('truthColCampaign'),
                           t('truthColSpend'),
                           t('truthColClicks'),
-                          t('truthColCtr'),
-                          t('truthColCpc'),
                           t('truthColOrders'),
-                          t('truthColConversionRate'),
                           t('truthColRevenueReal'),
                           t('truthColProfitReal'),
+                          t('truthColProfitType'),
                           t('truthColRoasReal'),
-                          t('truthColPlatformRoas'),
                           t('truthColErrorPercent'),
                           t('truthColStatus'),
                         ].map((label) => (
@@ -257,14 +370,15 @@ export default function TruthPage() {
                           <td className="px-4 py-3 font-medium text-[#1A1A2E]">{row.campaign_name}</td>
                           <td className="px-4 py-3 whitespace-nowrap">{formatCurrency(row.spend)}</td>
                           <td className="px-4 py-3 whitespace-nowrap">{formatNumber(row.clicks)}</td>
-                          <td className="px-4 py-3 whitespace-nowrap">{formatPercent(row.ctr)}</td>
-                          <td className="px-4 py-3 whitespace-nowrap">{formatCurrency(row.cpc)}</td>
                           <td className="px-4 py-3 whitespace-nowrap">{formatNumber(row.orders)}</td>
-                          <td className="px-4 py-3 whitespace-nowrap">{formatPercent(row.conversion_rate)}</td>
                           <td className="px-4 py-3 whitespace-nowrap">{formatCurrency(row.revenue_real)}</td>
-                          <td className={`px-4 py-3 whitespace-nowrap ${Number(row.profit_real) >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>{formatCurrency(row.profit_real)}</td>
-                          <td className="px-4 py-3 whitespace-nowrap">{row.roas_real ? `${Number(row.roas_real).toFixed(2)}x` : '—'}</td>
-                          <td className="px-4 py-3 whitespace-nowrap">{row.platform_roas ? `${Number(row.platform_roas).toFixed(2)}x` : '—'}</td>
+                          <td className={`px-4 py-3 whitespace-nowrap ${Number(row?.profit_engine?.value) >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>{renderProfitValue(row.profit_engine)}</td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <span className={`inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-semibold ${getProfitTypeClasses(row?.profit_engine?.type)}`}>
+                              {row?.profit_engine?.type || 'UNKNOWN'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap">{systemFlags?.hide_real_profit ? t('truthMetricHidden') : (row.roas_real ? `${Number(row.roas_real).toFixed(2)}x` : '—')}</td>
                           <td className="px-4 py-3 whitespace-nowrap" title={t('truthErrorTooltip')}>{formatPercent(row.error_percent)}</td>
                           <td className="px-4 py-3 whitespace-nowrap">
                             <span className={`inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-semibold ${getStatusClasses(row.status)}`}>
@@ -277,7 +391,7 @@ export default function TruthPage() {
                   </table>
                 </div>
 
-                <div className="lg:hidden p-4 space-y-3">
+                <div className="xl:hidden p-4 space-y-3">
                   {campaignRows.map((row) => (
                     <button
                       key={`${row.platform}-${row.campaign_id}-${row.campaign_name}`}
@@ -289,15 +403,15 @@ export default function TruthPage() {
                           <p className="text-xs text-[#8A8AA3]">{row.platform}</p>
                           <p className="font-semibold text-[#1A1A2E]">{row.campaign_name}</p>
                         </div>
-                        <span className={`inline-flex items-center px-2.5 py-1 rounded-full border text-[11px] font-semibold ${getStatusClasses(row.status)}`}>
-                          {row.status}
+                        <span className={`inline-flex items-center px-2.5 py-1 rounded-full border text-[11px] font-semibold ${getProfitTypeClasses(row?.profit_engine?.type)}`}>
+                          {row?.profit_engine?.type || 'UNKNOWN'}
                         </span>
                       </div>
                       <div className="grid grid-cols-2 gap-2 text-sm">
                         <div><span className="text-[#8A8AA3]">{t('truthColSpend')}</span><p className="font-medium">{formatCurrency(row.spend)}</p></div>
                         <div><span className="text-[#8A8AA3]">{t('truthColRevenueReal')}</span><p className="font-medium">{formatCurrency(row.revenue_real)}</p></div>
-                        <div><span className="text-[#8A8AA3]">{t('truthColProfitReal')}</span><p className={`font-medium ${Number(row.profit_real) >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>{formatCurrency(row.profit_real)}</p></div>
-                        <div><span className="text-[#8A8AA3]">{t('truthColRoasReal')}</span><p className="font-medium">{row.roas_real ? `${Number(row.roas_real).toFixed(2)}x` : '—'}</p></div>
+                        <div><span className="text-[#8A8AA3]">{t('truthColProfitReal')}</span><p className={`font-medium ${Number(row?.profit_engine?.value) >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>{renderProfitValue(row.profit_engine)}</p></div>
+                        <div><span className="text-[#8A8AA3]">{t('truthColRoasReal')}</span><p className="font-medium">{systemFlags?.hide_real_profit ? t('truthMetricHidden') : (row.roas_real ? `${Number(row.roas_real).toFixed(2)}x` : '—')}</p></div>
                       </div>
                     </button>
                   ))}
@@ -311,13 +425,15 @@ export default function TruthPage() {
               <div className="space-y-6 xl:sticky xl:top-28">
                 <div className="bg-white border border-[#E8E8EE] rounded-2xl shadow-sm p-5">
                   <h3 className="text-lg font-semibold mb-4">{t('truthInsightsTitle')}</h3>
-                  <div className="space-y-2">
-                    {(data?.insights || []).map((insight) => (
-                      <div key={insight} className="rounded-xl bg-[#F7F8FA] px-3.5 py-3 text-sm text-[#2A2A42] border border-[#EFF1F5]">
-                        {insight}
+                  <div className="space-y-3">
+                    {insights.map((insight, index) => (
+                      <div key={`${insight.problem}-${index}`} className="rounded-xl bg-[#F7F8FA] px-4 py-3 text-sm text-[#2A2A42] border border-[#EFF1F5]">
+                        <p><span className="font-semibold">{t('truthInsightProblem')}:</span> {insight.problem}</p>
+                        <p className="mt-1"><span className="font-semibold">{t('truthInsightImpact')}:</span> {insight.impact}</p>
+                        <p className="mt-1"><span className="font-semibold">{t('truthInsightAction')}:</span> {insight.action}</p>
                       </div>
                     ))}
-                    {(!data?.insights || data.insights.length === 0) && (
+                    {insights.length === 0 && (
                       <div className="rounded-xl bg-[#F7F8FA] px-3.5 py-3 text-sm text-[#8A8AA3] border border-[#EFF1F5]">
                         {t('truthNoInsights')}
                       </div>
@@ -326,16 +442,17 @@ export default function TruthPage() {
                 </div>
 
                 <div className="bg-white border border-[#E8E8EE] rounded-2xl shadow-sm p-5">
-                  <h3 className="text-lg font-semibold mb-4">{t('truthAlertsTitle')}</h3>
+                  <h3 className="text-lg font-semibold mb-4">{t('truthAnomaliesTitle')}</h3>
                   <div className="space-y-2">
-                    {(data?.alerts || []).map((alert) => (
-                      <div key={alert} className="rounded-xl bg-[#FFF7ED] px-3.5 py-3 text-sm text-[#9A3412] border border-[#FED7AA]">
-                        {alert}
+                    {anomalies.map((anomaly, index) => (
+                      <div key={`${anomaly.type}-${index}`} className={`rounded-xl px-3.5 py-3 text-sm border ${anomaly.severity === 'HIGH' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                        <p className="font-semibold">{anomaly.type}</p>
+                        <p className="mt-1">{anomaly.message}</p>
                       </div>
                     ))}
-                    {(!data?.alerts || data.alerts.length === 0) && (
+                    {anomalies.length === 0 && (
                       <div className="rounded-xl bg-[#F7F8FA] px-3.5 py-3 text-sm text-[#8A8AA3] border border-[#EFF1F5]">
-                        {t('truthNoAlerts')}
+                        {t('truthNoAnomalies')}
                       </div>
                     )}
                   </div>
@@ -382,8 +499,8 @@ export default function TruthPage() {
                 {[
                   [t('truthColRevenueReal'), formatCurrency(selectedRow.revenue_real)],
                   [t('truthColSpend'), formatCurrency(selectedRow.spend)],
-                  [t('truthColProfitReal'), formatCurrency(selectedRow.profit_real)],
-                  [t('truthColRoasReal'), selectedRow.roas_real ? `${Number(selectedRow.roas_real).toFixed(2)}x` : '—'],
+                  [t('truthColProfitReal'), renderProfitValue(selectedRow.profit_engine)],
+                  [t('truthColRoasReal'), systemFlags?.hide_real_profit ? t('truthMetricHidden') : (selectedRow.roas_real ? `${Number(selectedRow.roas_real).toFixed(2)}x` : '—')],
                   [t('truthColOrders'), formatNumber(selectedRow.orders)],
                   [t('truthColConversionRate'), formatPercent(selectedRow.conversion_rate)],
                 ].map(([label, value]) => (
@@ -397,13 +514,14 @@ export default function TruthPage() {
               <div className="rounded-2xl border border-[#E8E8EE] p-4 bg-white">
                 <div className="flex items-center justify-between gap-3 mb-3">
                   <h4 className="font-semibold text-[#1A1A2E]">{t('truthAttributionDetails')}</h4>
-                  <span className={`inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-semibold ${getStatusClasses(selectedRow.status)}`}>{selectedRow.status}</span>
+                  <span className={`inline-flex items-center px-2.5 py-1 rounded-full border text-xs font-semibold ${getProfitTypeClasses(selectedRow?.profit_engine?.type)}`}>{selectedRow?.profit_engine?.type || 'UNKNOWN'}</span>
                 </div>
                 <div className="space-y-2 text-sm text-[#4A4A68]">
                   <p><span className="text-[#8A8AA3]">UTM Source:</span> {selectedRow.utm_source || '—'}</p>
                   <p><span className="text-[#8A8AA3]">UTM Content:</span> {selectedRow.utm_content || '—'}</p>
-                  <p><span className="text-[#8A8AA3]">{t('truthColPlatformRoas')}:</span> {selectedRow.platform_roas ? `${Number(selectedRow.platform_roas).toFixed(2)}x` : '—'}</p>
+                  <p><span className="text-[#8A8AA3]">{t('truthColPlatformRoas')}:</span> {systemFlags?.hide_real_profit ? t('truthMetricHidden') : (selectedRow.platform_roas ? `${Number(selectedRow.platform_roas).toFixed(2)}x` : '—')}</p>
                   <p title={t('truthErrorTooltip')}><span className="text-[#8A8AA3]">{t('truthColErrorPercent')}:</span> {formatPercent(selectedRow.error_percent)}</p>
+                  {selectedRow?.profit_engine?.warning && <p className="text-amber-700"><span className="text-[#8A8AA3]">{t('truthWarningLabel')}:</span> {selectedRow.profit_engine.warning}</p>}
                 </div>
               </div>
 

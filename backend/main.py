@@ -5723,6 +5723,18 @@ def _truth_safe_div(numerator: float, denominator: float) -> float | None:
         return None
 
 
+def _truth_now_iso() -> str:
+    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+def _truth_pct(value, default: float = 0.0) -> int:
+    try:
+        numeric = float(value)
+    except Exception:
+        numeric = default
+    return max(0, min(100, int(round(numeric))))
+
+
 def _truth_slug(value: str | None) -> str:
     return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
 
@@ -5733,6 +5745,8 @@ def _truth_normalize_platform(source: str | None) -> str:
         return "Meta"
     if normalized in {"tiktok", "tt", "tik_tok"}:
         return "TikTok"
+    if normalized in {"google", "googleads", "google_ads", "google ads", "gads"}:
+        return "Google Ads"
     return "Unknown"
 
 
@@ -5884,6 +5898,7 @@ def _truth_fetch_meta_ads_rows(range_days: int) -> tuple[list[dict], dict]:
             "source": "api",
             "campaigns": len(rows),
             "error": None,
+            "last_sync": _truth_now_iso(),
         }
         _truth_cache_set_ads("meta", range_days, rows, meta)
         return rows, meta
@@ -5893,6 +5908,7 @@ def _truth_fetch_meta_ads_rows(range_days: int) -> tuple[list[dict], dict]:
             "configured": True,
             "source": "api",
             "error": str(exc),
+            "last_sync": None,
         }
         _truth_cache_set_ads("meta", range_days, [], meta)
         return [], meta
@@ -5904,6 +5920,48 @@ def _truth_tiktok_get_value(item: dict, key: str):
     dimensions = item.get("dimensions") or {}
     metrics = item.get("metrics") or {}
     return metrics.get(key) if key in metrics else dimensions.get(key)
+
+
+def _truth_parse_single_ads_payload(default_platform: str, raw: str) -> list[dict]:
+    rows: list[dict] = []
+    if not raw:
+        return rows
+    try:
+        payload = json.loads(raw)
+    except Exception as exc:
+        print(f"⚠️ [TRUTH] invalid ads JSON for {default_platform}: {exc}")
+        return rows
+
+    items = payload.get("campaigns") if isinstance(payload, dict) else payload
+    if not isinstance(items, list):
+        return rows
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        campaign_name = str(item.get("campaign_name") or item.get("name") or "Untitled campaign").strip()
+        spend = _truth_float(item.get("spend"))
+        clicks = int(_truth_float(item.get("clicks")))
+        impressions = int(_truth_float(item.get("impressions")))
+        ctr = item.get("ctr")
+        cpc = item.get("cpc")
+        platform_revenue = item.get("platform_revenue")
+        roas = item.get("roas")
+        if platform_revenue in (None, "") and roas not in (None, ""):
+            platform_revenue = _truth_float(roas) * spend
+
+        rows.append({
+            "platform": str(item.get("platform") or default_platform),
+            "campaign_id": str(item.get("campaign_id") or _truth_slug(campaign_name) or str(uuid.uuid4())),
+            "campaign_name": campaign_name,
+            "spend": spend,
+            "clicks": clicks,
+            "impressions": impressions,
+            "ctr": _truth_float(ctr) if ctr not in (None, "") else (_truth_safe_div(clicks, impressions) * 100 if impressions else None),
+            "cpc": _truth_float(cpc) if cpc not in (None, "") else (_truth_safe_div(spend, clicks) if clicks else None),
+            "platform_revenue": _truth_float(platform_revenue) if platform_revenue not in (None, "") else None,
+        })
+    return rows
 
 
 def _truth_fetch_tiktok_ads_rows(range_days: int) -> tuple[list[dict], dict]:
@@ -5985,6 +6043,7 @@ def _truth_fetch_tiktok_ads_rows(range_days: int) -> tuple[list[dict], dict]:
             "source": "api",
             "campaigns": len(rows),
             "error": None,
+            "last_sync": _truth_now_iso(),
         }
         _truth_cache_set_ads("tiktok", range_days, rows, meta)
         return rows, meta
@@ -5994,6 +6053,7 @@ def _truth_fetch_tiktok_ads_rows(range_days: int) -> tuple[list[dict], dict]:
             "configured": True,
             "source": "api",
             "error": str(exc),
+            "last_sync": None,
         }
         _truth_cache_set_ads("tiktok", range_days, [], meta)
         return [], meta
@@ -6006,52 +6066,65 @@ def _truth_parse_ads_env_rows() -> list[dict]:
     ]
     rows: list[dict] = []
     for default_platform, raw in config:
-        if not raw:
-            continue
-        try:
-            payload = json.loads(raw)
-        except Exception as exc:
-            print(f"⚠️ [TRUTH] invalid ads JSON for {default_platform}: {exc}")
-            continue
-
-        items = payload.get("campaigns") if isinstance(payload, dict) else payload
-        if not isinstance(items, list):
-            continue
-
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            campaign_name = str(item.get("campaign_name") or item.get("name") or "Untitled campaign").strip()
-            spend = _truth_float(item.get("spend"))
-            clicks = int(_truth_float(item.get("clicks")))
-            impressions = int(_truth_float(item.get("impressions")))
-            ctr = item.get("ctr")
-            cpc = item.get("cpc")
-            platform_revenue = item.get("platform_revenue")
-            roas = item.get("roas")
-            if platform_revenue in (None, "") and roas not in (None, ""):
-                platform_revenue = _truth_float(roas) * spend
-
-            rows.append({
-                "platform": str(item.get("platform") or default_platform),
-                "campaign_id": str(item.get("campaign_id") or _truth_slug(campaign_name) or str(uuid.uuid4())),
-                "campaign_name": campaign_name,
-                "spend": spend,
-                "clicks": clicks,
-                "impressions": impressions,
-                "ctr": _truth_float(ctr) if ctr not in (None, "") else (_truth_safe_div(clicks, impressions) * 100 if impressions else None),
-                "cpc": _truth_float(cpc) if cpc not in (None, "") else (_truth_safe_div(spend, clicks) if clicks else None),
-                "platform_revenue": _truth_float(platform_revenue) if platform_revenue not in (None, "") else None,
-            })
+        rows.extend(_truth_parse_single_ads_payload(default_platform, raw))
     return rows
+
+
+def _truth_fetch_google_ads_rows(range_days: int) -> tuple[list[dict], dict]:
+    cached = _truth_cache_get_ads("google", range_days)
+    if cached:
+        return cached
+
+    env_rows = _truth_parse_single_ads_payload("Google Ads", os.getenv("TRUTH_GOOGLE_ADS_JSON", ""))
+    if env_rows:
+        meta = {
+            "connected": True,
+            "configured": True,
+            "source": "env_json",
+            "campaigns": len(env_rows),
+            "error": None,
+            "last_sync": _truth_now_iso(),
+        }
+        _truth_cache_set_ads("google", range_days, env_rows, meta)
+        return env_rows, meta
+
+    developer_token = os.getenv("TRUTH_GOOGLE_DEVELOPER_TOKEN", "").strip()
+    customer_id = os.getenv("TRUTH_GOOGLE_CUSTOMER_ID", "").strip()
+    refresh_token = os.getenv("TRUTH_GOOGLE_REFRESH_TOKEN", "").strip()
+    client_id = os.getenv("TRUTH_GOOGLE_CLIENT_ID", "").strip()
+    client_secret = os.getenv("TRUTH_GOOGLE_CLIENT_SECRET", "").strip()
+
+    if developer_token and customer_id and refresh_token and client_id and client_secret:
+        meta = {
+            "connected": False,
+            "configured": True,
+            "source": "api",
+            "campaigns": 0,
+            "error": "Google Ads API is configured but not yet wired in this backend build",
+            "last_sync": None,
+        }
+        _truth_cache_set_ads("google", range_days, [], meta)
+        return [], meta
+
+    meta = {
+        "connected": False,
+        "configured": False,
+        "source": "api",
+        "campaigns": 0,
+        "error": "Missing Google Ads credentials",
+        "last_sync": None,
+    }
+    _truth_cache_set_ads("google", range_days, [], meta)
+    return [], meta
 
 
 def _truth_collect_ads_rows(range_days: int) -> tuple[list[dict], dict]:
     meta_rows, meta_info = _truth_fetch_meta_ads_rows(range_days)
     tiktok_rows, tiktok_info = _truth_fetch_tiktok_ads_rows(range_days)
+    google_rows, google_info = _truth_fetch_google_ads_rows(range_days)
     env_rows = _truth_parse_ads_env_rows()
 
-    rows = [*meta_rows, *tiktok_rows]
+    rows = [*meta_rows, *tiktok_rows, *google_rows]
     if env_rows:
         for row in env_rows:
             platform = _truth_normalize_platform(row.get("platform"))
@@ -6059,14 +6132,271 @@ def _truth_collect_ads_rows(range_days: int) -> tuple[list[dict], dict]:
             if not has_real:
                 rows.append(row)
                 if platform == "Meta" and not meta_info.get("connected"):
-                    meta_info = {**meta_info, "source": "env_json", "configured": True}
+                    meta_info = {**meta_info, "source": "env_json", "configured": True, "connected": True, "campaigns": 1, "last_sync": _truth_now_iso()}
                 if platform == "TikTok" and not tiktok_info.get("connected"):
-                    tiktok_info = {**tiktok_info, "source": "env_json", "configured": True}
+                    tiktok_info = {**tiktok_info, "source": "env_json", "configured": True, "connected": True, "campaigns": 1, "last_sync": _truth_now_iso()}
 
     return rows, {
         "meta": meta_info,
         "tiktok": tiktok_info,
+        "google": google_info,
     }
+
+
+def _truth_source_status(name: str, *, connected: bool, last_sync: str | None = None, completeness: float = 0.0, reliability: float = 0.0, **extra) -> dict:
+    status = {
+        "name": name,
+        "connected": bool(connected),
+        "last_sync": last_sync,
+        "completeness": _truth_pct(completeness),
+        "reliability": _truth_pct(reliability),
+    }
+    status.update(extra)
+    return status
+
+
+def _truth_cost_inputs(total_revenue: float) -> dict:
+    cogs_value_raw = os.getenv("TRUTH_COGS_VALUE", "").strip()
+    fees_value_raw = os.getenv("TRUTH_FEES_VALUE", "").strip()
+    cogs_percent_raw = os.getenv("TRUTH_COGS_PERCENT", "").strip()
+    fees_percent_raw = os.getenv("TRUTH_FEES_PERCENT", "").strip()
+
+    cogs_value = _truth_float(cogs_value_raw) if cogs_value_raw else None
+    fees_value = _truth_float(fees_value_raw) if fees_value_raw else None
+    cogs_percent = _truth_float(cogs_percent_raw) if cogs_percent_raw else None
+    fees_percent = _truth_float(fees_percent_raw) if fees_percent_raw else None
+
+    if cogs_value is None and cogs_percent is not None:
+        cogs_value = total_revenue * (cogs_percent / 100)
+    if fees_value is None and fees_percent is not None:
+        fees_value = total_revenue * (fees_percent / 100)
+
+    completeness = 0
+    if cogs_value is not None:
+        completeness += 50
+    if fees_value is not None:
+        completeness += 50
+
+    return {
+        "cogs_value": cogs_value,
+        "fees_value": fees_value,
+        "cogs_percent": cogs_percent,
+        "fees_percent": fees_percent,
+        "completeness": completeness,
+    }
+
+
+def _truth_build_profit_engine(*, revenue: float, ad_spend: float, data_completeness: int, truth_block_allowed: bool, cogs_value: float | None = None, fees_value: float | None = None) -> dict:
+    known_costs = ad_spend
+    missing_parts: list[str] = []
+
+    if cogs_value is not None:
+        known_costs += cogs_value
+    else:
+        missing_parts.append("COGS")
+    if fees_value is not None:
+        known_costs += fees_value
+    else:
+        missing_parts.append("fees")
+
+    if not truth_block_allowed or data_completeness < 50:
+        warning = "Profit blocked until ad coverage and cost inputs are reliable enough"
+        if missing_parts:
+            warning = f"{warning}; missing {', '.join(missing_parts)}"
+        return {
+            "value": None,
+            "type": "UNKNOWN",
+            "confidence": min(data_completeness, 49),
+            "warning": warning,
+        }
+
+    if data_completeness >= 90 and cogs_value is not None and fees_value is not None:
+        return {
+            "value": revenue - known_costs,
+            "type": "VERIFIED",
+            "confidence": min(100, data_completeness),
+            "warning": "",
+        }
+
+    warning = "Estimated profit from partial costs only"
+    if missing_parts:
+        warning = f"{warning}; missing {', '.join(missing_parts)}"
+    return {
+        "value": revenue - known_costs,
+        "type": "ESTIMATED",
+        "confidence": max(50, min(89, data_completeness)),
+        "warning": warning,
+    }
+
+
+def _truth_label_from_score(score: int) -> str:
+    if score >= 90:
+        return "VERIFIED"
+    if score >= 60:
+        return "PARTIAL"
+    return "UNVERIFIED"
+
+
+def _truth_severity_weight(severity: str) -> int:
+    return {
+        "HIGH": 28,
+        "MEDIUM": 14,
+        "LOW": 6,
+    }.get(str(severity or "").upper(), 10)
+
+
+def _truth_build_source_statuses(*, orders: list[dict], tracked_orders: int, ads_integrations: dict, shopify_connected: bool) -> dict:
+    total_orders = len(orders)
+    tracked_ratio = (tracked_orders / total_orders * 100) if total_orders else 0
+    now_iso = _truth_now_iso()
+
+    meta_info = ads_integrations.get("meta", {})
+    tiktok_info = ads_integrations.get("tiktok", {})
+    google_info = ads_integrations.get("google", {})
+
+    meta_connected = bool(meta_info.get("connected"))
+    tiktok_connected = bool(tiktok_info.get("connected"))
+    google_connected = bool(google_info.get("connected"))
+
+    return {
+        "shopify_orders": _truth_source_status(
+            "Shopify Orders",
+            connected=shopify_connected,
+            last_sync=now_iso if shopify_connected else None,
+            completeness=100 if shopify_connected else 0,
+            reliability=96 if shopify_connected else 0,
+            order_count=total_orders,
+        ),
+        "utm_events": _truth_source_status(
+            "UTM Events",
+            connected=tracked_orders > 0,
+            last_sync=now_iso if tracked_orders > 0 else None,
+            completeness=tracked_ratio,
+            reliability=85 if tracked_orders > 0 else 20,
+            tracked_orders=tracked_orders,
+            total_orders=total_orders,
+        ),
+        "meta_ads": _truth_source_status(
+            "Meta Ads",
+            connected=meta_connected,
+            last_sync=meta_info.get("last_sync"),
+            completeness=100 if meta_connected else 0,
+            reliability=92 if meta_info.get("source") == "api" and meta_connected else (68 if meta_info.get("source") == "env_json" and meta_connected else 15),
+            source=meta_info.get("source"),
+            error=meta_info.get("error"),
+        ),
+        "tiktok_ads": _truth_source_status(
+            "TikTok Ads",
+            connected=tiktok_connected,
+            last_sync=tiktok_info.get("last_sync"),
+            completeness=100 if tiktok_connected else 0,
+            reliability=90 if tiktok_info.get("source") == "api" and tiktok_connected else (68 if tiktok_info.get("source") == "env_json" and tiktok_connected else 15),
+            source=tiktok_info.get("source"),
+            error=tiktok_info.get("error"),
+        ),
+        "google_ads": _truth_source_status(
+            "Google Ads",
+            connected=google_connected,
+            last_sync=google_info.get("last_sync"),
+            completeness=100 if google_connected else 0,
+            reliability=90 if google_info.get("source") == "api" and google_connected else (65 if google_info.get("source") == "env_json" and google_connected else 10),
+            source=google_info.get("source"),
+            error=google_info.get("error"),
+        ),
+        "stripe": _truth_source_status(
+            "Stripe",
+            connected=bool(STRIPE_SECRET_KEY),
+            last_sync=None,
+            completeness=25 if STRIPE_SECRET_KEY else 0,
+            reliability=60 if STRIPE_SECRET_KEY else 0,
+            optional=True,
+        ),
+    }
+
+
+def _truth_detect_anomalies(campaign_rows: list[dict]) -> list[dict]:
+    anomalies: list[dict] = []
+    for row in campaign_rows:
+        clicks = int(_truth_float(row.get("clicks")))
+        orders = int(_truth_float(row.get("orders")))
+        revenue = _truth_float(row.get("revenue_real"))
+        spend = _truth_float(row.get("spend"))
+        impressions = int(_truth_float(row.get("impressions")))
+        campaign_name = row.get("campaign_name") or "Unknown campaign"
+        platform = row.get("platform") or "Unknown"
+        is_paid = platform in {"Meta", "TikTok", "Google Ads"}
+
+        if orders > clicks and clicks >= 0:
+            anomalies.append({
+                "type": "ATTRIBUTION_ERROR",
+                "severity": "HIGH",
+                "message": f"{orders} orders with {clicks} clicks on {campaign_name}",
+                "campaign_name": campaign_name,
+                "platform": platform,
+            })
+
+        if revenue > 0 and clicks == 0 and impressions == 0:
+            anomalies.append({
+                "type": "GHOST_REVENUE",
+                "severity": "HIGH",
+                "message": f"Revenue detected on {campaign_name} with zero traffic",
+                "campaign_name": campaign_name,
+                "platform": platform,
+            })
+
+        if spend <= 0 and is_paid:
+            anomalies.append({
+                "type": "MISSING_SPEND_DATA",
+                "severity": "HIGH" if orders > 0 or revenue > 0 else "MEDIUM",
+                "message": f"Paid campaign {campaign_name} has no spend data",
+                "campaign_name": campaign_name,
+                "platform": platform,
+            })
+    return anomalies
+
+
+def _truth_build_insights(*, truth_block: dict, source_status: dict, anomalies: list[dict], unattributed_orders: int, total_orders: int, campaign_rows: list[dict], profit_engine: dict) -> list[dict]:
+    insights: list[dict] = []
+
+    if not truth_block.get("allowed"):
+        insights.append({
+            "problem": "Ad spend sources are missing",
+            "impact": "Real profit stays blocked until paid spend is connected",
+            "action": "Connect Meta Ads, TikTok Ads or Google Ads before trusting TRUTH metrics",
+        })
+
+    tracked_ratio = source_status.get("utm_events", {}).get("completeness", 0)
+    if total_orders and tracked_ratio < 70:
+        untracked_pct = max(0, 100 - tracked_ratio)
+        insights.append({
+            "problem": f"{untracked_pct}% of orders are not attributed by UTM",
+            "impact": "Profit and ROAS can be inflated because orders cannot be tied back to spend",
+            "action": "Deploy the storefront UTM tracker and pass UTM fields into checkout attributes",
+        })
+
+    for anomaly in anomalies[:2]:
+        insights.append({
+            "problem": anomaly.get("message"),
+            "impact": "Business truth is contradictory, so verified metrics are downgraded",
+            "action": "Fix tracking or reconnect the missing paid source before acting on these numbers",
+        })
+
+    if profit_engine.get("type") == "ESTIMATED":
+        insights.append({
+            "problem": "Profit is estimated from partial costs",
+            "impact": profit_engine.get("warning") or "Margins are directionally useful but not audit-grade",
+            "action": "Add verified COGS and fee inputs to unlock fully verified profit",
+        })
+
+    if not insights and campaign_rows:
+        top_row = sorted(campaign_rows, key=lambda row: _truth_float(row.get("revenue_real")), reverse=True)[0]
+        insights.append({
+            "problem": f"Top campaign is {top_row.get('campaign_name')}",
+            "impact": "This campaign has the biggest leverage on your truth score and margin quality",
+            "action": "Audit its spend, UTM coverage and costs first to improve the overall TRUTH layer",
+        })
+
+    return insights[:6]
 
 
 def _truth_status_from_roas(roas: float | None) -> tuple[str, str]:
@@ -6089,6 +6419,7 @@ async def get_truth_dashboard(request: Request, range: str = "30d"):
 
     campaigns: dict[str, dict] = {}
     unattributed_orders = 0
+    tracked_orders = 0
 
     for ad_row in ads_rows:
         key = f"{_truth_normalize_platform(ad_row.get('platform'))}::{_truth_slug(ad_row.get('campaign_name'))}"
@@ -6103,7 +6434,7 @@ async def get_truth_dashboard(request: Request, range: str = "30d"):
             "cpc": ad_row.get("cpc"),
             "orders": 0,
             "revenue_real": 0.0,
-            "profit_real": 0.0,
+            "profit_real": None,
             "roas_real": None,
             "platform_revenue": ad_row.get("platform_revenue"),
             "platform_roas": None,
@@ -6115,6 +6446,7 @@ async def get_truth_dashboard(request: Request, range: str = "30d"):
             "attributed_orders": [],
             "utm_source": None,
             "utm_content": None,
+                        "profit_engine": None,
           }
 
     for order in orders:
@@ -6126,6 +6458,8 @@ async def get_truth_dashboard(request: Request, range: str = "30d"):
         customer = order.get("customer") or {}
         if campaign_name == "unknown":
             unattributed_orders += 1
+        else:
+            tracked_orders += 1
 
         campaign_row = campaigns.setdefault(key, {
             "platform": platform,
@@ -6138,7 +6472,7 @@ async def get_truth_dashboard(request: Request, range: str = "30d"):
             "cpc": None,
             "orders": 0,
             "revenue_real": 0.0,
-            "profit_real": 0.0,
+            "profit_real": None,
             "roas_real": None,
             "platform_revenue": None,
             "platform_roas": None,
@@ -6150,6 +6484,7 @@ async def get_truth_dashboard(request: Request, range: str = "30d"):
             "attributed_orders": [],
             "utm_source": utm.get("utm_source"),
             "utm_content": utm.get("utm_content"),
+            "profit_engine": None,
         })
 
         campaign_row["orders"] += 1
@@ -6168,6 +6503,32 @@ async def get_truth_dashboard(request: Request, range: str = "30d"):
             "utm_content": utm.get("utm_content"),
         })
 
+    source_status = _truth_build_source_statuses(
+        orders=orders,
+        tracked_orders=tracked_orders,
+        ads_integrations=ads_integrations,
+        shopify_connected=True,
+    )
+
+    ad_sources = [source_status["meta_ads"], source_status["tiktok_ads"], source_status["google_ads"]]
+    missing_sources = [source.get("name") for source in ad_sources if not source.get("connected")]
+    truth_block = {
+        "allowed": any(source.get("connected") for source in ad_sources),
+        "reason": "" if any(source.get("connected") for source in ad_sources) else "Missing ad spend sources",
+        "missing_sources": missing_sources if not any(source.get("connected") for source in ad_sources) else [],
+    }
+
+    ad_coverage = max((source.get("completeness", 0) for source in ad_sources), default=0)
+    attribution_accuracy = source_status.get("utm_events", {}).get("completeness", 0)
+    source_data_completeness = round(
+        source_status.get("shopify_orders", {}).get("completeness", 0) * 0.25
+        + attribution_accuracy * 0.25
+        + ad_coverage * 0.50
+    )
+
+    cost_inputs = _truth_cost_inputs(sum(_truth_float(order.get("total_price")) for order in orders))
+    data_completeness = round(source_data_completeness * 0.7 + cost_inputs.get("completeness", 0) * 0.3)
+
     for row in campaigns.values():
         spend = _truth_float(row.get("spend"))
         clicks = int(_truth_float(row.get("clicks")))
@@ -6178,37 +6539,51 @@ async def get_truth_dashboard(request: Request, range: str = "30d"):
             row["ctr"] = _truth_safe_div(clicks, impressions) * 100
         if row.get("cpc") is None and clicks:
             row["cpc"] = _truth_safe_div(spend, clicks)
-        row["profit_real"] = revenue_real - spend
-        row["roas_real"] = _truth_safe_div(revenue_real, spend)
+        row_cost_inputs = _truth_cost_inputs(revenue_real)
+        row["profit_engine"] = _truth_build_profit_engine(
+            revenue=revenue_real,
+            ad_spend=spend,
+            data_completeness=data_completeness,
+            truth_block_allowed=truth_block.get("allowed", False),
+            cogs_value=row_cost_inputs.get("cogs_value"),
+            fees_value=row_cost_inputs.get("fees_value"),
+        )
+        row["profit_real"] = row["profit_engine"].get("value")
+        row["roas_real"] = _truth_safe_div(revenue_real, spend) if truth_block.get("allowed") else None
         row["platform_roas"] = _truth_safe_div(_truth_float(platform_revenue), spend) if platform_revenue is not None else None
         row["conversion_rate"] = _truth_safe_div(row.get("orders", 0), clicks) * 100 if clicks else None
         if platform_revenue is not None and revenue_real > 0:
             row["error_percent"] = ((_truth_float(platform_revenue) - revenue_real) / revenue_real) * 100
         row["status"], row["status_tone"] = _truth_status_from_roas(row.get("roas_real"))
 
+    anomalies = _truth_detect_anomalies(list(campaigns.values()))
+    consistency_penalty = sum(_truth_severity_weight(anomaly.get("severity")) for anomaly in anomalies)
+    consistency_score = max(0, 100 - min(100, consistency_penalty))
+    truth_score_value = round(
+        ad_coverage * 0.35
+        + attribution_accuracy * 0.35
+        + data_completeness * 0.20
+        + consistency_score * 0.10
+    )
+
     campaign_rows = sorted(
         campaigns.values(),
-        key=lambda item: (_truth_float(item.get("profit_real")), _truth_float(item.get("revenue_real"))),
+        key=lambda item: (_truth_float(item.get("revenue_real")), _truth_float(item.get("spend"))),
         reverse=True,
     )
 
     total_revenue = sum(_truth_float(row.get("revenue_real")) for row in campaign_rows)
     total_spend = sum(_truth_float(row.get("spend")) for row in campaign_rows)
-    total_profit = total_revenue - total_spend
-    total_roas = _truth_safe_div(total_revenue, total_spend)
-
-    insights: list[str] = []
-    alerts: list[str] = []
-    for row in campaign_rows[:6]:
-        campaign_name = row.get("campaign_name") or "Unknown"
-        profit = _truth_float(row.get("profit_real"))
-        roas = row.get("roas_real")
-        if roas is not None and roas < 1:
-            insights.append(f"Campaign {campaign_name} is losing money")
-            alerts.append(f"You are losing ${abs(profit) / max(days, 1):.2f}/day on {campaign_name}")
-        elif roas is not None and roas > 2:
-            insights.append(f"Campaign {campaign_name} is profitable")
-            alerts.append(f"Campaign {campaign_name} is profitable, consider scaling")
+    total_roas = _truth_safe_div(total_revenue, total_spend) if truth_block.get("allowed") else None
+    profit_engine = _truth_build_profit_engine(
+        revenue=total_revenue,
+        ad_spend=total_spend,
+        data_completeness=data_completeness,
+        truth_block_allowed=truth_block.get("allowed", False),
+        cogs_value=cost_inputs.get("cogs_value"),
+        fees_value=cost_inputs.get("fees_value"),
+    )
+    total_profit = profit_engine.get("value")
 
     platform_summary: dict[str, dict] = {}
     for row in campaign_rows:
@@ -6217,23 +6592,48 @@ async def get_truth_dashboard(request: Request, range: str = "30d"):
         platform_bucket["real"] += _truth_float(row.get("revenue_real"))
         platform_bucket["reported"] += _truth_float(row.get("platform_revenue"))
 
-    for platform, totals in platform_summary.items():
-        if totals["real"] <= 0 or totals["reported"] <= 0:
-            continue
-        error_pct = ((totals["reported"] - totals["real"]) / totals["real"]) * 100
-        if error_pct >= 1:
-            insights.append(f"{platform} is overreporting by {error_pct:.1f}%")
-        elif error_pct <= -1:
-            insights.append(f"{platform} is underreporting by {abs(error_pct):.1f}%")
+    insights = _truth_build_insights(
+        truth_block=truth_block,
+        source_status=source_status,
+        anomalies=anomalies,
+        unattributed_orders=unattributed_orders,
+        total_orders=len(orders),
+        campaign_rows=campaign_rows,
+        profit_engine=profit_engine,
+    )
+    alerts = [anomaly.get("message") for anomaly in anomalies if anomaly.get("severity") == "HIGH"][:6]
 
-    if not ads_rows:
-        insights.append("Meta and TikTok spend are not connected yet — revenue is real, spend is incomplete")
+    system_flags = {
+        "blocked": not truth_block.get("allowed"),
+        "hide_real_profit": truth_score_value < 60 or not truth_block.get("allowed"),
+        "show_warning_banner": truth_score_value < 60 or not truth_block.get("allowed"),
+        "show_estimated_metrics": 60 <= truth_score_value < 90,
+        "show_verified_metrics": truth_score_value >= 90 and truth_block.get("allowed"),
+        "metric_mode": "verified" if truth_score_value >= 90 and truth_block.get("allowed") else ("estimated" if truth_score_value >= 60 and truth_block.get("allowed") else "hidden"),
+        "ad_coverage": ad_coverage,
+        "attribution_accuracy": attribution_accuracy,
+        "data_completeness": data_completeness,
+        "consistency_score": consistency_score,
+        "cost_inputs": {
+            "cogs_present": cost_inputs.get("cogs_value") is not None,
+            "fees_present": cost_inputs.get("fees_value") is not None,
+        },
+    }
 
     return {
         "success": True,
         "range": range,
         "range_days": days,
         "shop": shop_domain,
+        "truth_block": truth_block,
+        "truth_score": {
+            "value": truth_score_value,
+            "label": _truth_label_from_score(truth_score_value),
+        },
+        "profit_engine": profit_engine,
+        "anomalies": anomalies,
+        "data_sources_status": source_status,
+        "system_flags": system_flags,
         "summary": {
             "total_revenue_real": total_revenue,
             "total_ad_spend": total_spend,
@@ -6245,6 +6645,7 @@ async def get_truth_dashboard(request: Request, range: str = "30d"):
         "campaigns": campaign_rows,
         "insights": insights[:8],
         "alerts": alerts[:6],
+        "data_completeness": data_completeness,
         "integrations": {
             "shopify": {"connected": True, "configured": True, "source": "api"},
             "meta": {
@@ -6254,6 +6655,10 @@ async def get_truth_dashboard(request: Request, range: str = "30d"):
             "tiktok": {
                 **ads_integrations.get("tiktok", {}),
                 "connected": bool(ads_integrations.get("tiktok", {}).get("connected")) or any(row.get("platform") == "TikTok" and _truth_float(row.get("spend")) > 0 for row in campaign_rows),
+            },
+            "google": {
+                **ads_integrations.get("google", {}),
+                "connected": bool(ads_integrations.get("google", {}).get("connected")) or any(row.get("platform") == "Google Ads" and _truth_float(row.get("spend")) > 0 for row in campaign_rows),
             },
         },
         "tracking": {
