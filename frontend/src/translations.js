@@ -28,7 +28,7 @@ const fr = {
   or: 'OU',
   viewPlans: 'Voir les plans',
   viewAllPlans: 'Voir tous les plans',
-  startFreeTrialNow: "Commencer l'essai gratuit dès maintenant",
+  startFreeTrialNow: "Commencez l'essai gratuit",
   perMonth: '/mois',
 
   // ---- Nav ----
