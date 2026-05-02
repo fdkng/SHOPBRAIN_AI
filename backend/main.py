@@ -13,6 +13,7 @@ import re
 import json
 import time
 import uuid
+import secrets
 import hashlib
 import base64
 import hmac
@@ -20,7 +21,7 @@ import smtplib
 import ssl
 import requests
 import threading
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, urlencode
 from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, HTTPException, Request, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
@@ -132,14 +133,49 @@ FRONTEND_ORIGIN = _sanitize_url(
     os.getenv("FRONTEND_ORIGIN"),
     "https://fdkng.github.io/SHOPBRAIN_AI",
 )
+BACKEND_BASE_URL = _sanitize_url(
+    os.getenv("BACKEND_BASE_URL"),
+    "https://shopbrain-backend.onrender.com",
+)
 SERPAPI_KEY = os.getenv("SERPAPI_KEY") or os.getenv("SERPAPI_API_KEY")
 MARKET_TOLERANCE_PCT = float(os.getenv("MARKET_TOLERANCE_PCT", "5"))
 SERP_MAX_PRODUCTS = int(os.getenv("SERP_MAX_PRODUCTS", "8"))
 SERP_NUM_RESULTS = int(os.getenv("SERP_NUM_RESULTS", "20"))
 
+META_ADS_APP_ID = os.getenv("META_ADS_APP_ID") or os.getenv("META_APP_ID") or os.getenv("FACEBOOK_APP_ID")
+META_ADS_APP_SECRET = os.getenv("META_ADS_APP_SECRET") or os.getenv("META_APP_SECRET") or os.getenv("FACEBOOK_APP_SECRET")
+META_ADS_REDIRECT_URI = _sanitize_url(
+    os.getenv("META_ADS_REDIRECT_URI"),
+    f"{BACKEND_BASE_URL}/auth/integrations/meta/callback",
+)
+META_ADS_SCOPES = os.getenv("META_ADS_SCOPES", "ads_read,business_management")
+
+GOOGLE_ADS_CLIENT_ID = os.getenv("GOOGLE_ADS_CLIENT_ID") or os.getenv("TRUTH_GOOGLE_CLIENT_ID")
+GOOGLE_ADS_CLIENT_SECRET = os.getenv("GOOGLE_ADS_CLIENT_SECRET") or os.getenv("TRUTH_GOOGLE_CLIENT_SECRET")
+GOOGLE_ADS_REDIRECT_URI = _sanitize_url(
+    os.getenv("GOOGLE_ADS_REDIRECT_URI"),
+    f"{BACKEND_BASE_URL}/auth/integrations/google/callback",
+)
+GOOGLE_ADS_SCOPES = os.getenv("GOOGLE_ADS_SCOPES", "https://www.googleapis.com/auth/adwords")
+
+TIKTOK_ADS_CLIENT_ID = os.getenv("TIKTOK_ADS_CLIENT_ID") or os.getenv("TIKTOK_CLIENT_ID") or os.getenv("TIKTOK_APP_ID") or os.getenv("TIKTOK_CLIENT_KEY")
+TIKTOK_ADS_CLIENT_SECRET = os.getenv("TIKTOK_ADS_CLIENT_SECRET") or os.getenv("TIKTOK_CLIENT_SECRET") or os.getenv("TIKTOK_SECRET")
+TIKTOK_ADS_REDIRECT_URI = _sanitize_url(
+    os.getenv("TIKTOK_ADS_REDIRECT_URI"),
+    f"{BACKEND_BASE_URL}/auth/integrations/tiktok/callback",
+)
+TIKTOK_ADS_SCOPES = os.getenv("TIKTOK_ADS_SCOPES", "ads.read")
+
+TRUTH_INTEGRATION_PROVIDER_LABELS = {
+    "meta": "Meta Ads",
+    "tiktok": "TikTok Ads",
+    "google": "Google Ads",
+}
+
 _SERP_CACHE: dict[str, dict] = {}
 _SHOP_CACHE: dict[str, dict] = {}
 _BLOCKERS_CACHE: dict[str, dict] = {}
+_INTEGRATION_OAUTH_STATES: dict[str, dict] = {}
 _MEM_CACHE_LOCK = threading.Lock()
 
 
@@ -1396,16 +1432,16 @@ def _deactivate_subscription_row(supabase_client, row_id: str, reason: str = "",
 
 # Stripe price IDs - Mapping tier names to price IDs
 STRIPE_PLANS = {
-    "standard": "price_1SQfzmPSvADOSbOzpxoK8hG3",
-    "pro": "price_1SQg0xPSvADOSbOzrZbOGs06",
-    "premium": "price_1SQg3CPSvADOSbOzHXSoDkGN",
+    "standard": "price_1TSiKwPSvADOSbOz1u7GmrkY",
+    "pro": "price_1TSiO8PSvADOSbOzQBuDLKqr",
+    "premium": "price_1TSiPbPSvADOSbOzQ2VdVeII",
 }
 
 # Reverse mapping: price_id -> tier
 PRICE_TO_TIER = {
-    "price_1SQfzmPSvADOSbOzpxoK8hG3": "standard",
-    "price_1SQg0xPSvADOSbOzrZbOGs06": "pro",
-    "price_1SQg3CPSvADOSbOzHXSoDkGN": "premium",
+    "price_1TSiKwPSvADOSbOz1u7GmrkY": "standard",
+    "price_1TSiO8PSvADOSbOzQBuDLKqr": "pro",
+    "price_1TSiPbPSvADOSbOzQ2VdVeII": "premium",
 }
 
 
@@ -1890,6 +1926,785 @@ def get_user_id(request: Request) -> str:
     
     print(f"❌ Missing Bearer token or user_id.")
     raise HTTPException(status_code=401, detail="Missing or invalid token")
+
+
+class ClientIntegrationConnectRequest(BaseModel):
+    external_account_id: str
+    external_account_name: str | None = None
+    display_name: str | None = None
+    access_token: str | None = None
+    refresh_token: str | None = None
+    token_expires_at: str | None = None
+    connection_mode: str = "manual"
+    api_version: str | None = None
+    config: dict | None = None
+    metadata: dict | None = None
+    is_primary: bool = True
+    developer_token: str | None = None
+    client_id: str | None = None
+    client_secret: str | None = None
+    manager_account_id: str | None = None
+
+
+class ClientIntegrationOAuthStartRequest(BaseModel):
+    external_account_id: str | None = None
+    external_account_name: str | None = None
+    display_name: str | None = None
+    api_version: str | None = None
+    developer_token: str | None = None
+    manager_account_id: str | None = None
+
+
+def _truth_normalize_provider(provider: str | None) -> str:
+    normalized = str(provider or "").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "facebook": "meta",
+        "instagram": "meta",
+        "fb": "meta",
+        "ig": "meta",
+        "tik_tok": "tiktok",
+        "googleads": "google",
+        "google_ads": "google",
+        "gads": "google",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def _truth_require_provider(provider: str | None) -> str:
+    normalized = _truth_normalize_provider(provider)
+    if normalized not in TRUTH_INTEGRATION_PROVIDER_LABELS:
+        raise HTTPException(status_code=404, detail=f"Unsupported integration provider: {provider}")
+    return normalized
+
+
+def _truth_provider_label(provider: str | None) -> str:
+    normalized = _truth_normalize_provider(provider)
+    return TRUTH_INTEGRATION_PROVIDER_LABELS.get(normalized, str(provider or "Unknown"))
+
+
+def _supabase_admin_client():
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        raise HTTPException(status_code=500, detail="Supabase not configured")
+    return create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+
+def _truth_parse_iso_datetime(value: str | None) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid ISO datetime: {value}") from exc
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _truth_mask_secret(value: str | None) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    if len(raw) <= 8:
+        return "*" * len(raw)
+    return f"{raw[:4]}…{raw[-4:]}"
+
+
+def _truth_safe_dict(value) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _truth_is_pending_account_id(value: str | None) -> bool:
+    return str(value or "").strip().lower().startswith("pending:")
+
+
+def _truth_integration_ready(provider: str, row: dict) -> bool:
+    config = _truth_safe_dict(row.get("config"))
+    if provider in {"meta", "tiktok"}:
+        return bool(
+            row.get("access_token")
+            and row.get("external_account_id")
+            and not _truth_is_pending_account_id(row.get("external_account_id"))
+        ) or bool(config.get("campaigns_json"))
+    if provider == "google":
+        return (
+            bool(config.get("campaigns_json"))
+            or bool(
+                config.get("developer_token")
+                and row.get("external_account_id")
+                and not _truth_is_pending_account_id(row.get("external_account_id"))
+                and row.get("refresh_token")
+                and config.get("client_id")
+                and config.get("client_secret")
+            )
+        )
+    return False
+
+
+def _truth_serialize_integration(row: dict) -> dict:
+    provider = _truth_normalize_provider(row.get("provider"))
+    config = _truth_safe_dict(row.get("config"))
+    metadata = _truth_safe_dict(row.get("metadata"))
+    return {
+        "id": row.get("id"),
+        "provider": provider,
+        "provider_label": _truth_provider_label(provider),
+        "display_name": row.get("display_name") or row.get("external_account_name") or _truth_provider_label(provider),
+        "external_account_id": row.get("external_account_id"),
+        "external_account_name": row.get("external_account_name"),
+        "status": row.get("status") or ("connected" if _truth_integration_ready(provider, row) else "pending"),
+        "connection_mode": row.get("connection_mode") or "manual",
+        "is_primary": bool(row.get("is_primary")),
+        "api_version": row.get("api_version"),
+        "last_sync_at": row.get("last_sync_at"),
+        "last_error": row.get("last_error"),
+        "token_expires_at": row.get("token_expires_at"),
+        "has_access_token": bool(row.get("access_token")),
+        "has_refresh_token": bool(row.get("refresh_token")),
+        "access_token_preview": _truth_mask_secret(row.get("access_token")),
+        "refresh_token_preview": _truth_mask_secret(row.get("refresh_token")),
+        "config_summary": {
+            "has_campaigns_json": bool(config.get("campaigns_json")),
+            "has_developer_token": bool(config.get("developer_token")),
+            "has_client_id": bool(config.get("client_id")),
+            "has_client_secret": bool(config.get("client_secret")),
+            "manager_account_id": config.get("manager_account_id"),
+        },
+        "metadata": metadata,
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+    }
+
+
+def _truth_get_user_integrations(user_id: str, provider: str | None = None) -> list[dict]:
+    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
+        return []
+    try:
+        supabase = _supabase_admin_client()
+        query = supabase.table("client_integrations").select("*").eq("user_id", user_id)
+        normalized_provider = _truth_normalize_provider(provider) if provider else None
+        if normalized_provider:
+            query = query.eq("provider", normalized_provider)
+        response = query.order("is_primary", desc=True).order("updated_at", desc=True).execute()
+        rows = response.data or []
+        normalized_rows: list[dict] = []
+        for row in rows:
+            row_provider = _truth_normalize_provider(row.get("provider"))
+            if row_provider in TRUTH_INTEGRATION_PROVIDER_LABELS:
+                row["provider"] = row_provider
+                normalized_rows.append(row)
+        return normalized_rows
+    except Exception as exc:
+        print(f"⚠️ [INTEGRATIONS] unable to read client_integrations: {exc}")
+        return []
+
+
+def _truth_get_primary_integration(user_id: str, provider: str, integrations: list[dict] | None = None) -> dict | None:
+    normalized_provider = _truth_require_provider(provider)
+    rows = integrations if integrations is not None else _truth_get_user_integrations(user_id, normalized_provider)
+    provider_rows = [row for row in rows if _truth_normalize_provider(row.get("provider")) == normalized_provider]
+    if not provider_rows:
+        return None
+    primary = next((row for row in provider_rows if row.get("is_primary")), provider_rows[0])
+    primary["provider"] = normalized_provider
+    return primary
+
+
+def _truth_set_primary_integration(supabase, user_id: str, provider: str, integration_id: str) -> None:
+    try:
+        (
+            supabase.table("client_integrations")
+            .update({"is_primary": False})
+            .eq("user_id", user_id)
+            .eq("provider", provider)
+            .neq("id", integration_id)
+            .execute()
+        )
+    except Exception as exc:
+        print(f"⚠️ [INTEGRATIONS] unable to rebalance primary integration for {provider}: {exc}")
+
+
+def _truth_upsert_integration(user_id: str, provider: str, req: ClientIntegrationConnectRequest) -> dict:
+    normalized_provider = _truth_require_provider(provider)
+    external_account_id = str(req.external_account_id or "").strip()
+    if normalized_provider == "meta":
+        external_account_id = external_account_id.replace("act_", "")
+    if not external_account_id:
+        raise HTTPException(status_code=400, detail=f"{_truth_provider_label(normalized_provider)} account id is required")
+
+    config = dict(req.config or {})
+    metadata = dict(req.metadata or {})
+    if req.developer_token:
+        config["developer_token"] = req.developer_token.strip()
+    if req.client_id:
+        config["client_id"] = req.client_id.strip()
+    if req.client_secret:
+        config["client_secret"] = req.client_secret.strip()
+    if req.manager_account_id:
+        config["manager_account_id"] = req.manager_account_id.strip()
+
+    token_expires_at = _truth_parse_iso_datetime(req.token_expires_at)
+    now_iso = _truth_now_iso()
+    payload = {
+        "user_id": user_id,
+        "provider": normalized_provider,
+        "display_name": (req.display_name or req.external_account_name or _truth_provider_label(normalized_provider)).strip(),
+        "external_account_id": external_account_id,
+        "external_account_name": (req.external_account_name or req.display_name or "").strip() or None,
+        "access_token": (req.access_token or "").strip() or None,
+        "refresh_token": (req.refresh_token or "").strip() or None,
+        "token_expires_at": token_expires_at,
+        "connection_mode": (req.connection_mode or "manual").strip() or "manual",
+        "api_version": (req.api_version or "").strip() or None,
+        "config": config,
+        "metadata": metadata,
+        "is_primary": bool(req.is_primary),
+        "status": "pending",
+        "last_error": None,
+        "updated_at": now_iso,
+    }
+    payload["status"] = "connected" if _truth_integration_ready(normalized_provider, payload) else "pending"
+
+    supabase = _supabase_admin_client()
+    try:
+        existing = (
+            supabase.table("client_integrations")
+            .select("*")
+            .eq("user_id", user_id)
+            .eq("provider", normalized_provider)
+            .eq("external_account_id", external_account_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="`client_integrations` table missing. Run the new Supabase migration first.",
+        ) from exc
+
+    if existing.data:
+        existing_row = existing.data[0]
+        integration_id = existing_row.get("id")
+        if not payload.get("access_token"):
+            payload["access_token"] = existing_row.get("access_token")
+        if not payload.get("refresh_token"):
+            payload["refresh_token"] = existing_row.get("refresh_token")
+        if not payload.get("token_expires_at"):
+            payload["token_expires_at"] = existing_row.get("token_expires_at")
+        if not payload.get("external_account_name"):
+            payload["external_account_name"] = existing_row.get("external_account_name")
+        if not payload.get("display_name"):
+            payload["display_name"] = existing_row.get("display_name")
+        if not payload.get("api_version"):
+            payload["api_version"] = existing_row.get("api_version")
+        merged_config = {
+            **_truth_safe_dict(existing_row.get("config")),
+            **payload.get("config", {}),
+        }
+        merged_metadata = {
+            **_truth_safe_dict(existing_row.get("metadata")),
+            **payload.get("metadata", {}),
+        }
+        payload["config"] = merged_config
+        payload["metadata"] = merged_metadata
+        payload["status"] = "connected" if _truth_integration_ready(normalized_provider, {**existing_row, **payload}) else (existing_row.get("status") or "pending")
+        payload_to_write = dict(payload)
+        payload_to_write.pop("user_id", None)
+        (
+            supabase.table("client_integrations")
+            .update(payload_to_write)
+            .eq("id", integration_id)
+            .execute()
+        )
+    else:
+        payload["created_at"] = now_iso
+        response = supabase.table("client_integrations").insert(payload).execute()
+        integration_id = response.data[0].get("id") if response.data else None
+
+    if req.is_primary and integration_id:
+        _truth_set_primary_integration(supabase, user_id, normalized_provider, integration_id)
+
+    refreshed = (
+        supabase.table("client_integrations")
+        .select("*")
+        .eq("user_id", user_id)
+        .eq("provider", normalized_provider)
+        .eq("external_account_id", external_account_id)
+        .limit(1)
+        .execute()
+    )
+    if not refreshed.data:
+        raise HTTPException(status_code=500, detail="Unable to persist integration")
+    return refreshed.data[0]
+
+
+def _truth_build_provider_credentials(provider: str, integration: dict | None = None) -> dict:
+    normalized_provider = _truth_require_provider(provider)
+    config = _truth_safe_dict(integration.get("config")) if integration else {}
+    if normalized_provider == "meta":
+        access_token = (integration.get("access_token") if integration else os.getenv("TRUTH_META_ACCESS_TOKEN", "")) or ""
+        account_id = (integration.get("external_account_id") if integration else os.getenv("TRUTH_META_AD_ACCOUNT_ID", "")) or ""
+        return {
+            "access_token": str(access_token).strip(),
+            "account_id": str(account_id).strip().replace("act_", ""),
+            "api_version": str((integration.get("api_version") if integration else os.getenv("TRUTH_META_API_VERSION", "v20.0")) or config.get("api_version") or "v20.0").strip(),
+            "campaigns_json": config.get("campaigns_json") if integration else None,
+        }
+    if normalized_provider == "tiktok":
+        access_token = (integration.get("access_token") if integration else os.getenv("TRUTH_TIKTOK_ACCESS_TOKEN", "")) or ""
+        account_id = (integration.get("external_account_id") if integration else os.getenv("TRUTH_TIKTOK_ADVERTISER_ID", "")) or ""
+        return {
+            "access_token": str(access_token).strip(),
+            "account_id": str(account_id).strip(),
+            "api_version": str((integration.get("api_version") if integration else os.getenv("TRUTH_TIKTOK_API_VERSION", "v1.3")) or config.get("api_version") or "v1.3").strip(),
+            "campaigns_json": config.get("campaigns_json") if integration else None,
+        }
+    developer_token = (config.get("developer_token") if integration else os.getenv("TRUTH_GOOGLE_DEVELOPER_TOKEN", "")) or ""
+    customer_id = (integration.get("external_account_id") if integration else os.getenv("TRUTH_GOOGLE_CUSTOMER_ID", "")) or ""
+    refresh_token = (integration.get("refresh_token") if integration else os.getenv("TRUTH_GOOGLE_REFRESH_TOKEN", "")) or ""
+    client_id = (config.get("client_id") if integration else os.getenv("TRUTH_GOOGLE_CLIENT_ID", "")) or ""
+    client_secret = (config.get("client_secret") if integration else os.getenv("TRUTH_GOOGLE_CLIENT_SECRET", "")) or ""
+    return {
+        "developer_token": str(developer_token).strip(),
+        "customer_id": str(customer_id).strip(),
+        "refresh_token": str(refresh_token).strip(),
+        "client_id": str(client_id).strip(),
+        "client_secret": str(client_secret).strip(),
+        "campaigns_json": config.get("campaigns_json") if integration else None,
+        "manager_account_id": config.get("manager_account_id") if integration else None,
+    }
+
+
+def _truth_ads_cache_scope(user_id: str, provider: str, integration: dict | None = None) -> str:
+    normalized_provider = _truth_require_provider(provider)
+    credentials = _truth_build_provider_credentials(normalized_provider, integration)
+    identity = "|".join([
+        user_id or "anonymous",
+        normalized_provider,
+        str(credentials.get("account_id") or credentials.get("customer_id") or ""),
+        str(credentials.get("access_token") or ""),
+        str(credentials.get("refresh_token") or ""),
+        str(credentials.get("developer_token") or ""),
+        str(credentials.get("client_id") or ""),
+    ])
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+
+
+def _truth_cleanup_oauth_states(ttl_seconds: int = 900) -> None:
+    cutoff = time.time() - ttl_seconds
+    expired = [key for key, value in _INTEGRATION_OAUTH_STATES.items() if float(value.get("ts", 0)) < cutoff]
+    for key in expired:
+        _INTEGRATION_OAUTH_STATES.pop(key, None)
+
+
+def _truth_oauth_redirect(status: str, provider: str, **params) -> RedirectResponse:
+    query = urlencode({
+        "integration_oauth": status,
+        "provider": _truth_normalize_provider(provider),
+        **{key: value for key, value in params.items() if value not in (None, "")},
+    })
+    return RedirectResponse(url=f"{FRONTEND_ORIGIN}/#/dashboard?{query}")
+
+
+def _truth_provider_oauth_settings(provider: str) -> dict:
+    normalized_provider = _truth_require_provider(provider)
+    if normalized_provider == "meta":
+        return {
+            "client_id": META_ADS_APP_ID,
+            "client_secret": META_ADS_APP_SECRET,
+            "redirect_uri": META_ADS_REDIRECT_URI,
+            "scopes": META_ADS_SCOPES,
+            "auth_url": "https://www.facebook.com/v20.0/dialog/oauth",
+            "token_url": "https://graph.facebook.com/v20.0/oauth/access_token",
+        }
+    if normalized_provider == "google":
+        return {
+            "client_id": GOOGLE_ADS_CLIENT_ID,
+            "client_secret": GOOGLE_ADS_CLIENT_SECRET,
+            "redirect_uri": GOOGLE_ADS_REDIRECT_URI,
+            "scopes": GOOGLE_ADS_SCOPES,
+            "auth_url": "https://accounts.google.com/o/oauth2/v2/auth",
+            "token_url": "https://oauth2.googleapis.com/token",
+        }
+    return {
+        "client_id": TIKTOK_ADS_CLIENT_ID,
+        "client_secret": TIKTOK_ADS_CLIENT_SECRET,
+        "redirect_uri": TIKTOK_ADS_REDIRECT_URI,
+        "scopes": TIKTOK_ADS_SCOPES,
+        "auth_url": "https://ads.tiktok.com/marketing_api/auth",
+        "token_url": "https://business-api.tiktok.com/open_api/v1.3/oauth2/access_token/",
+    }
+
+
+def _truth_provider_oauth_ready(provider: str) -> bool:
+    settings = _truth_provider_oauth_settings(provider)
+    return bool(settings.get("client_id") and settings.get("client_secret") and settings.get("redirect_uri"))
+
+
+def _truth_oauth_prefill_payload(provider: str, req: ClientIntegrationOAuthStartRequest | None) -> dict:
+    normalized_provider = _truth_require_provider(provider)
+    payload = {
+        "external_account_id": str((req.external_account_id if req else "") or "").strip() or None,
+        "external_account_name": str((req.external_account_name if req else "") or "").strip() or None,
+        "display_name": str((req.display_name if req else "") or "").strip() or None,
+        "api_version": str((req.api_version if req else "") or "").strip() or None,
+        "developer_token": str((req.developer_token if req else "") or "").strip() or None,
+        "manager_account_id": str((req.manager_account_id if req else "") or "").strip() or None,
+        "provider": normalized_provider,
+    }
+    if normalized_provider == "meta" and not payload["api_version"]:
+        payload["api_version"] = "v20.0"
+    if normalized_provider == "tiktok" and not payload["api_version"]:
+        payload["api_version"] = "v1.3"
+    return payload
+
+
+def _truth_fetch_meta_oauth_account(access_token: str) -> dict | None:
+    try:
+        response = requests.get(
+            "https://graph.facebook.com/v20.0/me/adaccounts",
+            params={
+                "fields": "id,account_id,name,account_status",
+                "limit": 1,
+                "access_token": access_token,
+            },
+            timeout=20,
+        )
+        response.raise_for_status()
+        data = response.json().get("data") or []
+        if not data:
+            return None
+        account = data[0]
+        account_id = str(account.get("account_id") or account.get("id") or "").replace("act_", "").strip()
+        if not account_id:
+            return None
+        return {
+            "external_account_id": account_id,
+            "external_account_name": account.get("name") or f"Meta Ads {account_id}",
+        }
+    except Exception as exc:
+        print(f"⚠️ [INTEGRATIONS-OAUTH] unable to fetch Meta ad accounts: {exc}")
+        return None
+
+
+def _truth_fetch_tiktok_oauth_account(access_token: str, api_version: str = "v1.3") -> dict | None:
+    try:
+        response = requests.get(
+            f"https://business-api.tiktok.com/open_api/{api_version}/oauth2/advertiser/get/",
+            headers={"Access-Token": access_token},
+            timeout=20,
+        )
+        response.raise_for_status()
+        payload = response.json() if response.content else {}
+        data = payload.get("data") if isinstance(payload, dict) else None
+        candidates = []
+        if isinstance(data, dict):
+            candidates = data.get("list") or data.get("advertisers") or []
+            if not candidates and data.get("advertiser_ids"):
+                candidates = [{"advertiser_id": data.get("advertiser_ids")[0]}]
+        if not candidates:
+            return None
+        account = candidates[0] if isinstance(candidates[0], dict) else {"advertiser_id": candidates[0]}
+        account_id = str(account.get("advertiser_id") or account.get("id") or "").strip()
+        if not account_id:
+            return None
+        return {
+            "external_account_id": account_id,
+            "external_account_name": account.get("name") or account.get("advertiser_name") or f"TikTok Ads {account_id}",
+        }
+    except Exception as exc:
+        print(f"⚠️ [INTEGRATIONS-OAUTH] unable to fetch TikTok advertisers: {exc}")
+        return None
+
+
+def _truth_build_oauth_connect_request(
+    provider: str,
+    *,
+    access_token: str | None = None,
+    refresh_token: str | None = None,
+    token_expires_at: str | None = None,
+    prefill: dict | None = None,
+    discovered_account: dict | None = None,
+    metadata: dict | None = None,
+) -> ClientIntegrationConnectRequest:
+    normalized_provider = _truth_require_provider(provider)
+    payload = dict(prefill or {})
+    account = discovered_account or {}
+    external_account_id = str(payload.get("external_account_id") or account.get("external_account_id") or "").strip()
+    if not external_account_id:
+        external_account_id = f"pending:{normalized_provider}:{secrets.token_hex(6)}"
+
+    config: dict = {}
+    if normalized_provider == "google":
+        if payload.get("developer_token"):
+            config["developer_token"] = payload.get("developer_token")
+        if GOOGLE_ADS_CLIENT_ID:
+            config["client_id"] = GOOGLE_ADS_CLIENT_ID
+        if GOOGLE_ADS_CLIENT_SECRET:
+            config["client_secret"] = GOOGLE_ADS_CLIENT_SECRET
+        if payload.get("manager_account_id"):
+            config["manager_account_id"] = payload.get("manager_account_id")
+
+    return ClientIntegrationConnectRequest(
+        external_account_id=external_account_id,
+        external_account_name=(payload.get("external_account_name") or account.get("external_account_name") or None),
+        display_name=(payload.get("display_name") or account.get("external_account_name") or _truth_provider_label(normalized_provider)),
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_expires_at=token_expires_at,
+        connection_mode="oauth",
+        api_version=payload.get("api_version"),
+        config=config or None,
+        metadata=metadata or None,
+        is_primary=True,
+        developer_token=payload.get("developer_token") or None,
+        client_id=GOOGLE_ADS_CLIENT_ID if normalized_provider == "google" else None,
+        client_secret=GOOGLE_ADS_CLIENT_SECRET if normalized_provider == "google" else None,
+        manager_account_id=payload.get("manager_account_id") or None,
+    )
+
+
+@app.get("/api/integrations")
+async def get_client_integrations(request: Request):
+    user_id = get_user_id(request)
+    rows = _truth_get_user_integrations(user_id)
+    grouped = {provider: [] for provider in TRUTH_INTEGRATION_PROVIDER_LABELS}
+    for row in rows:
+        provider = _truth_normalize_provider(row.get("provider"))
+        if provider in grouped:
+            grouped[provider].append(_truth_serialize_integration(row))
+
+    providers = []
+    for provider, label in TRUTH_INTEGRATION_PROVIDER_LABELS.items():
+        accounts = grouped.get(provider, [])
+        providers.append({
+            "provider": provider,
+            "label": label,
+            "connected": any(account.get("status") == "connected" for account in accounts),
+            "account_count": len(accounts),
+            "primary_account": next((account for account in accounts if account.get("is_primary")), accounts[0] if accounts else None),
+        })
+
+    return {
+        "success": True,
+        "providers": providers,
+        "integrations": grouped,
+        "oauth": {
+            provider: {
+                "configured": _truth_provider_oauth_ready(provider),
+            }
+            for provider in TRUTH_INTEGRATION_PROVIDER_LABELS
+        },
+    }
+
+
+@app.get("/api/integrations/{provider}/status")
+async def get_client_integration_status(provider: str, request: Request):
+    user_id = get_user_id(request)
+    normalized_provider = _truth_require_provider(provider)
+    rows = _truth_get_user_integrations(user_id, normalized_provider)
+    primary = _truth_get_primary_integration(user_id, normalized_provider, rows)
+    return {
+        "success": True,
+        "provider": normalized_provider,
+        "label": _truth_provider_label(normalized_provider),
+        "connected": bool(primary and _truth_integration_ready(normalized_provider, primary)),
+        "account_count": len(rows),
+        "primary": _truth_serialize_integration(primary) if primary else None,
+        "accounts": [_truth_serialize_integration(row) for row in rows],
+    }
+
+
+@app.post("/api/integrations/{provider}/manual-connect")
+async def connect_client_integration(provider: str, req: ClientIntegrationConnectRequest, request: Request):
+    user_id = get_user_id(request)
+    saved = _truth_upsert_integration(user_id, provider, req)
+    return {
+        "success": True,
+        "provider": _truth_normalize_provider(provider),
+        "integration": _truth_serialize_integration(saved),
+    }
+
+
+@app.post("/api/integrations/{provider}/oauth/start")
+async def start_client_integration_oauth(provider: str, request: Request, req: ClientIntegrationOAuthStartRequest | None = None):
+    user_id = get_user_id(request)
+    normalized_provider = _truth_require_provider(provider)
+    settings = _truth_provider_oauth_settings(normalized_provider)
+    if not _truth_provider_oauth_ready(normalized_provider):
+        raise HTTPException(status_code=500, detail=f"{_truth_provider_label(normalized_provider)} OAuth is not configured on the server")
+
+    _truth_cleanup_oauth_states()
+    state = secrets.token_urlsafe(32)
+    prefill = _truth_oauth_prefill_payload(normalized_provider, req)
+    _INTEGRATION_OAUTH_STATES[state] = {
+        "ts": time.time(),
+        "provider": normalized_provider,
+        "user_id": user_id,
+        "prefill": prefill,
+    }
+
+    if normalized_provider == "meta":
+        auth_url = f"{settings['auth_url']}?{urlencode({'client_id': settings['client_id'], 'redirect_uri': settings['redirect_uri'], 'scope': settings['scopes'], 'response_type': 'code', 'state': state})}"
+    elif normalized_provider == "google":
+        auth_url = f"{settings['auth_url']}?{urlencode({'client_id': settings['client_id'], 'redirect_uri': settings['redirect_uri'], 'response_type': 'code', 'access_type': 'offline', 'prompt': 'consent', 'include_granted_scopes': 'true', 'scope': settings['scopes'], 'state': state})}"
+    else:
+        auth_url = f"{settings['auth_url']}?{urlencode({'app_id': settings['client_id'], 'redirect_uri': settings['redirect_uri'], 'state': state, 'scope': settings['scopes']})}"
+
+    return {
+        "success": True,
+        "provider": normalized_provider,
+        "auth_url": auth_url,
+    }
+
+
+@app.get("/auth/integrations/{provider}/callback")
+async def integration_oauth_callback(provider: str, request: Request):
+    normalized_provider = _truth_require_provider(provider)
+    query_params = dict(request.query_params)
+    state = str(query_params.get("state") or "").strip()
+    code = str(query_params.get("code") or query_params.get("auth_code") or "").strip()
+    error = str(query_params.get("error") or query_params.get("message") or "").strip()
+
+    if error:
+        return _truth_oauth_redirect("error", normalized_provider, reason="provider_denied")
+    if not state or not code:
+        return _truth_oauth_redirect("error", normalized_provider, reason="missing_params")
+
+    saved_state = _INTEGRATION_OAUTH_STATES.pop(state, None)
+    if not saved_state:
+        return _truth_oauth_redirect("error", normalized_provider, reason="expired")
+    if saved_state.get("provider") != normalized_provider:
+        return _truth_oauth_redirect("error", normalized_provider, reason="state_mismatch")
+
+    user_id = saved_state.get("user_id")
+    prefill = _truth_safe_dict(saved_state.get("prefill"))
+    settings = _truth_provider_oauth_settings(normalized_provider)
+
+    try:
+        access_token = None
+        refresh_token = None
+        expires_in = None
+        discovered_account = None
+        metadata = {"oauth_connected_at": _truth_now_iso()}
+
+        if normalized_provider == "meta":
+            token_response = requests.get(
+                settings["token_url"],
+                params={
+                    "client_id": settings["client_id"],
+                    "client_secret": settings["client_secret"],
+                    "redirect_uri": settings["redirect_uri"],
+                    "code": code,
+                },
+                timeout=20,
+            )
+            token_response.raise_for_status()
+            token_payload = token_response.json()
+            access_token = token_payload.get("access_token")
+            expires_in = token_payload.get("expires_in")
+            discovered_account = _truth_fetch_meta_oauth_account(access_token) if access_token else None
+        elif normalized_provider == "google":
+            token_response = requests.post(
+                settings["token_url"],
+                data={
+                    "client_id": settings["client_id"],
+                    "client_secret": settings["client_secret"],
+                    "redirect_uri": settings["redirect_uri"],
+                    "grant_type": "authorization_code",
+                    "code": code,
+                },
+                timeout=20,
+            )
+            token_response.raise_for_status()
+            token_payload = token_response.json()
+            access_token = token_payload.get("access_token")
+            refresh_token = token_payload.get("refresh_token")
+            expires_in = token_payload.get("expires_in")
+            metadata["scope"] = token_payload.get("scope")
+        else:
+            token_response = requests.post(
+                settings["token_url"],
+                json={
+                    "app_id": settings["client_id"],
+                    "secret": settings["client_secret"],
+                    "auth_code": code,
+                },
+                timeout=20,
+            )
+            token_response.raise_for_status()
+            token_payload = token_response.json() if token_response.content else {}
+            token_data = token_payload.get("data") if isinstance(token_payload, dict) else None
+            access_token = (token_data or {}).get("access_token") or token_payload.get("access_token")
+            refresh_token = (token_data or {}).get("refresh_token") or token_payload.get("refresh_token")
+            expires_in = (token_data or {}).get("expires_in") or token_payload.get("expires_in")
+            advertiser_ids = (token_data or {}).get("advertiser_ids") or []
+            if advertiser_ids and not prefill.get("external_account_id"):
+                prefill["external_account_id"] = str(advertiser_ids[0])
+            discovered_account = _truth_fetch_tiktok_oauth_account(access_token, prefill.get("api_version") or "v1.3") if access_token else None
+
+        if not access_token and normalized_provider in {"meta", "tiktok"}:
+            return _truth_oauth_redirect("error", normalized_provider, reason="no_token")
+        if not refresh_token and normalized_provider == "google":
+            return _truth_oauth_redirect("error", normalized_provider, reason="no_refresh_token")
+
+        token_expires_at = None
+        if expires_in:
+            try:
+                token_expires_at = (
+                    datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+                ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            except Exception:
+                token_expires_at = None
+
+        connect_req = _truth_build_oauth_connect_request(
+            normalized_provider,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            token_expires_at=token_expires_at,
+            prefill=prefill,
+            discovered_account=discovered_account,
+            metadata=metadata,
+        )
+        saved = _truth_upsert_integration(user_id, normalized_provider, connect_req)
+        serialized = _truth_serialize_integration(saved)
+        status = "connected" if serialized.get("status") == "connected" else "partial"
+        return _truth_oauth_redirect(
+            status,
+            normalized_provider,
+            account_id=serialized.get("external_account_id"),
+        )
+    except requests.exceptions.Timeout:
+        return _truth_oauth_redirect("error", normalized_provider, reason="timeout")
+    except requests.exceptions.HTTPError as exc:
+        print(f"❌ [INTEGRATIONS-OAUTH] HTTP error during {normalized_provider} callback: {exc}")
+        return _truth_oauth_redirect("error", normalized_provider, reason="exchange_failed")
+    except Exception as exc:
+        print(f"❌ [INTEGRATIONS-OAUTH] callback failed for {normalized_provider}: {exc}")
+        return _truth_oauth_redirect("error", normalized_provider, reason="internal")
+
+
+@app.delete("/api/integrations/{provider}")
+async def delete_client_integrations(provider: str, request: Request):
+    user_id = get_user_id(request)
+    normalized_provider = _truth_require_provider(provider)
+    supabase = _supabase_admin_client()
+    try:
+        (
+            supabase.table("client_integrations")
+            .delete()
+            .eq("user_id", user_id)
+            .eq("provider", normalized_provider)
+            .execute()
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Unable to delete {normalized_provider} integrations") from exc
+
+    return {
+        "success": True,
+        "provider": normalized_provider,
+        "deleted": True,
+    }
 
 
 class OptimizeRequest(BaseModel):
@@ -5618,7 +6433,7 @@ def _get_user_id_by_shop_domain(shop_domain: str) -> str | None:
 
 
 _ORDERS_CACHE: dict[tuple[str, int, str], tuple[float, list[dict]]] = {}
-_TRUTH_ADS_CACHE: dict[tuple[str, int], tuple[float, list[dict], dict]] = {}
+_TRUTH_ADS_CACHE: dict[tuple[str, int, str], tuple[float, list[dict], dict]] = {}
 
 # Bundles job store: simple in-memory registry for async jobs
 _BUNDLES_JOBS: dict[str, dict] = {}
@@ -5780,11 +6595,11 @@ def _truth_extract_utm(order: dict) -> dict:
     return payload
 
 
-def _truth_cache_get_ads(platform: str, range_days: int) -> tuple[list[dict], dict] | None:
+def _truth_cache_get_ads(platform: str, range_days: int, scope_key: str = "global") -> tuple[list[dict], dict] | None:
     ttl = int(os.getenv("TRUTH_ADS_CACHE_TTL", "300"))
     if ttl <= 0:
         return None
-    key = (platform.lower(), int(range_days))
+    key = (platform.lower(), int(range_days), scope_key)
     entry = _TRUTH_ADS_CACHE.get(key)
     if not entry:
         return None
@@ -5795,11 +6610,11 @@ def _truth_cache_get_ads(platform: str, range_days: int) -> tuple[list[dict], di
     return rows, meta
 
 
-def _truth_cache_set_ads(platform: str, range_days: int, rows: list[dict], meta: dict) -> None:
+def _truth_cache_set_ads(platform: str, range_days: int, rows: list[dict], meta: dict, scope_key: str = "global") -> None:
     ttl = int(os.getenv("TRUTH_ADS_CACHE_TTL", "300"))
     if ttl <= 0:
         return
-    key = (platform.lower(), int(range_days))
+    key = (platform.lower(), int(range_days), scope_key)
     _TRUTH_ADS_CACHE[key] = (time.time(), rows, meta)
 
 
@@ -5834,23 +6649,36 @@ def _truth_meta_reported_revenue(item: dict, spend: float) -> float | None:
     return None
 
 
-def _truth_fetch_meta_ads_rows(range_days: int) -> tuple[list[dict], dict]:
-    cached = _truth_cache_get_ads("meta", range_days)
+def _truth_fetch_meta_ads_rows(range_days: int, integration: dict | None = None, cache_scope: str = "global") -> tuple[list[dict], dict]:
+    cached = _truth_cache_get_ads("meta", range_days, cache_scope)
     if cached:
         return cached
 
-    access_token = os.getenv("TRUTH_META_ACCESS_TOKEN", "").strip()
-    ad_account_id = os.getenv("TRUTH_META_AD_ACCOUNT_ID", "").strip().replace("act_", "")
-    api_version = os.getenv("TRUTH_META_API_VERSION", "v20.0").strip()
+    credentials = _truth_build_provider_credentials("meta", integration)
+    access_token = credentials.get("access_token", "")
+    ad_account_id = credentials.get("account_id", "")
+    api_version = str(credentials.get("api_version") or "v20.0").strip()
+    fallback_rows = _truth_parse_integration_ads_rows("Meta", integration)
 
     if not access_token or not ad_account_id:
+        if fallback_rows:
+            meta = {
+                "connected": True,
+                "configured": True,
+                "source": "integration_json",
+                "campaigns": len(fallback_rows),
+                "error": None,
+                "last_sync": _truth_now_iso(),
+            }
+            _truth_cache_set_ads("meta", range_days, fallback_rows, meta, cache_scope)
+            return fallback_rows, meta
         meta = {
             "connected": False,
-            "configured": False,
+            "configured": bool(integration),
             "source": "api",
             "error": "Missing TRUTH_META_ACCESS_TOKEN or TRUTH_META_AD_ACCOUNT_ID",
         }
-        _truth_cache_set_ads("meta", range_days, [], meta)
+        _truth_cache_set_ads("meta", range_days, [], meta, cache_scope)
         return [], meta
 
     start_date, end_date = _truth_range_dates(range_days)
@@ -5900,7 +6728,7 @@ def _truth_fetch_meta_ads_rows(range_days: int) -> tuple[list[dict], dict]:
             "error": None,
             "last_sync": _truth_now_iso(),
         }
-        _truth_cache_set_ads("meta", range_days, rows, meta)
+        _truth_cache_set_ads("meta", range_days, rows, meta, cache_scope)
         return rows, meta
     except Exception as exc:
         meta = {
@@ -5910,7 +6738,7 @@ def _truth_fetch_meta_ads_rows(range_days: int) -> tuple[list[dict], dict]:
             "error": str(exc),
             "last_sync": None,
         }
-        _truth_cache_set_ads("meta", range_days, [], meta)
+        _truth_cache_set_ads("meta", range_days, [], meta, cache_scope)
         return [], meta
 
 
@@ -5922,15 +6750,18 @@ def _truth_tiktok_get_value(item: dict, key: str):
     return metrics.get(key) if key in metrics else dimensions.get(key)
 
 
-def _truth_parse_single_ads_payload(default_platform: str, raw: str) -> list[dict]:
+def _truth_parse_single_ads_payload(default_platform: str, raw) -> list[dict]:
     rows: list[dict] = []
     if not raw:
         return rows
-    try:
-        payload = json.loads(raw)
-    except Exception as exc:
-        print(f"⚠️ [TRUTH] invalid ads JSON for {default_platform}: {exc}")
-        return rows
+    if isinstance(raw, (dict, list)):
+        payload = raw
+    else:
+        try:
+            payload = json.loads(str(raw))
+        except Exception as exc:
+            print(f"⚠️ [TRUTH] invalid ads JSON for {default_platform}: {exc}")
+            return rows
 
     items = payload.get("campaigns") if isinstance(payload, dict) else payload
     if not isinstance(items, list):
@@ -5964,23 +6795,43 @@ def _truth_parse_single_ads_payload(default_platform: str, raw: str) -> list[dic
     return rows
 
 
-def _truth_fetch_tiktok_ads_rows(range_days: int) -> tuple[list[dict], dict]:
-    cached = _truth_cache_get_ads("tiktok", range_days)
+def _truth_parse_integration_ads_rows(default_platform: str, integration: dict | None) -> list[dict]:
+    if not integration:
+        return []
+    config = _truth_safe_dict(integration.get("config"))
+    return _truth_parse_single_ads_payload(default_platform, config.get("campaigns_json"))
+
+
+def _truth_fetch_tiktok_ads_rows(range_days: int, integration: dict | None = None, cache_scope: str = "global") -> tuple[list[dict], dict]:
+    cached = _truth_cache_get_ads("tiktok", range_days, cache_scope)
     if cached:
         return cached
 
-    access_token = os.getenv("TRUTH_TIKTOK_ACCESS_TOKEN", "").strip()
-    advertiser_id = os.getenv("TRUTH_TIKTOK_ADVERTISER_ID", "").strip()
-    api_version = os.getenv("TRUTH_TIKTOK_API_VERSION", "v1.3").strip().lstrip("/")
+    credentials = _truth_build_provider_credentials("tiktok", integration)
+    access_token = credentials.get("access_token", "")
+    advertiser_id = credentials.get("account_id", "")
+    api_version = str(credentials.get("api_version") or "v1.3").strip().lstrip("/")
+    fallback_rows = _truth_parse_integration_ads_rows("TikTok", integration)
 
     if not access_token or not advertiser_id:
+        if fallback_rows:
+            meta = {
+                "connected": True,
+                "configured": True,
+                "source": "integration_json",
+                "campaigns": len(fallback_rows),
+                "error": None,
+                "last_sync": _truth_now_iso(),
+            }
+            _truth_cache_set_ads("tiktok", range_days, fallback_rows, meta, cache_scope)
+            return fallback_rows, meta
         meta = {
             "connected": False,
-            "configured": False,
+            "configured": bool(integration),
             "source": "api",
             "error": "Missing TRUTH_TIKTOK_ACCESS_TOKEN or TRUTH_TIKTOK_ADVERTISER_ID",
         }
-        _truth_cache_set_ads("tiktok", range_days, [], meta)
+        _truth_cache_set_ads("tiktok", range_days, [], meta, cache_scope)
         return [], meta
 
     start_date, end_date = _truth_range_dates(range_days)
@@ -6045,7 +6896,7 @@ def _truth_fetch_tiktok_ads_rows(range_days: int) -> tuple[list[dict], dict]:
             "error": None,
             "last_sync": _truth_now_iso(),
         }
-        _truth_cache_set_ads("tiktok", range_days, rows, meta)
+        _truth_cache_set_ads("tiktok", range_days, rows, meta, cache_scope)
         return rows, meta
     except Exception as exc:
         meta = {
@@ -6055,7 +6906,7 @@ def _truth_fetch_tiktok_ads_rows(range_days: int) -> tuple[list[dict], dict]:
             "error": str(exc),
             "last_sync": None,
         }
-        _truth_cache_set_ads("tiktok", range_days, [], meta)
+        _truth_cache_set_ads("tiktok", range_days, [], meta, cache_scope)
         return [], meta
 
 
@@ -6070,29 +6921,44 @@ def _truth_parse_ads_env_rows() -> list[dict]:
     return rows
 
 
-def _truth_fetch_google_ads_rows(range_days: int) -> tuple[list[dict], dict]:
-    cached = _truth_cache_get_ads("google", range_days)
+def _truth_fetch_google_ads_rows(range_days: int, integration: dict | None = None, cache_scope: str = "global") -> tuple[list[dict], dict]:
+    cached = _truth_cache_get_ads("google", range_days, cache_scope)
     if cached:
         return cached
 
-    env_rows = _truth_parse_single_ads_payload("Google Ads", os.getenv("TRUTH_GOOGLE_ADS_JSON", ""))
-    if env_rows:
+    integration_rows = _truth_parse_integration_ads_rows("Google Ads", integration)
+    if integration_rows:
         meta = {
             "connected": True,
             "configured": True,
-            "source": "env_json",
-            "campaigns": len(env_rows),
+            "source": "integration_json",
+            "campaigns": len(integration_rows),
             "error": None,
             "last_sync": _truth_now_iso(),
         }
-        _truth_cache_set_ads("google", range_days, env_rows, meta)
-        return env_rows, meta
+        _truth_cache_set_ads("google", range_days, integration_rows, meta, cache_scope)
+        return integration_rows, meta
 
-    developer_token = os.getenv("TRUTH_GOOGLE_DEVELOPER_TOKEN", "").strip()
-    customer_id = os.getenv("TRUTH_GOOGLE_CUSTOMER_ID", "").strip()
-    refresh_token = os.getenv("TRUTH_GOOGLE_REFRESH_TOKEN", "").strip()
-    client_id = os.getenv("TRUTH_GOOGLE_CLIENT_ID", "").strip()
-    client_secret = os.getenv("TRUTH_GOOGLE_CLIENT_SECRET", "").strip()
+    if integration is None:
+        env_rows = _truth_parse_single_ads_payload("Google Ads", os.getenv("TRUTH_GOOGLE_ADS_JSON", ""))
+        if env_rows:
+            meta = {
+                "connected": True,
+                "configured": True,
+                "source": "env_json",
+                "campaigns": len(env_rows),
+                "error": None,
+                "last_sync": _truth_now_iso(),
+            }
+            _truth_cache_set_ads("google", range_days, env_rows, meta, cache_scope)
+            return env_rows, meta
+
+    credentials = _truth_build_provider_credentials("google", integration)
+    developer_token = credentials.get("developer_token", "")
+    customer_id = credentials.get("customer_id", "")
+    refresh_token = credentials.get("refresh_token", "")
+    client_id = credentials.get("client_id", "")
+    client_secret = credentials.get("client_secret", "")
 
     if developer_token and customer_id and refresh_token and client_id and client_secret:
         meta = {
@@ -6103,31 +6969,52 @@ def _truth_fetch_google_ads_rows(range_days: int) -> tuple[list[dict], dict]:
             "error": "Google Ads API is configured but not yet wired in this backend build",
             "last_sync": None,
         }
-        _truth_cache_set_ads("google", range_days, [], meta)
+        _truth_cache_set_ads("google", range_days, [], meta, cache_scope)
         return [], meta
 
     meta = {
         "connected": False,
-        "configured": False,
+        "configured": bool(integration),
         "source": "api",
         "campaigns": 0,
         "error": "Missing Google Ads credentials",
         "last_sync": None,
     }
-    _truth_cache_set_ads("google", range_days, [], meta)
+    _truth_cache_set_ads("google", range_days, [], meta, cache_scope)
     return [], meta
 
 
-def _truth_collect_ads_rows(range_days: int) -> tuple[list[dict], dict]:
-    meta_rows, meta_info = _truth_fetch_meta_ads_rows(range_days)
-    tiktok_rows, tiktok_info = _truth_fetch_tiktok_ads_rows(range_days)
-    google_rows, google_info = _truth_fetch_google_ads_rows(range_days)
+def _truth_collect_ads_rows(range_days: int, user_id: str) -> tuple[list[dict], dict]:
+    user_integrations = _truth_get_user_integrations(user_id)
+    meta_integration = _truth_get_primary_integration(user_id, "meta", user_integrations)
+    tiktok_integration = _truth_get_primary_integration(user_id, "tiktok", user_integrations)
+    google_integration = _truth_get_primary_integration(user_id, "google", user_integrations)
+
+    meta_rows, meta_info = _truth_fetch_meta_ads_rows(
+        range_days,
+        integration=meta_integration,
+        cache_scope=_truth_ads_cache_scope(user_id, "meta", meta_integration),
+    )
+    tiktok_rows, tiktok_info = _truth_fetch_tiktok_ads_rows(
+        range_days,
+        integration=tiktok_integration,
+        cache_scope=_truth_ads_cache_scope(user_id, "tiktok", tiktok_integration),
+    )
+    google_rows, google_info = _truth_fetch_google_ads_rows(
+        range_days,
+        integration=google_integration,
+        cache_scope=_truth_ads_cache_scope(user_id, "google", google_integration),
+    )
     env_rows = _truth_parse_ads_env_rows()
 
     rows = [*meta_rows, *tiktok_rows, *google_rows]
     if env_rows:
         for row in env_rows:
             platform = _truth_normalize_platform(row.get("platform"))
+            if platform == "Meta" and meta_integration:
+                continue
+            if platform == "TikTok" and tiktok_integration:
+                continue
             has_real = any(_truth_normalize_platform(existing.get("platform")) == platform for existing in rows)
             if not has_real:
                 rows.append(row)
@@ -6281,7 +7168,7 @@ def _truth_build_source_statuses(*, orders: list[dict], tracked_orders: int, ads
             connected=meta_connected,
             last_sync=meta_info.get("last_sync"),
             completeness=100 if meta_connected else 0,
-            reliability=92 if meta_info.get("source") == "api" and meta_connected else (68 if meta_info.get("source") == "env_json" and meta_connected else 15),
+            reliability=92 if meta_info.get("source") == "api" and meta_connected else (68 if meta_info.get("source") in {"env_json", "integration_json"} and meta_connected else 15),
             source=meta_info.get("source"),
             error=meta_info.get("error"),
         ),
@@ -6290,7 +7177,7 @@ def _truth_build_source_statuses(*, orders: list[dict], tracked_orders: int, ads
             connected=tiktok_connected,
             last_sync=tiktok_info.get("last_sync"),
             completeness=100 if tiktok_connected else 0,
-            reliability=90 if tiktok_info.get("source") == "api" and tiktok_connected else (68 if tiktok_info.get("source") == "env_json" and tiktok_connected else 15),
+            reliability=90 if tiktok_info.get("source") == "api" and tiktok_connected else (68 if tiktok_info.get("source") in {"env_json", "integration_json"} and tiktok_connected else 15),
             source=tiktok_info.get("source"),
             error=tiktok_info.get("error"),
         ),
@@ -6299,7 +7186,7 @@ def _truth_build_source_statuses(*, orders: list[dict], tracked_orders: int, ads
             connected=google_connected,
             last_sync=google_info.get("last_sync"),
             completeness=100 if google_connected else 0,
-            reliability=90 if google_info.get("source") == "api" and google_connected else (65 if google_info.get("source") == "env_json" and google_connected else 10),
+            reliability=90 if google_info.get("source") == "api" and google_connected else (65 if google_info.get("source") in {"env_json", "integration_json"} and google_connected else 10),
             source=google_info.get("source"),
             error=google_info.get("error"),
         ),
@@ -6415,7 +7302,7 @@ async def get_truth_dashboard(request: Request, range: str = "30d"):
     shop_domain, access_token = _get_shopify_connection(user_id)
     days = _truth_range_to_days(range)
     orders = _fetch_shopify_orders(shop_domain, access_token, days)
-    ads_rows, ads_integrations = _truth_collect_ads_rows(days)
+    ads_rows, ads_integrations = _truth_collect_ads_rows(days, user_id)
 
     campaigns: dict[str, dict] = {}
     unattributed_orders = 0

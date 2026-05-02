@@ -1,7 +1,8 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react'
 import { useTranslation } from './LanguageContext'
 import ErrorBoundary from './ErrorBoundary'
-import { createClient } from '@supabase/supabase-js'
+import { supabase } from './supabaseClient'
+import { getMarketingPricingPlans } from './pricingConfig'
 
 // ⚡ Lazy load PricingTable only
 const StripePricingTable = lazy(() => import('./PricingTable'))
@@ -21,73 +22,13 @@ const LazyFallback = () => {
   )
 }
 
-const supabase = createClient(
-  'https://jgmsfadayzbgykzajvmw.supabase.co',
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpnbXNmYWRheXpiZ3lremFqdm13Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQwODk0NTksImV4cCI6MjA3OTY2NTQ1OX0.sg0O2QGdoKO5Zb6vcRJr5pSu2zlaxU3r7nHtyXb07hg'
-)
-
 // Stripe Payment Links are created dynamically via backend API
 // No static links needed - backend generates them on demand
 
 
 export default function App() {
   const { t } = useTranslation()
-
-  const PRICING_PLANS = [
-    {
-      name: 'Standard',
-      price: '$99',
-      popular: false,
-      features: [
-        t('pf_standard_1'),
-        t('pf_standard_2'),
-        t('pf_standard_3'),
-        t('pf_standard_4'),
-        t('pf_standard_5'),
-        t('pf_standard_6')
-      ],
-      cta: t('pf_standard_cta'),
-      plan_id: 'standard',
-      highlight: false
-    },
-    {
-      name: 'Pro',
-      price: '$199',
-      popular: true,
-      features: [
-        t('pf_pro_1'),
-        t('pf_pro_2'),
-        t('pf_pro_3'),
-        t('pf_pro_4'),
-        t('pf_pro_5'),
-        t('pf_pro_6'),
-        t('pf_pro_7'),
-        t('pf_pro_8')
-      ],
-      cta: t('pf_pro_cta'),
-      plan_id: 'pro',
-      highlight: true
-    },
-    {
-      name: 'Premium',
-      price: '$299',
-      popular: false,
-      features: [
-        t('pf_premium_1'),
-        t('pf_premium_2'),
-        t('pf_premium_3'),
-        t('pf_premium_4'),
-        t('pf_premium_5'),
-        t('pf_premium_6'),
-        t('pf_premium_7'),
-        t('pf_premium_8'),
-        t('pf_premium_9')
-      ],
-      cta: t('pf_premium_cta'),
-      plan_id: 'premium',
-      highlight: false
-    }
-  ]
+  const PRICING_PLANS = getMarketingPricingPlans(t)
 
   const [showAuthModal, setShowAuthModal] = useState(false)
   const [authMode, setAuthMode] = useState('signup') // 'signup' or 'login'
@@ -121,6 +62,43 @@ export default function App() {
   // Prevent simultaneous subscription checks
   const subscriptionCheckInProgressRef = React.useRef(false)
 
+  const cleanupAuthQueryParams = React.useCallback(() => {
+    if (typeof window === 'undefined') return
+    const url = new URL(window.location.href)
+    const authKeys = ['code', 'error', 'error_code', 'error_description', 'provider_token', 'provider_refresh_token']
+    let changed = false
+
+    authKeys.forEach((key) => {
+      if (url.searchParams.has(key)) {
+        url.searchParams.delete(key)
+        changed = true
+      }
+    })
+
+    if (changed) {
+      window.history.replaceState({}, document.title, url.toString())
+    }
+  }, [])
+
+  const formatOAuthCallbackError = React.useCallback((errorCode, errorDescription) => {
+    const decodedDescription = decodeURIComponent(errorDescription || '').replace(/\+/g, ' ').trim()
+    const normalized = decodedDescription.toLowerCase()
+
+    if (normalized.includes('unable to exchange external code')) {
+      return 'Connexion Google échouée. Dans Supabase > Authentication > Providers > Google, remets le client OAuth du login Google et vérifie le redirect URI autorisé : https://jgmsfadayzbgykzajvmw.supabase.co/auth/v1/callback'
+    }
+
+    if (decodedDescription) {
+      return `Connexion Google échouée : ${decodedDescription}`
+    }
+
+    if (errorCode) {
+      return `Connexion Google échouée : ${errorCode}`
+    }
+
+    return 'Connexion Google échouée. Réessaie dans quelques secondes.'
+  }, [])
+
   // ── One-time setup: scroll, auth listener, payment success ──
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 10)
@@ -142,6 +120,17 @@ export default function App() {
         localStorage.removeItem('subscriptionCache')
         localStorage.removeItem('profileCache')
       } catch {}
+    }
+
+    const authError = urlParams.get('error')
+    const authErrorCode = urlParams.get('error_code')
+    const authErrorDescription = urlParams.get('error_description')
+
+    if (authError || authErrorCode || authErrorDescription) {
+      setAuthMode('login')
+      setShowAuthModal(true)
+      setAuthMessage(formatOAuthCallbackError(authErrorCode || authError, authErrorDescription || authError))
+      cleanupAuthQueryParams()
     }
 
     // Hash-based routing (only on explicit hash change by user)
@@ -181,6 +170,8 @@ export default function App() {
         setUser(session.user)
         checkSubscription()
         setShowAuthModal(false)
+        setAuthMessage('')
+        cleanupAuthQueryParams()
       } else if (event === 'SIGNED_OUT') {
         setUser(null)
         setHasSubscription(false)
@@ -193,7 +184,7 @@ export default function App() {
       window.removeEventListener('hashchange', handleHashChange)
       authListener?.subscription?.unsubscribe()
     }
-  }, []) // ← empty deps: runs once on mount only
+  }, [cleanupAuthQueryParams, formatOAuthCallbackError]) // ← empty deps: runs once on mount only
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -265,6 +256,7 @@ export default function App() {
     const { data: { session } } = await supabase.auth.getSession()
     if (session) {
       setUser(session.user)
+      cleanupAuthQueryParams()
     }
   }
 

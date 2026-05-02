@@ -1,11 +1,35 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from './LanguageContext'
+import { supabase } from './supabaseClient'
+import { getMarketingPricingPlans, getPlanUiLabel } from './pricingConfig'
 
 // Prefill email/client reference so Stripe checkout is smoother
 // Supports test mode via URL params: ?mode=test&pk=pk_test_...&ptid=prctbl_test_...
 export default function StripePricingTable({ userEmail, userId, hasActiveSubscription, currentPlan }) {
+  const { t } = useTranslation()
   const readyIdentity = Boolean(userId && userEmail)
+  const currentPlanLabel = getPlanUiLabel(currentPlan)
+  const pricingPlans = useMemo(() => getMarketingPricingPlans(t), [t])
+  const [checkoutPlanId, setCheckoutPlanId] = useState(null)
+  const [status, setStatus] = useState(null)
+
+  const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
+  const mode = params?.get('mode') || 'live'
+  const overridePk = params?.get('pk') || ''
+  const overrideTableId = params?.get('ptid') || ''
+  const livePublishableKey = (import.meta?.env?.VITE_STRIPE_LIVE_PUBLISHABLE_KEY) || ''
+  const liveTableId = (import.meta?.env?.VITE_STRIPE_LIVE_TABLE_ID) || ''
+  const testPublishableKey = (import.meta?.env?.VITE_STRIPE_TEST_PUBLISHABLE_KEY) || ''
+  const testTableId = (import.meta?.env?.VITE_STRIPE_TEST_TABLE_ID) || ''
+  const publishableKey = overridePk || (mode === 'test' ? testPublishableKey : livePublishableKey)
+  const tableId = overrideTableId || (mode === 'test' ? testTableId : liveTableId)
+  const canRenderStripeEmbed = Boolean(readyIdentity && publishableKey && tableId)
 
   useEffect(() => {
+    if (!canRenderStripeEmbed) {
+      return undefined
+    }
+
     // Load Stripe Pricing Table script
     const script = document.createElement('script')
     script.src = 'https://js.stripe.com/v3/pricing-table.js'
@@ -17,17 +41,73 @@ export default function StripePricingTable({ userEmail, userId, hasActiveSubscri
         script.parentNode.removeChild(script)
       }
     }
-  }, [])
+  }, [canRenderStripeEmbed])
+
+  const handleStripeCheckout = async (planId) => {
+    setStatus(null)
+
+    if (!readyIdentity) {
+      setStatus({ type: 'error', message: t('sessionNotFound') })
+      return
+    }
+
+    try {
+      setCheckoutPlanId(planId)
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        setStatus({ type: 'error', message: t('sessionNotFound') })
+        return
+      }
+
+      if (!session.access_token) {
+        setStatus({ type: 'error', message: t('accessTokenMissing') })
+        return
+      }
+
+      const response = await fetch('https://shopbrain-backend.onrender.com/create-checkout-session', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          plan: planId,
+          email: userEmail,
+        }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        setStatus({
+          type: 'error',
+          message: `${t('error')}: ${errorData.detail || response.statusText || t('unableToCreateCheckoutSession')}`,
+        })
+        return
+      }
+
+      const data = await response.json()
+      if (data.url) {
+        window.location.href = data.url
+        return
+      }
+
+      setStatus({ type: 'error', message: t('checkoutUrlMissing') })
+    } catch (error) {
+      setStatus({ type: 'error', message: `${t('connectionError')}: ${error.message}` })
+    } finally {
+      setCheckoutPlanId(null)
+    }
+  }
 
   return (
     <div className="min-h-screen bg-white">
       <div className="max-w-7xl mx-auto px-6 py-12">
         <div className="text-center mb-12">
           <h1 className="text-5xl md:text-6xl font-bold text-gray-900 mb-6">
-            Plans de pricing
+            {t('chooseSubscription')}
           </h1>
           <p className="text-xl text-gray-600 max-w-2xl mx-auto">
-            Choisissez le plan qui correspond à vos besoins. Tous les plans incluent 14 jours d'essai gratuit.
+            {t('pricingSubtitle')}
           </p>
         </div>
 
@@ -39,7 +119,7 @@ export default function StripePricingTable({ userEmail, userId, hasActiveSubscri
               Vous avez déjà un abonnement actif
             </h2>
             <p className="text-gray-600 mb-2">
-              Votre plan actuel : <strong className="text-orange-600">{(currentPlan || 'Pro').toUpperCase()}</strong>
+              Votre plan actuel : <strong className="text-orange-600">{currentPlanLabel}</strong>
             </p>
             <p className="text-gray-600 mb-6">
               Pour changer de plan, utilisez le bouton "Changer de plan" dans votre dashboard.
@@ -55,34 +135,80 @@ export default function StripePricingTable({ userEmail, userId, hasActiveSubscri
           </div>
         ) : (
         <>
-        {/* Stripe Pricing Table Embed (supports overrides via URL params) */}
-        <div id="stripe-pricing-table">
-          {(() => {
-            const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
-            const mode = params?.get('mode') || 'live'
-            const overridePk = params?.get('pk') || ''
-            const overrideTableId = params?.get('ptid') || ''
-
-            // Live defaults
-            const LIVE_PUBLISHABLE_KEY = 'pk_live_51REHBEPSvADOSbOzqhf7zqZKxA8T2OWPkMOeNsli4wc1n3GYgmTc7TboQlAL6GeeVSd7i5vfIG1IbkGeXvXqedyB009rEijMRi'
-            const LIVE_TABLE_ID = 'prctbl_1SczvvPSvADOSbOz3kGUkwwZ'
-
-            // Optional test env (fallbacks if provided at build time)
-            const TEST_PUBLISHABLE_KEY = (import.meta?.env?.VITE_STRIPE_TEST_PUBLISHABLE_KEY) || ''
-            const TEST_TABLE_ID = (import.meta?.env?.VITE_STRIPE_TEST_TABLE_ID) || ''
-
-            const publishableKey = overridePk || (mode === 'test' ? TEST_PUBLISHABLE_KEY : LIVE_PUBLISHABLE_KEY)
-            const tableId = overrideTableId || (mode === 'test' ? TEST_TABLE_ID : LIVE_TABLE_ID)
-
-            if (!readyIdentity) {
-              return (
-                <div className="rounded-2xl border border-gray-200 bg-gray-50 p-8 text-center text-gray-700">
-                  Chargement de votre compte sécurisé…
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8 max-w-6xl mx-auto">
+          {pricingPlans.map((plan) => (
+            <div
+              key={plan.plan_id}
+              className={`relative rounded-2xl border-2 bg-white p-8 transition-all duration-300 ${
+                plan.highlight
+                  ? 'border-[#2DD4BF] shadow-xl'
+                  : 'border-[#FF6B35]/30 shadow-sm'
+              }`}
+            >
+              {plan.highlight && (
+                <div className="absolute -top-4 left-1/2 -translate-x-1/2">
+                  <span className="inline-flex items-center gap-1 bg-[#0D9488] text-white px-4 py-1.5 rounded-full text-xs font-semibold tracking-wide shadow-md">
+                    {t('mostPopularBadge')}
+                  </span>
                 </div>
-              )
-            }
+              )}
 
-            return (
+              <div className="text-center mb-8">
+                <h2 className="text-2xl font-semibold text-[#1A1A2E] mb-3">{plan.name}</h2>
+                <div className="mb-2">
+                  <span className="font-serif text-5xl text-[#1A1A2E]">{plan.price}</span>
+                  <span className="text-[#8A8AA3] text-base ml-1">{t('perMonth')}</span>
+                </div>
+                <p className="text-xs text-[#8A8AA3]">{t('billedMonthly')}</p>
+              </div>
+
+              <ul className="space-y-3 mb-8">
+                {plan.features.map((feature) => (
+                  <li key={`${plan.plan_id}-${feature}`} className="flex items-start gap-3">
+                    <span className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-xs mt-0.5 ${
+                      plan.highlight ? 'bg-[#ECFDF5] text-[#0D9488]' : 'bg-[#F7F8FA] text-[#8A8AA3]'
+                    }`}>
+                      ✓
+                    </span>
+                    <span className="text-sm text-[#4A4A68] leading-relaxed">{feature}</span>
+                  </li>
+                ))}
+              </ul>
+
+              <button
+                onClick={() => handleStripeCheckout(plan.plan_id)}
+                disabled={checkoutPlanId === plan.plan_id}
+                className={`w-full py-3.5 rounded-full text-sm font-semibold text-center transition-all disabled:opacity-60 ${
+                  plan.highlight
+                    ? 'bg-[#0D9488] text-white hover:bg-[#2DD4BF] hover:text-[#0D9488] shadow-sm'
+                    : 'bg-[#F7F8FA] text-[#1A1A2E] border border-[#FF6B35]/40 hover:bg-[#EFF1F5] hover:border-[#FF6B35]/65'
+                }`}
+              >
+                {checkoutPlanId === plan.plan_id ? t('processingPayment') : plan.cta}
+              </button>
+
+              <p className="text-center text-xs text-[#8A8AA3] mt-4">{t('cancelInOneClick')}</p>
+            </div>
+          ))}
+        </div>
+
+        {status?.message && (
+          <div className={`max-w-3xl mx-auto mt-8 rounded-2xl border px-5 py-4 text-sm ${
+            status.type === 'error'
+              ? 'border-red-200 bg-red-50 text-red-800'
+              : 'border-green-200 bg-green-50 text-green-800'
+          }`}>
+            {status.message}
+          </div>
+        )}
+
+        {canRenderStripeEmbed && (
+          <div className="mt-16">
+            <div className="text-center mb-6">
+              <h2 className="text-2xl font-semibold text-[#1A1A2E]">Stripe</h2>
+              <p className="text-sm text-[#6A6A85] mt-2">Version embarquée configurée pour ce build.</p>
+            </div>
+            <div id="stripe-pricing-table">
               <stripe-pricing-table
                 key={`${userId}-${userEmail}`}
                 pricing-table-id={tableId}
@@ -90,9 +216,9 @@ export default function StripePricingTable({ userEmail, userId, hasActiveSubscri
                 customer-email={userEmail}
                 client-reference-id={userId}
               ></stripe-pricing-table>
-            )
-          })()}
-        </div>
+            </div>
+          </div>
+        )}
 
         {/* Fallback: if Stripe shows a success message but doesn't redirect, let user continue */}
         <div className="mt-8 text-center">

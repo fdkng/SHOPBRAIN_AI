@@ -9,6 +9,48 @@ const supabase = createClient(
 
 const API_URL = 'https://shopbrain-backend.onrender.com'
 
+const INTEGRATION_PROVIDER_CONFIG = {
+  meta: {
+    label: 'Meta Ads',
+    fields: ['external_account_id', 'display_name', 'external_account_name', 'access_token', 'api_version'],
+  },
+  tiktok: {
+    label: 'TikTok Ads',
+    fields: ['external_account_id', 'display_name', 'external_account_name', 'access_token', 'api_version'],
+  },
+  google: {
+    label: 'Google Ads',
+    fields: ['external_account_id', 'display_name', 'external_account_name', 'refresh_token', 'developer_token', 'client_id', 'client_secret', 'manager_account_id'],
+  },
+}
+
+const createEmptyIntegrationForms = () => ({
+  meta: {
+    external_account_id: '',
+    display_name: '',
+    external_account_name: '',
+    access_token: '',
+    api_version: 'v20.0',
+  },
+  tiktok: {
+    external_account_id: '',
+    display_name: '',
+    external_account_name: '',
+    access_token: '',
+    api_version: 'v1.3',
+  },
+  google: {
+    external_account_id: '',
+    display_name: '',
+    external_account_name: '',
+    refresh_token: '',
+    developer_token: '',
+    client_id: '',
+    client_secret: '',
+    manager_account_id: '',
+  },
+})
+
 // ⚡ Session cache — avoid redundant Supabase getSession() calls (each takes ~50ms)
 let _cachedSession = null
 let _cachedSessionTs = 0
@@ -88,6 +130,13 @@ export default function Dashboard() {
   const [shopifyConnected, setShopifyConnected] = useState(false)
   const [shopifyConnecting, setShopifyConnecting] = useState(false)
   const [showShopifyToken, setShowShopifyToken] = useState(false)
+  const [integrationsData, setIntegrationsData] = useState({ meta: [], tiktok: [], google: [] })
+  const [integrationsLoading, setIntegrationsLoading] = useState(false)
+  const [integrationSavingProvider, setIntegrationSavingProvider] = useState(null)
+  const [integrationDeletingProvider, setIntegrationDeletingProvider] = useState(null)
+  const [integrationOAuthProvider, setIntegrationOAuthProvider] = useState(null)
+  const [integrationOAuthConfig, setIntegrationOAuthConfig] = useState({ meta: { configured: false }, tiktok: { configured: false }, google: { configured: false } })
+  const [integrationForms, setIntegrationForms] = useState(() => createEmptyIntegrationForms())
   // ── Multi-shop state ──
   const [shopList, setShopList] = useState([])       // all connected shops [{shop_domain, is_active, created_at, updated_at}]
   const [shopLimit, setShopLimit] = useState(1)       // plan limit (null = unlimited)
@@ -99,10 +148,13 @@ export default function Dashboard() {
   const [error, setError] = useState('')
   const [isProcessingPayment, setIsProcessingPayment] = useState(false)
 
+  const PLAN_DISPLAY = { standard: 'STANDARD', pro: 'GROW', premium: 'PREMIUM' }
+  const PLAN_PRICE = { standard: '35', pro: '99', premium: '199' }
+
   // ──── STRICT PLAN FEATURE GATES ────
-  // Standard $99: product analysis (50/mo), title rewrite, price suggestions, 1 shop, monthly report
-  // Pro $199: + description rewrite, image recs, cross-sell/bundles, 500/mo, 3 shops, weekly reports, automated actions, invoices
-  // Premium $299: + IA prédictive, auto stock, unlimited products/shops, daily reports, API, account manager
+  // Standard $35: product analysis (50/mo), title rewrite, price suggestions, 1 shop, monthly report
+  // Grow $99: + description rewrite, image recs, cross-sell/bundles, 500/mo, 3 shops, weekly reports, automated actions, invoices
+  // Premium $199: + IA prédictive, auto stock, unlimited products/shops, daily reports, API, account manager
   const PLAN_GATES = {
     // feature_key: minimum plan required
     'product_analysis': 'standard',
@@ -124,7 +176,7 @@ export default function Dashboard() {
   const userPlanRank = PLAN_RANK[subscription?.plan] || 0
   const canAccess = (feature) => userPlanRank >= (PLAN_RANK[PLAN_GATES[feature]] || 1)
   const getProductLimit = () => ({ standard: 50, pro: 500, premium: Infinity }[subscription?.plan] || 50)
-  const planLabel = (feature) => PLAN_GATES[feature] === 'premium' ? 'Premium' : 'Pro'
+  const planLabel = (feature) => PLAN_GATES[feature] === 'premium' ? 'PREMIUM' : 'GROW'
   const [showPlanMenu, setShowPlanMenu] = useState(false)
   const [showProfileMenu, setShowProfileMenu] = useState(false)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
@@ -523,10 +575,7 @@ export default function Dashboard() {
 
   const formatPlan = (plan) => {
     const normalized = String(plan || '').toLowerCase()
-    if (normalized === 'standard') return 'STANDARD'
-    if (normalized === 'pro') return 'PRO'
-    if (normalized === 'premium') return 'PREMIUM'
-    return '—'
+    return PLAN_DISPLAY[normalized] || '—'
   }
 
   const getPlanFeatures = (plan) => {
@@ -726,6 +775,40 @@ export default function Dashboard() {
     )
   }
 
+  const buildIntegrationFormFromAccount = (provider, account) => {
+    const defaults = createEmptyIntegrationForms()[provider] || {}
+    if (!account) return defaults
+    return {
+      ...defaults,
+      external_account_id: account.external_account_id || '',
+      display_name: account.display_name || '',
+      external_account_name: account.external_account_name || '',
+      api_version: account.api_version || defaults.api_version || '',
+    }
+  }
+
+  const hydrateIntegrationForms = (groupedIntegrations) => {
+    setIntegrationForms((prev) => {
+      const next = { ...prev }
+      Object.keys(INTEGRATION_PROVIDER_CONFIG).forEach((provider) => {
+        const accounts = groupedIntegrations?.[provider] || []
+        const primary = accounts.find((account) => account.is_primary) || accounts[0] || null
+        next[provider] = buildIntegrationFormFromAccount(provider, primary)
+      })
+      return next
+    })
+  }
+
+  const handleIntegrationFormChange = (provider, field, value) => {
+    setIntegrationForms((prev) => ({
+      ...prev,
+      [provider]: {
+        ...prev[provider],
+        [field]: value,
+      },
+    }))
+  }
+
   // Translations are now managed by LanguageContext
 
   // Normalize a timestamp value that may be a Unix seconds integer, ISO string, or ms number
@@ -914,9 +997,40 @@ export default function Dashboard() {
         window.location.hash = window.location.hash.replace('success=true', '')
       }, 120000)
     } else {
-      // ── Shopify OAuth return handler ──
+      // ── Integrations OAuth / Shopify OAuth return handlers ──
+      const integrationOauthStatus = hashParams.get('integration_oauth')
       const shopifyStatus = hashParams.get('shopify')
-      if (shopifyStatus) {
+      if (integrationOauthStatus) {
+        const provider = hashParams.get('provider') || 'meta'
+        const reason = hashParams.get('reason') || 'unknown'
+        const reasonMessages = {
+          missing_params: t('oauthMissingParams'),
+          expired: t('oauthExpired'),
+          state_mismatch: t('oauthStateMismatch'),
+          timeout: t('oauthTimeout'),
+          exchange_failed: t('oauthExchangeFailed'),
+          no_token: t('oauthNoToken'),
+          no_refresh_token: t('oauthNoRefreshToken'),
+          provider_denied: t('oauthProviderDenied'),
+          internal: t('oauthInternal'),
+        }
+        setActiveTab('integrations')
+        setIntegrationOAuthProvider(null)
+        setTimeout(() => {
+          if (integrationOauthStatus === 'connected') {
+            setStatus(`integrations-${provider}`, 'success', t('integrationsOauthConnected'))
+          } else if (integrationOauthStatus === 'partial') {
+            setStatus(`integrations-${provider}`, 'warning', t('integrationsOauthPartial'))
+          } else {
+            setStatus(`integrations-${provider}`, 'error', reasonMessages[reason] || `${t('integrationsOauthError')}: ${reason}`)
+          }
+        }, 300)
+        loadIntegrations({ silent: false })
+        setTimeout(() => {
+          const cleanHash = hash.split('?')[0] || '#/dashboard'
+          window.location.hash = cleanHash
+        }, 1500)
+      } else if (shopifyStatus) {
         if (shopifyStatus === 'connected') {
           const connectedShop = hashParams.get('shop') || ''
           console.log('✅ Shopify OAuth connected:', connectedShop)
@@ -1107,6 +1221,7 @@ export default function Dashboard() {
   useEffect(() => {
     const allowedTabs = [
       'overview',
+      'integrations',
       'underperforming',
       'action-blockers',
       'action-rewrite',
@@ -2355,7 +2470,8 @@ export default function Dashboard() {
         invoices: t('ctxInvoices'),
         ai: t('ctxFullAnalysis'),
         analysis: t('ctxAnalysisResults'),
-        settings: t('ctxSettings')
+        settings: t('ctxSettings'),
+        integrations: t('ctxIntegrations')
       }
       ctxParts.push(`[DASHBOARD CONTEXT]`)
       ctxParts.push(`Active tab: ${tabNameMap[activeTab] || activeTab}`)
@@ -3027,6 +3143,172 @@ export default function Dashboard() {
       setStatus('shopify', 'error', formatUserFacingError(e, t('newShopConnectionError')))
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadIntegrations = async ({ silent = false } = {}) => {
+    try {
+      if (!silent) setIntegrationsLoading(true)
+      const session = await getCachedSession()
+      if (!session) {
+        setStatus('integrations', 'error', t('sessionExpiredReconnect'))
+        return null
+      }
+
+      const response = await fetch(`${API_URL}/api/integrations`, {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok || !data.success) {
+        throw new Error(data.detail || `HTTP ${response.status}`)
+      }
+
+      const grouped = data.integrations || { meta: [], tiktok: [], google: [] }
+      setIntegrationOAuthConfig(data.oauth || { meta: { configured: false }, tiktok: { configured: false }, google: { configured: false } })
+      setIntegrationsData(grouped)
+      hydrateIntegrationForms(grouped)
+      clearStatus('integrations')
+      return grouped
+    } catch (err) {
+      setStatus('integrations', 'error', formatUserFacingError(err, t('integrationsLoadError')))
+      return null
+    } finally {
+      if (!silent) setIntegrationsLoading(false)
+    }
+  }
+
+  const saveIntegration = async (provider) => {
+    const form = integrationForms[provider] || {}
+    if (!form.external_account_id?.trim()) {
+      setStatus(`integrations-${provider}`, 'warning', t('integrationAccountIdRequired'))
+      return
+    }
+
+    try {
+      setIntegrationSavingProvider(provider)
+      const session = await getCachedSession()
+      if (!session) {
+        setStatus(`integrations-${provider}`, 'error', t('sessionExpiredReconnect'))
+        return
+      }
+
+      const payload = {
+        external_account_id: form.external_account_id.trim(),
+        display_name: form.display_name?.trim() || undefined,
+        external_account_name: form.external_account_name?.trim() || undefined,
+        connection_mode: 'manual',
+        is_primary: true,
+      }
+
+      if (provider === 'meta' || provider === 'tiktok') {
+        payload.access_token = form.access_token?.trim() || undefined
+        payload.api_version = form.api_version?.trim() || undefined
+      }
+
+      if (provider === 'google') {
+        payload.refresh_token = form.refresh_token?.trim() || undefined
+        payload.developer_token = form.developer_token?.trim() || undefined
+        payload.client_id = form.client_id?.trim() || undefined
+        payload.client_secret = form.client_secret?.trim() || undefined
+        payload.manager_account_id = form.manager_account_id?.trim() || undefined
+      }
+
+      const response = await fetch(`${API_URL}/api/integrations/${provider}/manual-connect`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok || !data.success) {
+        throw new Error(data.detail || `HTTP ${response.status}`)
+      }
+
+      setStatus(`integrations-${provider}`, 'success', t('integrationSaved'))
+      await loadIntegrations({ silent: true })
+    } catch (err) {
+      setStatus(`integrations-${provider}`, 'error', formatUserFacingError(err, t('integrationSaveError')))
+    } finally {
+      setIntegrationSavingProvider(null)
+    }
+  }
+
+  const deleteIntegration = async (provider) => {
+    try {
+      setIntegrationDeletingProvider(provider)
+      const session = await getCachedSession()
+      if (!session) {
+        setStatus(`integrations-${provider}`, 'error', t('sessionExpiredReconnect'))
+        return
+      }
+
+      const response = await fetch(`${API_URL}/api/integrations/${provider}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok || !data.success) {
+        throw new Error(data.detail || `HTTP ${response.status}`)
+      }
+
+      setStatus(`integrations-${provider}`, 'success', t('integrationDeleted'))
+      setIntegrationForms((prev) => ({
+        ...prev,
+        [provider]: createEmptyIntegrationForms()[provider],
+      }))
+      await loadIntegrations({ silent: true })
+    } catch (err) {
+      setStatus(`integrations-${provider}`, 'error', formatUserFacingError(err, t('integrationDeleteError')))
+    } finally {
+      setIntegrationDeletingProvider(null)
+    }
+  }
+
+  const startIntegrationOAuth = async (provider) => {
+    try {
+      setIntegrationOAuthProvider(provider)
+      const session = await getCachedSession()
+      if (!session) {
+        setStatus(`integrations-${provider}`, 'error', t('sessionExpiredReconnect'))
+        return
+      }
+
+      const form = integrationForms[provider] || {}
+      const payload = {
+        external_account_id: form.external_account_id?.trim() || undefined,
+        display_name: form.display_name?.trim() || undefined,
+        external_account_name: form.external_account_name?.trim() || undefined,
+        api_version: form.api_version?.trim() || undefined,
+      }
+
+      if (provider === 'google') {
+        payload.developer_token = form.developer_token?.trim() || undefined
+        payload.manager_account_id = form.manager_account_id?.trim() || undefined
+      }
+
+      const response = await fetch(`${API_URL}/api/integrations/${provider}/oauth/start`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok || !data.success || !data.auth_url) {
+        throw new Error(data.detail || `HTTP ${response.status}`)
+      }
+
+      window.location.href = data.auth_url
+    } catch (err) {
+      setStatus(`integrations-${provider}`, 'error', formatUserFacingError(err, t('integrationsOauthStartError')))
+      setIntegrationOAuthProvider(null)
     }
   }
 
@@ -4410,6 +4692,9 @@ export default function Dashboard() {
     if (activeTab === 'overview') {
       loadAnalytics(analyticsRange, { silent: !!analyticsData, useCache: true })
     }
+    if (activeTab === 'integrations') {
+      loadIntegrations({ silent: false })
+    }
     if (activeTab === 'underperforming') {
       loadAnalytics(analyticsRange, { silent: !!analyticsData, useCache: true })
       if (!underperformingData) loadUnderperforming(analyticsRange)
@@ -4933,14 +5218,14 @@ export default function Dashboard() {
               <>
                 <h3 className="text-xl font-bold text-[#1A1A2E] mb-4">{tr('changeYourPlan', 'Change Your Plan')}</h3>
                 <div className="space-y-2">
-                  {[{plan:'standard',price:'99',desc:'50 produits/mo'},{plan:'pro',price:'199',desc:'500 produits/mo + reports'},{plan:'premium',price:'299',desc:'Unlimited + auto actions'}].filter(p => p.plan !== subscription?.plan).map(opt => (
+                  {[{plan:'standard',price:PLAN_PRICE.standard,desc:'50 produits/mo'},{plan:'pro',price:PLAN_PRICE.pro,desc:'500 produits/mo + reports'},{plan:'premium',price:PLAN_PRICE.premium,desc:'Unlimited + auto actions'}].filter(p => p.plan !== subscription?.plan).map(opt => (
                     <button
                       key={opt.plan}
                       onClick={() => { clearStatus('change-plan'); setPendingPlanConfirm({ plan: opt.plan, price: opt.price }) }}
                       disabled={changePlanLoading}
                       className="w-full text-left px-4 py-3 rounded-lg bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E] disabled:opacity-50"
                     >
-                      <div className="font-semibold">{opt.plan.toUpperCase()} - ${opt.price}/{tr('month', 'month')}</div>
+                      <div className="font-semibold">{formatPlan(opt.plan)} - ${opt.price}/{tr('month', 'month')}</div>
                       <div className="text-sm text-[#6A6A85]">{opt.desc}</div>
                     </button>
                   ))}
@@ -5021,7 +5306,7 @@ export default function Dashboard() {
               {t('truthNavProducts')}
             </button>
             <button
-              onClick={() => { window.location.hash = '#truth' }}
+              onClick={() => setActiveTab('integrations')}
               className="px-4 py-2 rounded-full border border-[#E8E8EE] text-sm font-medium text-[#1A1A2E] hover:bg-[#F7F8FA]"
             >
               {t('truthNavAds')}
@@ -5044,6 +5329,214 @@ export default function Dashboard() {
               <div className="px-4 md:px-6 pt-4 md:pt-5 pb-0 flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
                 <div>
                   <div className="flex items-center gap-2">
+
+              {activeTab === 'integrations' && (
+                <div className="space-y-6">
+                  <div className="bg-white border border-[#E8E8EE] rounded-2xl p-5 md:p-6 shadow-sm">
+                    <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+                      <div>
+                        <p className="text-[11px] uppercase tracking-[0.14em] text-[#8A8AA3] font-semibold mb-2">ADS CONNECT</p>
+                        <h3 className="text-xl md:text-2xl font-semibold text-[#1A1A2E]">{t('integrationsTitle')}</h3>
+                        <p className="text-sm text-[#6A6A85] mt-1 max-w-3xl">{t('integrationsSubtitle')}</p>
+                      </div>
+                      <button
+                        onClick={() => loadIntegrations({ silent: false })}
+                        className="px-4 py-2 rounded-lg border border-[#E8E8EE] text-sm font-medium text-[#1A1A2E] hover:bg-[#F7F8FA]"
+                      >
+                        {integrationsLoading ? t('loading') : t('integrationsRefresh')}
+                      </button>
+                    </div>
+                    {renderStatus('integrations')}
+                  </div>
+
+                  <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+                    {Object.entries(INTEGRATION_PROVIDER_CONFIG).map(([provider, config]) => {
+                      const accounts = integrationsData?.[provider] || []
+                      const primary = accounts.find((account) => account.is_primary) || accounts[0] || null
+                      const form = integrationForms?.[provider] || createEmptyIntegrationForms()[provider]
+                      const isSaving = integrationSavingProvider === provider
+                      const isDeleting = integrationDeletingProvider === provider
+                      const isOAuthLoading = integrationOAuthProvider === provider
+                      const oauthConfigured = integrationOAuthConfig?.[provider]?.configured !== false
+                      const isConnected = Boolean(primary?.status === 'connected')
+
+                      return (
+                        <div key={provider} className="bg-white border border-[#E8E8EE] rounded-2xl p-5 shadow-sm flex flex-col gap-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <h4 className="text-lg font-semibold text-[#1A1A2E]">{t(`integrationProvider${provider.charAt(0).toUpperCase()}${provider.slice(1)}`)}</h4>
+                              <p className="text-sm text-[#6A6A85] mt-1">{t(`integrationProvider${provider.charAt(0).toUpperCase()}${provider.slice(1)}Desc`)}</p>
+                            </div>
+                            <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${isConnected ? 'bg-teal-50 text-teal-700' : 'bg-[#F7F8FA] text-[#6A6A85]'}`}>
+                              {isConnected ? t('truthConnected') : t('truthDisconnected')}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3 text-sm">
+                            <div className="bg-[#F7F8FA] rounded-xl p-3 border border-[#EFF1F5]">
+                              <p className="text-[11px] uppercase tracking-[0.12em] text-[#8A8AA3]">{t('integrationsAccounts')}</p>
+                              <p className="mt-1 text-lg font-semibold text-[#1A1A2E]">{accounts.length}</p>
+                            </div>
+                            <div className="bg-[#F7F8FA] rounded-xl p-3 border border-[#EFF1F5]">
+                              <p className="text-[11px] uppercase tracking-[0.12em] text-[#8A8AA3]">{t('integrationsLastSync')}</p>
+                              <p className="mt-1 text-sm font-medium text-[#1A1A2E]">{primary?.last_sync_at ? formatDate(primary.last_sync_at) : '—'}</p>
+                            </div>
+                          </div>
+
+                          <div className="rounded-xl border border-[#E8E8EE] bg-[#FCFCFD] p-4 space-y-2">
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="text-sm font-semibold text-[#1A1A2E]">{primary?.display_name || t('integrationNoAccount')}</p>
+                              {primary?.is_primary && (
+                                <span className="px-2 py-1 rounded-full bg-[#1A1A2E] text-white text-[10px] uppercase tracking-[0.12em]">{t('integrationsPrimary')}</span>
+                              )}
+                            </div>
+                            <p className="text-xs text-[#6A6A85]">{t('integrationsAccountId')}: <span className="font-mono text-[#1A1A2E]">{primary?.external_account_id || '—'}</span></p>
+                            <p className="text-xs text-[#6A6A85]">{t('integrationsMode')}: <span className="text-[#1A1A2E]">{primary?.connection_mode || 'manual'}</span></p>
+                            {primary?.last_error && (
+                              <p className="text-xs text-[#E85A28]">{primary.last_error}</p>
+                            )}
+                          </div>
+
+                          <div className="space-y-3">
+                            <div>
+                              <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1">{t('integrationsDisplayName')}</label>
+                              <input
+                                value={form.display_name || ''}
+                                onChange={(e) => handleIntegrationFormChange(provider, 'display_name', e.target.value)}
+                                className="w-full rounded-xl border border-[#D8D8E2] px-3 py-2.5 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
+                                placeholder={t('integrationsDisplayNamePlaceholder')}
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1">{t('integrationsAccountId')}</label>
+                              <input
+                                value={form.external_account_id || ''}
+                                onChange={(e) => handleIntegrationFormChange(provider, 'external_account_id', e.target.value)}
+                                className="w-full rounded-xl border border-[#D8D8E2] px-3 py-2.5 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
+                                placeholder={t('integrationsAccountIdPlaceholder')}
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1">{t('integrationsAccountName')}</label>
+                              <input
+                                value={form.external_account_name || ''}
+                                onChange={(e) => handleIntegrationFormChange(provider, 'external_account_name', e.target.value)}
+                                className="w-full rounded-xl border border-[#D8D8E2] px-3 py-2.5 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
+                                placeholder={t('integrationsAccountNamePlaceholder')}
+                              />
+                            </div>
+
+                            {(provider === 'meta' || provider === 'tiktok') && (
+                              <>
+                                <div>
+                                  <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1">{t('integrationsAccessToken')}</label>
+                                  <input
+                                    type="password"
+                                    value={form.access_token || ''}
+                                    onChange={(e) => handleIntegrationFormChange(provider, 'access_token', e.target.value)}
+                                    className="w-full rounded-xl border border-[#D8D8E2] px-3 py-2.5 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
+                                    placeholder={t('integrationsAccessTokenPlaceholder')}
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1">{t('integrationsApiVersion')}</label>
+                                  <input
+                                    value={form.api_version || ''}
+                                    onChange={(e) => handleIntegrationFormChange(provider, 'api_version', e.target.value)}
+                                    className="w-full rounded-xl border border-[#D8D8E2] px-3 py-2.5 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
+                                    placeholder={provider === 'meta' ? 'v20.0' : 'v1.3'}
+                                  />
+                                </div>
+                              </>
+                            )}
+
+                            {provider === 'google' && (
+                              <>
+                                <div>
+                                  <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1">{t('integrationsRefreshToken')}</label>
+                                  <input
+                                    type="password"
+                                    value={form.refresh_token || ''}
+                                    onChange={(e) => handleIntegrationFormChange(provider, 'refresh_token', e.target.value)}
+                                    className="w-full rounded-xl border border-[#D8D8E2] px-3 py-2.5 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
+                                    placeholder={t('integrationsRefreshTokenPlaceholder')}
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1">{t('integrationsDeveloperToken')}</label>
+                                  <input
+                                    type="password"
+                                    value={form.developer_token || ''}
+                                    onChange={(e) => handleIntegrationFormChange(provider, 'developer_token', e.target.value)}
+                                    className="w-full rounded-xl border border-[#D8D8E2] px-3 py-2.5 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
+                                    placeholder={t('integrationsDeveloperTokenPlaceholder')}
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1">{t('integrationsClientId')}</label>
+                                  <input
+                                    value={form.client_id || ''}
+                                    onChange={(e) => handleIntegrationFormChange(provider, 'client_id', e.target.value)}
+                                    className="w-full rounded-xl border border-[#D8D8E2] px-3 py-2.5 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
+                                    placeholder={t('integrationsClientIdPlaceholder')}
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1">{t('integrationsClientSecret')}</label>
+                                  <input
+                                    type="password"
+                                    value={form.client_secret || ''}
+                                    onChange={(e) => handleIntegrationFormChange(provider, 'client_secret', e.target.value)}
+                                    className="w-full rounded-xl border border-[#D8D8E2] px-3 py-2.5 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
+                                    placeholder={t('integrationsClientSecretPlaceholder')}
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1">{t('integrationsManagerId')}</label>
+                                  <input
+                                    value={form.manager_account_id || ''}
+                                    onChange={(e) => handleIntegrationFormChange(provider, 'manager_account_id', e.target.value)}
+                                    className="w-full rounded-xl border border-[#D8D8E2] px-3 py-2.5 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
+                                    placeholder={t('integrationsManagerIdPlaceholder')}
+                                  />
+                                </div>
+                              </>
+                            )}
+                          </div>
+
+                          <div className="flex flex-wrap gap-2 pt-2">
+                            <button
+                              onClick={() => startIntegrationOAuth(provider)}
+                              disabled={isOAuthLoading || !oauthConfigured}
+                              className="px-4 py-2 rounded-lg border border-[#FF6B35]/30 text-sm font-semibold text-[#FF6B35] hover:bg-[#FFF4EF] disabled:opacity-40"
+                            >
+                              {isOAuthLoading ? t('loading') : (isConnected ? t('integrationsOAuthReconnect') : t('integrationsOAuthButton'))}
+                            </button>
+                            <button
+                              onClick={() => saveIntegration(provider)}
+                              disabled={isSaving}
+                              className="px-4 py-2 rounded-lg bg-[#FF6B35] hover:bg-[#E85A28] text-white text-sm font-semibold disabled:opacity-50"
+                            >
+                              {isSaving ? t('saving') : t('integrationsSaveButton')}
+                            </button>
+                            <button
+                              onClick={() => deleteIntegration(provider)}
+                              disabled={isDeleting || accounts.length === 0}
+                              className="px-4 py-2 rounded-lg border border-[#E8E8EE] text-sm font-semibold text-[#1A1A2E] hover:bg-[#F7F8FA] disabled:opacity-40"
+                            >
+                              {isDeleting ? t('updating') : t('integrationsDeleteButton')}
+                            </button>
+                          </div>
+                          {!oauthConfigured && (
+                            <p className="text-xs text-[#8A8AA3]">{t('integrationsOAuthNotConfigured')}</p>
+                          )}
+                          {renderStatus(`integrations-${provider}`)}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
                     <div className="w-2 h-2 rounded-full bg-[#FF6B35] animate-pulse" />
                     <p className="text-xs uppercase tracking-[0.25em] text-[#FF6B35] font-semibold">{t('realTimeSales')}</p>
                   </div>
@@ -6850,7 +7343,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         <h3 className="text-[#1A1A2E] text-xl font-bold mb-2">{t('autoAIActions')}</h3>
                         <p className="text-[#0D9488] text-sm">{t('aiCanAutoApply')}</p>
                         {subscription?.plan === 'premium' && (
-                          <p className="text-[#FF6B35] text-xs mt-1">Premium: Modifications automatiques sans limites</p>
+                          <p className="text-[#FF6B35] text-xs mt-1">{t('premiumAutoUnlimited')}</p>
                         )}
                       </div>
                       <button
@@ -7806,7 +8299,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         </div>
                         <div className="sm:text-right">
                           <div className="text-xl sm:text-2xl font-bold text-[#0D9488]">
-                            ${subscription?.plan === 'standard' ? '99' : subscription?.plan === 'pro' ? '199' : '299'}/mo
+                            ${PLAN_PRICE[subscription?.plan] || PLAN_PRICE.standard}/mo
                           </div>
                         </div>
                       </div>
@@ -7817,7 +8310,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         {pendingPlanConfirm ? (
                           <div className="bg-[#FFF7ED] border border-[#FF6B35]/30 rounded-lg p-4 mb-2">
                             <p className="text-sm text-[#1A1A2E] mb-1">{tr('youAreAboutToSwitch', 'You Are About to Switch To:')}</p>
-                            <p className="text-lg font-bold text-[#FF6B35]">{pendingPlanConfirm.plan.toUpperCase()} — ${pendingPlanConfirm.price}/mo</p>
+                            <p className="text-lg font-bold text-[#FF6B35]">{formatPlan(pendingPlanConfirm.plan)} — ${pendingPlanConfirm.price}/mo</p>
                             <p className="text-xs text-[#6A6A85] mt-1 mb-3">
                               {subscription?.current_period_end
                                 ? `${tr('planChangeEffectiveOn', 'The change will take effect on your next renewal date')}: ${new Date(subscription.current_period_end).toLocaleDateString()}.`
@@ -7833,13 +8326,13 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             {['standard', 'pro', 'premium'].filter(p => p !== subscription?.plan).map(targetPlan => (
                               <button
                                 key={targetPlan}
-                                onClick={() => { clearStatus('change-plan'); setPendingPlanConfirm({ plan: targetPlan, price: targetPlan === 'standard' ? '99' : targetPlan === 'pro' ? '199' : '299' }) }}
+                                onClick={() => { clearStatus('change-plan'); setPendingPlanConfirm({ plan: targetPlan, price: PLAN_PRICE[targetPlan] || PLAN_PRICE.standard }) }}
                                 disabled={changePlanLoading}
                                 className="flex-1 px-4 py-3 rounded-lg border border-[#E8E8EE] bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E] disabled:opacity-50 transition text-left"
                               >
                                 <div className="font-semibold text-sm">{formatPlan(targetPlan)}</div>
                                 <div className="text-xs text-[#6A6A85]">
-                                  ${targetPlan === 'standard' ? '99' : targetPlan === 'pro' ? '199' : '299'}/{t('month') || 'mo'}
+                                  ${PLAN_PRICE[targetPlan] || PLAN_PRICE.standard}/{t('month') || 'mo'}
                                 </div>
                               </button>
                             ))}

@@ -1,29 +1,32 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
 client_id = "2993e31e71939664b4f6a255d27d6ab4"
 name = "ShopBrain AI"
-handle = "shopbrain-ai-louis-felix"
 application_url = "https://shopbrain-backend.onrender.com/api/shopify/install"
 embedded = false
-
-[auth]
-redirect_urls = [
-  "https://shopbrain-backend.onrender.com/auth/shopify/callback"
-]
-
-[access_scopes]
-scopes = "read_analytics,read_customers,read_orders,read_products,write_products,read_script_tags"
-use_legacy_install_flow = true
+handle = "shopbrain-ai-louis-felix"
 
 [webhooks]
 api_version = "2026-04"
 
   [[webhooks.subscriptions]]
-  compliance_topics = ["customers/data_request"]
   uri = "https://shopbrain-backend.onrender.com/api/shopify/webhooks/customers-data-request"
+  compliance_topics = [ "customers/data_request" ]
 
   [[webhooks.subscriptions]]
-  compliance_topics = ["customers/redact"]
   uri = "https://shopbrain-backend.onrender.com/api/shopify/webhooks/customers-redact"
+  compliance_topics = [ "customers/redact" ]
 
   [[webhooks.subscriptions]]
-  compliance_topics = ["shop/redact"]
   uri = "https://shopbrain-backend.onrender.com/api/shopify/webhooks/shop-redact"
+  compliance_topics = [ "shop/redact" ]
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_analytics,read_customers,read_orders,read_products,read_script_tags,write_products"
+use_legacy_install_flow = true
+
+[auth]
+redirect_urls = [
+  "https://shopbrain-backend.onrender.com/auth/shopify/callback"
+]
