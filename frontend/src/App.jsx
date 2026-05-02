@@ -1213,10 +1213,11 @@ export default function App() {
       {/* ═══════════════════ ECOSYSTEM SECTION ═══════════════════ */}
       <section className="py-20 md:py-28 px-4 md:px-6 bg-white">
         <motion.div 
-          initial={{ opacity: 0, y: 40 }}
+          initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: "-100px" }}
-          transition={{ duration: 0.6 }}
+          transition={{ duration: 0.4, ease: "easeOut" }}
+          style={{ willChange: "transform, opacity" }}
           className="max-w-6xl mx-auto"
         >
           <div className="text-center mb-14 md:mb-20">
@@ -1245,10 +1246,11 @@ export default function App() {
       {/* ═══════════════════ COMMAND CENTER ═══════════════════ */}
       <section className="py-20 md:py-28 px-4 md:px-6 bg-[#F7F8FA] overflow-hidden">
         <motion.div 
-          initial={{ opacity: 0, x: -40 }}
+          initial={{ opacity: 0, x: -20 }}
           whileInView={{ opacity: 1, x: 0 }}
           viewport={{ once: true, margin: "-100px" }}
-          transition={{ duration: 0.6 }}
+          transition={{ duration: 0.4, ease: "easeOut" }}
+          style={{ willChange: "transform, opacity" }}
           className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-10 md:gap-16 items-center"
         >
           <div>
@@ -1292,10 +1294,11 @@ export default function App() {
       {/* ═══════════════════ BEFORE / AFTER ═══════════════════ */}
       <section className="py-20 md:py-28 px-4 md:px-6 bg-white">
         <motion.div 
-          initial={{ opacity: 0, y: 40 }}
+          initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: "-100px" }}
-          transition={{ duration: 0.6 }}
+          transition={{ duration: 0.4, ease: "easeOut" }}
+          style={{ willChange: "transform, opacity" }}
           className="max-w-6xl mx-auto"
         >
           <div className="text-center mb-14">
@@ -1338,10 +1341,11 @@ export default function App() {
       {/* ═══════════════════ BENEFITS ═══════════════════ */}
       <section className="py-20 md:py-28 px-4 md:px-6 bg-[#F7F8FA]">
         <motion.div 
-          initial={{ opacity: 0, y: 40 }}
+          initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: "-100px" }}
-          transition={{ duration: 0.6 }}
+          transition={{ duration: 0.4, ease: "easeOut" }}
+          style={{ willChange: "transform, opacity" }}
           className="max-w-7xl mx-auto"
         >
           <div className="text-center mb-14 md:mb-20">
@@ -1394,10 +1398,11 @@ export default function App() {
       {/* ═══════════════════ FEATURES ═══════════════════ */}
       <section id="features" className="py-20 md:py-28 px-4 md:px-6 bg-white">
         <motion.div 
-          initial={{ opacity: 0, y: 40 }}
+          initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: "-100px" }}
-          transition={{ duration: 0.6 }}
+          transition={{ duration: 0.4, ease: "easeOut" }}
+          style={{ willChange: "transform, opacity" }}
           className="max-w-7xl mx-auto"
         >
           <div className="text-center mb-14 md:mb-20">
@@ -1461,10 +1466,11 @@ export default function App() {
       {/* ═══════════════════ HOW IT WORKS ═══════════════════ */}
       <section id="how-it-works" className="py-20 md:py-28 px-4 md:px-6 bg-[#F7F8FA]">
         <motion.div 
-          initial={{ opacity: 0, y: 40 }}
+          initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: "-100px" }}
-          transition={{ duration: 0.6 }}
+          transition={{ duration: 0.4, ease: "easeOut" }}
+          style={{ willChange: "transform, opacity" }}
           className="max-w-6xl mx-auto"
         >
           <div className="text-center mb-14 md:mb-20">
@@ -1507,10 +1513,11 @@ export default function App() {
       {/* ═══════════════════ PRICING ═══════════════════ */}
       <section id="pricing" className="py-20 md:py-32 px-4 md:px-6 bg-white">
         <motion.div 
-          initial={{ opacity: 0, y: 40 }}
+          initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: "-100px" }}
-          transition={{ duration: 0.6 }}
+          transition={{ duration: 0.4, ease: "easeOut" }}
+          style={{ willChange: "transform, opacity" }}
           className="max-w-7xl mx-auto"
         >
           <div className="text-center mb-10 md:mb-20">
@@ -1622,10 +1629,11 @@ export default function App() {
       {/* ═══════════════════ CTA ═══════════════════ */}
       <section className="py-20 md:py-28 px-4 md:px-6 bg-gradient-to-br from-[#1A1A2E] via-[#1A1A2E] to-[#0D3B3B]">
         <motion.div 
-          initial={{ opacity: 0, scale: 0.95 }}
+          initial={{ opacity: 0, scale: 0.98 }}
           whileInView={{ opacity: 1, scale: 1 }}
           viewport={{ once: true, margin: "-100px" }}
-          transition={{ duration: 0.6 }}
+          transition={{ duration: 0.4, ease: "easeOut" }}
+          style={{ willChange: "transform, opacity" }}
           className="max-w-4xl mx-auto text-center"
         >
           <h2 className="font-serif text-3xl md:text-5xl text-white mb-5 md:mb-6">
