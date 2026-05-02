@@ -1,4 +1,5 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { useTranslation } from './LanguageContext'
 import ErrorBoundary from './ErrorBoundary'
 import { supabase } from './supabaseClient'
@@ -8,20 +9,36 @@ import { getMarketingPricingPlans } from './pricingConfig'
 const StripePricingTable = lazy(() => import('./PricingTable'))
 const Dashboard = lazy(() => import('./Dashboard'))
 const TruthPage = lazy(() => import('./TruthPage'))
+const Hero3D = lazy(() => import('./Hero3D'))
 
 // ⚡ Loading fallback for lazy components
 const LazyFallback = () => {
   const { t } = useTranslation()
   return (
-    <div className="min-h-screen bg-white flex items-center justify-center">
-      <div className="flex flex-col items-center gap-4">
-        <div className="w-10 h-10 border-2 border-[#FF6B35] border-t-transparent rounded-full animate-spin" />
-        <p className="text-[#8A8AA3] text-sm">{t('loading')}</p>
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="min-h-screen bg-white flex items-center justify-center gradient-bg opacity-30"
+    >
+      <div className="flex flex-col items-center gap-6 glass-panel p-10 rounded-3xl premium-card shadow-[var(--shadow-xl)]">
+        <motion.div 
+          animate={{ rotate: 360 }}
+          transition={{ repeat: Infinity, duration: 1.5, ease: "linear" }}
+          className="w-12 h-12 border-[3px] border-[#FF6B35]/20 border-t-[#FF6B35] rounded-full" 
+        />
+        <div className="space-y-3 flex flex-col items-center">
+          <motion.div 
+            animate={{ opacity: [0.4, 1, 0.4] }}
+            transition={{ repeat: Infinity, duration: 2 }}
+            className="h-2.5 w-24 bg-[#E8E8EE] rounded-full"
+          />
+          <p className="text-[#8A8AA3] text-sm font-medium tracking-wide">{t('loading')}</p>
+        </div>
       </div>
-    </div>
+    </motion.div>
   )
 }
-
 // Stripe Payment Links are created dynamically via backend API
 // No static links needed - backend generates them on demand
 
@@ -679,10 +696,14 @@ export default function App() {
       )}
 
       {/* ═══════════════════ NAVIGATION ═══════════════════ */}
-      <nav className={`fixed top-0 w-full z-50 transition-all duration-300 ${
+      <motion.nav 
+        initial={{ y: -100 }}
+        animate={{ y: 0 }}
+        transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+        className={`fixed top-0 w-full z-50 transition-all duration-300 ${
         scrolled
-          ? 'bg-white/90 backdrop-blur-md shadow-[var(--shadow-sm)] border-b border-[#E8E8EE]'
-          : 'bg-white border-b border-[#E8E8EE]'
+          ? 'glass-panel shadow-[var(--shadow-md)] border-b border-[#E8E8EE]/50'
+          : 'bg-transparent border-b-0'
       }`}>
         <div className="max-w-7xl mx-auto px-4 md:px-8">
           <div className="flex items-center justify-between h-16 md:h-[72px]">
@@ -763,7 +784,7 @@ export default function App() {
             )}
           </div>
         </div>
-      </nav>
+      </motion.nav>
 
 
 
@@ -952,45 +973,77 @@ export default function App() {
       )}
 
       {/* ═══════════════════ HERO SECTION ═══════════════════ */}
-      <section className="pt-28 md:pt-36 pb-16 md:pb-28 px-4 md:px-6 bg-white relative overflow-hidden">
+      <section className="pt-28 md:pt-36 pb-16 md:pb-28 px-4 md:px-6 bg-white relative overflow-hidden perspective-container">
         {/* Subtle teal-orange gradient bg */}
-        <div className="absolute inset-0 gradient-bg opacity-40 pointer-events-none" />
-        <div className="max-w-6xl mx-auto relative">
-          <div className="text-center animate-fadeInUp">
-            <div className="inline-block mb-6 md:mb-8">
-              <span className="section-label px-4 py-2 bg-[#CCFBF1] text-[#0D9488] border border-[#0D9488]/10 rounded-full text-xs font-semibold uppercase tracking-[0.15em]">{t("heroBadge")}</span>
-            </div>
-            <h1 className="font-serif text-4xl md:text-7xl lg:text-8xl text-[#1A1A2E] tracking-tight leading-[1.05] mb-5 md:mb-6">
+        <div className="absolute inset-0 gradient-bg opacity-30 pointer-events-none" />
+        <Suspense fallback={null}>
+          <Hero3D />
+        </Suspense>
+        <div className="max-w-6xl mx-auto relative z-10">
+          <motion.div 
+            initial={{ opacity: 0, y: 40 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
+            className="text-center"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ delay: 0.2, duration: 0.5 }}
+              className="inline-block mb-6 md:mb-8"
+            >
+              <span className="section-label px-4 py-2 bg-[#CCFBF1] text-[#0D9488] border border-[#0D9488]/10 rounded-full text-xs font-semibold uppercase tracking-[0.15em] shadow-sm">
+                {t("heroBadge")}
+              </span>
+            </motion.div>
+            <h1 className="font-serif text-4xl md:text-7xl lg:text-8xl text-[#1A1A2E] tracking-tight leading-[1.05] mb-5 md:mb-6 drop-shadow-sm">
               {t('heroTitle').split(' ').slice(0, -1).join(' ')}{' '}
-              <span className="gradient-text">{t('heroTitle').split(' ').slice(-1)}</span>
+              <span className="gradient-text drop-shadow-sm">{t('heroTitle').split(' ').slice(-1)}</span>
             </h1>
             <p className="text-base md:text-xl text-[#4A4A68] mb-10 md:mb-14 max-w-3xl mx-auto leading-relaxed font-light">
               {t('heroSubtitle')}
             </p>
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 md:gap-4 mb-8">
+            <motion.div 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3, duration: 0.6 }}
+              className="flex flex-col sm:flex-row items-center justify-center gap-3 md:gap-4 mb-8"
+            >
               <button
                 onClick={openStripePricing}
-                className="w-full sm:w-auto px-8 md:px-10 py-4 bg-[#1A1A2E] text-white text-sm md:text-base font-medium rounded-full hover:bg-[#2A2A42] transition-all hover:shadow-lg group"
+                className="w-full sm:w-auto px-8 md:px-10 py-4 bg-[#1A1A2E] text-white text-sm md:text-base font-medium rounded-full hover:bg-[#2A2A42] transition-all hover:shadow-xl group"
               >
                 {t('startFreeTrialNow')} <span className="inline-block transition-transform group-hover:translate-x-1">→</span>
               </button>
               <button
                 onClick={() => setShowAuthModal(true)}
-                className="w-full sm:w-auto px-8 md:px-10 py-4 text-[#1A1A2E] text-sm md:text-base font-medium border border-[#E8E8EE] rounded-full hover:bg-[#F7F8FA] transition-all"
+                className="w-full sm:w-auto px-8 md:px-10 py-4 text-[#1A1A2E] text-sm md:text-base font-medium border border-[#E8E8EE] rounded-full hover:bg-[#F7F8FA] transition-all glass-panel"
               >
                 {t("login")}
               </button>
-            </div>
+            </motion.div>
             <p className="text-xs md:text-sm text-[#8A8AA3]">
               {t('heroDisclaimer')}
             </p>
-          </div>
+          </motion.div>
 
-          {/* Kinso-style floating notification cards — animated */}
-          <div className="hidden lg:block relative mt-16 h-[320px]">
+          {/* Kinso-style floating notification cards — animated with Framer Motion 3D */}
+          <div className="hidden lg:block relative mt-16 h-[320px] perspective-container">
             {/* Card 1 — AI Analysis (floats gently) */}
-            <div className="absolute left-[5%] top-4 animate-popIn stagger-1" style={{animation: 'popIn 0.6s cubic-bezier(0.34,1.56,0.64,1) forwards, floatSlow 6s ease-in-out 1s infinite'}}>
-              <div className="bg-white border border-[#E8E8EE] rounded-2xl p-5 shadow-[var(--shadow-lg)] w-72 hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-default">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.8, y: 40 }}
+              animate={{ opacity: 1, scale: 1, y: [0, -15, 0] }}
+              transition={{
+                opacity: { delay: 0.4 },
+                scale: { delay: 0.4, type: "spring", stiffness: 100, damping: 15 },
+                y: { repeat: Infinity, duration: 6, ease: "easeInOut", delay: 0.4 }
+              }}
+              className="absolute left-[5%] top-4 z-10"
+            >
+              <motion.div 
+                whileHover={{ scale: 1.05, rotateX: 5, rotateY: -5, z: 20 }}
+                className="premium-card glass-panel p-5 w-72 cursor-default"
+              >
                 <div className="flex items-center gap-3 mb-3">
                   <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#2DD4BF] to-[#0D9488] flex items-center justify-center text-white text-lg animate-pulse-soft">🤖</div>
                   <div>
@@ -1002,12 +1055,24 @@ export default function App() {
                 <p className="text-sm text-[#4A4A68] leading-relaxed">
                   <span className="typewriter-text">Titre optimisé : « Bouteille Premium Inox 750ml — Isolée 24h »</span>
                 </p>
-              </div>
-            </div>
+              </motion.div>
+            </motion.div>
 
             {/* Card 2 — Price opportunity (floats opposite) */}
-            <div className="absolute right-[5%] top-0 animate-popIn stagger-3" style={{animation: 'popIn 0.6s cubic-bezier(0.34,1.56,0.64,1) 0.3s forwards, floatSlow 7s ease-in-out 1.5s infinite reverse'}}>
-              <div className="bg-white border border-[#FF6B35]/20 rounded-2xl p-5 shadow-[var(--shadow-lg)] w-64 hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-default">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.8, y: -20 }}
+              animate={{ opacity: 1, scale: 1, y: [0, 15, 0] }}
+              transition={{
+                opacity: { delay: 0.6 },
+                scale: { delay: 0.6, type: "spring", stiffness: 100, damping: 15 },
+                y: { repeat: Infinity, duration: 7, ease: "easeInOut", delay: 0.5 }
+              }}
+              className="absolute right-[5%] top-0 z-20"
+            >
+              <motion.div 
+                whileHover={{ scale: 1.05, rotateX: -5, rotateY: 5, z: 20 }}
+                className="premium-card glass-panel border-[#FF6B35]/30 p-5 w-64 cursor-default"
+              >
                 <div className="flex items-center gap-2 mb-2">
                   <span className="text-[#FF6B35] text-lg">📊</span>
                   <p className="text-sm font-semibold text-[#1A1A2E]">Opportunité prix</p>
@@ -1022,12 +1087,24 @@ export default function App() {
                   <span className="text-[10px] text-[#8A8AA3]">Score confiance</span>
                   <span className="text-[10px] font-semibold text-[#0D9488]">92%</span>
                 </div>
-              </div>
-            </div>
+              </motion.div>
+            </motion.div>
 
             {/* Card 3 — Actions recommandées (floats center) */}
-            <div className="absolute left-1/2 -translate-x-1/2 bottom-0 animate-popIn stagger-5" style={{animation: 'popIn 0.6s cubic-bezier(0.34,1.56,0.64,1) 0.6s forwards, floatSlow 5s ease-in-out 2s infinite'}}>
-              <div className="bg-white border border-[#E8E8EE] rounded-2xl p-5 shadow-[var(--shadow-lg)] w-80 hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-default">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.8, y: 30 }}
+              animate={{ opacity: 1, scale: 1, y: [0, -10, 0] }}
+              transition={{
+                opacity: { delay: 0.8 },
+                scale: { delay: 0.8, type: "spring", stiffness: 100, damping: 15 },
+                y: { repeat: Infinity, duration: 5, ease: "easeInOut", delay: 1 }
+              }}
+              className="absolute left-1/2 -translate-x-1/2 bottom-0 z-30"
+            >
+              <motion.div 
+                whileHover={{ scale: 1.05, rotateX: 2, rotateY: 2, z: 30 }}
+                className="premium-card glass-panel p-5 w-80 cursor-default"
+              >
                 <div className="flex items-center gap-3 mb-3">
                   <div className="w-10 h-10 rounded-xl bg-[#FFF4F0] flex items-center justify-center text-lg">⚡</div>
                   <div className="flex-1">
@@ -1041,20 +1118,32 @@ export default function App() {
                   <div className="flex items-center gap-2 text-sm text-[#4A4A68] action-row stagger-2"><span className="w-1.5 h-1.5 bg-[#2DD4BF] rounded-full animate-pulse" style={{animationDelay:'0.5s'}} />Optimiser 1 prix</div>
                   <div className="flex items-center gap-2 text-sm text-[#4A4A68] action-row stagger-3"><span className="w-1.5 h-1.5 bg-[#F59E0B] rounded-full animate-pulse" style={{animationDelay:'1s'}} />Alerte stock bas</div>
                 </div>
-              </div>
-            </div>
+              </motion.div>
+            </motion.div>
 
             {/* Card 4 — Revenue mini-card (new, top center) */}
-            <div className="absolute left-[38%] top-0 animate-popIn stagger-2" style={{animation: 'popIn 0.6s cubic-bezier(0.34,1.56,0.64,1) 0.9s forwards, floatSlow 8s ease-in-out 0.5s infinite'}}>
-              <div className="bg-white border border-[#2DD4BF]/20 rounded-2xl px-4 py-3 shadow-[var(--shadow-lg)] hover:shadow-xl transition-all duration-300 cursor-default">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.8, x: -20 }}
+              animate={{ opacity: 1, scale: 1, y: [0, -8, 0] }}
+              transition={{
+                opacity: { delay: 0.5 },
+                scale: { delay: 0.5, type: "spring", stiffness: 100, damping: 15 },
+                y: { repeat: Infinity, duration: 8, ease: "easeInOut", delay: 0.2 }
+              }}
+              className="absolute left-[38%] top-0 z-10"
+            >
+              <motion.div 
+                whileHover={{ scale: 1.05, rotateX: -2, rotateY: -2, z: 20 }}
+                className="premium-card glass-panel border-[#2DD4BF]/30 px-4 py-3 cursor-default"
+              >
                 <div className="flex items-center gap-2">
                   <span className="text-[#0D9488]">💰</span>
                   <span className="text-xs font-medium text-[#8A8AA3]">Revenus 30j</span>
                 </div>
                 <p className="text-lg font-bold text-[#1A1A2E] mt-1">12 480 <span className="text-xs font-normal text-[#8A8AA3]">CAD</span></p>
                 <span className="text-[10px] font-semibold text-[#0D9488] bg-teal-50 px-1.5 py-0.5 rounded">↑ 24%</span>
-              </div>
-            </div>
+              </motion.div>
+            </motion.div>
           </div>
 
           {/* Dashboard Button */}
@@ -1123,7 +1212,13 @@ export default function App() {
 
       {/* ═══════════════════ ECOSYSTEM SECTION ═══════════════════ */}
       <section className="py-20 md:py-28 px-4 md:px-6 bg-white">
-        <div className="max-w-6xl mx-auto">
+        <motion.div 
+          initial={{ opacity: 0, y: 40 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: "-100px" }}
+          transition={{ duration: 0.6 }}
+          className="max-w-6xl mx-auto"
+        >
           <div className="text-center mb-14 md:mb-20">
             <p className="section-label mb-4">{t('ecosystemLabel')}</p>
             <h2 className="font-serif text-3xl md:text-5xl text-[#1A1A2E] mb-4">{t('ecosystemTitle')}</h2>
@@ -1144,12 +1239,18 @@ export default function App() {
               </div>
             ))}
           </div>
-        </div>
+        </motion.div>
       </section>
 
       {/* ═══════════════════ COMMAND CENTER ═══════════════════ */}
-      <section className="py-20 md:py-28 px-4 md:px-6 bg-[#F7F8FA]">
-        <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-10 md:gap-16 items-center">
+      <section className="py-20 md:py-28 px-4 md:px-6 bg-[#F7F8FA] overflow-hidden">
+        <motion.div 
+          initial={{ opacity: 0, x: -40 }}
+          whileInView={{ opacity: 1, x: 0 }}
+          viewport={{ once: true, margin: "-100px" }}
+          transition={{ duration: 0.6 }}
+          className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-10 md:gap-16 items-center"
+        >
           <div>
             <p className="section-label mb-4">{t('ecosystemCommandTitle')}</p>
             <h2 className="font-serif text-3xl md:text-5xl text-[#1A1A2E] mb-4">{t('commandCenterTitle')}</h2>
@@ -1185,12 +1286,18 @@ export default function App() {
               </div>
             </div>
           </div>
-        </div>
+        </motion.div>
       </section>
 
       {/* ═══════════════════ BEFORE / AFTER ═══════════════════ */}
       <section className="py-20 md:py-28 px-4 md:px-6 bg-white">
-        <div className="max-w-6xl mx-auto">
+        <motion.div 
+          initial={{ opacity: 0, y: 40 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: "-100px" }}
+          transition={{ duration: 0.6 }}
+          className="max-w-6xl mx-auto"
+        >
           <div className="text-center mb-14">
             <p className="section-label mb-4">{t('beforeAfterLabel')}</p>
             <h2 className="font-serif text-3xl md:text-5xl text-[#1A1A2E] mb-4">{t('beforeAfterTitle')}</h2>
@@ -1222,7 +1329,7 @@ export default function App() {
               </ul>
             </div>
           </div>
-        </div>
+        </motion.div>
       </section>
 
       {/* ═══════════════════ DIVIDER ═══════════════════ */}
@@ -1230,7 +1337,13 @@ export default function App() {
 
       {/* ═══════════════════ BENEFITS ═══════════════════ */}
       <section className="py-20 md:py-28 px-4 md:px-6 bg-[#F7F8FA]">
-        <div className="max-w-7xl mx-auto">
+        <motion.div 
+          initial={{ opacity: 0, y: 40 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: "-100px" }}
+          transition={{ duration: 0.6 }}
+          className="max-w-7xl mx-auto"
+        >
           <div className="text-center mb-14 md:mb-20">
             <p className="section-label mb-4">{t('benefitsLabel')}</p>
             <h2 className="font-serif text-3xl md:text-5xl text-[#1A1A2E] mb-4">{t('benefitsTitle')}</h2>
@@ -1252,7 +1365,7 @@ export default function App() {
               </div>
             ))}
           </div>
-        </div>
+        </motion.div>
       </section>
 
       {/* ═══════════════════ INTEGRATIONS MARQUEE (Kinso-style) ═══════════════════ */}
@@ -1280,7 +1393,13 @@ export default function App() {
 
       {/* ═══════════════════ FEATURES ═══════════════════ */}
       <section id="features" className="py-20 md:py-28 px-4 md:px-6 bg-white">
-        <div className="max-w-7xl mx-auto">
+        <motion.div 
+          initial={{ opacity: 0, y: 40 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: "-100px" }}
+          transition={{ duration: 0.6 }}
+          className="max-w-7xl mx-auto"
+        >
           <div className="text-center mb-14 md:mb-20">
             <p className="section-label mb-4">FEATURES</p>
             <h2 className="font-serif text-3xl md:text-6xl text-[#1A1A2E] mb-4">
@@ -1336,12 +1455,18 @@ export default function App() {
               </div>
             ))}
           </div>
-        </div>
+        </motion.div>
       </section>
 
       {/* ═══════════════════ HOW IT WORKS ═══════════════════ */}
       <section id="how-it-works" className="py-20 md:py-28 px-4 md:px-6 bg-[#F7F8FA]">
-        <div className="max-w-6xl mx-auto">
+        <motion.div 
+          initial={{ opacity: 0, y: 40 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: "-100px" }}
+          transition={{ duration: 0.6 }}
+          className="max-w-6xl mx-auto"
+        >
           <div className="text-center mb-14 md:mb-20">
             <p className="section-label mb-4">HOW IT WORKS</p>
             <h2 className="font-serif text-3xl md:text-5xl text-[#1A1A2E]">{t("howItWorksTitle")}</h2>
@@ -1373,7 +1498,7 @@ export default function App() {
               </div>
             ))}
           </div>
-        </div>
+        </motion.div>
       </section>
 
       {/* ═══════════════════ DIVIDER ═══════════════════ */}
@@ -1381,7 +1506,13 @@ export default function App() {
 
       {/* ═══════════════════ PRICING ═══════════════════ */}
       <section id="pricing" className="py-20 md:py-32 px-4 md:px-6 bg-white">
-        <div className="max-w-7xl mx-auto">
+        <motion.div 
+          initial={{ opacity: 0, y: 40 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: "-100px" }}
+          transition={{ duration: 0.6 }}
+          className="max-w-7xl mx-auto"
+        >
           <div className="text-center mb-10 md:mb-20">
             <p className="section-label mb-4">PRICING</p>
             <h2 className="font-serif text-3xl md:text-6xl text-[#1A1A2E] mb-5">
@@ -1485,12 +1616,18 @@ export default function App() {
               </a>
             </div>
           </div>
-        </div>
+        </motion.div>
       </section>
 
       {/* ═══════════════════ CTA ═══════════════════ */}
       <section className="py-20 md:py-28 px-4 md:px-6 bg-gradient-to-br from-[#1A1A2E] via-[#1A1A2E] to-[#0D3B3B]">
-        <div className="max-w-4xl mx-auto text-center">
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.95 }}
+          whileInView={{ opacity: 1, scale: 1 }}
+          viewport={{ once: true, margin: "-100px" }}
+          transition={{ duration: 0.6 }}
+          className="max-w-4xl mx-auto text-center"
+        >
           <h2 className="font-serif text-3xl md:text-5xl text-white mb-5 md:mb-6">
             {t('ctaTitle')}
           </h2>
@@ -1503,7 +1640,7 @@ export default function App() {
           >
             {t('startFreeTrialNow')} →
           </button>
-        </div>
+        </motion.div>
       </section>
 
       {/* ═══════════════════ FOOTER ═══════════════════ */}
