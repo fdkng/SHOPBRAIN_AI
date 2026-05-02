@@ -5181,32 +5181,39 @@ export default function Dashboard() {
                       : tr('planChangeEffectiveAtNextRenewal', 'The change will take effect at your next renewal date.')}
                   </p>
                 </div>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => { setPendingPlanConfirm(null); clearStatus('change-plan') }}
-                    disabled={changePlanLoading}
-                    className="flex-1 px-4 py-3 rounded-lg border border-[#E8E8EE] text-[#6A6A85] hover:bg-[#EFF1F5] disabled:opacity-50"
-                  >
-                    {tr('cancel', 'Cancel')}
-                  </button>
-                  <button
-                    onClick={async () => {
-                      await handleChangePlan(pendingPlanConfirm.plan)
-                      // Only dismiss confirmation if switch succeeded
-                      if (!changePlanLoading) {
-                        const statusObj = statusByKey['change-plan']
-                        if (statusObj?.type === 'success' || statusObj?.type === 'info') {
-                          setPendingPlanConfirm(null)
-                        }
-                      }
-                    }}
-                    disabled={changePlanLoading}
-                    className="flex-1 px-4 py-3 rounded-lg bg-[#FF6B35] hover:bg-[#E85A28] text-white font-semibold disabled:opacity-50"
-                  >
-                    {changePlanLoading ? tr('switching', 'Switching...') : tr('confirmSwitch', 'Confirm & Switch')}
-                  </button>
-                </div>
-                {renderStatus('change-plan')}
+                {statusByKey['change-plan']?.type === 'success' ? (
+                  /* ── Success state: hide action buttons, show close only ── */
+                  <div className="flex flex-col items-center gap-4">
+                    {renderStatus('change-plan')}
+                    <button
+                      onClick={() => { setPendingPlanConfirm(null); clearStatus('change-plan'); setShowPlanMenu(false) }}
+                      className="mt-1 px-6 py-2.5 rounded-lg bg-[#1A1A2E] hover:bg-[#2A2A42] text-white font-semibold text-sm transition-colors"
+                    >
+                      ✕ &nbsp;{tr('close', 'Close')}
+                    </button>
+                  </div>
+                ) : (
+                  /* ── Normal state: cancel + confirm buttons ── */
+                  <>
+                    <div className="flex gap-3">
+                      <button
+                        onClick={() => { setPendingPlanConfirm(null); clearStatus('change-plan') }}
+                        disabled={changePlanLoading}
+                        className="flex-1 px-4 py-3 rounded-lg border border-[#E8E8EE] text-[#6A6A85] hover:bg-[#EFF1F5] disabled:opacity-50"
+                      >
+                        {tr('cancel', 'Cancel')}
+                      </button>
+                      <button
+                        onClick={async () => { await handleChangePlan(pendingPlanConfirm.plan) }}
+                        disabled={changePlanLoading}
+                        className="flex-1 px-4 py-3 rounded-lg bg-[#FF6B35] hover:bg-[#E85A28] text-white font-semibold disabled:opacity-50"
+                      >
+                        {changePlanLoading ? tr('switching', 'Switching...') : tr('confirmSwitch', 'Confirm & Switch')}
+                      </button>
+                    </div>
+                    {renderStatus('change-plan')}
+                  </>
+                )}
               </>
             ) : (
               /* ── Plan selection step ── */
