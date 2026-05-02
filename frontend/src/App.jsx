@@ -972,7 +972,7 @@ export default function App() {
                 onClick={openStripePricing}
                 className="w-full sm:w-auto px-8 md:px-10 py-4 bg-[#1A1A2E] text-white text-sm md:text-base font-medium rounded-full hover:bg-[#2A2A42] transition-all hover:shadow-lg group"
               >
-                {t("viewAllPlans")} <span className="inline-block transition-transform group-hover:translate-x-1">→</span>
+                {t('startFreeTrialNow')} <span className="inline-block transition-transform group-hover:translate-x-1">→</span>
               </button>
               <button
                 onClick={() => setShowAuthModal(true)}
@@ -1459,7 +1459,7 @@ export default function App() {
                         : 'bg-[#F7F8FA] text-[#1A1A2E] border border-[#FF6B35]/40 hover:bg-[#EFF1F5] hover:border-[#FF6B35]/65'
                     }`}
                   >
-                    {t("viewAllPlans")}
+                    {t('startFreeTrialNow')}
                   </button>
 
                   <p className="text-center text-xs text-[#8A8AA3] mt-4">{t('cancelInOneClick')}</p>
@@ -1475,7 +1475,7 @@ export default function App() {
                 onClick={openStripePricing}
                 className="px-8 py-3 bg-[#1A1A2E] text-white font-medium rounded-full hover:bg-[#2A2A42] transition-all text-sm"
               >
-                {t("viewAllPlans")} →
+                {t('startFreeTrialNow')} →
               </button>
               <a
                 href="mailto:louis-felix.gilbert@outlook.com"
@@ -1501,7 +1501,7 @@ export default function App() {
             onClick={openStripePricing}
             className="px-10 py-4 bg-[#FF6B35] text-white text-sm md:text-base font-semibold rounded-full hover:bg-[#E85A28] transition-all hover:shadow-[0_8px_24px_rgba(255,107,53,0.3)]"
           >
-            {t("viewAllPlans")} →
+            {t('startFreeTrialNow')} →
           </button>
         </div>
       </section>
