@@ -1988,13 +1988,14 @@ def _truth_manual_required_fields(provider: str, req: ClientIntegrationConnectRe
         if not str(req.access_token or "").strip():
             required.append("access_token")
     elif normalized_provider == "google":
+        server_credentials = _truth_build_provider_credentials(normalized_provider, None)
         if not str(req.refresh_token or "").strip():
             required.append("refresh_token")
-        if not str(req.developer_token or "").strip():
+        if not str(req.developer_token or "").strip() and not str(server_credentials.get("developer_token") or "").strip():
             required.append("developer_token")
-        if not str(req.client_id or "").strip():
+        if not str(req.client_id or "").strip() and not str(server_credentials.get("client_id") or "").strip():
             required.append("client_id")
-        if not str(req.client_secret or "").strip():
+        if not str(req.client_secret or "").strip() and not str(server_credentials.get("client_secret") or "").strip():
             required.append("client_secret")
 
     if not str(req.external_account_id or "").strip():

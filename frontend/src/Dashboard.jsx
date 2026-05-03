@@ -3,6 +3,7 @@ import { useTranslation } from './LanguageContext'
 import { supabase } from './supabaseClient'
 
 const API_URL = 'https://shopbrain-backend.onrender.com'
+const INTEGRATION_OAUTH_STORAGE_KEY = 'shopbrain:integration-oauth-result'
 
 const INTEGRATION_PROVIDER_CONFIG = {
   meta: {
@@ -229,6 +230,8 @@ export default function Dashboard() {
   const [chatLoading, setChatLoading] = useState(false)
 
   const blockersRequestIdRef = useRef(0)
+  const integrationOauthPopupRef = useRef(null)
+  const integrationOauthPopupHandledRef = useRef(false)
   
   // Settings form states
   const [profileFirstName, setProfileFirstName] = useState(profile?.first_name || '')
@@ -807,34 +810,71 @@ export default function Dashboard() {
     }))
   }
 
-  const getIntegrationFieldDefinitions = (provider) => {
-    const commonFields = [
-      {
-        field: 'display_name',
-        label: t('integrationsDisplayName'),
-        placeholder: t('integrationsDisplayNamePlaceholder'),
-        required: false,
-        type: 'text',
-      },
-      {
-        field: 'external_account_id',
-        label: t('integrationsAccountId'),
-        placeholder: t('integrationsAccountIdPlaceholder'),
-        required: true,
-        type: 'text',
-      },
-      {
-        field: 'external_account_name',
-        label: t('integrationsAccountName'),
-        placeholder: t('integrationsAccountNamePlaceholder'),
-        required: false,
-        type: 'text',
-      },
-    ]
+  const isAdsProvider = (provider) => ['meta', 'tiktok', 'google'].includes(provider)
 
+  const isProviderOauthConfigured = (provider) => integrationOAuthConfig?.[provider]?.configured !== false
+
+  const getProviderVisual = (provider) => {
+    if (provider === 'shopify') return { icon: 'S', accent: 'bg-[#ECF8D9] text-[#5D7F1F]' }
+    if (provider === 'meta') return { icon: 'M', accent: 'bg-[#EEF2FF] text-[#4338CA]' }
+    if (provider === 'tiktok') return { icon: 'T', accent: 'bg-[#F3F4F6] text-[#111827]' }
+    if (provider === 'google') return { icon: 'G', accent: 'bg-[#EFF6FF] text-[#1D4ED8]' }
+    return { icon: '$', accent: 'bg-[#F5F3FF] text-[#6D28D9]' }
+  }
+
+  const formatProviderConnectionError = (provider, rawError) => {
+    const message = String(rawError || '').trim()
+    if (!message) return ''
+    if (/TRUTH_[A-Z0-9_]+/i.test(message) || /Missing required credentials/i.test(message)) {
+      return tr('integrationSetupRequired', 'This source still needs valid credentials before it can sync.')
+    }
+    if (provider === 'meta' && /domain/i.test(message) && /app/i.test(message)) {
+      return tr('integrationMetaDomainIssue', 'Meta OAuth is blocked by the Meta app configuration. Add the backend domain to App Domains and valid OAuth redirect URIs, or use manual token connection.')
+    }
+    return message
+  }
+
+  const getProviderConnectionSummary = (provider, connected) => {
+    if (provider === 'shopify') {
+      return connected
+        ? tr('connectionSummaryShopifyConnected', 'Your store data is available for revenue, orders, and product insights.')
+        : tr('connectionSummaryShopifyDisconnected', 'Connect Shopify first to unlock real revenue, orders, and catalog data.')
+    }
+    if (provider === 'stripe') {
+      return connected
+        ? tr('connectionSummaryStripeConnected', 'Billing verification is active for subscriptions and payments.')
+        : tr('connectionSummaryStripeDisconnected', 'Stripe verifies billing status and subscription access on the platform.')
+    }
+    return connected
+      ? tr('connectionSummaryAdsConnected', 'This ads source is ready to feed spend and campaign truth into the Truth Engine.')
+      : tr('connectionSummaryAdsDisconnected', 'Connect this source to sync real ad spend, campaigns, and attribution signals.')
+  }
+
+  const getProviderNextAction = (provider) => {
+    if (provider === 'meta') return tr('integrationNextActionMeta', 'Use OAuth or paste a valid Meta access token and ad account ID.')
+    if (provider === 'tiktok') return tr('integrationNextActionTiktok', 'Use OAuth or paste a valid TikTok access token and advertiser ID.')
+    if (provider === 'google') return tr('integrationNextActionGoogle', 'Use OAuth or paste the minimum Google Ads credentials needed to validate the account.')
+    return ''
+  }
+
+  const clearIntegrationOauthPopupMonitor = () => {
+    if (integrationOauthPopupRef.current?.intervalId) {
+      window.clearInterval(integrationOauthPopupRef.current.intervalId)
+    }
+    integrationOauthPopupRef.current = null
+    integrationOauthPopupHandledRef.current = false
+  }
+
+  const getIntegrationFieldDefinitions = (provider) => {
     if (provider === 'meta' || provider === 'tiktok') {
       return [
-        ...commonFields,
+        {
+          field: 'external_account_id',
+          label: t('integrationsAccountId'),
+          placeholder: provider === 'meta' ? 'Ex: 1234567890' : 'Ex: 7123456789012345678',
+          required: true,
+          type: 'text',
+        },
         {
           field: 'access_token',
           label: t('integrationsAccessToken'),
@@ -842,18 +882,17 @@ export default function Dashboard() {
           required: true,
           type: 'password',
         },
-        {
-          field: 'api_version',
-          label: t('integrationsApiVersion'),
-          placeholder: provider === 'meta' ? 'v20.0' : 'v1.3',
-          required: false,
-          type: 'text',
-        },
       ]
     }
 
-    return [
-      ...commonFields,
+    const fields = [
+      {
+        field: 'external_account_id',
+        label: t('integrationsAccountId'),
+        placeholder: 'Ex: 1234567890',
+        required: true,
+        type: 'text',
+      },
       {
         field: 'refresh_token',
         label: t('integrationsRefreshToken'),
@@ -869,20 +908,6 @@ export default function Dashboard() {
         type: 'password',
       },
       {
-        field: 'client_id',
-        label: t('integrationsClientId'),
-        placeholder: t('integrationsClientIdPlaceholder'),
-        required: true,
-        type: 'text',
-      },
-      {
-        field: 'client_secret',
-        label: t('integrationsClientSecret'),
-        placeholder: t('integrationsClientSecretPlaceholder'),
-        required: true,
-        type: 'password',
-      },
-      {
         field: 'manager_account_id',
         label: t('integrationsManagerId'),
         placeholder: t('integrationsManagerIdPlaceholder'),
@@ -890,21 +915,39 @@ export default function Dashboard() {
         type: 'text',
       },
     ]
+
+    if (!isProviderOauthConfigured('google')) {
+      fields.splice(3, 0,
+        {
+          field: 'client_id',
+          label: t('integrationsClientId'),
+          placeholder: t('integrationsClientIdPlaceholder'),
+          required: true,
+          type: 'text',
+        },
+        {
+          field: 'client_secret',
+          label: t('integrationsClientSecret'),
+          placeholder: t('integrationsClientSecretPlaceholder'),
+          required: true,
+          type: 'password',
+        },
+      )
+    }
+
+    return fields
   }
 
   const buildIntegrationPayload = (provider) => {
     const form = integrationForms[provider] || {}
     const payload = {
       external_account_id: form.external_account_id?.trim(),
-      display_name: form.display_name?.trim() || undefined,
-      external_account_name: form.external_account_name?.trim() || undefined,
       connection_mode: 'manual',
       is_primary: true,
     }
 
     if (provider === 'meta' || provider === 'tiktok') {
       payload.access_token = form.access_token?.trim() || undefined
-      payload.api_version = form.api_version?.trim() || undefined
     }
 
     if (provider === 'google') {
@@ -919,12 +962,58 @@ export default function Dashboard() {
   }
 
   const openIntegrationConnectModal = (provider) => {
+    clearIntegrationOauthPopupMonitor()
     clearStatus(`integrations-${provider}`)
     setIntegrationConnectProvider(provider)
   }
 
   const closeIntegrationConnectModal = () => {
+    clearIntegrationOauthPopupMonitor()
     setIntegrationConnectProvider(null)
+  }
+
+  const getIntegrationOauthReasonMessage = (reason, provider) => {
+    const reasonMessages = {
+      missing_params: t('oauthMissingParams'),
+      expired: t('oauthExpired'),
+      state_mismatch: t('oauthStateMismatch'),
+      timeout: t('oauthTimeout'),
+      exchange_failed: t('oauthExchangeFailed'),
+      no_token: t('oauthNoToken'),
+      no_refresh_token: t('oauthNoRefreshToken'),
+      provider_denied: t('oauthProviderDenied'),
+      internal: t('oauthInternal'),
+    }
+    if (provider === 'meta' && reason === 'provider_denied') {
+      return tr('integrationMetaOauthDenied', 'Meta OAuth was denied or blocked. If Meta reports a domain issue, add the backend domain to your Meta app settings or use manual token connection.')
+    }
+    return reasonMessages[reason] || `${t('integrationsOauthError')}: ${reason}`
+  }
+
+  const applyIntegrationOauthResult = async ({ status, provider, reason }) => {
+    const normalizedProvider = ['meta', 'tiktok', 'google'].includes(provider) ? provider : 'meta'
+    clearIntegrationOauthPopupMonitor()
+    setShowSettingsModal(true)
+    setSettingsTab('connections')
+    setIntegrationOAuthProvider(null)
+
+    if (status === 'connected') {
+      setStatus(`integrations-${normalizedProvider}`, 'success', t('integrationsOauthConnected'))
+      setStatus('connections', 'success', `${t(`integrationProvider${normalizedProvider.charAt(0).toUpperCase()}${normalizedProvider.slice(1)}`)} · ${tr('integrationConnectedSuccess', 'Connected successfully')}`)
+      setIntegrationConnectProvider(null)
+    } else if (status === 'partial') {
+      setIntegrationConnectProvider(normalizedProvider)
+      setStatus(`integrations-${normalizedProvider}`, 'warning', t('integrationsOauthPartial'))
+      setStatus('connections', 'warning', `${t(`integrationProvider${normalizedProvider.charAt(0).toUpperCase()}${normalizedProvider.slice(1)}`)} · ${t('integrationsOauthPartial')}`)
+    } else {
+      setIntegrationConnectProvider(normalizedProvider)
+      const errorMessage = getIntegrationOauthReasonMessage(reason, normalizedProvider)
+      setStatus(`integrations-${normalizedProvider}`, 'error', errorMessage)
+      setStatus('connections', 'error', `${t(`integrationProvider${normalizedProvider.charAt(0).toUpperCase()}${normalizedProvider.slice(1)}`)} · ${errorMessage}`)
+    }
+
+    await loadIntegrations({ silent: true })
+    await loadConnectionsOverview()
   }
 
   // Translations are now managed by LanguageContext
@@ -1121,29 +1210,24 @@ export default function Dashboard() {
       if (integrationOauthStatus) {
         const provider = hashParams.get('provider') || 'meta'
         const reason = hashParams.get('reason') || 'unknown'
-        const reasonMessages = {
-          missing_params: t('oauthMissingParams'),
-          expired: t('oauthExpired'),
-          state_mismatch: t('oauthStateMismatch'),
-          timeout: t('oauthTimeout'),
-          exchange_failed: t('oauthExchangeFailed'),
-          no_token: t('oauthNoToken'),
-          no_refresh_token: t('oauthNoRefreshToken'),
-          provider_denied: t('oauthProviderDenied'),
-          internal: t('oauthInternal'),
+
+        if (window.opener && window.opener !== window) {
+          try {
+            localStorage.setItem(INTEGRATION_OAUTH_STORAGE_KEY, JSON.stringify({
+              status: integrationOauthStatus,
+              provider,
+              reason,
+              ts: Date.now(),
+            }))
+          } catch {}
+
+          setTimeout(() => {
+            window.close()
+          }, 150)
+          return
         }
-        setActiveTab('integrations')
-        setIntegrationOAuthProvider(null)
-        setTimeout(() => {
-          if (integrationOauthStatus === 'connected') {
-            setStatus(`integrations-${provider}`, 'success', t('integrationsOauthConnected'))
-          } else if (integrationOauthStatus === 'partial') {
-            setStatus(`integrations-${provider}`, 'warning', t('integrationsOauthPartial'))
-          } else {
-            setStatus(`integrations-${provider}`, 'error', reasonMessages[reason] || `${t('integrationsOauthError')}: ${reason}`)
-          }
-        }, 300)
-        loadIntegrations({ silent: false })
+
+        applyIntegrationOauthResult({ status: integrationOauthStatus, provider, reason })
         setTimeout(() => {
           const cleanHash = hash.split('?')[0] || '#/dashboard'
           window.location.hash = cleanHash
@@ -1208,6 +1292,40 @@ export default function Dashboard() {
       }
     }
   }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+
+    const consumeOauthResult = async (rawValue) => {
+      if (!rawValue) return
+      try {
+        const parsed = JSON.parse(rawValue)
+        localStorage.removeItem(INTEGRATION_OAUTH_STORAGE_KEY)
+        if (parsed?.status && parsed?.provider) {
+          integrationOauthPopupHandledRef.current = true
+          await applyIntegrationOauthResult(parsed)
+        }
+      } catch {
+        localStorage.removeItem(INTEGRATION_OAUTH_STORAGE_KEY)
+      }
+    }
+
+    const pending = localStorage.getItem(INTEGRATION_OAUTH_STORAGE_KEY)
+    if (pending) {
+      consumeOauthResult(pending)
+    }
+
+    const handleStorage = (event) => {
+      if (event.key === INTEGRATION_OAUTH_STORAGE_KEY && event.newValue) {
+        consumeOauthResult(event.newValue)
+      }
+    }
+
+    window.addEventListener('storage', handleStorage)
+    return () => {
+      window.removeEventListener('storage', handleStorage)
+    }
+  }, [language])
 
   // 🔄 Auto-refresh subscription when user returns from Stripe Billing Portal / external redirect
   // The portal redirects to #dashboard with no session_id, so we detect tab visibility change
@@ -3443,6 +3561,7 @@ export default function Dashboard() {
   const startIntegrationOAuth = async (provider) => {
     try {
       setIntegrationOAuthProvider(provider)
+      clearStatus(`integrations-${provider}`)
       const session = await getCachedSession()
       if (!session) {
         setStatus(`integrations-${provider}`, 'error', t('sessionExpiredReconnect'))
@@ -3452,9 +3571,6 @@ export default function Dashboard() {
       const form = integrationForms[provider] || {}
       const payload = {
         external_account_id: form.external_account_id?.trim() || undefined,
-        display_name: form.display_name?.trim() || undefined,
-        external_account_name: form.external_account_name?.trim() || undefined,
-        api_version: form.api_version?.trim() || undefined,
       }
 
       if (provider === 'google') {
@@ -3475,9 +3591,37 @@ export default function Dashboard() {
         throw new Error(data.detail || `HTTP ${response.status}`)
       }
 
-      window.location.href = data.auth_url
+      setStatus(`integrations-${provider}`, 'info', tr('integrationOauthOpening', 'Opening secure OAuth window...'))
+      integrationOauthPopupHandledRef.current = false
+
+      const popup = window.open(
+        data.auth_url,
+        `shopbrain-oauth-${provider}`,
+        'popup=yes,width=720,height=820,menubar=no,toolbar=no,location=yes,resizable=yes,scrollbars=yes,status=no'
+      )
+
+      if (!popup) {
+        setStatus(`integrations-${provider}`, 'warning', tr('integrationOauthPopupBlocked', 'Popup blocked by the browser. Redirecting in the current tab...'))
+        window.location.href = data.auth_url
+        return
+      }
+
+      popup.focus()
+      clearIntegrationOauthPopupMonitor()
+      integrationOauthPopupRef.current = {
+        provider,
+        intervalId: window.setInterval(() => {
+          if (!popup.closed) return
+          clearIntegrationOauthPopupMonitor()
+          setIntegrationOAuthProvider(null)
+          if (!integrationOauthPopupHandledRef.current) {
+            setStatus(`integrations-${provider}`, 'warning', getIntegrationOauthReasonMessage('provider_denied', provider))
+          }
+        }, 700),
+      }
     } catch (err) {
       setStatus(`integrations-${provider}`, 'error', formatUserFacingError(err, t('integrationsOauthStartError')))
+      clearIntegrationOauthPopupMonitor()
       setIntegrationOAuthProvider(null)
     }
   }
@@ -8203,52 +8347,56 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                 {settingsTab === 'connections' && (
                   <div className="space-y-6">
-                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-                      <div>
-                        <h3 className="text-xl font-bold text-[#1A1A2E] mb-2">{tr('connectionsTitle', 'Connections')}</h3>
-                        <p className="text-[#6A6A85] text-sm">
-                          {tr('connectionsSubtitle', 'These statuses come from your real Shopify, ads, and billing connections only.')}
-                        </p>
+                    <div className="rounded-2xl border border-[#E8E8EE] bg-gradient-to-br from-white via-white to-[#F7F8FA] p-5 sm:p-6 space-y-5">
+                      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                        <div className="max-w-2xl">
+                          <h3 className="text-2xl font-bold text-[#1A1A2E]">{tr('connectionsTitle', 'Connections')}</h3>
+                          <p className="text-[#6A6A85] text-sm mt-2">
+                            {tr('connectionsSubtitle', 'These statuses come from your real Shopify, ads, and billing connections only.')}
+                          </p>
+                        </div>
+                        <button
+                          onClick={loadConnectionsOverview}
+                          disabled={connectionsLoading}
+                          className="inline-flex items-center justify-center bg-[#0D9488] hover:bg-[#0F766E] disabled:opacity-50 px-4 py-2.5 rounded-xl text-white font-semibold text-sm"
+                        >
+                          {connectionsLoading ? tr('refreshing', 'Refreshing...') : tr('refreshConnections', 'Refresh statuses')}
+                        </button>
                       </div>
-                      <button
-                        onClick={loadConnectionsOverview}
-                        disabled={connectionsLoading}
-                        className="bg-[#0D9488] hover:bg-[#0F766E] disabled:opacity-50 px-4 py-2 rounded-lg text-white font-semibold text-sm"
-                      >
-                        {connectionsLoading ? tr('refreshing', 'Refreshing...') : tr('refreshConnections', 'Refresh statuses')}
-                      </button>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="rounded-2xl border border-[#E8E8EE] bg-white p-4">
+                          <p className="text-[#8A8AA3] text-xs uppercase tracking-[0.16em]">{tr('connectionsSummary', 'Connected sources')}</p>
+                          <p className="text-3xl font-bold text-[#1A1A2E] mt-3">
+                            {connectionsOverview?.summary?.connected_count ?? 0}
+                            <span className="text-base font-medium text-[#8A8AA3]">/{connectionsOverview?.summary?.total_count ?? 5}</span>
+                          </p>
+                        </div>
+                        <div className="rounded-2xl border border-[#E8E8EE] bg-white p-4">
+                          <p className="text-[#8A8AA3] text-xs uppercase tracking-[0.16em]">{tr('truthReadiness', 'Truth readiness')}</p>
+                          <p className={`text-base font-bold mt-3 ${(connectionsOverview?.summary?.truth_ready) ? 'text-[#0D9488]' : 'text-[#FF6B35]'}`}>
+                            {(connectionsOverview?.summary?.truth_ready)
+                              ? tr('truthReady', 'Ready for real Truth analysis')
+                              : tr('truthNotReady', 'Connect Shopify + at least one ads source')}
+                          </p>
+                        </div>
+                        <div className="rounded-2xl border border-[#E8E8EE] bg-white p-4">
+                          <p className="text-[#8A8AA3] text-xs uppercase tracking-[0.16em]">{tr('adsCoverage', 'Ads sources')}</p>
+                          <p className="text-3xl font-bold text-[#1A1A2E] mt-3">{connectionsOverview?.summary?.ads_connected ?? 0}</p>
+                          <p className="text-sm text-[#8A8AA3] mt-1">{tr('adsCoverageHint', 'Meta, TikTok, Google connected')}</p>
+                        </div>
+                      </div>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <div className="bg-white rounded-lg p-4 border border-[#E8E8EE]">
-                        <p className="text-[#6A6A85] text-xs uppercase tracking-wide">{tr('connectionsSummary', 'Connected sources')}</p>
-                        <p className="text-3xl font-bold text-[#1A1A2E] mt-2">
-                          {connectionsOverview?.summary?.connected_count ?? 0}
-                          <span className="text-base font-medium text-[#8A8AA3]">/{connectionsOverview?.summary?.total_count ?? 5}</span>
-                        </p>
-                      </div>
-                      <div className="bg-white rounded-lg p-4 border border-[#E8E8EE]">
-                        <p className="text-[#6A6A85] text-xs uppercase tracking-wide">{tr('truthReadiness', 'Truth readiness')}</p>
-                        <p className={`text-lg font-bold mt-2 ${(connectionsOverview?.summary?.truth_ready) ? 'text-[#0D9488]' : 'text-[#FF6B35]'}`}>
-                          {(connectionsOverview?.summary?.truth_ready)
-                            ? tr('truthReady', 'Ready for real Truth analysis')
-                            : tr('truthNotReady', 'Connect Shopify + at least one ads source')}
-                        </p>
-                      </div>
-                      <div className="bg-white rounded-lg p-4 border border-[#E8E8EE]">
-                        <p className="text-[#6A6A85] text-xs uppercase tracking-wide">{tr('adsCoverage', 'Ads sources')}</p>
-                        <p className="text-3xl font-bold text-[#1A1A2E] mt-2">{connectionsOverview?.summary?.ads_connected ?? 0}</p>
-                        <p className="text-sm text-[#8A8AA3] mt-1">{tr('adsCoverageHint', 'Meta, TikTok, Google connected')}</p>
-                      </div>
-                    </div>
+                    {renderStatus('connections')}
 
                     {connectionsLoading && !connectionsOverview && (
-                      <div className="bg-white rounded-lg p-6 border border-[#E8E8EE] text-[#6A6A85]">
+                      <div className="bg-white rounded-2xl p-6 border border-[#E8E8EE] text-[#6A6A85]">
                         {tr('loadingConnections', 'Loading connection overview...')}
                       </div>
                     )}
 
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div className="space-y-4">
                       {(connectionsOverview?.providers || []).map((provider) => {
                         const connected = Boolean(provider?.connected)
                         const completeness = Number(provider?.completeness || 0)
@@ -8257,83 +8405,104 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           ? new Date(provider.last_sync).toLocaleString(language === 'fr' ? 'fr-FR' : 'en-US')
                           : tr('neverSynced', 'Not synced yet')
                         const primaryLabel = provider?.primary_account?.display_name || provider?.connection?.shop_domain || provider?.label
+                        const providerError = formatProviderConnectionError(provider?.provider, provider?.error)
                         const statusTone = connected ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-orange-50 text-[#E85A28] border-[#FF6B35]/30'
+                        const visual = getProviderVisual(provider?.provider)
+                        const oauthAvailable = isAdsProvider(provider?.provider) ? isProviderOauthConfigured(provider?.provider) : false
 
                         return (
-                          <div key={provider.provider} className="bg-white rounded-lg p-5 border border-[#E8E8EE] space-y-4">
-                            <div className="flex items-start justify-between gap-4">
-                              <div>
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <h4 className="text-lg font-semibold text-[#1A1A2E]">{provider.label}</h4>
-                                  <span className={`px-2.5 py-1 rounded-full text-xs font-semibold border ${statusTone}`}>
-                                    {connected ? tr('connectedLabel', 'Connected') : tr('attentionLabel', 'Attention needed')}
-                                  </span>
+                          <div key={provider.provider} className="bg-white rounded-2xl p-5 border border-[#E8E8EE] shadow-sm shadow-black/[0.02]">
+                            <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+                              <div className="flex items-start gap-4 min-w-0">
+                                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-bold text-lg ${visual.accent}`}>
+                                  {visual.icon}
                                 </div>
-                                <p className="text-sm text-[#6A6A85] mt-1">{primaryLabel || '—'}</p>
+                                <div className="min-w-0">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <h4 className="text-lg font-semibold text-[#1A1A2E]">{provider.label}</h4>
+                                    <span className={`px-2.5 py-1 rounded-full text-xs font-semibold border ${statusTone}`}>
+                                      {connected ? tr('connectedLabel', 'Connected') : tr('attentionLabel', 'Attention needed')}
+                                    </span>
+                                  </div>
+                                  <p className="text-sm text-[#4A4A68] mt-2">{getProviderConnectionSummary(provider?.provider, connected)}</p>
+                                  <p className="text-sm text-[#8A8AA3] mt-2 truncate">{connected ? (primaryLabel || '—') : getProviderNextAction(provider?.provider)}</p>
+                                  {isAdsProvider(provider?.provider) && (
+                                    <div className="flex flex-wrap gap-2 mt-3">
+                                      <span className="px-2.5 py-1 rounded-full bg-[#F7F8FA] text-[#6A6A85] text-xs font-semibold border border-[#E8E8EE]">
+                                        OAuth {oauthAvailable ? tr('availableLabel', 'available') : tr('unavailableLabel', 'unavailable')}
+                                      </span>
+                                      <span className="px-2.5 py-1 rounded-full bg-[#F7F8FA] text-[#6A6A85] text-xs font-semibold border border-[#E8E8EE]">
+                                        {tr('manualCredentialsLabel', 'Manual credentials')}
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
                               </div>
-                              <div className="text-right text-xs text-[#8A8AA3]">
-                                <div>{tr('lastSyncLabel', 'Last sync')}</div>
-                                <div className="mt-1 text-[#4A4A68]">{lastSyncLabel}</div>
+
+                              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 lg:min-w-[320px]">
+                                <div className="rounded-2xl bg-[#F7F8FA] p-3 border border-[#E8E8EE]">
+                                  <div className="text-[#8A8AA3] text-[11px] uppercase tracking-[0.14em]">{tr('accountsConnectedLabel', 'Accounts')}</div>
+                                  <div className="text-[#1A1A2E] font-bold text-lg mt-1">{provider?.account_count ?? 0}</div>
+                                </div>
+                                <div className="rounded-2xl bg-[#F7F8FA] p-3 border border-[#E8E8EE]">
+                                  <div className="text-[#8A8AA3] text-[11px] uppercase tracking-[0.14em]">{tr('coverageLabel', 'Coverage')}</div>
+                                  <div className="text-[#1A1A2E] font-bold text-lg mt-1">{Math.round(completeness)}%</div>
+                                </div>
+                                <div className="rounded-2xl bg-[#F7F8FA] p-3 border border-[#E8E8EE] col-span-2 sm:col-span-1">
+                                  <div className="text-[#8A8AA3] text-[11px] uppercase tracking-[0.14em]">{tr('reliabilityLabel', 'Reliability')}</div>
+                                  <div className="text-[#1A1A2E] font-bold text-lg mt-1">{Math.round(reliability)}%</div>
+                                </div>
                               </div>
                             </div>
 
-                            <div className="grid grid-cols-2 gap-3 text-sm">
-                              <div className="rounded-lg bg-[#F7F8FA] p-3 border border-[#E8E8EE]">
-                                <div className="text-[#8A8AA3] text-xs uppercase tracking-wide">{tr('coverageLabel', 'Coverage')}</div>
-                                <div className="text-[#1A1A2E] font-bold text-lg mt-1">{Math.round(completeness)}%</div>
+                            <div className="flex flex-col gap-3 mt-5">
+                              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm text-[#6A6A85]">
+                                <span>{tr('lastSyncLabel', 'Last sync')}: <span className="text-[#1A1A2E] font-medium">{lastSyncLabel}</span></span>
+                                {provider?.provider === 'shopify' && typeof provider?.shop_limit !== 'undefined' && (
+                                  <span>{tr('shopsConnectedLabel', 'Shops')}: <span className="text-[#1A1A2E] font-medium">{provider?.shop_count ?? 0}{provider?.shop_limit === null ? ' / ∞' : ` / ${provider.shop_limit}`}</span></span>
+                                )}
                               </div>
-                              <div className="rounded-lg bg-[#F7F8FA] p-3 border border-[#E8E8EE]">
-                                <div className="text-[#8A8AA3] text-xs uppercase tracking-wide">{tr('reliabilityLabel', 'Reliability')}</div>
-                                <div className="text-[#1A1A2E] font-bold text-lg mt-1">{Math.round(reliability)}%</div>
+
+                              {providerError && (
+                                <div className="rounded-2xl border border-[#FF6B35]/20 bg-[#FFF7F2] px-4 py-3 text-sm text-[#E85A28]">
+                                  {providerError}
+                                </div>
+                              )}
+
+                              <div className="flex flex-wrap gap-3">
+                                {provider?.provider === 'shopify' && (
+                                  <button
+                                    onClick={() => setSettingsTab('shopify')}
+                                    className="bg-[#96BF48] hover:bg-[#7FA83D] px-4 py-2.5 rounded-xl text-white text-sm font-semibold"
+                                  >
+                                    {connected ? tr('manageConnection', 'Manage connection') : tr('connectNow', 'Connect now')}
+                                  </button>
+                                )}
+                                {isAdsProvider(provider?.provider) && (
+                                  <button
+                                    onClick={() => {
+                                      loadIntegrations({ silent: true })
+                                      openIntegrationConnectModal(provider.provider)
+                                    }}
+                                    className="bg-[#0D9488] hover:bg-[#0F766E] px-4 py-2.5 rounded-xl text-white text-sm font-semibold"
+                                  >
+                                    {connected ? tr('manageAdsConnections', 'Manage ads connections') : tr('connectAdsSource', 'Connect ads source')}
+                                  </button>
+                                )}
+                                {provider?.provider === 'stripe' && (
+                                  <button
+                                    onClick={() => setSettingsTab('billing')}
+                                    className="bg-[#635BFF] hover:bg-[#4F46E5] px-4 py-2.5 rounded-xl text-white text-sm font-semibold"
+                                  >
+                                    {tr('openBilling', 'Open billing')}
+                                  </button>
+                                )}
                               </div>
-                            </div>
-
-                            <div className="text-sm text-[#6A6A85] space-y-1">
-                              <p>{tr('accountsConnectedLabel', 'Accounts')}: <span className="text-[#1A1A2E] font-semibold">{provider?.account_count ?? 0}</span></p>
-                              {provider?.error && <p className="text-[#E85A28]">{provider.error}</p>}
-                              {provider?.provider === 'shopify' && typeof provider?.shop_limit !== 'undefined' && (
-                                <p>{tr('shopsConnectedLabel', 'Shops')}: <span className="text-[#1A1A2E] font-semibold">{provider?.shop_count ?? 0}{provider?.shop_limit === null ? ' / ∞' : ` / ${provider.shop_limit}`}</span></p>
-                              )}
-                              {provider?.provider === 'stripe' && (
-                                <p>{tr('stripeConnectionHint', 'Stripe is used for billing status and payment verification on the platform.')}</p>
-                              )}
-                            </div>
-
-                            <div className="flex flex-wrap gap-2">
-                              {provider?.provider === 'shopify' && (
-                                <button
-                                  onClick={() => setSettingsTab('shopify')}
-                                  className="bg-[#96BF48] hover:bg-[#7FA83D] px-4 py-2 rounded-lg text-white text-sm font-semibold"
-                                >
-                                  {connected ? tr('manageConnection', 'Manage connection') : tr('connectNow', 'Connect now')}
-                                </button>
-                              )}
-                              {['meta', 'tiktok', 'google'].includes(provider?.provider) && (
-                                <button
-                                  onClick={() => {
-                                    loadIntegrations({ silent: true })
-                                    openIntegrationConnectModal(provider.provider)
-                                  }}
-                                  className="bg-[#0D9488] hover:bg-[#0F766E] px-4 py-2 rounded-lg text-white text-sm font-semibold"
-                                >
-                                  {connected ? tr('manageAdsConnections', 'Manage ads connections') : tr('connectAdsSource', 'Connect ads source')}
-                                </button>
-                              )}
-                              {provider?.provider === 'stripe' && (
-                                <button
-                                  onClick={() => setSettingsTab('billing')}
-                                  className="bg-[#635BFF] hover:bg-[#4F46E5] px-4 py-2 rounded-lg text-white text-sm font-semibold"
-                                >
-                                  {tr('openBilling', 'Open billing')}
-                                </button>
-                              )}
                             </div>
                           </div>
                         )
                       })}
                     </div>
-
-                    {renderStatus('connections')}
                   </div>
                 )}
 
@@ -8742,89 +8911,125 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
       {showSettingsModal && integrationConnectProvider && (
         <div className="fixed inset-0 bg-black/75 z-[60] flex items-center justify-center p-3 sm:p-4" onClick={closeIntegrationConnectModal}>
-          <div className="w-full max-w-2xl max-h-[92vh] overflow-hidden rounded-2xl bg-white border border-[#E8E8EE] shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="px-5 sm:px-6 py-4 border-b border-[#E8E8EE] flex items-start justify-between gap-4">
+          <div className="w-full max-w-3xl max-h-[92vh] overflow-hidden rounded-[28px] bg-white border border-[#E8E8EE] shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 sm:px-6 py-5 border-b border-[#E8E8EE] flex items-start justify-between gap-4 bg-white">
               <div>
                 <p className="text-[11px] uppercase tracking-[0.14em] text-[#8A8AA3] font-semibold mb-2">{tr('connectSourceLabel', 'Connect source')}</p>
-                <h3 className="text-xl font-bold text-[#1A1A2E]">
+                <h3 className="text-2xl font-bold text-[#1A1A2E]">
                   {t(`integrationProvider${integrationConnectProvider.charAt(0).toUpperCase()}${integrationConnectProvider.slice(1)}`)}
                 </h3>
-                <p className="text-sm text-[#6A6A85] mt-1">
+                <p className="text-sm text-[#6A6A85] mt-2 max-w-2xl">
                   {tr('integrationModalSubtitle', 'Enter the API credentials below, then click Connect to validate the source and start the first sync.')}
                 </p>
               </div>
-              <button onClick={closeIntegrationConnectModal} className="text-[#6A6A85] hover:bg-[#EFF1F5] p-2 rounded-lg">
+              <button onClick={closeIntegrationConnectModal} className="text-[#6A6A85] hover:bg-[#EFF1F5] p-2 rounded-xl">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
             </div>
 
-            <div className="p-5 sm:p-6 overflow-y-auto max-h-[calc(92vh-78px)] space-y-6 bg-[#F7F8FA]">
-              <div className="bg-white rounded-xl border border-[#E8E8EE] p-4">
-                <p className="text-sm text-[#1A1A2E] font-semibold mb-2">{tr('integrationRequiredFieldsTitle', 'Required fields')}</p>
-                <div className="flex flex-wrap gap-2">
-                  {getIntegrationFieldDefinitions(integrationConnectProvider).filter((field) => field.required).map((field) => (
-                    <span key={field.field} className="px-2.5 py-1 rounded-full bg-[#FFF4EF] text-[#FF6B35] text-xs font-semibold border border-[#FF6B35]/20">
-                      {field.label}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {getIntegrationFieldDefinitions(integrationConnectProvider).map((field) => {
-                  const value = integrationForms?.[integrationConnectProvider]?.[field.field] || ''
-                  return (
-                    <div key={field.field} className={field.field === 'display_name' || field.field === 'external_account_name' ? 'sm:col-span-1' : 'sm:col-span-1'}>
-                      <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1.5">
-                        {field.label} {field.required && <span className="text-[#FF6B35]">*</span>}
-                      </label>
-                      <input
-                        type={field.type}
-                        value={value}
-                        onChange={(e) => handleIntegrationFormChange(integrationConnectProvider, field.field, e.target.value)}
-                        className="w-full rounded-xl border border-[#D8D8E2] bg-white px-3 py-2.5 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
-                        placeholder={field.placeholder}
-                      />
-                    </div>
-                  )
-                })}
-              </div>
-
-              {integrationOAuthConfig?.[integrationConnectProvider]?.configured !== false ? (
-                <div className="bg-white rounded-xl border border-[#E8E8EE] p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="p-5 sm:p-6 overflow-y-auto max-h-[calc(92vh-88px)] space-y-6 bg-[#F7F8FA]">
+              <div className="bg-white rounded-2xl border border-[#E8E8EE] p-5 space-y-4">
+                <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
                   <div>
-                    <p className="text-sm font-semibold text-[#1A1A2E]">{tr('integrationOAuthAltTitle', 'Prefer OAuth?')}</p>
-                    <p className="text-sm text-[#6A6A85] mt-1">{tr('integrationOAuthAltSubtitle', 'You can also connect this source with the provider authorization flow.')}</p>
+                    <p className="text-sm font-semibold text-[#1A1A2E]">{tr('integrationConnectionMethodsTitle', 'Choose your connection method')}</p>
+                    <p className="text-sm text-[#6A6A85] mt-1">{tr('integrationConnectionMethodsSubtitle', 'OAuth is the easiest path. Manual connection stays available if you already have the required credentials.')}</p>
                   </div>
-                  <button
-                    onClick={() => startIntegrationOAuth(integrationConnectProvider)}
-                    disabled={integrationOAuthProvider === integrationConnectProvider}
-                    className="px-4 py-2 rounded-lg border border-[#FF6B35]/30 text-sm font-semibold text-[#FF6B35] hover:bg-[#FFF4EF] disabled:opacity-50"
-                  >
-                    {integrationOAuthProvider === integrationConnectProvider ? t('loading') : t('integrationsOAuthButton')}
-                  </button>
+                  <div className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${((connectionsOverview?.providers || []).find((item) => item.provider === integrationConnectProvider)?.connected) ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-orange-50 text-[#E85A28] border-[#FF6B35]/30'}`}>
+                    {((connectionsOverview?.providers || []).find((item) => item.provider === integrationConnectProvider)?.connected)
+                      ? tr('connectedLabel', 'Connected')
+                      : tr('attentionLabel', 'Attention needed')}
+                  </div>
                 </div>
-              ) : (
-                <div className="bg-white rounded-xl border border-[#E8E8EE] p-4 text-sm text-[#6A6A85]">
-                  {t('integrationsOAuthNotConfigured')}
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className={`rounded-2xl border p-4 ${isProviderOauthConfigured(integrationConnectProvider) ? 'border-[#0D9488]/20 bg-[#F0FDFA]' : 'border-[#E8E8EE] bg-[#FAFAFB]'}`}>
+                    <p className="text-sm font-semibold text-[#1A1A2E]">{tr('integrationOAuthCardTitle', 'OAuth connection')}</p>
+                    <p className="text-sm text-[#6A6A85] mt-1">{tr('integrationOAuthCardSubtitle', 'Recommended when available: fewer fields, safer access, faster setup.')}</p>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <span className="px-2.5 py-1 rounded-full bg-white text-[#0D9488] text-xs font-semibold border border-[#0D9488]/20">{tr('integrationRecommendedLabel', 'Recommended')}</span>
+                      {!isProviderOauthConfigured(integrationConnectProvider) && (
+                        <span className="px-2.5 py-1 rounded-full bg-white text-[#8A8AA3] text-xs font-semibold border border-[#E8E8EE]">{tr('unavailableLabel', 'unavailable')}</span>
+                      )}
+                    </div>
+                    <div className="mt-4">
+                      {isProviderOauthConfigured(integrationConnectProvider) ? (
+                        <button
+                          onClick={() => startIntegrationOAuth(integrationConnectProvider)}
+                          disabled={integrationOAuthProvider === integrationConnectProvider}
+                          className="w-full px-4 py-3 rounded-xl bg-[#0D9488] hover:bg-[#0F766E] text-white text-sm font-semibold disabled:opacity-50"
+                        >
+                          {integrationOAuthProvider === integrationConnectProvider ? tr('integrationOauthOpening', 'Opening secure OAuth window...') : t('integrationsOAuthButton')}
+                        </button>
+                      ) : (
+                        <div className="rounded-xl border border-[#E8E8EE] bg-white px-4 py-3 text-sm text-[#6A6A85]">
+                          {t('integrationsOAuthNotConfigured')}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-[#E8E8EE] bg-white p-4">
+                    <p className="text-sm font-semibold text-[#1A1A2E]">{tr('integrationManualCardTitle', 'Manual connection')}</p>
+                    <p className="text-sm text-[#6A6A85] mt-1">{getProviderNextAction(integrationConnectProvider)}</p>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {getIntegrationFieldDefinitions(integrationConnectProvider).filter((field) => field.required).map((field) => (
+                        <span key={field.field} className="px-2.5 py-1 rounded-full bg-[#FFF4EF] text-[#FF6B35] text-xs font-semibold border border-[#FF6B35]/20">
+                          {field.label}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {integrationConnectProvider === 'meta' && isProviderOauthConfigured('meta') && (
+                <div className="rounded-2xl border border-[#F59E0B]/25 bg-[#FFF9ED] px-4 py-3 text-sm text-[#9A6700]">
+                  {tr('integrationMetaOauthHint', 'If Meta shows a domain error, add the backend domain to your Meta app settings (App Domains + valid OAuth redirect URIs), then retry. Manual token connection remains available below.')}
                 </div>
               )}
+
+              <div className="bg-white rounded-2xl border border-[#E8E8EE] p-5 space-y-4">
+                <div>
+                  <p className="text-sm font-semibold text-[#1A1A2E]">{tr('integrationManualFieldsTitle', 'Enter only the required credentials')}</p>
+                  <p className="text-sm text-[#6A6A85] mt-1">{tr('integrationManualFieldsSubtitle', 'No extra display fields. Only the credentials needed to validate and save the connection.')}</p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {getIntegrationFieldDefinitions(integrationConnectProvider).map((field) => {
+                    const value = integrationForms?.[integrationConnectProvider]?.[field.field] || ''
+                    return (
+                      <div key={field.field} className={field.field === 'access_token' || field.field === 'refresh_token' || field.field === 'developer_token' || field.field === 'client_secret' ? 'sm:col-span-2' : 'sm:col-span-1'}>
+                        <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1.5">
+                          {field.label} {field.required && <span className="text-[#FF6B35]">*</span>}
+                        </label>
+                        <input
+                          type={field.type}
+                          value={value}
+                          onChange={(e) => handleIntegrationFormChange(integrationConnectProvider, field.field, e.target.value)}
+                          className="w-full rounded-xl border border-[#D8D8E2] bg-white px-3 py-3 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
+                          placeholder={field.placeholder}
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
 
               {renderStatus(`integrations-${integrationConnectProvider}`)}
 
               <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 pt-2">
                 <button
                   onClick={closeIntegrationConnectModal}
-                  className="px-4 py-2.5 rounded-lg border border-[#E8E8EE] text-sm font-semibold text-[#1A1A2E] hover:bg-white"
+                  className="px-4 py-2.5 rounded-xl border border-[#E8E8EE] text-sm font-semibold text-[#1A1A2E] hover:bg-white"
                 >
                   {t('cancel')}
                 </button>
                 <button
                   onClick={() => saveIntegration(integrationConnectProvider, { closeOnSuccess: true, refreshConnections: true, parentStatusKey: 'connections' })}
                   disabled={integrationSavingProvider === integrationConnectProvider}
-                  className="px-5 py-2.5 rounded-lg bg-[#FF6B35] hover:bg-[#E85A28] text-white text-sm font-semibold disabled:opacity-50"
+                  className="px-5 py-2.5 rounded-xl bg-[#FF6B35] hover:bg-[#E85A28] text-white text-sm font-semibold disabled:opacity-50"
                 >
                   {integrationSavingProvider === integrationConnectProvider ? tr('integrationConnecting', 'Connecting...') : tr('integrationConnectNow', 'Connect')}
                 </button>
