@@ -1955,6 +1955,137 @@ class ClientIntegrationOAuthStartRequest(BaseModel):
     manager_account_id: str | None = None
 
 
+def _truth_build_manual_integration(provider: str, req: ClientIntegrationConnectRequest) -> dict:
+    normalized_provider = _truth_require_provider(provider)
+    config: dict = _truth_safe_dict(req.config)
+
+    if normalized_provider == "google":
+        if req.developer_token:
+            config["developer_token"] = req.developer_token
+        if req.client_id:
+            config["client_id"] = req.client_id
+        if req.client_secret:
+            config["client_secret"] = req.client_secret
+        if req.manager_account_id:
+            config["manager_account_id"] = req.manager_account_id
+
+    return {
+        "provider": normalized_provider,
+        "external_account_id": str(req.external_account_id or "").strip(),
+        "external_account_name": str(req.external_account_name or "").strip() or None,
+        "display_name": str(req.display_name or "").strip() or None,
+        "access_token": str(req.access_token or "").strip() or None,
+        "refresh_token": str(req.refresh_token or "").strip() or None,
+        "api_version": str(req.api_version or "").strip() or None,
+        "config": config or None,
+    }
+
+
+def _truth_manual_required_fields(provider: str, req: ClientIntegrationConnectRequest) -> list[str]:
+    normalized_provider = _truth_require_provider(provider)
+    required = ["external_account_id"]
+    if normalized_provider in {"meta", "tiktok"}:
+        if not str(req.access_token or "").strip():
+            required.append("access_token")
+    elif normalized_provider == "google":
+        if not str(req.refresh_token or "").strip():
+            required.append("refresh_token")
+        if not str(req.developer_token or "").strip():
+            required.append("developer_token")
+        if not str(req.client_id or "").strip():
+            required.append("client_id")
+        if not str(req.client_secret or "").strip():
+            required.append("client_secret")
+
+    if not str(req.external_account_id or "").strip():
+        required.append("external_account_id")
+
+    return sorted(set(required))
+
+
+def _truth_humanize_validation_error(provider: str, raw_error: str) -> str:
+    normalized_provider = _truth_require_provider(provider)
+    message = str(raw_error or "Connection failed").strip()
+    lower = message.lower()
+
+    if "missing" in lower and "credential" in lower:
+        return "Missing required credentials"
+    if "invalid oauth access token" in lower or "oauth" in lower and "invalid" in lower:
+        return "Invalid token"
+    if "invalid_grant" in lower:
+        return "Invalid refresh token"
+    if "invalid_client" in lower:
+        return "Invalid client ID or client secret"
+    if "permission" in lower or "access denied" in lower:
+        return "Permission denied for this ad account"
+    if normalized_provider == "google" and "not yet wired" in lower:
+        return "Google Ads credentials are valid, but campaign sync is not fully available yet"
+    return message or "Connection failed"
+
+
+def _truth_validate_manual_integration(provider: str, req: ClientIntegrationConnectRequest) -> dict:
+    normalized_provider = _truth_require_provider(provider)
+    missing_fields = _truth_manual_required_fields(normalized_provider, req)
+    if missing_fields:
+        raise HTTPException(status_code=400, detail=f"Missing required fields: {', '.join(missing_fields)}")
+
+    integration = _truth_build_manual_integration(normalized_provider, req)
+    cache_scope = f"validate:{uuid.uuid4()}"
+
+    if normalized_provider == "meta":
+        rows, meta = _truth_fetch_meta_ads_rows(30, integration=integration, cache_scope=cache_scope)
+        if not meta.get("connected"):
+            raise HTTPException(status_code=400, detail=_truth_humanize_validation_error(normalized_provider, meta.get("error") or "Connection failed"))
+        return {
+            "provider": normalized_provider,
+            "connected": True,
+            "message": "Connected successfully",
+            "campaigns": len(rows),
+            "last_sync": meta.get("last_sync") or _truth_now_iso(),
+        }
+
+    if normalized_provider == "tiktok":
+        rows, meta = _truth_fetch_tiktok_ads_rows(30, integration=integration, cache_scope=cache_scope)
+        if not meta.get("connected"):
+            raise HTTPException(status_code=400, detail=_truth_humanize_validation_error(normalized_provider, meta.get("error") or "Connection failed"))
+        return {
+            "provider": normalized_provider,
+            "connected": True,
+            "message": "Connected successfully",
+            "campaigns": len(rows),
+            "last_sync": meta.get("last_sync") or _truth_now_iso(),
+        }
+
+    credentials = _truth_build_provider_credentials(normalized_provider, integration)
+    token_response = requests.post(
+        "https://oauth2.googleapis.com/token",
+        data={
+            "client_id": credentials.get("client_id"),
+            "client_secret": credentials.get("client_secret"),
+            "refresh_token": credentials.get("refresh_token"),
+            "grant_type": "refresh_token",
+        },
+        timeout=20,
+    )
+    if token_response.status_code != 200:
+        payload = token_response.json() if token_response.content else {}
+        error_message = payload.get("error_description") or payload.get("error") or token_response.text[:300]
+        raise HTTPException(status_code=400, detail=_truth_humanize_validation_error(normalized_provider, error_message))
+
+    token_payload = token_response.json() or {}
+    if not token_payload.get("access_token"):
+        raise HTTPException(status_code=400, detail="Connection failed")
+
+    return {
+        "provider": normalized_provider,
+        "connected": True,
+        "message": "Connected successfully",
+        "campaigns": 0,
+        "last_sync": _truth_now_iso(),
+        "warning": "Google Ads campaign sync is still limited in this backend build",
+    }
+
+
 def _truth_normalize_provider(provider: str | None) -> str:
     normalized = str(provider or "").strip().lower().replace("-", "_").replace(" ", "_")
     aliases = {
@@ -2515,6 +2646,16 @@ async def get_client_integration_status(provider: str, request: Request):
     }
 
 
+@app.post("/api/integrations/{provider}/validate")
+async def validate_client_integration(provider: str, req: ClientIntegrationConnectRequest, request: Request):
+    get_user_id(request)
+    validation = _truth_validate_manual_integration(provider, req)
+    return {
+        "success": True,
+        **validation,
+    }
+
+
 @app.post("/api/integrations/{provider}/manual-connect")
 async def connect_client_integration(provider: str, req: ClientIntegrationConnectRequest, request: Request):
     user_id = get_user_id(request)
@@ -2763,10 +2904,20 @@ async def get_connections_overview(request: Request):
         provider_rows = [row for row in integrations if _truth_normalize_provider(row.get("provider")) == provider_key]
         primary_row = _truth_get_primary_integration(user_id, provider_key, provider_rows)
         serialized_primary = _truth_serialize_integration(primary_row) if primary_row else None
+        provider_status = source_status.get(status_key, {})
+        primary_connected = bool(serialized_primary and serialized_primary.get("status") == "connected")
+        merged_status = {
+            **provider_status,
+            "connected": bool(provider_status.get("connected") or primary_connected),
+            "last_sync": provider_status.get("last_sync") or (serialized_primary or {}).get("last_sync_at"),
+            "completeness": provider_status.get("completeness", 0) if provider_status.get("connected") else (55 if primary_connected else provider_status.get("completeness", 0)),
+            "reliability": provider_status.get("reliability", 0) if provider_status.get("connected") else (78 if primary_connected else provider_status.get("reliability", 0)),
+            "error": None if primary_connected else provider_status.get("error"),
+        }
         _push_provider(
             provider_key,
             _truth_provider_label(provider_key),
-            source_status.get(status_key, {}),
+            merged_status,
             primary=serialized_primary,
             account_count=len(provider_rows),
             oauth={

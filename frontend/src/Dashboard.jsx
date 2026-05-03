@@ -254,6 +254,7 @@ export default function Dashboard() {
   const [apiLoading, setApiLoading] = useState(false)
   const [connectionsOverview, setConnectionsOverview] = useState(null)
   const [connectionsLoading, setConnectionsLoading] = useState(false)
+  const [integrationConnectProvider, setIntegrationConnectProvider] = useState(null)
   const [applyingRecommendationId, setApplyingRecommendationId] = useState(null)
   const [applyingBlockerActionId, setApplyingBlockerActionId] = useState(null)
   const [statusByKey, setStatusByKey] = useState({})
@@ -804,6 +805,126 @@ export default function Dashboard() {
         [field]: value,
       },
     }))
+  }
+
+  const getIntegrationFieldDefinitions = (provider) => {
+    const commonFields = [
+      {
+        field: 'display_name',
+        label: t('integrationsDisplayName'),
+        placeholder: t('integrationsDisplayNamePlaceholder'),
+        required: false,
+        type: 'text',
+      },
+      {
+        field: 'external_account_id',
+        label: t('integrationsAccountId'),
+        placeholder: t('integrationsAccountIdPlaceholder'),
+        required: true,
+        type: 'text',
+      },
+      {
+        field: 'external_account_name',
+        label: t('integrationsAccountName'),
+        placeholder: t('integrationsAccountNamePlaceholder'),
+        required: false,
+        type: 'text',
+      },
+    ]
+
+    if (provider === 'meta' || provider === 'tiktok') {
+      return [
+        ...commonFields,
+        {
+          field: 'access_token',
+          label: t('integrationsAccessToken'),
+          placeholder: t('integrationsAccessTokenPlaceholder'),
+          required: true,
+          type: 'password',
+        },
+        {
+          field: 'api_version',
+          label: t('integrationsApiVersion'),
+          placeholder: provider === 'meta' ? 'v20.0' : 'v1.3',
+          required: false,
+          type: 'text',
+        },
+      ]
+    }
+
+    return [
+      ...commonFields,
+      {
+        field: 'refresh_token',
+        label: t('integrationsRefreshToken'),
+        placeholder: t('integrationsRefreshTokenPlaceholder'),
+        required: true,
+        type: 'password',
+      },
+      {
+        field: 'developer_token',
+        label: t('integrationsDeveloperToken'),
+        placeholder: t('integrationsDeveloperTokenPlaceholder'),
+        required: true,
+        type: 'password',
+      },
+      {
+        field: 'client_id',
+        label: t('integrationsClientId'),
+        placeholder: t('integrationsClientIdPlaceholder'),
+        required: true,
+        type: 'text',
+      },
+      {
+        field: 'client_secret',
+        label: t('integrationsClientSecret'),
+        placeholder: t('integrationsClientSecretPlaceholder'),
+        required: true,
+        type: 'password',
+      },
+      {
+        field: 'manager_account_id',
+        label: t('integrationsManagerId'),
+        placeholder: t('integrationsManagerIdPlaceholder'),
+        required: false,
+        type: 'text',
+      },
+    ]
+  }
+
+  const buildIntegrationPayload = (provider) => {
+    const form = integrationForms[provider] || {}
+    const payload = {
+      external_account_id: form.external_account_id?.trim(),
+      display_name: form.display_name?.trim() || undefined,
+      external_account_name: form.external_account_name?.trim() || undefined,
+      connection_mode: 'manual',
+      is_primary: true,
+    }
+
+    if (provider === 'meta' || provider === 'tiktok') {
+      payload.access_token = form.access_token?.trim() || undefined
+      payload.api_version = form.api_version?.trim() || undefined
+    }
+
+    if (provider === 'google') {
+      payload.refresh_token = form.refresh_token?.trim() || undefined
+      payload.developer_token = form.developer_token?.trim() || undefined
+      payload.client_id = form.client_id?.trim() || undefined
+      payload.client_secret = form.client_secret?.trim() || undefined
+      payload.manager_account_id = form.manager_account_id?.trim() || undefined
+    }
+
+    return payload
+  }
+
+  const openIntegrationConnectModal = (provider) => {
+    clearStatus(`integrations-${provider}`)
+    setIntegrationConnectProvider(provider)
+  }
+
+  const closeIntegrationConnectModal = () => {
+    setIntegrationConnectProvider(null)
   }
 
   // Translations are now managed by LanguageContext
@@ -3210,10 +3331,20 @@ export default function Dashboard() {
     }
   }
 
-  const saveIntegration = async (provider) => {
-    const form = integrationForms[provider] || {}
-    if (!form.external_account_id?.trim()) {
-      setStatus(`integrations-${provider}`, 'warning', t('integrationAccountIdRequired'))
+  const saveIntegration = async (provider, options = {}) => {
+    const {
+      closeOnSuccess = false,
+      refreshConnections = false,
+      parentStatusKey = null,
+    } = options
+
+    const payload = buildIntegrationPayload(provider)
+    const missingFields = getIntegrationFieldDefinitions(provider)
+      .filter((field) => field.required && !String(payload[field.field] || '').trim())
+      .map((field) => field.label)
+
+    if (missingFields.length > 0) {
+      setStatus(`integrations-${provider}`, 'warning', `${tr('integrationMissingFields', 'Required fields')}: ${missingFields.join(', ')}`)
       return
     }
 
@@ -3225,26 +3356,20 @@ export default function Dashboard() {
         return
       }
 
-      const payload = {
-        external_account_id: form.external_account_id.trim(),
-        display_name: form.display_name?.trim() || undefined,
-        external_account_name: form.external_account_name?.trim() || undefined,
-        connection_mode: 'manual',
-        is_primary: true,
+      const validationResponse = await fetch(`${API_URL}/api/integrations/${provider}/validate`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      })
+      const validationData = await validationResponse.json().catch(() => ({}))
+      if (!validationResponse.ok || !validationData.success) {
+        throw new Error(validationData.detail || tr('integrationConnectionFailed', 'Connection failed'))
       }
 
-      if (provider === 'meta' || provider === 'tiktok') {
-        payload.access_token = form.access_token?.trim() || undefined
-        payload.api_version = form.api_version?.trim() || undefined
-      }
-
-      if (provider === 'google') {
-        payload.refresh_token = form.refresh_token?.trim() || undefined
-        payload.developer_token = form.developer_token?.trim() || undefined
-        payload.client_id = form.client_id?.trim() || undefined
-        payload.client_secret = form.client_secret?.trim() || undefined
-        payload.manager_account_id = form.manager_account_id?.trim() || undefined
-      }
+      setStatus(`integrations-${provider}`, 'info', validationData.warning || validationData.message || tr('integrationValidationSuccess', 'Connection validated successfully.'))
 
       const response = await fetch(`${API_URL}/api/integrations/${provider}/manual-connect`, {
         method: 'POST',
@@ -3259,10 +3384,24 @@ export default function Dashboard() {
         throw new Error(data.detail || `HTTP ${response.status}`)
       }
 
-      setStatus(`integrations-${provider}`, 'success', t('integrationSaved'))
+      const successMessage = validationData.warning
+        ? `${tr('integrationConnectedSuccess', 'Connected successfully')} — ${validationData.warning}`
+        : tr('integrationConnectedSuccess', 'Connected successfully')
+
+      setStatus(`integrations-${provider}`, 'success', successMessage)
       await loadIntegrations({ silent: true })
+      if (refreshConnections) {
+        await loadConnectionsOverview()
+      }
+      if (closeOnSuccess) {
+        closeIntegrationConnectModal()
+        setSettingsTab('connections')
+      }
+      if (parentStatusKey) {
+        setStatus(parentStatusKey, 'success', `${t(`integrationProvider${provider.charAt(0).toUpperCase()}${provider.slice(1)}`)} · ${successMessage}`)
+      }
     } catch (err) {
-      setStatus(`integrations-${provider}`, 'error', formatUserFacingError(err, t('integrationSaveError')))
+      setStatus(`integrations-${provider}`, 'error', formatUserFacingError(err, tr('integrationConnectionFailed', 'Connection failed')))
     } finally {
       setIntegrationSavingProvider(null)
     }
@@ -8172,9 +8311,8 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               {['meta', 'tiktok', 'google'].includes(provider?.provider) && (
                                 <button
                                   onClick={() => {
-                                    setShowSettingsModal(false)
-                                    setActiveTab('integrations')
-                                    loadIntegrations({ silent: false })
+                                    loadIntegrations({ silent: true })
+                                    openIntegrationConnectModal(provider.provider)
                                   }}
                                   className="bg-[#0D9488] hover:bg-[#0F766E] px-4 py-2 rounded-lg text-white text-sm font-semibold"
                                 >
@@ -8596,6 +8734,100 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     {renderStatus('api')}
                   </div>
                 )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSettingsModal && integrationConnectProvider && (
+        <div className="fixed inset-0 bg-black/75 z-[60] flex items-center justify-center p-3 sm:p-4" onClick={closeIntegrationConnectModal}>
+          <div className="w-full max-w-2xl max-h-[92vh] overflow-hidden rounded-2xl bg-white border border-[#E8E8EE] shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 sm:px-6 py-4 border-b border-[#E8E8EE] flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.14em] text-[#8A8AA3] font-semibold mb-2">{tr('connectSourceLabel', 'Connect source')}</p>
+                <h3 className="text-xl font-bold text-[#1A1A2E]">
+                  {t(`integrationProvider${integrationConnectProvider.charAt(0).toUpperCase()}${integrationConnectProvider.slice(1)}`)}
+                </h3>
+                <p className="text-sm text-[#6A6A85] mt-1">
+                  {tr('integrationModalSubtitle', 'Enter the API credentials below, then click Connect to validate the source and start the first sync.')}
+                </p>
+              </div>
+              <button onClick={closeIntegrationConnectModal} className="text-[#6A6A85] hover:bg-[#EFF1F5] p-2 rounded-lg">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="p-5 sm:p-6 overflow-y-auto max-h-[calc(92vh-78px)] space-y-6 bg-[#F7F8FA]">
+              <div className="bg-white rounded-xl border border-[#E8E8EE] p-4">
+                <p className="text-sm text-[#1A1A2E] font-semibold mb-2">{tr('integrationRequiredFieldsTitle', 'Required fields')}</p>
+                <div className="flex flex-wrap gap-2">
+                  {getIntegrationFieldDefinitions(integrationConnectProvider).filter((field) => field.required).map((field) => (
+                    <span key={field.field} className="px-2.5 py-1 rounded-full bg-[#FFF4EF] text-[#FF6B35] text-xs font-semibold border border-[#FF6B35]/20">
+                      {field.label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {getIntegrationFieldDefinitions(integrationConnectProvider).map((field) => {
+                  const value = integrationForms?.[integrationConnectProvider]?.[field.field] || ''
+                  return (
+                    <div key={field.field} className={field.field === 'display_name' || field.field === 'external_account_name' ? 'sm:col-span-1' : 'sm:col-span-1'}>
+                      <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1.5">
+                        {field.label} {field.required && <span className="text-[#FF6B35]">*</span>}
+                      </label>
+                      <input
+                        type={field.type}
+                        value={value}
+                        onChange={(e) => handleIntegrationFormChange(integrationConnectProvider, field.field, e.target.value)}
+                        className="w-full rounded-xl border border-[#D8D8E2] bg-white px-3 py-2.5 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
+                        placeholder={field.placeholder}
+                      />
+                    </div>
+                  )
+                })}
+              </div>
+
+              {integrationOAuthConfig?.[integrationConnectProvider]?.configured !== false ? (
+                <div className="bg-white rounded-xl border border-[#E8E8EE] p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-[#1A1A2E]">{tr('integrationOAuthAltTitle', 'Prefer OAuth?')}</p>
+                    <p className="text-sm text-[#6A6A85] mt-1">{tr('integrationOAuthAltSubtitle', 'You can also connect this source with the provider authorization flow.')}</p>
+                  </div>
+                  <button
+                    onClick={() => startIntegrationOAuth(integrationConnectProvider)}
+                    disabled={integrationOAuthProvider === integrationConnectProvider}
+                    className="px-4 py-2 rounded-lg border border-[#FF6B35]/30 text-sm font-semibold text-[#FF6B35] hover:bg-[#FFF4EF] disabled:opacity-50"
+                  >
+                    {integrationOAuthProvider === integrationConnectProvider ? t('loading') : t('integrationsOAuthButton')}
+                  </button>
+                </div>
+              ) : (
+                <div className="bg-white rounded-xl border border-[#E8E8EE] p-4 text-sm text-[#6A6A85]">
+                  {t('integrationsOAuthNotConfigured')}
+                </div>
+              )}
+
+              {renderStatus(`integrations-${integrationConnectProvider}`)}
+
+              <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 pt-2">
+                <button
+                  onClick={closeIntegrationConnectModal}
+                  className="px-4 py-2.5 rounded-lg border border-[#E8E8EE] text-sm font-semibold text-[#1A1A2E] hover:bg-white"
+                >
+                  {t('cancel')}
+                </button>
+                <button
+                  onClick={() => saveIntegration(integrationConnectProvider, { closeOnSuccess: true, refreshConnections: true, parentStatusKey: 'connections' })}
+                  disabled={integrationSavingProvider === integrationConnectProvider}
+                  className="px-5 py-2.5 rounded-lg bg-[#FF6B35] hover:bg-[#E85A28] text-white text-sm font-semibold disabled:opacity-50"
+                >
+                  {integrationSavingProvider === integrationConnectProvider ? tr('integrationConnecting', 'Connecting...') : tr('integrationConnectNow', 'Connect')}
+                </button>
               </div>
             </div>
           </div>
