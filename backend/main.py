@@ -2707,6 +2707,104 @@ async def delete_client_integrations(provider: str, request: Request):
     }
 
 
+@app.get("/api/connections/overview")
+async def get_connections_overview(request: Request):
+    user_id = get_user_id(request)
+
+    shop_domain, access_token = _get_shopify_connection(user_id)
+    shopify_connected = bool(shop_domain and access_token)
+    integrations = _truth_get_user_integrations(user_id)
+    ads_rows, ads_integrations = _truth_collect_ads_rows(30, user_id)
+    shopify_info = await get_shopify_connection(request)
+
+    source_status = _truth_build_source_statuses(
+        orders=[],
+        tracked_orders=0,
+        ads_integrations=ads_integrations,
+        shopify_connected=shopify_connected,
+    )
+
+    providers = []
+
+    def _push_provider(provider_key: str, label: str, status: dict, primary: dict | None = None, account_count: int = 0, **extra):
+        providers.append({
+            "provider": provider_key,
+            "label": label,
+            "connected": bool(status.get("connected")),
+            "last_sync": status.get("last_sync") or (primary or {}).get("last_sync_at"),
+            "completeness": status.get("completeness", 0),
+            "reliability": status.get("reliability", 0),
+            "error": status.get("error") or (primary or {}).get("last_error"),
+            "account_count": account_count,
+            "primary_account": primary,
+            **extra,
+        })
+
+    _push_provider(
+        "shopify",
+        "Shopify",
+        source_status.get("shopify_orders", {}),
+        primary={
+            "display_name": shop_domain,
+            "external_account_id": shop_domain,
+            "status": "connected" if shopify_connected else "pending",
+        } if shop_domain else None,
+        account_count=int(shopify_info.get("shop_count") or 0),
+        shop_count=shopify_info.get("shop_count") or 0,
+        shop_limit=shopify_info.get("shop_limit"),
+        connection=shopify_info.get("connection"),
+        connections=shopify_info.get("connections") or [],
+        oauth={
+            "configured": bool(SHOPIFY_API_KEY and SHOPIFY_API_SECRET),
+        },
+    )
+
+    for provider_key, status_key in (("meta", "meta_ads"), ("tiktok", "tiktok_ads"), ("google", "google_ads")):
+        provider_rows = [row for row in integrations if _truth_normalize_provider(row.get("provider")) == provider_key]
+        primary_row = _truth_get_primary_integration(user_id, provider_key, provider_rows)
+        serialized_primary = _truth_serialize_integration(primary_row) if primary_row else None
+        _push_provider(
+            provider_key,
+            _truth_provider_label(provider_key),
+            source_status.get(status_key, {}),
+            primary=serialized_primary,
+            account_count=len(provider_rows),
+            oauth={
+                "configured": _truth_provider_oauth_ready(provider_key),
+            },
+        )
+
+    stripe_status = source_status.get("stripe", {})
+    _push_provider(
+        "stripe",
+        "Stripe",
+        stripe_status,
+        primary={
+            "display_name": "Stripe billing",
+            "status": "connected" if stripe_status.get("connected") else "pending",
+        } if stripe_status.get("connected") else None,
+        account_count=1 if stripe_status.get("connected") else 0,
+        mode="platform_billing",
+        optional=True,
+    )
+
+    connected_count = sum(1 for provider in providers if provider.get("connected"))
+    ads_connected = sum(1 for provider in providers if provider.get("provider") in {"meta", "tiktok", "google"} and provider.get("connected"))
+
+    return {
+        "success": True,
+        "providers": providers,
+        "summary": {
+            "connected_count": connected_count,
+            "total_count": len(providers),
+            "shopify_connected": shopify_connected,
+            "ads_connected": ads_connected,
+            "truth_ready": bool(shopify_connected and ads_connected > 0),
+            "has_ads_data": bool(ads_rows),
+        },
+    }
+
+
 class OptimizeRequest(BaseModel):
     name: str
     description: str
@@ -7524,9 +7622,12 @@ async def get_truth_dashboard(request: Request, range: str = "30d"):
         "summary": {
             "total_revenue_real": total_revenue,
             "total_ad_spend": total_spend,
+            "total_cogs": cost_inputs.get("cogs_value"),
+            "total_fees": cost_inputs.get("fees_value"),
             "total_profit": total_profit,
             "real_roas": total_roas,
             "campaign_count": len(campaign_rows),
+            "orders_count": len(orders),
             "unattributed_orders": unattributed_orders,
         },
         "campaigns": campaign_rows,

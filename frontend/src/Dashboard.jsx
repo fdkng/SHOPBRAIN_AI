@@ -252,6 +252,8 @@ export default function Dashboard() {
   const avatarInputRef = useRef(null)
   const [apiKeys, setApiKeys] = useState([])
   const [apiLoading, setApiLoading] = useState(false)
+  const [connectionsOverview, setConnectionsOverview] = useState(null)
+  const [connectionsLoading, setConnectionsLoading] = useState(false)
   const [applyingRecommendationId, setApplyingRecommendationId] = useState(null)
   const [applyingBlockerActionId, setApplyingBlockerActionId] = useState(null)
   const [statusByKey, setStatusByKey] = useState({})
@@ -1114,6 +1116,12 @@ export default function Dashboard() {
   }, [showSettingsModal, settingsTab])
 
   useEffect(() => {
+    if (showSettingsModal && settingsTab === 'connections') {
+      loadConnectionsOverview()
+    }
+  }, [showSettingsModal, settingsTab])
+
+  useEffect(() => {
     if (showSettingsModal && settingsTab === 'interface') {
       setInterfaceLanguageDraft(language)
     }
@@ -1138,6 +1146,34 @@ export default function Dashboard() {
       console.error('API keys load error:', err)
     } finally {
       setApiLoading(false)
+    }
+  }
+
+  const loadConnectionsOverview = async () => {
+    try {
+      setConnectionsLoading(true)
+      const session = await getCachedSession()
+      if (!session) {
+        setStatus('connections', 'error', t('sessionExpiredReconnect'))
+        return
+      }
+
+      const response = await fetch(`${API_URL}/api/connections/overview`, {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok || !data.success) {
+        throw new Error(data.detail || `HTTP ${response.status}`)
+      }
+
+      setConnectionsOverview(data)
+      clearStatus('connections')
+    } catch (err) {
+      setStatus('connections', 'error', formatUserFacingError(err, tr('connectionsLoadError', 'Unable to refresh connection statuses.')))
+    } finally {
+      setConnectionsLoading(false)
     }
   }
 
@@ -7891,7 +7927,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
               {/* Sidebar - horizontal on mobile, vertical on desktop */}
               <div className="md:w-64 bg-white md:border-r border-b md:border-b-0 border-[#E8E8EE] p-2 md:p-4 overflow-x-auto md:overflow-x-visible shrink-0">
                 <nav className="flex md:flex-col md:space-y-1 gap-1 md:gap-0 min-w-max md:min-w-0">
-                  {['profile', 'security', 'interface', 'notifications', 'shopify', 'billing', 'api'].map(tab => (
+                  {['profile', 'security', 'interface', 'connections', 'notifications', 'shopify', 'billing', 'api'].map(tab => (
                     <button
                       key={tab}
                       onClick={() => setSettingsTab(tab)}
@@ -7902,6 +7938,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                       {tab === 'profile' && t('tabProfile')}
                       {tab === 'security' && t('tabSecurity')}
                       {tab === 'interface' && t('tabInterface')}
+                      {tab === 'connections' && tr('tabConnections', 'Connections')}
                       {tab === 'notifications' && t('tabNotifications')}
                       {tab === 'shopify' && t('tabShopify')}
                       {tab === 'billing' && t('tabBilling')}
@@ -8022,6 +8059,143 @@ analytics.subscribe("product_added_to_cart", (event) => {
                       </button>
                       {renderStatus('interface')}
                     </div>
+                  </div>
+                )}
+
+                {settingsTab === 'connections' && (
+                  <div className="space-y-6">
+                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+                      <div>
+                        <h3 className="text-xl font-bold text-[#1A1A2E] mb-2">{tr('connectionsTitle', 'Connections')}</h3>
+                        <p className="text-[#6A6A85] text-sm">
+                          {tr('connectionsSubtitle', 'These statuses come from your real Shopify, ads, and billing connections only.')}
+                        </p>
+                      </div>
+                      <button
+                        onClick={loadConnectionsOverview}
+                        disabled={connectionsLoading}
+                        className="bg-[#0D9488] hover:bg-[#0F766E] disabled:opacity-50 px-4 py-2 rounded-lg text-white font-semibold text-sm"
+                      >
+                        {connectionsLoading ? tr('refreshing', 'Refreshing...') : tr('refreshConnections', 'Refresh statuses')}
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="bg-white rounded-lg p-4 border border-[#E8E8EE]">
+                        <p className="text-[#6A6A85] text-xs uppercase tracking-wide">{tr('connectionsSummary', 'Connected sources')}</p>
+                        <p className="text-3xl font-bold text-[#1A1A2E] mt-2">
+                          {connectionsOverview?.summary?.connected_count ?? 0}
+                          <span className="text-base font-medium text-[#8A8AA3]">/{connectionsOverview?.summary?.total_count ?? 5}</span>
+                        </p>
+                      </div>
+                      <div className="bg-white rounded-lg p-4 border border-[#E8E8EE]">
+                        <p className="text-[#6A6A85] text-xs uppercase tracking-wide">{tr('truthReadiness', 'Truth readiness')}</p>
+                        <p className={`text-lg font-bold mt-2 ${(connectionsOverview?.summary?.truth_ready) ? 'text-[#0D9488]' : 'text-[#FF6B35]'}`}>
+                          {(connectionsOverview?.summary?.truth_ready)
+                            ? tr('truthReady', 'Ready for real Truth analysis')
+                            : tr('truthNotReady', 'Connect Shopify + at least one ads source')}
+                        </p>
+                      </div>
+                      <div className="bg-white rounded-lg p-4 border border-[#E8E8EE]">
+                        <p className="text-[#6A6A85] text-xs uppercase tracking-wide">{tr('adsCoverage', 'Ads sources')}</p>
+                        <p className="text-3xl font-bold text-[#1A1A2E] mt-2">{connectionsOverview?.summary?.ads_connected ?? 0}</p>
+                        <p className="text-sm text-[#8A8AA3] mt-1">{tr('adsCoverageHint', 'Meta, TikTok, Google connected')}</p>
+                      </div>
+                    </div>
+
+                    {connectionsLoading && !connectionsOverview && (
+                      <div className="bg-white rounded-lg p-6 border border-[#E8E8EE] text-[#6A6A85]">
+                        {tr('loadingConnections', 'Loading connection overview...')}
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                      {(connectionsOverview?.providers || []).map((provider) => {
+                        const connected = Boolean(provider?.connected)
+                        const completeness = Number(provider?.completeness || 0)
+                        const reliability = Number(provider?.reliability || 0)
+                        const lastSyncLabel = provider?.last_sync
+                          ? new Date(provider.last_sync).toLocaleString(language === 'fr' ? 'fr-FR' : 'en-US')
+                          : tr('neverSynced', 'Not synced yet')
+                        const primaryLabel = provider?.primary_account?.display_name || provider?.connection?.shop_domain || provider?.label
+                        const statusTone = connected ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-orange-50 text-[#E85A28] border-[#FF6B35]/30'
+
+                        return (
+                          <div key={provider.provider} className="bg-white rounded-lg p-5 border border-[#E8E8EE] space-y-4">
+                            <div className="flex items-start justify-between gap-4">
+                              <div>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <h4 className="text-lg font-semibold text-[#1A1A2E]">{provider.label}</h4>
+                                  <span className={`px-2.5 py-1 rounded-full text-xs font-semibold border ${statusTone}`}>
+                                    {connected ? tr('connectedLabel', 'Connected') : tr('attentionLabel', 'Attention needed')}
+                                  </span>
+                                </div>
+                                <p className="text-sm text-[#6A6A85] mt-1">{primaryLabel || '—'}</p>
+                              </div>
+                              <div className="text-right text-xs text-[#8A8AA3]">
+                                <div>{tr('lastSyncLabel', 'Last sync')}</div>
+                                <div className="mt-1 text-[#4A4A68]">{lastSyncLabel}</div>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3 text-sm">
+                              <div className="rounded-lg bg-[#F7F8FA] p-3 border border-[#E8E8EE]">
+                                <div className="text-[#8A8AA3] text-xs uppercase tracking-wide">{tr('coverageLabel', 'Coverage')}</div>
+                                <div className="text-[#1A1A2E] font-bold text-lg mt-1">{Math.round(completeness)}%</div>
+                              </div>
+                              <div className="rounded-lg bg-[#F7F8FA] p-3 border border-[#E8E8EE]">
+                                <div className="text-[#8A8AA3] text-xs uppercase tracking-wide">{tr('reliabilityLabel', 'Reliability')}</div>
+                                <div className="text-[#1A1A2E] font-bold text-lg mt-1">{Math.round(reliability)}%</div>
+                              </div>
+                            </div>
+
+                            <div className="text-sm text-[#6A6A85] space-y-1">
+                              <p>{tr('accountsConnectedLabel', 'Accounts')}: <span className="text-[#1A1A2E] font-semibold">{provider?.account_count ?? 0}</span></p>
+                              {provider?.error && <p className="text-[#E85A28]">{provider.error}</p>}
+                              {provider?.provider === 'shopify' && typeof provider?.shop_limit !== 'undefined' && (
+                                <p>{tr('shopsConnectedLabel', 'Shops')}: <span className="text-[#1A1A2E] font-semibold">{provider?.shop_count ?? 0}{provider?.shop_limit === null ? ' / ∞' : ` / ${provider.shop_limit}`}</span></p>
+                              )}
+                              {provider?.provider === 'stripe' && (
+                                <p>{tr('stripeConnectionHint', 'Stripe is used for billing status and payment verification on the platform.')}</p>
+                              )}
+                            </div>
+
+                            <div className="flex flex-wrap gap-2">
+                              {provider?.provider === 'shopify' && (
+                                <button
+                                  onClick={() => setSettingsTab('shopify')}
+                                  className="bg-[#96BF48] hover:bg-[#7FA83D] px-4 py-2 rounded-lg text-white text-sm font-semibold"
+                                >
+                                  {connected ? tr('manageConnection', 'Manage connection') : tr('connectNow', 'Connect now')}
+                                </button>
+                              )}
+                              {['meta', 'tiktok', 'google'].includes(provider?.provider) && (
+                                <button
+                                  onClick={() => {
+                                    setShowSettingsModal(false)
+                                    setActiveTab('integrations')
+                                    loadIntegrations({ silent: false })
+                                  }}
+                                  className="bg-[#0D9488] hover:bg-[#0F766E] px-4 py-2 rounded-lg text-white text-sm font-semibold"
+                                >
+                                  {connected ? tr('manageAdsConnections', 'Manage ads connections') : tr('connectAdsSource', 'Connect ads source')}
+                                </button>
+                              )}
+                              {provider?.provider === 'stripe' && (
+                                <button
+                                  onClick={() => setSettingsTab('billing')}
+                                  className="bg-[#635BFF] hover:bg-[#4F46E5] px-4 py-2 rounded-lg text-white text-sm font-semibold"
+                                >
+                                  {tr('openBilling', 'Open billing')}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+
+                    {renderStatus('connections')}
                   </div>
                 )}
 
