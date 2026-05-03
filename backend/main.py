@@ -1955,6 +1955,10 @@ class ClientIntegrationOAuthStartRequest(BaseModel):
     manager_account_id: str | None = None
 
 
+class IntegrationTokenLookupRequest(BaseModel):
+    access_token: str
+
+
 def _truth_build_manual_integration(provider: str, req: ClientIntegrationConnectRequest) -> dict:
     normalized_provider = _truth_require_provider(provider)
     config: dict = _truth_safe_dict(req.config)
@@ -1983,23 +1987,19 @@ def _truth_build_manual_integration(provider: str, req: ClientIntegrationConnect
 
 def _truth_manual_required_fields(provider: str, req: ClientIntegrationConnectRequest) -> list[str]:
     normalized_provider = _truth_require_provider(provider)
-    required = ["external_account_id"]
+    required: list[str] = []
     if normalized_provider in {"meta", "tiktok"}:
+        if not str(req.external_account_id or "").strip():
+            required.append("external_account_id")
         if not str(req.access_token or "").strip():
             required.append("access_token")
     elif normalized_provider == "google":
-        server_credentials = _truth_build_provider_credentials(normalized_provider, None)
         if not str(req.refresh_token or "").strip():
             required.append("refresh_token")
-        if not str(req.developer_token or "").strip() and not str(server_credentials.get("developer_token") or "").strip():
-            required.append("developer_token")
-        if not str(req.client_id or "").strip() and not str(server_credentials.get("client_id") or "").strip():
+        if not str(req.client_id or "").strip():
             required.append("client_id")
-        if not str(req.client_secret or "").strip() and not str(server_credentials.get("client_secret") or "").strip():
+        if not str(req.client_secret or "").strip():
             required.append("client_secret")
-
-    if not str(req.external_account_id or "").strip():
-        required.append("external_account_id")
 
     return sorted(set(required))
 
@@ -2083,7 +2083,7 @@ def _truth_validate_manual_integration(provider: str, req: ClientIntegrationConn
         "message": "Connected successfully",
         "campaigns": 0,
         "last_sync": _truth_now_iso(),
-        "warning": "Google Ads campaign sync is still limited in this backend build",
+        "warning": "Google Ads credentials are valid. Campaign sync may stay limited until customer and developer access are fully configured.",
     }
 
 
@@ -2162,10 +2162,7 @@ def _truth_integration_ready(provider: str, row: dict) -> bool:
         return (
             bool(config.get("campaigns_json"))
             or bool(
-                config.get("developer_token")
-                and row.get("external_account_id")
-                and not _truth_is_pending_account_id(row.get("external_account_id"))
-                and row.get("refresh_token")
+                row.get("refresh_token")
                 and config.get("client_id")
                 and config.get("client_secret")
             )
@@ -2262,7 +2259,10 @@ def _truth_upsert_integration(user_id: str, provider: str, req: ClientIntegratio
     if normalized_provider == "meta":
         external_account_id = external_account_id.replace("act_", "")
     if not external_account_id:
-        raise HTTPException(status_code=400, detail=f"{_truth_provider_label(normalized_provider)} account id is required")
+        if normalized_provider == "google":
+            external_account_id = f"pending:{normalized_provider}:{secrets.token_hex(6)}"
+        else:
+            raise HTTPException(status_code=400, detail=f"{_truth_provider_label(normalized_provider)} account id is required")
 
     config = dict(req.config or {})
     metadata = dict(req.metadata or {})
@@ -2492,31 +2492,37 @@ def _truth_oauth_prefill_payload(provider: str, req: ClientIntegrationOAuthStart
 
 
 def _truth_fetch_meta_oauth_account(access_token: str) -> dict | None:
+    accounts = _truth_fetch_meta_oauth_accounts(access_token)
+    return accounts[0] if accounts else None
+
+
+def _truth_fetch_meta_oauth_accounts(access_token: str) -> list[dict]:
     try:
         response = requests.get(
             "https://graph.facebook.com/v20.0/me/adaccounts",
             params={
                 "fields": "id,account_id,name,account_status",
-                "limit": 1,
+                "limit": 50,
                 "access_token": access_token,
             },
             timeout=20,
         )
         response.raise_for_status()
         data = response.json().get("data") or []
-        if not data:
-            return None
-        account = data[0]
-        account_id = str(account.get("account_id") or account.get("id") or "").replace("act_", "").strip()
-        if not account_id:
-            return None
-        return {
-            "external_account_id": account_id,
-            "external_account_name": account.get("name") or f"Meta Ads {account_id}",
-        }
+        accounts: list[dict] = []
+        for account in data:
+            account_id = str(account.get("account_id") or account.get("id") or "").replace("act_", "").strip()
+            if not account_id:
+                continue
+            accounts.append({
+                "external_account_id": account_id,
+                "external_account_name": account.get("name") or f"Meta Ads {account_id}",
+                "status": account.get("account_status"),
+            })
+        return accounts
     except Exception as exc:
         print(f"⚠️ [INTEGRATIONS-OAUTH] unable to fetch Meta ad accounts: {exc}")
-        return None
+        return []
 
 
 def _truth_fetch_tiktok_oauth_account(access_token: str, api_version: str = "v1.3") -> dict | None:
@@ -2644,6 +2650,24 @@ async def get_client_integration_status(provider: str, request: Request):
         "account_count": len(rows),
         "primary": _truth_serialize_integration(primary) if primary else None,
         "accounts": [_truth_serialize_integration(row) for row in rows],
+    }
+
+
+@app.post("/api/integrations/meta/ad-accounts")
+async def get_meta_ad_accounts(req: IntegrationTokenLookupRequest, request: Request):
+    get_user_id(request)
+    access_token = str(req.access_token or "").strip()
+    if not access_token:
+        raise HTTPException(status_code=400, detail="Access token is required")
+
+    accounts = _truth_fetch_meta_oauth_accounts(access_token)
+    if not accounts:
+        raise HTTPException(status_code=400, detail="No ad accounts found for this token")
+
+    return {
+        "success": True,
+        "provider": "meta",
+        "accounts": accounts,
     }
 
 

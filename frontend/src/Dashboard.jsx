@@ -258,6 +258,8 @@ export default function Dashboard() {
   const [connectionsOverview, setConnectionsOverview] = useState(null)
   const [connectionsLoading, setConnectionsLoading] = useState(false)
   const [integrationConnectProvider, setIntegrationConnectProvider] = useState(null)
+  const [metaAccountOptions, setMetaAccountOptions] = useState([])
+  const [metaAccountsLoading, setMetaAccountsLoading] = useState(false)
   const [applyingRecommendationId, setApplyingRecommendationId] = useState(null)
   const [applyingBlockerActionId, setApplyingBlockerActionId] = useState(null)
   const [statusByKey, setStatusByKey] = useState({})
@@ -805,9 +807,19 @@ export default function Dashboard() {
       ...prev,
       [provider]: {
         ...prev[provider],
+        ...(provider === 'meta' && field === 'access_token'
+          ? {
+              external_account_id: '',
+              external_account_name: '',
+            }
+          : {}),
         [field]: value,
       },
     }))
+
+    if (provider === 'meta' && field === 'access_token') {
+      setMetaAccountOptions([])
+    }
   }
 
   const isAdsProvider = (provider) => ['meta', 'tiktok', 'google'].includes(provider)
@@ -851,10 +863,22 @@ export default function Dashboard() {
   }
 
   const getProviderNextAction = (provider) => {
-    if (provider === 'meta') return tr('integrationNextActionMeta', 'Use OAuth or paste a valid Meta access token and ad account ID.')
+    if (provider === 'meta') return tr('integrationNextActionMeta', 'Paste a valid Meta access token, then select the ad account to sync.')
     if (provider === 'tiktok') return tr('integrationNextActionTiktok', 'Use OAuth or paste a valid TikTok access token and advertiser ID.')
-    if (provider === 'google') return tr('integrationNextActionGoogle', 'Use OAuth or paste the minimum Google Ads credentials needed to validate the account.')
+    if (provider === 'google') return tr('integrationNextActionGoogle', 'Paste the Google Ads client ID, client secret, and refresh token needed to validate the connection.')
     return ''
+  }
+
+  const getIntegrationRequiredLabels = (provider) => {
+    if (provider === 'meta') {
+      return [
+        t('integrationsAccessToken'),
+        tr('integrationMetaAccountSelectorLabel', 'Ad account'),
+      ]
+    }
+    return getIntegrationFieldDefinitions(provider)
+      .filter((field) => field.required)
+      .map((field) => field.label)
   }
 
   const clearIntegrationOauthPopupMonitor = () => {
@@ -866,12 +890,24 @@ export default function Dashboard() {
   }
 
   const getIntegrationFieldDefinitions = (provider) => {
-    if (provider === 'meta' || provider === 'tiktok') {
+    if (provider === 'meta') {
+      return [
+        {
+          field: 'access_token',
+          label: t('integrationsAccessToken'),
+          placeholder: t('integrationsAccessTokenPlaceholder'),
+          required: true,
+          type: 'password',
+        },
+      ]
+    }
+
+    if (provider === 'tiktok') {
       return [
         {
           field: 'external_account_id',
-          label: t('integrationsAccountId'),
-          placeholder: provider === 'meta' ? 'Ex: 1234567890' : 'Ex: 7123456789012345678',
+          label: tr('integrationTiktokAdvertiserIdLabel', 'Advertiser ID'),
+          placeholder: tr('integrationTiktokAdvertiserIdPlaceholder', 'Ex: 7123456789012345678'),
           required: true,
           type: 'text',
         },
@@ -885,14 +921,7 @@ export default function Dashboard() {
       ]
     }
 
-    const fields = [
-      {
-        field: 'external_account_id',
-        label: t('integrationsAccountId'),
-        placeholder: 'Ex: 1234567890',
-        required: true,
-        type: 'text',
-      },
+    return [
       {
         field: 'refresh_token',
         label: t('integrationsRefreshToken'),
@@ -907,41 +936,13 @@ export default function Dashboard() {
         required: true,
         type: 'password',
       },
-      {
-        field: 'manager_account_id',
-        label: t('integrationsManagerId'),
-        placeholder: t('integrationsManagerIdPlaceholder'),
-        required: false,
-        type: 'text',
-      },
     ]
-
-    if (!isProviderOauthConfigured('google')) {
-      fields.splice(3, 0,
-        {
-          field: 'client_id',
-          label: t('integrationsClientId'),
-          placeholder: t('integrationsClientIdPlaceholder'),
-          required: true,
-          type: 'text',
-        },
-        {
-          field: 'client_secret',
-          label: t('integrationsClientSecret'),
-          placeholder: t('integrationsClientSecretPlaceholder'),
-          required: true,
-          type: 'password',
-        },
-      )
-    }
-
-    return fields
   }
 
   const buildIntegrationPayload = (provider) => {
     const form = integrationForms[provider] || {}
     const payload = {
-      external_account_id: form.external_account_id?.trim(),
+      external_account_id: form.external_account_id?.trim() || undefined,
       connection_mode: 'manual',
       is_primary: true,
     }
@@ -950,26 +951,107 @@ export default function Dashboard() {
       payload.access_token = form.access_token?.trim() || undefined
     }
 
+    if (provider === 'meta') {
+      payload.external_account_name = form.external_account_name?.trim() || undefined
+    }
+
     if (provider === 'google') {
       payload.refresh_token = form.refresh_token?.trim() || undefined
-      payload.developer_token = form.developer_token?.trim() || undefined
       payload.client_id = form.client_id?.trim() || undefined
       payload.client_secret = form.client_secret?.trim() || undefined
-      payload.manager_account_id = form.manager_account_id?.trim() || undefined
     }
 
     return payload
   }
 
+  const loadMetaAdAccounts = async ({ accessToken, preserveSelection = true } = {}) => {
+    const token = String(accessToken || integrationForms?.meta?.access_token || '').trim()
+    if (!token) {
+      setStatus('integrations-meta', 'warning', tr('integrationMetaTokenFirst', 'Enter a Meta access token first.'))
+      return []
+    }
+
+    try {
+      setMetaAccountsLoading(true)
+      clearStatus('integrations-meta')
+      const session = await getCachedSession()
+      if (!session) {
+        setStatus('integrations-meta', 'error', t('sessionExpiredReconnect'))
+        return []
+      }
+
+      const response = await fetch(`${API_URL}/api/integrations/meta/ad-accounts`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ access_token: token }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok || !data.success) {
+        throw new Error(data.detail || tr('integrationMetaAccountsLoadError', 'Unable to load Meta ad accounts.'))
+      }
+
+      const accounts = Array.isArray(data.accounts) ? data.accounts : []
+      const currentId = preserveSelection ? String(integrationForms?.meta?.external_account_id || '').trim() : ''
+      const selectedAccount = accounts.find((account) => account.external_account_id === currentId) || (accounts.length === 1 ? accounts[0] : null)
+
+      setMetaAccountOptions(accounts)
+      setIntegrationForms((prev) => ({
+        ...prev,
+        meta: {
+          ...prev.meta,
+          external_account_id: selectedAccount?.external_account_id || prev.meta.external_account_id || '',
+          external_account_name: selectedAccount?.external_account_name || prev.meta.external_account_name || '',
+        },
+      }))
+
+      setStatus('integrations-meta', 'success', `${accounts.length} ${tr('integrationMetaAccountsLoaded', 'Meta ad accounts loaded.')}`)
+      return accounts
+    } catch (err) {
+      setMetaAccountOptions([])
+      setStatus('integrations-meta', 'error', formatUserFacingError(err, tr('integrationMetaAccountsLoadError', 'Unable to load Meta ad accounts.')))
+      return []
+    } finally {
+      setMetaAccountsLoading(false)
+    }
+  }
+
   const openIntegrationConnectModal = (provider) => {
     clearIntegrationOauthPopupMonitor()
     clearStatus(`integrations-${provider}`)
+    if (provider === 'meta') {
+      const currentMeta = integrationForms?.meta || {}
+      setMetaAccountOptions(
+        currentMeta.external_account_id
+          ? [{
+              external_account_id: currentMeta.external_account_id,
+              external_account_name: currentMeta.external_account_name || currentMeta.external_account_id,
+            }]
+          : []
+      )
+    }
     setIntegrationConnectProvider(provider)
   }
 
   const closeIntegrationConnectModal = () => {
     clearIntegrationOauthPopupMonitor()
+    setMetaAccountsLoading(false)
+    setMetaAccountOptions([])
     setIntegrationConnectProvider(null)
+  }
+
+  const getIntegrationMissingLabels = (provider, payload) => {
+    const labels = getIntegrationFieldDefinitions(provider)
+      .filter((field) => field.required && !String(payload[field.field] || '').trim())
+      .map((field) => field.label)
+
+    if (provider === 'meta' && !String(payload.external_account_id || '').trim()) {
+      labels.push(tr('integrationMetaAccountSelectorLabel', 'Ad account'))
+    }
+
+    return [...new Set(labels)]
   }
 
   const getIntegrationOauthReasonMessage = (reason, provider) => {
@@ -3457,9 +3539,7 @@ export default function Dashboard() {
     } = options
 
     const payload = buildIntegrationPayload(provider)
-    const missingFields = getIntegrationFieldDefinitions(provider)
-      .filter((field) => field.required && !String(payload[field.field] || '').trim())
-      .map((field) => field.label)
+    const missingFields = getIntegrationMissingLabels(provider, payload)
 
     if (missingFields.length > 0) {
       setStatus(`integrations-${provider}`, 'warning', `${tr('integrationMissingFields', 'Required fields')}: ${missingFields.join(', ')}`)
@@ -8911,7 +8991,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
       {showSettingsModal && integrationConnectProvider && (
         <div className="fixed inset-0 bg-black/75 z-[60] flex items-center justify-center p-3 sm:p-4" onClick={closeIntegrationConnectModal}>
-          <div className="w-full max-w-3xl max-h-[92vh] overflow-hidden rounded-[28px] bg-white border border-[#E8E8EE] shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="w-full max-w-3xl h-[92vh] max-h-[920px] overflow-hidden rounded-[28px] bg-white border border-[#E8E8EE] shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="px-5 sm:px-6 py-5 border-b border-[#E8E8EE] flex items-start justify-between gap-4 bg-white">
               <div>
                 <p className="text-[11px] uppercase tracking-[0.14em] text-[#8A8AA3] font-semibold mb-2">{tr('connectSourceLabel', 'Connect source')}</p>
@@ -8929,7 +9009,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
               </button>
             </div>
 
-            <div className="p-5 sm:p-6 overflow-y-auto max-h-[calc(92vh-88px)] space-y-6 bg-[#F7F8FA]">
+            <div className="flex-1 min-h-0 overflow-y-auto p-5 sm:p-6 space-y-6 bg-[#F7F8FA]">
               <div className="bg-white rounded-2xl border border-[#E8E8EE] p-5 space-y-4">
                 <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
                   <div>
@@ -8974,9 +9054,9 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     <p className="text-sm font-semibold text-[#1A1A2E]">{tr('integrationManualCardTitle', 'Manual connection')}</p>
                     <p className="text-sm text-[#6A6A85] mt-1">{getProviderNextAction(integrationConnectProvider)}</p>
                     <div className="mt-4 flex flex-wrap gap-2">
-                      {getIntegrationFieldDefinitions(integrationConnectProvider).filter((field) => field.required).map((field) => (
-                        <span key={field.field} className="px-2.5 py-1 rounded-full bg-[#FFF4EF] text-[#FF6B35] text-xs font-semibold border border-[#FF6B35]/20">
-                          {field.label}
+                      {getIntegrationRequiredLabels(integrationConnectProvider).map((label) => (
+                        <span key={label} className="px-2.5 py-1 rounded-full bg-[#FFF4EF] text-[#FF6B35] text-xs font-semibold border border-[#FF6B35]/20">
+                          {label}
                         </span>
                       ))}
                     </div>
@@ -8996,30 +9076,94 @@ analytics.subscribe("product_added_to_cart", (event) => {
                   <p className="text-sm text-[#6A6A85] mt-1">{tr('integrationManualFieldsSubtitle', 'No extra display fields. Only the credentials needed to validate and save the connection.')}</p>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {getIntegrationFieldDefinitions(integrationConnectProvider).map((field) => {
-                    const value = integrationForms?.[integrationConnectProvider]?.[field.field] || ''
-                    return (
-                      <div key={field.field} className={field.field === 'access_token' || field.field === 'refresh_token' || field.field === 'developer_token' || field.field === 'client_secret' ? 'sm:col-span-2' : 'sm:col-span-1'}>
-                        <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1.5">
-                          {field.label} {field.required && <span className="text-[#FF6B35]">*</span>}
-                        </label>
-                        <input
-                          type={field.type}
-                          value={value}
-                          onChange={(e) => handleIntegrationFormChange(integrationConnectProvider, field.field, e.target.value)}
-                          className="w-full rounded-xl border border-[#D8D8E2] bg-white px-3 py-3 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
-                          placeholder={field.placeholder}
-                        />
+                {integrationConnectProvider === 'meta' ? (
+                  <div className="space-y-4">
+                    {getIntegrationFieldDefinitions('meta').map((field) => {
+                      const value = integrationForms?.meta?.[field.field] || ''
+                      return (
+                        <div key={field.field}>
+                          <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1.5">
+                            {field.label} {field.required && <span className="text-[#FF6B35]">*</span>}
+                          </label>
+                          <input
+                            type={field.type}
+                            value={value}
+                            onChange={(e) => handleIntegrationFormChange('meta', field.field, e.target.value)}
+                            className="w-full rounded-xl border border-[#D8D8E2] bg-white px-3 py-3 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
+                            placeholder={field.placeholder}
+                          />
+                        </div>
+                      )
+                    })}
+
+                    <div className="rounded-2xl border border-[#E8E8EE] bg-[#FAFAFB] p-4 space-y-4">
+                      <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+                        <div className="flex-1">
+                          <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1.5">
+                            {tr('integrationMetaAccountSelectorLabel', 'Ad account')} <span className="text-[#FF6B35]">*</span>
+                          </label>
+                          <select
+                            value={integrationForms?.meta?.external_account_id || ''}
+                            onChange={(e) => {
+                              const selected = metaAccountOptions.find((account) => account.external_account_id === e.target.value)
+                              handleIntegrationFormChange('meta', 'external_account_id', e.target.value)
+                              handleIntegrationFormChange('meta', 'external_account_name', selected?.external_account_name || '')
+                            }}
+                            className="w-full rounded-xl border border-[#D8D8E2] bg-white px-3 py-3 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
+                          >
+                            <option value="">{tr('integrationMetaAccountSelectorPlaceholder', 'Load and select an ad account')}</option>
+                            {metaAccountOptions.map((account) => (
+                              <option key={account.external_account_id} value={account.external_account_id}>
+                                {account.external_account_name || account.external_account_id}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <button
+                          onClick={() => loadMetaAdAccounts({ preserveSelection: true })}
+                          disabled={metaAccountsLoading || !String(integrationForms?.meta?.access_token || '').trim()}
+                          className="shrink-0 px-4 py-3 rounded-xl border border-[#0D9488]/20 text-[#0D9488] bg-white hover:bg-[#F0FDFA] text-sm font-semibold disabled:opacity-50"
+                        >
+                          {metaAccountsLoading ? tr('integrationMetaLoadingAccounts', 'Loading accounts...') : tr('integrationMetaLoadAccounts', 'Load ad accounts')}
+                        </button>
                       </div>
-                    )
-                  })}
-                </div>
+                      <p className="text-xs text-[#8A8AA3]">
+                        {metaAccountOptions.length > 0
+                          ? `${metaAccountOptions.length} ${tr('integrationMetaAccountsFound', 'accounts available')}`
+                          : tr('integrationMetaAccountsHint', 'Use the access token to fetch the ad accounts you can connect.')}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {getIntegrationFieldDefinitions(integrationConnectProvider).map((field) => {
+                      const value = integrationForms?.[integrationConnectProvider]?.[field.field] || ''
+                      return (
+                        <div key={field.field} className={field.field === 'access_token' || field.field === 'refresh_token' || field.field === 'client_secret' ? 'sm:col-span-2' : 'sm:col-span-1'}>
+                          <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1.5">
+                            {field.label} {field.required && <span className="text-[#FF6B35]">*</span>}
+                          </label>
+                          <input
+                            type={field.type}
+                            value={value}
+                            onChange={(e) => handleIntegrationFormChange(integrationConnectProvider, field.field, e.target.value)}
+                            className="w-full rounded-xl border border-[#D8D8E2] bg-white px-3 py-3 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
+                            placeholder={field.placeholder}
+                          />
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
 
+              <div className="h-4" />
+            </div>
+
+            <div className="border-t border-[#E8E8EE] bg-white px-5 sm:px-6 py-4 space-y-3">
               {renderStatus(`integrations-${integrationConnectProvider}`)}
 
-              <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 pt-2">
+              <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3">
                 <button
                   onClick={closeIntegrationConnectModal}
                   className="px-4 py-2.5 rounded-xl border border-[#E8E8EE] text-sm font-semibold text-[#1A1A2E] hover:bg-white"
