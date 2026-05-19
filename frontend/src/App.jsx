@@ -42,6 +42,8 @@ const LazyFallback = () => {
 // Stripe Payment Links are created dynamically via backend API
 // No static links needed - backend generates them on demand
 
+const APP_SUBSCRIPTION_CACHE_KEY = 'shopbrain:app-subscription-cache'
+
 
 export default function App() {
   const { t } = useTranslation()
@@ -72,12 +74,61 @@ export default function App() {
   const [user, setUser] = useState(null)
   const [hasSubscription, setHasSubscription] = useState(false)
   const [subscriptionPlan, setSubscriptionPlan] = useState(null)
+  const [isCheckingSubscription, setIsCheckingSubscription] = useState(false)
+  const [subscriptionCheckResolved, setSubscriptionCheckResolved] = useState(false)
 
   const [landingStatusByKey, setLandingStatusByKey] = useState({})
   const [faqOpenIndex, setFaqOpenIndex] = useState(null)
   
   // Prevent simultaneous subscription checks
   const subscriptionCheckInProgressRef = React.useRef(false)
+
+  const readAppSubscriptionCache = React.useCallback((userId) => {
+    if (typeof window === 'undefined' || !userId) return null
+    try {
+      const raw = localStorage.getItem(APP_SUBSCRIPTION_CACHE_KEY)
+      if (!raw) return null
+      const parsed = JSON.parse(raw)
+      if (parsed?.userId !== userId || parsed?.hasSubscription !== true) return null
+      return parsed
+    } catch {
+      return null
+    }
+  }, [])
+
+  const writeAppSubscriptionCache = React.useCallback((userId, plan) => {
+    if (typeof window === 'undefined' || !userId) return
+    try {
+      localStorage.setItem(APP_SUBSCRIPTION_CACHE_KEY, JSON.stringify({
+        userId,
+        hasSubscription: true,
+        plan: plan || null,
+        checkedAt: new Date().toISOString()
+      }))
+    } catch {}
+  }, [])
+
+  const clearAppSubscriptionCache = React.useCallback((userId) => {
+    if (typeof window === 'undefined') return
+    try {
+      const raw = localStorage.getItem(APP_SUBSCRIPTION_CACHE_KEY)
+      if (!raw) return
+      const parsed = JSON.parse(raw)
+      if (!userId || parsed?.userId === userId) {
+        localStorage.removeItem(APP_SUBSCRIPTION_CACHE_KEY)
+      }
+    } catch {
+      localStorage.removeItem(APP_SUBSCRIPTION_CACHE_KEY)
+    }
+  }, [])
+
+  const hydrateSubscriptionFromCache = React.useCallback((userId) => {
+    const cached = readAppSubscriptionCache(userId)
+    if (!cached) return false
+    setHasSubscription(true)
+    setSubscriptionPlan(cached.plan || null)
+    return true
+  }, [readAppSubscriptionCache])
 
   const cleanupAuthQueryParams = React.useCallback(() => {
     if (typeof window === 'undefined') return
@@ -185,6 +236,7 @@ export default function App() {
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_IN' && session) {
         setUser(session.user)
+        hydrateSubscriptionFromCache(session.user.id)
         checkSubscription()
         setShowAuthModal(false)
         setAuthMessage('')
@@ -192,6 +244,8 @@ export default function App() {
       } else if (event === 'SIGNED_OUT') {
         setUser(null)
         setHasSubscription(false)
+        setSubscriptionPlan(null)
+        setSubscriptionCheckResolved(false)
         setCurrentView('landing')
       }
     })
@@ -201,7 +255,7 @@ export default function App() {
       window.removeEventListener('hashchange', handleHashChange)
       authListener?.subscription?.unsubscribe()
     }
-  }, [cleanupAuthQueryParams, formatOAuthCallbackError]) // ← empty deps: runs once on mount only
+  }, [cleanupAuthQueryParams, formatOAuthCallbackError, hydrateSubscriptionFromCache]) // ← empty deps: runs once on mount only
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -273,6 +327,7 @@ export default function App() {
     const { data: { session } } = await supabase.auth.getSession()
     if (session) {
       setUser(session.user)
+      hydrateSubscriptionFromCache(session.user.id)
       cleanupAuthQueryParams()
     }
   }
@@ -281,21 +336,25 @@ export default function App() {
     // Skip if already checking to prevent stacking requests
     if (subscriptionCheckInProgressRef.current) {
       console.log('Subscription check already in progress, skipping...')
-      return
+      return hasSubscription
     }
     
     subscriptionCheckInProgressRef.current = true
+    setIsCheckingSubscription(true)
     const timeoutId = setTimeout(() => {
       console.warn('Subscription check timeout (120s), releasing lock')
       subscriptionCheckInProgressRef.current = false
+      setIsCheckingSubscription(false)
     }, 120000)
     
     try {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session || !session.user) {
         setHasSubscription(false)
+        setSubscriptionPlan(null)
+        setSubscriptionCheckResolved(true)
         // Don't show error — user just isn't logged in yet
-        return
+        return false
       }
       const resp = await fetch('https://shopbrain-backend.onrender.com/api/subscription/status', {
         method: 'POST',
@@ -312,7 +371,8 @@ export default function App() {
           // Token expired — user needs to re-login, don't show scary plan message
           setHasSubscription(false)
           setSubscriptionPlan(null)
-          return
+          setSubscriptionCheckResolved(true)
+          return false
         }
         // Server error (cold start / transient): keep previous subscription state
         // to avoid locking out already-paid users from the dashboard button.
@@ -323,7 +383,12 @@ export default function App() {
             message: t('backendWaking') || 'Le backend démarre. Réessaie dans quelques secondes.'
           }
         }))
-        return
+        if (hydrateSubscriptionFromCache(session.user.id)) {
+          setSubscriptionCheckResolved(true)
+          return true
+        }
+        setSubscriptionCheckResolved(true)
+        return false
       }
       const data = await resp.json()
       console.log('Subscription check response:', data)
@@ -359,6 +424,12 @@ export default function App() {
 
       setHasSubscription(hasSub)
       setSubscriptionPlan(hasSub ? resolvedPlan : null)
+      setSubscriptionCheckResolved(true)
+      if (hasSub) {
+        writeAppSubscriptionCache(session.user.id, resolvedPlan)
+      } else {
+        clearAppSubscriptionCache(session.user.id)
+      }
       if (hasSub) {
         setLandingStatusByKey((prev) => {
           if (!prev?.dashboardHero) return prev
@@ -375,6 +446,7 @@ export default function App() {
           }
         }))
       }
+      return hasSub
     } catch (e) {
       // Network error / Render cold start — preserve previous state
       console.error('Subscription check error:', e)
@@ -385,10 +457,28 @@ export default function App() {
           message: t('backendWaking') || 'Le backend démarre. Réessaie dans quelques secondes.'
         }
       }))
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session?.user?.id && hydrateSubscriptionFromCache(session.user.id)) {
+        setSubscriptionCheckResolved(true)
+        return true
+      }
+      setSubscriptionCheckResolved(true)
+      return false
     } finally {
       clearTimeout(timeoutId)
       subscriptionCheckInProgressRef.current = false
+      setIsCheckingSubscription(false)
     }
+  }
+
+  const openDashboardIfSubscribed = async () => {
+    const hasActiveSubscription = await checkSubscription()
+    if (hasActiveSubscription) {
+      setCurrentView('dashboard')
+      window.location.hash = '#dashboard'
+      return true
+    }
+    return false
   }
 
   useEffect(() => {
@@ -653,13 +743,13 @@ export default function App() {
   }
 
   // If user tried to access dashboard without subscription, bounce back to landing
-  if (currentView === 'dashboard' && user && !hasSubscription) {
+  if (currentView === 'dashboard' && user && subscriptionCheckResolved && !isCheckingSubscription && !hasSubscription) {
     // Reset view to landing so they see the pricing/landing page
     if (typeof window !== 'undefined') window.location.hash = ''
     setCurrentView('landing')
   }
 
-  if (currentView === 'truth' && user && !hasSubscription) {
+  if (currentView === 'truth' && user && subscriptionCheckResolved && !isCheckingSubscription && !hasSubscription) {
     if (typeof window !== 'undefined') window.location.hash = ''
     setCurrentView('landing')
   }
@@ -738,22 +828,27 @@ export default function App() {
                       setCurrentView('dashboard')
                       window.location.hash = '#dashboard'
                     } else {
-                      // No plan — scroll to pricing section
-                      document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' })
-                      setLandingStatusByKey((prev) => ({
-                        ...prev,
-                        pricing: { type: 'warning', message: t('mustSubscribeFirst') || 'You need an active plan to access the dashboard.' }
-                      }))
+                      openDashboardIfSubscribed().then((granted) => {
+                        if (!granted) {
+                          document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' })
+                          setLandingStatusByKey((prev) => ({
+                            ...prev,
+                            pricing: { type: 'warning', message: t('mustSubscribeFirst') || 'You need an active plan to access the dashboard.' }
+                          }))
+                        }
+                      })
                     }
                   }}
-                  disabled={!hasSubscription}
+                  disabled={isCheckingSubscription}
                   className={`px-4 md:px-5 py-2 rounded-full text-xs md:text-sm font-medium transition-all ${
-                    hasSubscription
+                    isCheckingSubscription
+                      ? 'bg-white border border-[#E8E8EE] text-[#C0C0D0] cursor-wait opacity-70'
+                      : hasSubscription
                       ? 'bg-[#1A1A2E] text-white hover:bg-[#2A2A42] shadow-sm cursor-pointer'
                       : 'bg-white border border-[#E8E8EE] text-[#C0C0D0] cursor-not-allowed opacity-60'
                   }`}
                 >
-                  Dashboard
+                  {isCheckingSubscription ? (t('loading') || 'Loading...') : 'Dashboard'}
                 </button>
                 <button
                   onClick={async () => {
@@ -1150,14 +1245,11 @@ export default function App() {
           {user && (
             <div className="mt-16 flex flex-col items-center animate-fadeInUp stagger-2">
               <button
-                onClick={() => {
-                  checkSubscription()
-                  setCurrentView('dashboard')
-                  window.location.hash = '#dashboard'
-                }}
+                onClick={openDashboardIfSubscribed}
+                disabled={isCheckingSubscription}
                 className="px-12 py-4 text-base font-semibold rounded-full transition-all bg-[#FF6B35] text-white hover:bg-[#E85A28] hover:shadow-lg shadow-[0_8px_24px_rgba(255,107,53,0.25)]"
               >
-                Accéder à mon Dashboard
+                {isCheckingSubscription ? (t('loading') || 'Loading...') : 'Accéder à mon Dashboard'}
               </button>
               {!hasSubscription && renderLandingStatus('dashboardHero')}
             </div>
