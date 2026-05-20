@@ -1437,6 +1437,30 @@ STRIPE_PLANS = {
     "premium": "price_1TSiPbPSvADOSbOzQ2VdVeII",
 }
 
+STRIPE_PLAN_AMOUNT_CENTS = {
+    "standard": 3500,
+    "pro": 9900,
+    "premium": 19900,
+}
+
+STRIPE_PLAN_VALUE_ALIASES = {
+    "35": "standard",
+    "99": "pro",
+    "199": "premium",
+    "299": "premium",
+    "standard": "standard",
+    "grow": "pro",
+    "pro": "pro",
+    "premium": "premium",
+}
+
+STRIPE_PLAN_AMOUNT_TO_TIER = {
+    3500: "standard",
+    9900: "pro",
+    19900: "premium",
+    29900: "premium",
+}
+
 # Reverse mapping: price_id -> tier
 PRICE_TO_TIER = {
     "price_1TSiKwPSvADOSbOz1u7GmrkY": "standard",
@@ -1737,18 +1761,11 @@ def _resolve_plan_from_stripe_subscription(subscription_obj) -> str | None:
     if not subscription_obj:
         return None
 
-    tier_map = {
-        '99': 'standard',
-        '199': 'pro',
-        '299': 'premium',
-        'standard': 'standard',
-        'pro': 'pro',
-        'premium': 'premium'
-    }
+    tier_map = STRIPE_PLAN_VALUE_ALIASES
 
     items_container = _sg(subscription_obj, "items", {})
     items = _sg(items_container, "data", []) if items_container else []
-    exact_amount_map = {9900: 'standard', 19900: 'pro', 29900: 'premium'}
+    exact_amount_map = STRIPE_PLAN_AMOUNT_TO_TIER
 
     # IMPORTANT: price_id / amount is the source of truth for upgrades/downgrades.
     # metadata.plan can be stale (e.g., user upgraded from standard -> pro).
@@ -1798,7 +1815,7 @@ def _extract_upcoming_plan_change(subscription_obj) -> dict:
     try:
         current_plan = _resolve_plan_from_stripe_subscription(subscription_obj)
         now_ts = int(time.time())
-        exact_amount_map = {9900: 'standard', 19900: 'pro', 29900: 'premium'}
+        exact_amount_map = STRIPE_PLAN_AMOUNT_TO_TIER
 
         schedule_obj = _sg(subscription_obj, "schedule")
         schedule_id = None
@@ -3170,10 +3187,7 @@ async def fast_init(request: Request):
         #   Stripe API call is ONLY used as background auto-heal, NEVER blocks access.
         subscription_data = {"has_subscription": False, "plan": None, "paid": False, "status": "inactive"}
         try:
-            tier_map = {
-                '99': 'standard', '199': 'pro', '299': 'premium',
-                'standard': 'standard', 'pro': 'pro', 'premium': 'premium',
-            }
+            tier_map = STRIPE_PLAN_VALUE_ALIASES
             capabilities = {
                 'standard': {'product_limit': 50, 'shop_limit': 1, 'report_frequency': 'monthly', 'features': ['product_analysis', 'title_optimization', 'price_suggestions']},
                 'pro': {'product_limit': 500, 'shop_limit': 3, 'report_frequency': 'weekly', 'features': ['product_analysis', 'title_optimization', 'price_suggestions', 'content_generation', 'image_recommendations', 'cross_sell', 'reports', 'automated_actions', 'invoicing']},
@@ -3723,17 +3737,17 @@ async def create_payment_link(payload: dict, request: Request):
         "standard": {
             "name": "ShopBrain AI - Standard",
             "description": "Analyse 50 produits/mois",
-            "amount": 9900,  # $99.00
+            "amount": STRIPE_PLAN_AMOUNT_CENTS["standard"],
         },
         "pro": {
             "name": "ShopBrain AI - Pro",
             "description": "Analyse 500 produits/mois + Support prioritaire",
-            "amount": 19900,  # $199.00
+            "amount": STRIPE_PLAN_AMOUNT_CENTS["pro"],
         },
         "premium": {
             "name": "ShopBrain AI - Premium",
             "description": "Analyse illimitée + Support 24/7",
-            "amount": 29900,  # $299.00
+            "amount": STRIPE_PLAN_AMOUNT_CENTS["premium"],
         }
     }
     
@@ -3822,9 +3836,8 @@ async def create_checkout(payload: dict, request: Request):
     raw_plan = payload.get("plan")
     customer_email = payload.get("email")
     
-    # Normalize plan key: accept both numeric ('99','199','299') and named ('standard','pro','premium')
-    _plan_normalize = {'99': 'standard', '199': 'pro', '299': 'premium'}
-    plan = _plan_normalize.get(str(raw_plan), raw_plan)
+    # Normalize plan key: accept both numeric and named values
+    plan = STRIPE_PLAN_VALUE_ALIASES.get(str(raw_plan).lower(), raw_plan)
     
     print(f"📊 Plan: {plan} (raw: {raw_plan}), Email: {customer_email}")
     
@@ -4421,7 +4434,6 @@ async def stripe_webhook(request: Request):
                     expanded_session = stripe.checkout.Session.retrieve(session.get("id"), expand=["line_items"])
                     line_items_container = _sg(expanded_session, "line_items", {})
                     line_items_data = _sg(line_items_container, "data", []) if line_items_container else []
-                    exact_amount_map = {9900: "standard", 19900: "pro", 29900: "premium"}
                     for li in line_items_data:
                         li_price = _sg(li, "price", {})
                         price_id = _sg(li_price, "id")
@@ -4429,7 +4441,7 @@ async def stripe_webhook(request: Request):
                         plan_tier = PRICE_TO_TIER.get(price_id)
                         if not plan_tier and amount is not None:
                             try:
-                                plan_tier = exact_amount_map.get(int(amount))
+                                plan_tier = STRIPE_PLAN_AMOUNT_TO_TIER.get(int(amount))
                             except Exception:
                                 pass
                         if plan_tier:
@@ -4663,8 +4675,7 @@ async def stripe_webhook(request: Request):
                 if lines:
                     price = _sg(lines[0], "price", {})
                     amount = _sg(price, "unit_amount")
-                    exact_amount_map = {9900: "standard", 19900: "pro", 29900: "premium"}
-                    plan_tier = PRICE_TO_TIER.get(_sg(price, "id")) or exact_amount_map.get(int(amount) if amount is not None else None)
+                    plan_tier = PRICE_TO_TIER.get(_sg(price, "id")) or STRIPE_PLAN_AMOUNT_TO_TIER.get(int(amount) if amount is not None else None)
             if not plan_tier:
                 print(f"  ❌ [WEBHOOK] invoice.payment_succeeded could not resolve plan_tier — skipping DB write to prevent wrong plan")
                 return {"received": True, "warning": "plan_tier_unresolvable", "event_type": event_type}
@@ -13559,10 +13570,7 @@ def get_ai_engine():
 
 def get_user_tier(user_id: str) -> str:
     """Resolve user's subscription tier from Supabase; default to free."""
-    tier_map = {
-        'standard': 'standard', 'pro': 'pro', 'premium': 'premium',
-        '99': 'standard', '199': 'pro', '299': 'premium',
-    }
+    tier_map = STRIPE_PLAN_VALUE_ALIASES
     try:
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
             supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
@@ -14679,10 +14687,7 @@ async def check_subscription_status(request: Request):
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
             # ── DB-FIRST APPROACH: DB is the source of truth (set by webhooks).
             #    Stripe API call is ONLY for auto-heal, NEVER blocks access.
-            tier_map = {
-                '99': 'standard', '199': 'pro', '299': 'premium',
-                'standard': 'standard', 'pro': 'pro', 'premium': 'premium',
-            }
+            tier_map = STRIPE_PLAN_VALUE_ALIASES
             capabilities = {
                 'standard': {'product_limit': 50, 'features': ['product_analysis', 'title_optimization', 'price_suggestions']},
                 'pro': {'product_limit': 500, 'features': ['product_analysis', 'content_generation', 'cross_sell', 'reports', 'automated_actions', 'invoicing']},
@@ -15062,9 +15067,8 @@ async def create_checkout_session(req: CreateCheckoutSessionRequest, request: Re
         raw_plan = req.plan
         email = req.email
         
-        # Normalize plan key: accept both numeric ('99','199','299') and named ('standard','pro','premium')
-        _plan_normalize = {'99': 'standard', '199': 'pro', '299': 'premium'}
-        plan = _plan_normalize.get(str(raw_plan), raw_plan)
+        # Normalize plan key: accept both numeric and named values
+        plan = STRIPE_PLAN_VALUE_ALIASES.get(str(raw_plan).lower(), raw_plan)
         
         if plan not in STRIPE_PLANS:
             raise HTTPException(status_code=400, detail=f"Plan invalide: {raw_plan}")
@@ -15175,8 +15179,7 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
             def tier_from_amount(amount_cents: int | None):
                 if amount_cents is None:
                     return None
-                exact_amount_map = {9900: "standard", 19900: "pro", 29900: "premium"}
-                return exact_amount_map.get(int(amount_cents))
+                return STRIPE_PLAN_AMOUNT_TO_TIER.get(int(amount_cents))
 
             # Try subscription item price_id first (metadata may be stale after upgrades)
             if subscription:
@@ -15206,13 +15209,9 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
                 if session_meta:
                     plan = _sg(session_meta, "plan")
 
-            # Normalize plan key (metadata might store '99', '199', '299')
-            _tier_normalize = {
-                '99': 'standard', '199': 'pro', '299': 'premium',
-                'standard': 'standard', 'pro': 'pro', 'premium': 'premium',
-            }
+            # Normalize plan key from metadata or legacy values
             if plan:
-                plan = _tier_normalize.get(str(plan).lower(), plan)
+                plan = STRIPE_PLAN_VALUE_ALIASES.get(str(plan).lower(), plan)
             
             # Final fallback — do NOT assign a paid plan if unknown
             if not plan:
@@ -17043,7 +17042,6 @@ async def switch_plan_inline(request: Request, _override_plan: str | None = None
         # Verify Stripe accepted the schedule update (target tier present in a future phase)
         schedule_verify = stripe.SubscriptionSchedule.retrieve(schedule_id)
         verify_phases = _sg(schedule_verify, "phases", []) or []
-        exact_amount_map = {9900: 'standard', 19900: 'pro', 29900: 'premium'}
         has_target_future_phase = False
         for phase in verify_phases:
             phase_start = _coerce_stripe_timestamp(_sg(phase, "start_date"))
@@ -17061,7 +17059,7 @@ async def switch_plan_inline(request: Request, _override_plan: str | None = None
                 phase_tier = PRICE_TO_TIER.get(phase_price_id)
                 if not phase_tier and phase_amount is not None:
                     try:
-                        phase_tier = exact_amount_map.get(int(phase_amount))
+                        phase_tier = STRIPE_PLAN_AMOUNT_TO_TIER.get(int(phase_amount))
                     except Exception:
                         phase_tier = None
                 if phase_tier == new_plan:
