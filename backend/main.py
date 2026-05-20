@@ -3579,7 +3579,11 @@ async def repair_subscription(email: str = "", secret: str = ""):
         # Resolve plan from subscription
         plan_tier = _resolve_plan_from_stripe_subscription(active_sub)
         if not plan_tier:
-            plan_tier = "standard"
+            return {
+                "error": "Unable to resolve plan from active Stripe subscription",
+                "stripe_subscription_id": active_sub.id,
+                "stripe_customer_id": active_customer_id,
+            }
 
         stripe_sub_id = active_sub.id
         cancel_at_period_end = getattr(active_sub, 'cancel_at_period_end', False)
@@ -4450,7 +4454,7 @@ async def stripe_webhook(request: Request):
                 except Exception as li_err:
                     print(f"  ⚠️ [WEBHOOK] line_items fallback warning: {li_err}")
             if plan_tier:
-                plan_tier = {"99": "standard", "199": "pro", "299": "premium"}.get(str(plan_tier).lower(), str(plan_tier).lower())
+                plan_tier = STRIPE_PLAN_VALUE_ALIASES.get(str(plan_tier).lower(), str(plan_tier).lower())
             # If still no plan, do NOT default — log error and skip DB write to avoid wrong plan
             if not plan_tier:
                 print(f"  ❌ [WEBHOOK] checkout.session.completed: Could not resolve plan_tier — skipping DB write to prevent wrong plan")
