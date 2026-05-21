@@ -7203,11 +7203,32 @@ def _truth_parse_ads_env_rows() -> list[dict]:
     config = [
         ("Meta", os.getenv("TRUTH_META_ADS_JSON", "")),
         ("TikTok", os.getenv("TRUTH_TIKTOK_ADS_JSON", "")),
+        ("Google Ads", os.getenv("TRUTH_GOOGLE_ADS_JSON", "")),
     ]
     rows: list[dict] = []
     for default_platform, raw in config:
         rows.extend(_truth_parse_single_ads_payload(default_platform, raw))
     return rows
+
+
+def _truth_google_access_token(credentials: dict) -> str:
+    response = requests.post(
+        "https://oauth2.googleapis.com/token",
+        data={
+            "client_id": credentials.get("client_id", ""),
+            "client_secret": credentials.get("client_secret", ""),
+            "refresh_token": credentials.get("refresh_token", ""),
+            "grant_type": "refresh_token",
+        },
+        timeout=20,
+    )
+    if response.status_code != 200:
+        raise HTTPException(status_code=response.status_code, detail=f"Google OAuth error: {response.text[:300]}")
+    payload = response.json() or {}
+    access_token = str(payload.get("access_token") or "").strip()
+    if not access_token:
+        raise HTTPException(status_code=502, detail="Google OAuth did not return an access token")
+    return access_token
 
 
 def _truth_fetch_google_ads_rows(range_days: int, integration: dict | None = None, cache_scope: str = "global") -> tuple[list[dict], dict]:
@@ -7250,16 +7271,82 @@ def _truth_fetch_google_ads_rows(range_days: int, integration: dict | None = Non
     client_secret = credentials.get("client_secret", "")
 
     if developer_token and customer_id and refresh_token and client_id and client_secret:
-        meta = {
-            "connected": False,
-            "configured": True,
-            "source": "api",
-            "campaigns": 0,
-            "error": "Google Ads API is configured but not yet wired in this backend build",
-            "last_sync": None,
+        start_date, end_date = _truth_range_dates(range_days)
+        query = f"""
+            SELECT
+              campaign.id,
+              campaign.name,
+              metrics.cost_micros,
+              metrics.clicks,
+              metrics.impressions,
+              metrics.ctr,
+              metrics.average_cpc,
+              metrics.conversions_value
+            FROM campaign
+            WHERE segments.date BETWEEN '{start_date}' AND '{end_date}'
+        """.strip()
+
+        headers = {
+            "Authorization": f"Bearer {_truth_google_access_token(credentials)}",
+            "developer-token": developer_token,
+            "Content-Type": "application/json",
         }
-        _truth_cache_set_ads("google", range_days, [], meta, cache_scope)
-        return [], meta
+        manager_account_id = str(credentials.get("manager_account_id") or "").strip().replace("-", "")
+        if manager_account_id:
+            headers["login-customer-id"] = manager_account_id
+
+        url = f"https://googleads.googleapis.com/v17/customers/{str(customer_id).strip().replace('-', '')}/googleAds:searchStream"
+        rows: list[dict] = []
+
+        try:
+            response = requests.post(url, headers=headers, json={"query": query}, timeout=30)
+            if response.status_code != 200:
+                raise HTTPException(status_code=response.status_code, detail=f"Google Ads API error: {response.text[:300]}")
+            payload = response.json() or []
+            batches = payload if isinstance(payload, list) else [payload]
+            for batch in batches:
+                for result in batch.get("results") or []:
+                    campaign = result.get("campaign") or {}
+                    metrics = result.get("metrics") or {}
+                    cost_micros = _truth_float(metrics.get("costMicros") if "costMicros" in metrics else metrics.get("cost_micros"))
+                    clicks = int(_truth_float(metrics.get("clicks")))
+                    impressions = int(_truth_float(metrics.get("impressions")))
+                    ctr = metrics.get("ctr")
+                    average_cpc = metrics.get("averageCpc") if "averageCpc" in metrics else metrics.get("average_cpc")
+                    conversions_value = metrics.get("conversionsValue") if "conversionsValue" in metrics else metrics.get("conversions_value")
+                    rows.append({
+                        "platform": "Google Ads",
+                        "campaign_id": str(campaign.get("id") or uuid.uuid4()),
+                        "campaign_name": str(campaign.get("name") or "Untitled campaign").strip(),
+                        "spend": cost_micros / 1_000_000 if cost_micros else 0.0,
+                        "clicks": clicks,
+                        "impressions": impressions,
+                        "ctr": _truth_float(ctr) * 100 if ctr not in (None, "") and _truth_float(ctr) <= 1 else (_truth_float(ctr) if ctr not in (None, "") else (_truth_safe_div(clicks, impressions) * 100 if impressions else None)),
+                        "cpc": (_truth_float(average_cpc) / 1_000_000) if average_cpc not in (None, "") else (_truth_safe_div(cost_micros / 1_000_000 if cost_micros else 0.0, clicks) if clicks else None),
+                        "platform_revenue": _truth_float(conversions_value) if conversions_value not in (None, "") else None,
+                    })
+
+            meta = {
+                "connected": True,
+                "configured": True,
+                "source": "api",
+                "campaigns": len(rows),
+                "error": None,
+                "last_sync": _truth_now_iso(),
+            }
+            _truth_cache_set_ads("google", range_days, rows, meta, cache_scope)
+            return rows, meta
+        except Exception as exc:
+            meta = {
+                "connected": False,
+                "configured": True,
+                "source": "api",
+                "campaigns": 0,
+                "error": str(exc),
+                "last_sync": None,
+            }
+            _truth_cache_set_ads("google", range_days, [], meta, cache_scope)
+            return [], meta
 
     meta = {
         "connected": False,

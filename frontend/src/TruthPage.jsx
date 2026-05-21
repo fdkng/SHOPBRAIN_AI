@@ -1,18 +1,25 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { useTranslation } from './LanguageContext'
 import { supabase } from './supabaseClient'
 
 const API_URL = 'https://shopbrain-backend.onrender.com'
+const RANGE_OPTIONS = ['7d', '30d', '90d']
 
-const formatCurrency = (value) => {
+const formatCurrency = (value, locale = 'en-US') => {
   const numeric = Number(value)
   if (!Number.isFinite(numeric)) return '—'
-  return new Intl.NumberFormat('en-US', {
+  return new Intl.NumberFormat(locale, {
     style: 'currency',
     currency: 'USD',
     maximumFractionDigits: 2,
   }).format(numeric)
+}
+
+const formatPercent = (value) => {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return '—'
+  return `${Math.round(numeric)}%`
 }
 
 const formatDateTime = (value, locale = 'en-US') => {
@@ -28,13 +35,31 @@ const CheckCircleIcon = ({ className = 'w-5 h-5' }) => <svg className={className
 const RefreshIcon = ({ className = 'w-4 h-4' }) => <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.13-3.36L23 10M1 14l5.36 4.36A9 9 0 0 0 20.49 15"></path></svg>
 
 export default function TruthPage() {
-  const { language } = useTranslation()
+  const { t, language } = useTranslation()
+  const locale = language === 'fr' ? 'fr-FR' : 'en-US'
+  const tr = useCallback((key, fallback) => {
+    const translated = t(key)
+    return translated === key && fallback ? fallback : translated
+  }, [t])
+
   const [data, setData] = useState(null)
+  const [rangeValue, setRangeValue] = useState('30d')
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState('')
 
-  const loadTruth = async ({ silent = false } = {}) => {
+  const navigateToDashboard = useCallback(() => {
+    window.location.hash = '#dashboard'
+  }, [])
+
+  const openDashboardTab = useCallback((tab) => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('dashboardRouteTab', tab)
+    }
+    window.location.hash = '#dashboard'
+  }, [])
+
+  const loadTruth = useCallback(async ({ silent = false } = {}) => {
     try {
       if (silent) {
         setRefreshing(true)
@@ -43,75 +68,89 @@ export default function TruthPage() {
       }
       setError('')
 
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) throw new Error('Session expired')
+      const { data: sessionData } = await supabase.auth.getSession()
+      const session = sessionData?.session
+      if (!session?.access_token) {
+        throw new Error(tr('authSessionExpired', 'Session expired'))
+      }
 
-      const response = await fetch(`${API_URL}/api/truth/dashboard?range=30d`, {
+      const response = await fetch(`${API_URL}/api/truth/dashboard?range=${rangeValue}`, {
         headers: { Authorization: `Bearer ${session.access_token}` },
       })
       const payload = await response.json().catch(() => ({}))
-      if (!response.ok || !payload?.success) {
-        throw new Error(payload?.detail || `HTTP ${response.status}`)
+      if (!response.ok || payload?.success === false) {
+        throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`)
       }
 
       setData(payload)
     } catch (err) {
-      setError(err.message || 'Unable to load Truth Engine')
+      setError(err?.message || tr('truthLoadError', 'Unable to load Truth Engine'))
     } finally {
       setLoading(false)
       setRefreshing(false)
     }
-  }
+  }, [rangeValue, tr])
 
   useEffect(() => {
     loadTruth()
-  }, [])
+  }, [loadTruth])
 
   const truthView = useMemo(() => {
     const summary = data?.summary || {}
     const profitEngine = data?.profit_engine || {}
-    const sourceCards = Object.entries(data?.data_sources_status || {}).map(([key, source]) => ({
+    const systemFlags = data?.system_flags || {}
+    const truthBlock = data?.truth_block || {}
+    const sourceStatus = data?.data_sources_status || {}
+
+    const sourceCards = Object.entries(sourceStatus).map(([key, source]) => ({
       key,
       label: source?.name || key,
       connected: Boolean(source?.connected),
-      lastSync: source?.last_sync || null,
       completeness: Number(source?.completeness || 0),
       reliability: Number(source?.reliability || 0),
+      source: source?.source || '',
+      lastSync: source?.last_sync || null,
       error: source?.error || '',
     }))
+
+    const metricTone = (value, positive = true) => {
+      if (value === null || value === undefined || !Number.isFinite(Number(value))) return 'text-[#8A8AA3]'
+      if (!positive) return 'text-[#FF6B35]'
+      return Number(value) >= 0 ? 'text-[#0D9488]' : 'text-[#DC2626]'
+    }
 
     const financialRows = [
       {
         key: 'revenue',
-        label: 'Revenue',
-        value: summary?.total_revenue_real,
-        color: 'text-emerald-400',
         badge: 'Shopify',
-        available: Number.isFinite(Number(summary?.total_revenue_real)),
+        label: tr('truthRevenueReal', 'Revenue'),
+        value: summary.total_revenue_real,
+        available: summary.total_revenue_real !== null && summary.total_revenue_real !== undefined,
+        tone: metricTone(summary.total_revenue_real, true),
       },
       {
-        key: 'ads',
-        label: 'Ad Spend',
-        value: summary?.total_ad_spend,
-        color: 'text-red-400',
-        badge: 'Meta / TikTok / Google',
-        available: Number.isFinite(Number(summary?.total_ad_spend)),
+        key: 'spend',
+        badge: 'Ads',
+        label: tr('truthSpendReal', 'Ad Spend'),
+        value: summary.total_ad_spend,
+        available: summary.total_ad_spend !== null && summary.total_ad_spend !== undefined,
+        tone: metricTone(summary.total_ad_spend, false),
       },
       {
         key: 'cogs',
-        label: 'COGS',
-        value: summary?.total_cogs,
-        color: 'text-zinc-300',
-        badge: data?.system_flags?.cost_inputs?.cogs_present ? 'Verified input' : 'Missing',
-        available: summary?.total_cogs !== null && summary?.total_cogs !== undefined,
+        badge: systemFlags?.cost_inputs?.cogs_present ? tr('truthVerifiedInput', 'Verified input') : tr('truthMissingInput', 'Missing'),
+        label: tr('truthCogs', 'COGS'),
+        value: summary.total_cogs,
+        available: summary.total_cogs !== null && summary.total_cogs !== undefined,
+        tone: metricTone(summary.total_cogs, true),
       },
       {
         key: 'fees',
-        label: 'Fees',
-        value: summary?.total_fees,
-        color: 'text-orange-400',
-        badge: data?.system_flags?.cost_inputs?.fees_present ? 'Verified input' : 'Missing',
-        available: summary?.total_fees !== null && summary?.total_fees !== undefined,
+        badge: systemFlags?.cost_inputs?.fees_present ? tr('truthVerifiedInput', 'Verified input') : tr('truthMissingInput', 'Missing'),
+        label: tr('truthFees', 'Fees'),
+        value: summary.total_fees,
+        available: summary.total_fees !== null && summary.total_fees !== undefined,
+        tone: metricTone(summary.total_fees, true),
       },
     ]
 
@@ -120,344 +159,368 @@ export default function TruthPage() {
       profitEngine,
       truthScore: Number(data?.truth_score?.value || 0),
       truthLabel: data?.truth_score?.label || 'UNVERIFIED',
-      financialRows,
-      sourceCards,
-      campaigns: Array.isArray(data?.campaigns) ? data.campaigns : [],
+      truthBlocked: truthBlock.allowed === false,
+      truthBlockReason: truthBlock.reason || '',
+      missingSources: truthBlock.missing_sources || [],
       insights: Array.isArray(data?.insights) ? data.insights : [],
       alerts: Array.isArray(data?.alerts) ? data.alerts : [],
       anomalies: Array.isArray(data?.anomalies) ? data.anomalies : [],
-      metricMode: data?.system_flags?.metric_mode || 'hidden',
-      truthBlocked: Boolean(data?.truth_block?.allowed === false),
-      truthBlockReason: data?.truth_block?.reason || '',
-      missingSources: data?.truth_block?.missing_sources || [],
+      campaigns: Array.isArray(data?.campaigns) ? data.campaigns : [],
+      sourceCards,
+      financialRows,
+      dataCompleteness: Number(data?.data_completeness || systemFlags?.data_completeness || 0),
+      metricMode: systemFlags?.metric_mode || 'hidden',
     }
-  }, [data])
+  }, [data, tr])
 
-  const navigateToDashboard = () => {
-    window.location.hash = '#dashboard'
-  }
-
-  const openDashboardTab = (tab) => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('dashboardRouteTab', tab)
-    }
-    window.location.hash = '#dashboard'
-  }
-
-  const handleCampaignAction = (campaign) => {
+  const getCampaignActionLabel = useCallback((campaign) => {
     const roas = Number(campaign?.roas_real)
     const errorPercent = Math.abs(Number(campaign?.error_percent || 0))
-    if (!Number.isFinite(roas)) return openDashboardTab('integrations')
-    if (roas < 1) return openDashboardTab('analysis')
-    if (errorPercent >= 20) return openDashboardTab('integrations')
-    return openDashboardTab('overview')
-  }
+    if (!Number.isFinite(roas)) return tr('truthActionConnect', 'Connect source')
+    if (roas < 1) return tr('truthActionReduce', 'Reduce budget')
+    if (errorPercent >= 20) return tr('truthActionTracking', 'Check tracking')
+    if (roas > 2) return tr('truthActionScale', 'Scale carefully')
+    return tr('truthActionDetails', 'Open details')
+  }, [tr])
 
-  const getCampaignActionLabel = (campaign) => {
+  const handleCampaignAction = useCallback((campaign) => {
     const roas = Number(campaign?.roas_real)
     const errorPercent = Math.abs(Number(campaign?.error_percent || 0))
-    if (!Number.isFinite(roas)) return 'Connect source'
-    if (roas < 1) return 'Reduce budget'
-    if (errorPercent >= 20) return 'Check tracking'
-    if (roas > 2) return 'Scale carefully'
-    return 'View campaign'
-  }
+    if (!Number.isFinite(roas) || errorPercent >= 20) {
+      openDashboardTab('integrations')
+      return
+    }
+    if (roas < 1) {
+      openDashboardTab('underperforming')
+      return
+    }
+    openDashboardTab('overview')
+  }, [openDashboardTab])
 
   if (loading && !data) {
     return (
-      <div className="min-h-screen bg-[#0A0A0B] flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-[#333] border-t-[#FF6B35] rounded-full animate-spin" />
+      <div className="min-h-screen bg-[#F7F8FA] flex items-center justify-center">
+        <div className="w-10 h-10 border-2 border-[#E8E8EE] border-t-[#FF6B35] rounded-full animate-spin" />
       </div>
     )
   }
-
   return (
-    <div className="min-h-screen bg-[#0A0A0B] text-white selection:bg-[#FF6B35]/30">
-      <div className="sticky top-0 z-50 bg-[#0A0A0B]/80 backdrop-blur-xl border-b border-white/5">
-        <div className="max-w-6xl mx-auto px-4 md:px-6 py-4 flex items-center justify-between gap-3">
+    <div className="min-h-screen bg-[#F7F8FA] text-[#1A1A2E] selection:bg-[#FF6B35]/20">
+      <div className="sticky top-0 z-40 bg-white/90 backdrop-blur-xl border-b border-[#E8E8EE]">
+        <div className="max-w-7xl mx-auto px-4 md:px-6 py-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-center gap-4">
-            <button onClick={navigateToDashboard} className="p-2 rounded-full hover:bg-white/10 transition-colors text-white/70 hover:text-white">
+            <button onClick={navigateToDashboard} className="p-2 rounded-full hover:bg-[#F3F4F6] transition-colors text-[#6A6A85] hover:text-[#1A1A2E]">
               <ArrowLeftIcon />
             </button>
             <div>
-              <p className="text-[10px] font-bold tracking-widest text-white/40 uppercase">Truth Engine</p>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-semibold text-lg tracking-tight">{truthView.truthLabel}</span>
-                <span className="text-sm text-white/50">Score {truthView.truthScore}%</span>
+              <p className="text-[11px] uppercase tracking-[0.18em] text-[#8A8AA3] font-semibold">TRUTH</p>
+              <div className="flex flex-wrap items-center gap-2 mt-1">
+                <h1 className="text-2xl font-bold text-[#1A1A2E]">{tr('truthTitle', 'Real Profit Dashboard')}</h1>
+                <span className="inline-flex items-center rounded-full bg-[#F1F5F9] text-[#0F172A] px-3 py-1 text-xs font-semibold border border-[#E2E8F0]">
+                  {truthView.truthLabel} · {truthView.truthScore}%
+                </span>
               </div>
+              <p className="text-sm text-[#6A6A85] mt-1 max-w-3xl">{tr('truthDashboardCta', 'Open the source-of-truth view to compare real Shopify revenue, ad spend and UTM attribution in one dedicated page.')}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="inline-flex rounded-xl border border-[#E8E8EE] bg-white p-1">
+              {RANGE_OPTIONS.map((option) => (
+                <button
+                  key={option}
+                  onClick={() => setRangeValue(option)}
+                  className={`px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${rangeValue === option ? 'bg-[#1A1A2E] text-white' : 'text-[#6A6A85] hover:bg-[#F7F8FA]'}`}
+                >
+                  {option.toUpperCase()}
+                </button>
+              ))}
+            </div>
             <button
               onClick={() => loadTruth({ silent: true })}
               disabled={refreshing}
-              className="text-xs font-semibold px-4 py-2 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 transition-all inline-flex items-center gap-2 disabled:opacity-60"
+              className="inline-flex items-center justify-center gap-2 bg-[#0D9488] hover:bg-[#0F766E] disabled:opacity-50 px-4 py-2.5 rounded-xl text-white font-semibold text-sm"
             >
               <RefreshIcon className={refreshing ? 'w-4 h-4 animate-spin' : 'w-4 h-4'} />
-              {refreshing ? 'Refreshing' : 'Refresh'}
+              {refreshing ? tr('refreshing', 'Refreshing...') : tr('refreshConnections', 'Refresh statuses')}
             </button>
-            <button onClick={navigateToDashboard} className="text-xs font-semibold px-4 py-2 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 transition-all">
-              Back to Dashboard
+            <button onClick={() => openDashboardTab('integrations')} className="inline-flex items-center justify-center bg-white hover:bg-[#F7F8FA] px-4 py-2.5 rounded-xl text-[#1A1A2E] font-semibold text-sm border border-[#E8E8EE]">
+              {tr('truthBackDashboard', 'Back to dashboard')}
             </button>
           </div>
         </div>
       </div>
 
-      <main className="max-w-6xl mx-auto px-4 md:px-6 py-12 space-y-10">
-        <motion.section initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} className="pt-6 space-y-6">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border text-xs font-semibold ${truthView.truthBlocked ? 'bg-red-500/10 border-red-500/20 text-red-300' : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'}`}>
-              <span className={`w-2 h-2 rounded-full ${truthView.truthBlocked ? 'bg-red-400' : 'bg-emerald-400'}`} />
-              {truthView.truthBlocked ? 'Truth blocked' : 'Real data synced'}
-            </span>
-            <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-white/10 bg-white/5 text-xs font-semibold text-white/70">
-              {truthView.summary?.orders_count ?? 0} orders · {truthView.summary?.campaign_count ?? 0} campaigns
-            </span>
+      <main className="max-w-7xl mx-auto px-4 md:px-6 py-8 space-y-6">
+        {error && (
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-red-700">
+            {error}
           </div>
+        )}
 
-          <div className="grid lg:grid-cols-[1.4fr_0.9fr] gap-6">
-            <div className="rounded-3xl border border-white/10 bg-[#111214] p-8">
-              <p className="text-sm uppercase tracking-[0.2em] text-white/35 mb-4">Real profit</p>
-              <div className={`text-5xl md:text-6xl font-extrabold tracking-tight ${Number(truthView.profitEngine?.value) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                {truthView.profitEngine?.value === null || truthView.profitEngine?.value === undefined ? 'Blocked' : formatCurrency(truthView.profitEngine.value)}
-              </div>
-              <p className="text-white/60 text-lg mt-4 max-w-2xl">
-                {truthView.profitEngine?.warning || 'Profit is calculated strictly from connected data and verified cost inputs.'}
-              </p>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-8">
-                <div className="rounded-2xl bg-white/[0.03] border border-white/5 p-4">
-                  <p className="text-xs text-white/40 uppercase tracking-wide">Confidence</p>
-                  <p className="text-2xl font-bold mt-2">{Number(truthView.profitEngine?.confidence || 0)}%</p>
-                </div>
-                <div className="rounded-2xl bg-white/[0.03] border border-white/5 p-4">
-                  <p className="text-xs text-white/40 uppercase tracking-wide">ROAS</p>
-                  <p className="text-2xl font-bold mt-2">{truthView.summary?.real_roas ? `${Number(truthView.summary.real_roas).toFixed(2)}x` : '—'}</p>
-                </div>
-                <div className="rounded-2xl bg-white/[0.03] border border-white/5 p-4">
-                  <p className="text-xs text-white/40 uppercase tracking-wide">Unattributed</p>
-                  <p className="text-2xl font-bold mt-2">{truthView.summary?.unattributed_orders ?? 0}</p>
-                </div>
-                <div className="rounded-2xl bg-white/[0.03] border border-white/5 p-4">
-                  <p className="text-xs text-white/40 uppercase tracking-wide">Mode</p>
-                  <p className="text-2xl font-bold mt-2 capitalize">{truthView.metricMode}</p>
-                </div>
-              </div>
+        <motion.section initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} className="grid grid-cols-1 xl:grid-cols-[1.6fr_1fr] gap-6">
+          <div className="rounded-3xl border border-[#E8E8EE] bg-gradient-to-br from-[#1A1A2E] via-[#20203A] to-[#0F172A] p-6 md:p-8 text-white shadow-sm">
+            <div className="flex flex-wrap items-center gap-3 mb-5">
+              <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full border text-xs font-semibold ${truthView.truthBlocked ? 'bg-red-500/10 border-red-500/20 text-red-200' : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-200'}`}>
+                <span className={`w-2 h-2 rounded-full ${truthView.truthBlocked ? 'bg-red-300' : 'bg-emerald-300'}`} />
+                {truthView.truthBlocked ? tr('truthModeHidden', 'Profit hidden') : tr('truthModeVerified', 'Verified metrics')}
+              </span>
+              <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-white/10 bg-white/5 text-xs font-semibold text-white/70">
+                {truthView.summary?.orders_count ?? 0} orders · {truthView.summary?.campaign_count ?? 0} campaigns
+              </span>
             </div>
 
-            <div className="rounded-3xl border border-white/10 bg-[#111214] p-6 space-y-4">
-              <div>
-                <p className="text-sm uppercase tracking-[0.2em] text-white/35">AI analyst</p>
-                <h2 className="text-2xl font-bold mt-2">Short direct insights</h2>
-              </div>
+            <p className="text-sm uppercase tracking-[0.2em] text-white/40 mb-3">{tr('truthProfitEngine', 'Profit Engine')}</p>
+            <div className={`text-4xl md:text-6xl font-extrabold tracking-tight ${Number(truthView.profitEngine?.value) >= 0 ? 'text-[#34D399]' : 'text-[#F87171]'}`}>
+              {truthView.profitEngine?.value === null || truthView.profitEngine?.value === undefined ? tr('truthMetricHidden', 'Hidden') : formatCurrency(truthView.profitEngine.value, locale)}
+            </div>
+            <p className="text-white/70 text-base mt-4 max-w-3xl">
+              {truthView.profitEngine?.warning || tr('truthSourceNote', 'Source of truth: Shopify orders + UTM attribution + connected ad spend')}
+            </p>
 
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-8">
+              {[
+                { label: tr('truthScoreTitle', 'Truth Score'), value: `${truthView.truthScore}%` },
+                { label: tr('truthRealRoas', 'Real ROAS'), value: truthView.summary?.real_roas ? `${Number(truthView.summary.real_roas).toFixed(2)}x` : '—' },
+                { label: tr('truthDataCoverage', 'Data coverage'), value: formatPercent(truthView.dataCompleteness) },
+                { label: tr('truthConnected', 'Connected'), value: `${truthView.sourceCards.filter((card) => card.connected).length}/${truthView.sourceCards.length}` },
+              ].map((card) => (
+                <div key={card.label} className="rounded-2xl bg-white/[0.04] border border-white/10 p-4">
+                  <p className="text-xs uppercase tracking-[0.16em] text-white/45">{card.label}</p>
+                  <p className="text-2xl font-bold mt-2">{card.value}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-[#E8E8EE] bg-white p-6 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.16em] text-[#8A8AA3] font-semibold">AI</p>
+                <h2 className="text-xl font-bold text-[#1A1A2E] mt-1">{tr('truthInsightsTitle', 'Insights')}</h2>
+              </div>
+              <button onClick={() => openDashboardTab('integrations')} className="text-sm font-semibold text-[#FF6B35] hover:text-[#E85A28]">
+                {tr('connectionsTitle', 'Connections')}
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-3">
               {truthView.insights.length > 0 ? truthView.insights.slice(0, 3).map((insight, index) => (
-                <div key={`${insight.problem}-${index}`} className="rounded-2xl border border-white/8 bg-white/[0.03] p-4 space-y-2">
-                  <p className="text-white font-semibold">{insight.problem}</p>
-                  <p className="text-sm text-white/60">{insight.impact}</p>
-                  <button
-                    onClick={() => openDashboardTab(/connect|tracking/i.test(insight.action || '') ? 'integrations' : 'overview')}
-                    className="text-sm font-semibold text-[#FF6B35] hover:text-[#FF8B60] transition-colors"
-                  >
+                <div key={`${insight.problem}-${index}`} className="rounded-2xl border border-[#E8E8EE] bg-[#F7F8FA] p-4 space-y-2">
+                  <p className="font-semibold text-[#1A1A2E]">{insight.problem}</p>
+                  <p className="text-sm text-[#6A6A85]">{insight.impact}</p>
+                  <button onClick={() => openDashboardTab(/connect|tracking/i.test(insight.action || '') ? 'integrations' : 'overview')} className="text-sm font-semibold text-[#0D9488] hover:text-[#0F766E]">
                     {insight.action}
                   </button>
                 </div>
               )) : (
-                <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-4 text-white/60 text-sm">
-                  No AI insight yet. Connect more verified sources to unlock sharper decisions.
+                <div className="rounded-2xl border border-[#E8E8EE] bg-[#F7F8FA] p-4 text-sm text-[#6A6A85]">
+                  {tr('truthNoInsights', 'No insights generated yet.')}
                 </div>
               )}
             </div>
           </div>
         </motion.section>
 
-        {error && (
-          <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-red-200">
-            {error}
-          </div>
-        )}
-
         {truthView.truthBlocked && (
-          <section className="rounded-3xl border border-red-500/20 bg-red-500/8 p-6 space-y-3">
-            <div className="flex items-center gap-3 text-red-300">
+          <section className="rounded-3xl border border-[#FED7AA] bg-[#FFF7ED] p-6 space-y-3">
+            <div className="flex items-center gap-3 text-[#C2410C]">
               <AlertCircleIcon />
-              <h2 className="text-xl font-bold">Truth is blocked</h2>
+              <h2 className="text-xl font-bold">{tr('truthBannerTitle', 'TRUTH downgraded confidence')}</h2>
             </div>
-            <p className="text-white/70">{truthView.truthBlockReason || 'At least one paid source must be connected before real profit can be verified.'}</p>
+            <p className="text-[#9A3412]">{truthView.truthBlockReason || tr('truthBlockedReasonDefault', 'The TRUTH engine blocks metrics until ad sources are reliable enough.')}</p>
             {truthView.missingSources.length > 0 && (
               <div className="flex flex-wrap gap-2">
                 {truthView.missingSources.map((source) => (
-                  <span key={source} className="px-3 py-1 rounded-full text-sm bg-white/5 border border-white/10 text-white/75">
+                  <span key={source} className="px-3 py-1 rounded-full text-sm bg-white border border-[#FED7AA] text-[#9A3412]">
                     {source}
                   </span>
                 ))}
               </div>
             )}
             <button onClick={() => openDashboardTab('integrations')} className="px-4 py-2 rounded-xl bg-[#FF6B35] hover:bg-[#E85A28] text-white font-semibold">
-              Open connections
+              {tr('connectionsTitle', 'Connections')}
             </button>
           </section>
         )}
 
+        <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+          {truthView.financialRows.map((row) => (
+            <div key={row.key} className="rounded-2xl border border-[#E8E8EE] bg-white p-5 shadow-sm space-y-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.16em] text-[#8A8AA3] font-semibold">{row.badge}</p>
+                <h3 className="font-semibold text-[#1A1A2E] mt-1">{row.label}</h3>
+              </div>
+              <div className={`text-3xl font-bold ${row.tone}`}>
+                {row.available ? formatCurrency(row.value, locale) : '—'}
+              </div>
+              <p className="text-sm text-[#6A6A85]">
+                {row.available ? tr('truthModeVerified', 'Verified metrics') : tr('truthBlockedReasonDefault', 'The TRUTH engine blocks metrics until ad sources are reliable enough.')}
+              </p>
+            </div>
+          ))}
+        </section>
+
         <section className="space-y-4">
-          <div>
-            <h2 className="text-2xl font-bold tracking-tight">Connected data sources</h2>
-            <p className="text-white/50 text-sm mt-1">Only real synced sources appear here.</p>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h2 className="text-2xl font-bold text-[#1A1A2E]">{tr('truthSourcesTitle', 'Data Sources Status')}</h2>
+              <p className="text-sm text-[#6A6A85] mt-1">{tr('truthSourcesSubtitle', 'Each source is qualified before the profit engine is allowed to run.')}</p>
+            </div>
+            <button onClick={() => openDashboardTab('integrations')} className="inline-flex items-center justify-center bg-white hover:bg-[#F7F8FA] px-4 py-2 rounded-xl text-[#1A1A2E] font-semibold text-sm border border-[#E8E8EE]">
+              {tr('refreshConnections', 'Refresh statuses')}
+            </button>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {truthView.sourceCards.map((source) => (
-              <div key={source.key} className="rounded-2xl border border-white/10 bg-[#111214] p-5 space-y-4">
+              <div key={source.key} className="rounded-2xl border border-[#E8E8EE] bg-white p-5 shadow-sm space-y-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <h3 className="text-lg font-semibold">{source.label}</h3>
-                    <p className="text-sm text-white/45 mt-1">Last sync: {formatDateTime(source.lastSync, language === 'fr' ? 'fr-FR' : 'en-US')}</p>
+                    <h3 className="text-lg font-semibold text-[#1A1A2E]">{source.label}</h3>
+                    <p className="text-sm text-[#6A6A85] mt-1">{tr('truthLastSyncLabel', 'Last sync')}: {formatDateTime(source.lastSync, locale)}</p>
                   </div>
-                  <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${source.connected ? 'bg-emerald-500/15 text-emerald-300' : 'bg-orange-500/15 text-orange-300'}`}>
-                    {source.connected ? 'Connected' : 'Needs action'}
+                  <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${source.connected ? 'bg-[#D1FAE5] text-[#065F46]' : 'bg-[#FFF7ED] text-[#C2410C]'}`}>
+                    {source.connected ? tr('truthConnected', 'Connected') : tr('truthDisconnected', 'Disconnected')}
                   </span>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="rounded-xl bg-white/[0.03] p-3 border border-white/5">
-                    <div className="text-xs text-white/40 uppercase tracking-wide">Coverage</div>
-                    <div className="text-xl font-bold mt-1">{Math.round(source.completeness)}%</div>
+                  <div className="rounded-xl bg-[#F7F8FA] p-3 border border-[#E8E8EE]">
+                    <div className="text-xs text-[#8A8AA3] uppercase tracking-wide">{tr('truthCompletenessLabel', 'Completeness')}</div>
+                    <div className="text-xl font-bold mt-1 text-[#1A1A2E]">{formatPercent(source.completeness)}</div>
                   </div>
-                  <div className="rounded-xl bg-white/[0.03] p-3 border border-white/5">
-                    <div className="text-xs text-white/40 uppercase tracking-wide">Reliability</div>
-                    <div className="text-xl font-bold mt-1">{Math.round(source.reliability)}%</div>
+                  <div className="rounded-xl bg-[#F7F8FA] p-3 border border-[#E8E8EE]">
+                    <div className="text-xs text-[#8A8AA3] uppercase tracking-wide">{tr('truthReliabilityLabel', 'Reliability')}</div>
+                    <div className="text-xl font-bold mt-1 text-[#1A1A2E]">{formatPercent(source.reliability)}</div>
                   </div>
                 </div>
 
-                {source.error && <p className="text-sm text-red-300">{source.error}</p>}
+                <div className="flex items-center justify-between gap-3 text-sm">
+                  <span className="text-[#6A6A85]">{source.source ? `Source: ${source.source}` : 'Source: —'}</span>
+                  <button onClick={() => openDashboardTab('integrations')} className="font-semibold text-[#0D9488] hover:text-[#0F766E]">
+                    {source.connected ? 'Manage' : 'Connect'}
+                  </button>
+                </div>
+
+                {source.error && <p className="text-sm text-[#C2410C]">{source.error}</p>}
               </div>
             ))}
           </div>
         </section>
 
-        <section className="space-y-4">
-          <div>
-            <h2 className="text-2xl font-bold tracking-tight">Where your money goes</h2>
-            <p className="text-white/50 text-sm mt-1">Numbers appear only when they are available in the backend truth payload.</p>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-            {truthView.financialRows.map((row) => (
-              <div key={row.key} className="rounded-2xl border border-white/10 bg-[#111214] p-5 space-y-3">
-                <div className="flex items-center justify-between gap-3">
-                  <h3 className="font-semibold text-white/90">{row.label}</h3>
-                  <span className="text-[11px] uppercase tracking-wide text-white/40">{row.badge}</span>
-                </div>
-                <div className={`text-3xl font-bold ${row.color}`}>
-                  {row.available ? formatCurrency(row.value) : 'Missing'}
-                </div>
-                <p className="text-sm text-white/50">
-                  {row.available ? 'Verified amount from synced sources or configured cost inputs.' : 'This amount is not shown because no verified value is available yet.'}
-                </p>
+        <section className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <div className="rounded-3xl border border-[#E8E8EE] bg-white p-6 shadow-sm">
+            <div className="flex items-center gap-3">
+              <AlertCircleIcon className="text-[#FF6B35]" />
+              <div>
+                <h2 className="text-2xl font-bold text-[#1A1A2E]">{tr('truthAnomaliesTitle', 'Anomalies')}</h2>
+                <p className="text-sm text-[#6A6A85] mt-1">{tr('truthErrorTooltip', 'Platform is over/under reporting revenue')}</p>
               </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="space-y-4">
-          <div className="flex items-center gap-3">
-            <AlertCircleIcon className="text-red-400" />
-            <div>
-              <h2 className="text-2xl font-bold tracking-tight">Detected problems</h2>
-              <p className="text-white/50 text-sm mt-1">Issues come from anomalies and backend truth checks.</p>
             </div>
-          </div>
 
-          {(truthView.anomalies.length > 0 || truthView.alerts.length > 0) ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {truthView.anomalies.slice(0, 4).map((anomaly, index) => (
-                <div key={`${anomaly.type}-${index}`} className="rounded-2xl border border-red-500/20 bg-red-500/8 p-5 space-y-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wide bg-red-500/15 text-red-300">
+            <div className="mt-4 space-y-3">
+              {truthView.anomalies.length > 0 ? truthView.anomalies.slice(0, 4).map((anomaly, index) => (
+                <div key={`${anomaly.type}-${index}`} className="rounded-2xl border border-[#FDE68A] bg-[#FFFBEB] p-4">
+                  <div className="flex items-center justify-between gap-3 mb-2">
+                    <span className="px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wide bg-[#FEF3C7] text-[#92400E]">
                       {anomaly.severity}
                     </span>
-                    <span className="text-sm text-white/45">{anomaly.platform}</span>
+                    <span className="text-sm text-[#8A8AA3]">{anomaly.platform}</span>
                   </div>
-                  <p className="text-lg font-semibold">{anomaly.message}</p>
-                  <button onClick={() => openDashboardTab('integrations')} className="text-sm font-semibold text-[#FF6B35] hover:text-[#FF8B60]">
-                    Check campaign
-                  </button>
+                  <p className="font-semibold text-[#1A1A2E]">{anomaly.message}</p>
                 </div>
-              ))}
-              {truthView.alerts.slice(0, Math.max(0, 4 - truthView.anomalies.length)).map((alert, index) => (
-                <div key={`${alert}-${index}`} className="rounded-2xl border border-orange-500/20 bg-orange-500/8 p-5 space-y-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wide bg-orange-500/15 text-orange-300">
-                      Alert
-                    </span>
+              )) : (
+                <div className="rounded-2xl border border-[#D1FAE5] bg-[#ECFDF5] p-4 flex items-start gap-3">
+                  <CheckCircleIcon className="text-[#059669] mt-0.5" />
+                  <div>
+                    <h3 className="font-semibold text-[#065F46]">{tr('truthNoAnomalies', 'No contradictions detected right now.')}</h3>
                   </div>
-                  <p className="text-lg font-semibold">{alert}</p>
-                  <button onClick={() => openDashboardTab('overview')} className="text-sm font-semibold text-[#FF6B35] hover:text-[#FF8B60]">
-                    View product
-                  </button>
                 </div>
-              ))}
+              )}
             </div>
-          ) : (
-            <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/8 p-6 flex items-start gap-3">
-              <CheckCircleIcon className="text-emerald-300 mt-0.5" />
+          </div>
+
+          <div className="rounded-3xl border border-[#E8E8EE] bg-white p-6 shadow-sm">
+            <div className="flex items-center gap-3">
+              <CheckCircleIcon className="text-[#0D9488]" />
               <div>
-                <h3 className="font-semibold text-emerald-200">No critical contradiction detected</h3>
-                <p className="text-sm text-white/60 mt-1">The current connected data does not expose a major Truth conflict right now.</p>
+                <h2 className="text-2xl font-bold text-[#1A1A2E]">{tr('truthAlertsTitle', 'Notifications')}</h2>
+                <p className="text-sm text-[#6A6A85] mt-1">{tr('truthInsightAction', 'Action')}</p>
               </div>
             </div>
-          )}
+
+            <div className="mt-4 space-y-3">
+              {truthView.alerts.length > 0 ? truthView.alerts.slice(0, 4).map((alert, index) => (
+                <div key={`${alert}-${index}`} className="rounded-2xl border border-[#E8E8EE] bg-[#F7F8FA] p-4">
+                  <p className="font-semibold text-[#1A1A2E]">{alert}</p>
+                </div>
+              )) : (
+                <div className="rounded-2xl border border-[#E8E8EE] bg-[#F7F8FA] p-4 text-sm text-[#6A6A85]">
+                  {tr('truthNoAlerts', 'No critical alerts right now.')}
+                </div>
+              )}
+            </div>
+          </div>
         </section>
 
         <section className="space-y-4 pb-12">
-          <div>
-            <h2 className="text-2xl font-bold tracking-tight">Campaign truth table</h2>
-            <p className="text-white/50 text-sm mt-1">Campaign rows are built from real ads spend and Shopify-attributed revenue.</p>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h2 className="text-2xl font-bold text-[#1A1A2E]">{tr('truthTableTitle', 'Campaign Truth Table')}</h2>
+              <p className="text-sm text-[#6A6A85] mt-1">{tr('truthTableSubtitle', 'Each row compares what platforms report versus business reality.')}</p>
+            </div>
+            <span className="text-sm text-[#8A8AA3]">{truthView.campaigns.length} {tr('truthCampaignRows', 'campaigns')}</span>
           </div>
 
           {truthView.campaigns.length === 0 ? (
-            <div className="rounded-2xl border border-white/10 bg-[#111214] p-6 text-white/60">
-              No campaign data is available yet. Connect Shopify and at least one paid source to unlock the truth table.
+            <div className="rounded-2xl border border-[#E8E8EE] bg-white p-6 text-[#6A6A85] shadow-sm">
+              {tr('truthNoRows', 'No campaigns available for this range yet. Connect Shopify and add UTM tracking to feed TRUTH.')}
             </div>
           ) : (
-            <div className="overflow-x-auto rounded-2xl border border-white/10 bg-[#111214]">
+            <div className="overflow-x-auto rounded-2xl border border-[#E8E8EE] bg-white shadow-sm">
               <table className="w-full text-left text-sm whitespace-nowrap">
-                <thead className="bg-white/5 text-white/40 text-xs uppercase tracking-wider">
+                <thead className="bg-[#F7F8FA] text-[#8A8AA3] text-xs uppercase tracking-wider">
                   <tr>
-                    <th className="px-6 py-4 font-semibold">Campaign</th>
-                    <th className="px-6 py-4 font-semibold text-right">Revenue</th>
-                    <th className="px-6 py-4 font-semibold text-right">Spend</th>
-                    <th className="px-6 py-4 font-semibold text-right">Profit</th>
-                    <th className="px-6 py-4 font-semibold text-right">ROAS</th>
-                    <th className="px-6 py-4 font-semibold text-right">Action</th>
+                    <th className="px-6 py-4 font-semibold">{tr('truthColCampaign', 'Campaign Name')}</th>
+                    <th className="px-6 py-4 font-semibold text-right">{tr('truthColRevenueReal', 'Revenue (REAL)')}</th>
+                    <th className="px-6 py-4 font-semibold text-right">{tr('truthColSpend', 'Spend ($)')}</th>
+                    <th className="px-6 py-4 font-semibold text-right">{tr('truthColProfitReal', 'Profit (REAL)')}</th>
+                    <th className="px-6 py-4 font-semibold text-right">{tr('truthColRoasReal', 'ROAS (REAL)')}</th>
+                    <th className="px-6 py-4 font-semibold text-right">{tr('truthColStatus', 'Status')}</th>
+                    <th className="px-6 py-4 font-semibold text-right">{tr('truthInsightAction', 'Action')}</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/5">
+                <tbody className="divide-y divide-[#F1F5F9]">
                   {truthView.campaigns.map((campaign) => {
                     const profitValue = campaign?.profit_real
                     const negative = Number(profitValue) < 0
                     return (
-                      <tr key={`${campaign.platform}-${campaign.campaign_id || campaign.campaign_name}`} className="hover:bg-white/[0.02] transition-colors">
+                      <tr key={`${campaign.platform}-${campaign.campaign_id || campaign.campaign_name}`} className="hover:bg-[#FAFAFC] transition-colors">
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
-                            <div className={`w-2.5 h-2.5 rounded-full ${negative ? 'bg-red-500' : 'bg-emerald-500'}`} />
+                            <div className={`w-2.5 h-2.5 rounded-full ${negative ? 'bg-[#FF6B35]' : 'bg-[#0D9488]'}`} />
                             <div>
-                              <div className="font-medium text-white/90">{campaign.campaign_name}</div>
-                              <div className="text-xs text-white/45">{campaign.platform}</div>
+                              <div className="font-medium text-[#1A1A2E]">{campaign.campaign_name}</div>
+                              <div className="text-xs text-[#8A8AA3]">{campaign.platform}</div>
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4 text-right font-mono text-white/80">{formatCurrency(campaign.revenue_real)}</td>
-                        <td className="px-6 py-4 text-right font-mono text-red-300">{formatCurrency(campaign.spend)}</td>
-                        <td className={`px-6 py-4 text-right font-mono font-bold ${negative ? 'text-red-400' : 'text-emerald-400'}`}>
-                          {formatCurrency(profitValue)}
+                        <td className="px-6 py-4 text-right font-mono text-[#1A1A2E]">{formatCurrency(campaign.revenue_real, locale)}</td>
+                        <td className="px-6 py-4 text-right font-mono text-[#FF6B35]">{formatCurrency(campaign.spend, locale)}</td>
+                        <td className={`px-6 py-4 text-right font-mono font-bold ${negative ? 'text-[#DC2626]' : 'text-[#0D9488]'}`}>
+                          {profitValue === null || profitValue === undefined ? '—' : formatCurrency(profitValue, locale)}
                         </td>
-                        <td className="px-6 py-4 text-right font-mono text-white/75">
+                        <td className="px-6 py-4 text-right font-mono text-[#1A1A2E]">
                           {campaign?.roas_real ? `${Number(campaign.roas_real).toFixed(2)}x` : '—'}
                         </td>
                         <td className="px-6 py-4 text-right">
-                          <button
-                            onClick={() => handleCampaignAction(campaign)}
-                            className="px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-white text-xs font-semibold"
-                          >
+                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${campaign?.status === 'PROFITABLE' ? 'bg-[#D1FAE5] text-[#065F46]' : campaign?.status === 'LOSS' ? 'bg-[#FEE2E2] text-[#991B1B]' : 'bg-[#FEF3C7] text-[#92400E]'}`}>
+                            {campaign?.status || 'UNKNOWN'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <button onClick={() => handleCampaignAction(campaign)} className="px-3 py-2 rounded-lg bg-white hover:bg-[#F7F8FA] border border-[#E8E8EE] text-[#1A1A2E] text-xs font-semibold">
                             {getCampaignActionLabel(campaign)}
                           </button>
                         </td>
