@@ -399,9 +399,9 @@ const fr = {
   stripeSessionError: 'Erreur lors de la création de la session Stripe',
 
   // ---- Dashboard Greetings ----
-  goodMorning: 'Bonjour',
-  goodAfternoon: 'Bon après-midi',
-  goodEvening: 'Bonsoir',
+  goodMorning: 'Allo',
+  goodAfternoon: 'Allo',
+  goodEvening: 'Allo',
   today: "Aujourd'hui",
   yesterday: 'Hier',
 
