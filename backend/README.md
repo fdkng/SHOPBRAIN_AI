@@ -38,8 +38,11 @@ uvicorn main:app --reload --port 8000
 
 1. Create a Supabase project
 2. Run the SQL from `supabase_schema.sql` in your Supabase SQL editor
-3. Enable Auth (email/password) in Supabase dashboard
-4. Copy your project URL and keys to `.env`
+3. Run the SQL from `supabase_shopify_schema.sql` if you use the Shopify connection features
+4. Run the SQL from `supabase_subscriptions_schema.sql` and `supabase_user_profiles.sql` for billing and profile persistence
+5. Optionally run the SQL from `supabase_financials.sql` to create `financial_entries` and `tracked_products` for financial tracking extensions and future Truth-related inputs
+6. Enable Auth (email/password) in Supabase dashboard
+7. Copy your project URL and keys to `.env`
 
 ## Authentication
 
@@ -71,5 +74,7 @@ Stripe will send events with your webhook secret. Ensure `STRIPE_WEBHOOK_SECRET`
 Products and subscriptions are persisted to Supabase tables:
 - `products` — per-user optimized products
 - `subscriptions` — Stripe subscription events + metadata
+- `financial_entries` — optional user-owned revenue/expense records for financial tracking extensions
+- `tracked_products` — optional user-owned Shopify products explicitly tracked for follow-up workflows
 - RLS policies enforce per-user data access
 
