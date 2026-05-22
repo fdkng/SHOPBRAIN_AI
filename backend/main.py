@@ -1729,18 +1729,20 @@ def _subscription_period_is_valid(row: dict | None) -> bool:
     return end_dt > datetime.utcnow()
 
 
+def _subscription_status_allows_access(status: str | None) -> bool:
+    normalized = str(status or "").lower().strip()
+    return normalized in ("active", "cancelling", "trialing")
+
+
 def _is_paid_subscription_row(row: dict | None) -> bool:
     if not row:
         return False
     status = str(row.get("status") or row.get("subscription_status") or "").strip().lower()
-    # Robustly check paid/plan — DB may return bool True, string "true", or int 1
     raw_paid = row.get("paid")
     raw_plan = row.get("plan")
     paid = raw_paid is True or str(raw_paid).lower().strip() in ("true", "1")
     plan_ok = raw_plan is True or str(raw_plan).lower().strip() in ("true", "1")
-    # Accept both 'active' and 'cancelling' (user paid, just scheduled to cancel at period end)
-    # period_is_valid check removed — the columns end_date/current_period_end don't exist in Supabase
-    return status in ("active", "cancelling") and (paid or plan_ok)
+    return _subscription_status_allows_access(status) and (paid or plan_ok)
 
 
 def _inactive_subscription_payload(message: str | None = None) -> dict:
@@ -3197,7 +3199,7 @@ async def fast_init(request: Request):
             # Step 1: Read from DB
             sub_row = None
             try:
-                sub_result = supabase_client.table("subscriptions").select("*").eq("user_id", user_id).in_("status", ["active", "cancelling"]).order("updated_at", desc=True).limit(1).execute()
+                sub_result = supabase_client.table("subscriptions").select("*").eq("user_id", user_id).in_("status", ["active", "cancelling", "trialing"]).order("updated_at", desc=True).limit(1).execute()
                 if sub_result.data:
                     sub_row = sub_result.data[0]
                 else:
@@ -3219,7 +3221,7 @@ async def fast_init(request: Request):
 
                 # Step 2: DECISION — if DB says paid=true + valid plan + active status → GRANT ACCESS
                 payment_date = sub_row.get('payment_date')
-                if paid_flag and plan and sub_status in ('active', 'cancelling'):
+                if paid_flag and plan and _subscription_status_allows_access(sub_status):
                     # CRITICAL: Always verify plan from Stripe (source of truth) when we have a sub ID
                     # This prevents stale DB plan_tier from showing the wrong plan after upgrades/downgrades
                     stripe_verified_plan = None
@@ -3317,6 +3319,11 @@ async def fast_init(request: Request):
                             if cust_subs.data:
                                 stripe_sub_id = _normalize_stripe_subscription_id(cust_subs.data[0])
                                 print(f"  🔍 [INIT-SUB] Recovered sub_id from customer {sub_row['stripe_customer_id']}: {stripe_sub_id}")
+                            else:
+                                trial_subs = stripe.Subscription.list(customer=sub_row['stripe_customer_id'], status='trialing', limit=1)
+                                if trial_subs.data:
+                                    stripe_sub_id = _normalize_stripe_subscription_id(trial_subs.data[0])
+                                    print(f"  🔍 [INIT-SUB] Recovered TRIALING sub_id from customer {sub_row['stripe_customer_id']}: {stripe_sub_id}")
                         except Exception as cust_err:
                             print(f"  ⚠️ [INIT-SUB] Customer sub lookup warning: {cust_err}")
 
@@ -3363,7 +3370,7 @@ async def fast_init(request: Request):
                                 if healed_plan:
                                     upcoming_change = _extract_upcoming_plan_change(stripe_sub)
                                     plan = healed_plan
-                                    sub_status = 'active'
+                                    sub_status = 'trialing' if stripe_status == 'trialing' else 'active'
                                     payment_date = sub_row.get('payment_date') or _resolve_payment_date(_sg(stripe_sub, "created"))
                                     # Update DB so next call is instant
                                     try:
@@ -7446,6 +7453,112 @@ def _truth_cost_inputs(total_revenue: float) -> dict:
         "cogs_percent": cogs_percent,
         "fees_percent": fees_percent,
         "completeness": completeness,
+        "source": "env",
+    }
+
+
+def _truth_financial_bucket_from_entry(row: dict) -> str | None:
+    metadata = _truth_safe_dict(row.get("metadata"))
+    explicit_bucket = str(metadata.get("truth_bucket") or metadata.get("bucket") or "").strip().lower()
+    if explicit_bucket in {"cogs", "fees"}:
+        return explicit_bucket
+
+    category = str(row.get("category") or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if category in {"cogs", "cost_of_goods", "cost_of_goods_sold", "inventory", "product_cost", "product_costs"}:
+        return "cogs"
+    if category in {"fees", "fee", "transaction_fee", "transaction_fees", "processing_fee", "processing_fees", "payment_fee", "payment_fees", "shopify_fee", "shopify_fees"}:
+        return "fees"
+
+    description = str(row.get("description") or "").strip().lower()
+    if any(token in description for token in ("cogs", "cost of goods", "inventory cost", "product cost")):
+        return "cogs"
+    if any(token in description for token in ("processing fee", "transaction fee", "payment fee", "shopify fee")):
+        return "fees"
+    return None
+
+
+def _truth_financial_inputs(user_id: str, range_days: int, total_revenue: float) -> dict:
+    fallback = _truth_cost_inputs(total_revenue)
+    if not (SUPABASE_URL and SUPABASE_SERVICE_KEY and user_id):
+        return fallback
+
+    try:
+        start_date, end_date = _truth_range_dates(range_days)
+        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        result = (
+            supabase.table("financial_entries")
+            .select("amount,entry_type,category,date,description,metadata")
+            .eq("user_id", user_id)
+            .gte("date", start_date)
+            .lte("date", end_date)
+            .execute()
+        )
+        rows = result.data or []
+    except Exception as exc:
+        print(f"  ⚠️ [TRUTH] Financial entries lookup warning: {exc}")
+        return fallback
+
+    cogs_total = 0.0
+    fees_total = 0.0
+    recognized_rows = 0
+    for row in rows:
+        amount = abs(_truth_float(row.get("amount")))
+        if amount <= 0:
+            continue
+        bucket = _truth_financial_bucket_from_entry(row)
+        if not bucket:
+            continue
+        recognized_rows += 1
+        if bucket == "cogs":
+            cogs_total += amount
+        elif bucket == "fees":
+            fees_total += amount
+
+    if recognized_rows == 0:
+        return fallback
+
+    cogs_value = cogs_total if cogs_total > 0 else fallback.get("cogs_value")
+    fees_value = fees_total if fees_total > 0 else fallback.get("fees_value")
+    completeness = 0
+    if cogs_value is not None:
+        completeness += 50
+    if fees_value is not None:
+        completeness += 50
+
+    return {
+        "cogs_value": cogs_value,
+        "fees_value": fees_value,
+        "cogs_percent": (_truth_safe_div(cogs_value, total_revenue) * 100) if total_revenue and cogs_value is not None else fallback.get("cogs_percent"),
+        "fees_percent": (_truth_safe_div(fees_value, total_revenue) * 100) if total_revenue and fees_value is not None else fallback.get("fees_percent"),
+        "completeness": completeness,
+        "source": "financial_entries",
+        "recognized_rows": recognized_rows,
+    }
+
+
+def _truth_row_cost_inputs(revenue: float, total_revenue: float, aggregate_cost_inputs: dict) -> dict:
+    if revenue <= 0 or total_revenue <= 0:
+        return _truth_cost_inputs(revenue)
+
+    ratio = revenue / total_revenue
+    cogs_total = aggregate_cost_inputs.get("cogs_value")
+    fees_total = aggregate_cost_inputs.get("fees_value")
+    cogs_value = (cogs_total * ratio) if cogs_total is not None else None
+    fees_value = (fees_total * ratio) if fees_total is not None else None
+
+    completeness = 0
+    if cogs_value is not None:
+        completeness += 50
+    if fees_value is not None:
+        completeness += 50
+
+    return {
+        "cogs_value": cogs_value,
+        "fees_value": fees_value,
+        "cogs_percent": aggregate_cost_inputs.get("cogs_percent"),
+        "fees_percent": aggregate_cost_inputs.get("fees_percent"),
+        "completeness": completeness,
+        "source": aggregate_cost_inputs.get("source") or "env",
     }
 
 
@@ -7789,7 +7902,8 @@ async def get_truth_dashboard(request: Request, range: str = "30d"):
         + ad_coverage * 0.50
     )
 
-    cost_inputs = _truth_cost_inputs(sum(_truth_float(order.get("total_price")) for order in orders))
+    total_revenue = sum(_truth_float(order.get("total_price")) for order in orders)
+    cost_inputs = _truth_financial_inputs(user_id, days, total_revenue)
     data_completeness = round(source_data_completeness * 0.7 + cost_inputs.get("completeness", 0) * 0.3)
 
     for row in campaigns.values():
@@ -7802,7 +7916,7 @@ async def get_truth_dashboard(request: Request, range: str = "30d"):
             row["ctr"] = _truth_safe_div(clicks, impressions) * 100
         if row.get("cpc") is None and clicks:
             row["cpc"] = _truth_safe_div(spend, clicks)
-        row_cost_inputs = _truth_cost_inputs(revenue_real)
+        row_cost_inputs = _truth_row_cost_inputs(revenue_real, total_revenue, cost_inputs)
         row["profit_engine"] = _truth_build_profit_engine(
             revenue=revenue_real,
             ad_spend=spend,
@@ -13665,8 +13779,7 @@ def get_user_tier(user_id: str) -> str:
     try:
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
             supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-            # Include both "active" and "cancelling" — cancelling users paid until period end
-            sub_result = supabase.table("subscriptions").select("plan_tier,status,paid,created_at").eq("user_id", user_id).eq("paid", True).in_("status", ["active", "cancelling"]).order("created_at", desc=True).limit(1).execute()
+            sub_result = supabase.table("subscriptions").select("plan_tier,status,paid,created_at").eq("user_id", user_id).eq("paid", True).in_("status", ["active", "cancelling", "trialing"]).order("created_at", desc=True).limit(1).execute()
             if sub_result.data:
                 raw = (sub_result.data[0].get("plan_tier") or "").lower()
                 plan = tier_map.get(raw)
@@ -14789,7 +14902,7 @@ async def check_subscription_status(request: Request):
             subscription = None
             try:
                 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-                sub_result = supabase.table("subscriptions").select("*").eq("user_id", user_id).in_("status", ["active", "cancelling"]).order("updated_at", desc=True).limit(1).execute()
+                sub_result = supabase.table("subscriptions").select("*").eq("user_id", user_id).in_("status", ["active", "cancelling", "trialing"]).order("updated_at", desc=True).limit(1).execute()
                 if sub_result.data:
                     subscription = sub_result.data[0]
                     print(f"  📋 [STATUS] DB row (active): id={subscription.get('id')}, plan_tier={subscription.get('plan_tier')}, paid={subscription.get('paid')}, status={subscription.get('status')}, payment_date={subscription.get('payment_date')}")
@@ -14810,7 +14923,7 @@ async def check_subscription_status(request: Request):
 
                 # Step 2: If DB says paid=true + valid plan → verify from Stripe (source of truth) then GRANT ACCESS
                 payment_date = subscription.get('payment_date')
-                if paid_flag and plan and sub_status in ('active', 'cancelling'):
+                if paid_flag and plan and _subscription_status_allows_access(sub_status):
                     # CRITICAL: Verify plan from Stripe live to prevent stale plan display
                     stripe_verified_plan = None
                     upcoming_change = {"upcoming_plan": None, "upcoming_plan_effective_at": None}
@@ -14885,6 +14998,7 @@ async def check_subscription_status(request: Request):
                     elif cancel_at_period_end:
                         pass
                     print(f"  ✅ [STATUS] ACCESS GRANTED: paid={paid_flag}, plan={plan}, status={sub_status}, stripe_verified={stripe_verified_plan is not None}")
+                    effective_status = 'cancelling' if cancel_at_period_end else (sub_status if _subscription_status_allows_access(sub_status) else 'active')
                     return {
                         'success': True,
                         'has_subscription': True,
@@ -14893,8 +15007,8 @@ async def check_subscription_status(request: Request):
                         'upcoming_plan_effective_at': upcoming_change.get('upcoming_plan_effective_at'),
                         'current_period_end': current_period_end_iso,
                         'paid': True,
-                        'status': 'active' if not cancel_at_period_end else 'cancelling',
-                        'subscription_status': 'active' if not cancel_at_period_end else 'cancelling',
+                        'status': effective_status,
+                        'subscription_status': effective_status,
                         'payment_date': payment_date,
                         'started_at': subscription.get('start_date') or subscription.get('created_at'),
                         'capabilities': capabilities.get(plan, {}),
@@ -14982,11 +15096,12 @@ async def check_subscription_status(request: Request):
                                 healed_payment_date = subscription.get('payment_date') or _resolve_payment_date(_sg(stripe_sub, "created"))
                                 try:
                                     healed_period_end = _coerce_stripe_timestamp(_sg(stripe_sub, "current_period_end"))
+                                    healed_status = "trialing" if stripe_status == "trialing" else "active"
                                     heal_payload = {
                                         "plan_tier": healed_plan,
                                         "plan": True,
-                                        "paid": True, "status": "active",
-                                        "subscription_status": "active",
+                                        "paid": True, "status": healed_status,
+                                        "subscription_status": healed_status,
                                         "payment_date": healed_payment_date,
                                         "current_period_end": _stripe_ts_to_iso(healed_period_end) if healed_period_end else subscription.get("current_period_end"),
                                         "stripe_customer_id": _sg(stripe_sub, "customer") or subscription.get("stripe_customer_id"),
@@ -15003,7 +15118,7 @@ async def check_subscription_status(request: Request):
                                             raise
                                     supabase.table("user_profiles").update({
                                         "subscription_plan": healed_plan, "subscription_tier": healed_plan,
-                                        "subscription_status": "active",
+                                        "subscription_status": healed_status,
                                         "updated_at": datetime.utcnow().isoformat(),
                                     }).eq("id", user_id).execute()
                                     print(f"  ✅ [STATUS] Auto-healed: paid=true, plan={healed_plan}")
@@ -15017,8 +15132,8 @@ async def check_subscription_status(request: Request):
                                     'upcoming_plan_effective_at': upcoming_change.get('upcoming_plan_effective_at'),
                                     'current_period_end': _stripe_ts_to_iso(healed_period_end) if healed_period_end else subscription.get('current_period_end'),
                                     'paid': True,
-                                    'status': 'active',
-                                    'subscription_status': 'active',
+                                    'status': healed_status,
+                                    'subscription_status': healed_status,
                                     'payment_date': healed_payment_date,
                                     'started_at': subscription.get('start_date') or subscription.get('created_at'),
                                     'capabilities': capabilities.get(healed_plan, {}),
@@ -15087,13 +15202,14 @@ async def check_subscription_status(request: Request):
                     if recovered_sub_id and recovered_plan and recovered_status in ("active", "trialing"):
                         recovered_payment_date = _resolve_payment_date(_sg(recovered_sub, "created"))
                         recovered_period_end = _coerce_stripe_timestamp(_sg(recovered_sub, "current_period_end"))
+                        recovered_db_status = "trialing" if recovered_status == "trialing" else "active"
                         _sub_upsert(supabase, user_id, {
                             "user_id": user_id,
                             "plan_tier": recovered_plan,
                             "plan": True,
                             "paid": True,
-                            "status": "active",
-                            "subscription_status": "active",
+                            "status": recovered_db_status,
+                            "subscription_status": recovered_db_status,
                             "payment_date": recovered_payment_date,
                             "stripe_customer_id": recovered_customer,
                             "stripe_subscription_id": recovered_sub_id,
@@ -15106,7 +15222,7 @@ async def check_subscription_status(request: Request):
                                 "stripe_subscription_id": recovered_sub_id,
                                 "subscription_plan": recovered_plan,
                                 "subscription_tier": recovered_plan,
-                                "subscription_status": "active",
+                                "subscription_status": recovered_db_status,
                                 "updated_at": datetime.utcnow().isoformat(),
                             }).eq("id", user_id).execute()
                         except Exception:
@@ -15116,8 +15232,8 @@ async def check_subscription_status(request: Request):
                             'has_subscription': True,
                             'plan': recovered_plan,
                             'paid': True,
-                            'status': 'active',
-                            'subscription_status': 'active',
+                            'status': recovered_db_status,
+                            'subscription_status': recovered_db_status,
                             'payment_date': recovered_payment_date,
                             'started_at': _stripe_ts_to_iso(_coerce_stripe_timestamp(_sg(recovered_sub, 'start_date'))) or _stripe_ts_to_iso(_coerce_stripe_timestamp(_sg(recovered_sub, 'created'))),
                             'current_period_end': _stripe_ts_to_iso(recovered_period_end) if recovered_period_end else None,

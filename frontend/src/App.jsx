@@ -410,7 +410,7 @@ export default function App() {
           if (initResp.ok) {
             const initData = await initResp.json().catch(() => ({}))
             const initSub = initData?.subscription || {}
-            const initHasSub = Boolean(initSub?.has_subscription || (initSub?.paid && (initSub?.status === 'active' || initSub?.status === 'cancelling')))
+            const initHasSub = Boolean(initSub?.has_subscription || (initSub?.paid && (initSub?.status === 'active' || initSub?.status === 'cancelling' || initSub?.status === 'trialing')))
             if (initHasSub) {
               hasSub = true
               resolvedPlan = initSub?.plan || initSub?.plan_tier || null
