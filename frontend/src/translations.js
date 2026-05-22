@@ -95,6 +95,7 @@ const fr = {
   processingFailedRetryOrContact: 'Le traitement a échoué. Réessaie ou contacte le support.',
   paymentReceivedReconnect: 'Paiement reçu ! Reconnecte-toi pour accéder à ton plan.',
   verificationInProgress: 'Vérification en cours — cela peut prendre quelques secondes.',
+  subscriptionNotDetectedRetry: "Aucun abonnement actif détecté pour l'instant. Si tu viens de payer ou que ton essai démarre, attends quelques secondes puis réessaie.",
   accessDashboard: 'Accéder au dashboard',
 
   // ---- Pre-Dashboard Questions ----
@@ -1314,6 +1315,7 @@ const en = {
   processingFailedRetryOrContact: 'Processing failed. Try again or contact support.',
   paymentReceivedReconnect: 'Payment received! Sign in again to access your plan.',
   verificationInProgress: 'Verification in progress — this may take a few seconds.',
+  subscriptionNotDetectedRetry: 'No active subscription detected yet. If you just paid or your trial is starting, wait a few seconds and try again.',
   accessDashboard: 'Access dashboard',
   beforeDashboardLabel: 'Before the dashboard',
   preDashboardTitle: 'Answer critical questions before taking action',

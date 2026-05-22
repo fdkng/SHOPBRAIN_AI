@@ -1,51 +1,13 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useTranslation } from './LanguageContext'
-import { supabase } from './supabaseClient'
+import { createClient } from '@supabase/supabase-js'
+
+const supabase = createClient(
+  'https://jgmsfadayzbgykzajvmw.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpnbXNmYWRheXpiZ3lremFqdm13Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQwODk0NTksImV4cCI6MjA3OTY2NTQ1OX0.sg0O2QGdoKO5Zb6vcRJr5pSu2zlaxU3r7nHtyXb07hg'
+)
 
 const API_URL = 'https://shopbrain-backend.onrender.com'
-const INTEGRATION_OAUTH_STORAGE_KEY = 'shopbrain:integration-oauth-result'
-
-const INTEGRATION_PROVIDER_CONFIG = {
-  meta: {
-    label: 'Meta Ads',
-    fields: ['external_account_id', 'display_name', 'external_account_name', 'access_token', 'api_version'],
-  },
-  tiktok: {
-    label: 'TikTok Ads',
-    fields: ['external_account_id', 'display_name', 'external_account_name', 'access_token', 'api_version'],
-  },
-  google: {
-    label: 'Google Ads',
-    fields: ['external_account_id', 'display_name', 'external_account_name', 'refresh_token', 'developer_token', 'client_id', 'client_secret', 'manager_account_id'],
-  },
-}
-
-const createEmptyIntegrationForms = () => ({
-  meta: {
-    external_account_id: '',
-    display_name: '',
-    external_account_name: '',
-    access_token: '',
-    api_version: 'v20.0',
-  },
-  tiktok: {
-    external_account_id: '',
-    display_name: '',
-    external_account_name: '',
-    access_token: '',
-    api_version: 'v1.3',
-  },
-  google: {
-    external_account_id: '',
-    display_name: '',
-    external_account_name: '',
-    refresh_token: '',
-    developer_token: '',
-    client_id: '',
-    client_secret: '',
-    manager_account_id: '',
-  },
-})
 
 // ⚡ Session cache — avoid redundant Supabase getSession() calls (each takes ~50ms)
 let _cachedSession = null
@@ -126,13 +88,6 @@ export default function Dashboard() {
   const [shopifyConnected, setShopifyConnected] = useState(false)
   const [shopifyConnecting, setShopifyConnecting] = useState(false)
   const [showShopifyToken, setShowShopifyToken] = useState(false)
-  const [integrationsData, setIntegrationsData] = useState({ meta: [], tiktok: [], google: [] })
-  const [integrationsLoading, setIntegrationsLoading] = useState(false)
-  const [integrationSavingProvider, setIntegrationSavingProvider] = useState(null)
-  const [integrationDeletingProvider, setIntegrationDeletingProvider] = useState(null)
-  const [integrationOAuthProvider, setIntegrationOAuthProvider] = useState(null)
-  const [integrationOAuthConfig, setIntegrationOAuthConfig] = useState({ meta: { configured: false }, tiktok: { configured: false }, google: { configured: false } })
-  const [integrationForms, setIntegrationForms] = useState(() => createEmptyIntegrationForms())
   // ── Multi-shop state ──
   const [shopList, setShopList] = useState([])       // all connected shops [{shop_domain, is_active, created_at, updated_at}]
   const [shopLimit, setShopLimit] = useState(1)       // plan limit (null = unlimited)
@@ -144,13 +99,10 @@ export default function Dashboard() {
   const [error, setError] = useState('')
   const [isProcessingPayment, setIsProcessingPayment] = useState(false)
 
-  const PLAN_DISPLAY = { standard: 'STANDARD', pro: 'GROW', premium: 'PREMIUM' }
-  const PLAN_PRICE = { standard: '35', pro: '99', premium: '199' }
-
   // ──── STRICT PLAN FEATURE GATES ────
-  // Standard $35: product analysis (50/mo), title rewrite, price suggestions, 1 shop, monthly report
-  // Grow $99: + description rewrite, image recs, cross-sell/bundles, 500/mo, 3 shops, weekly reports, automated actions, invoices
-  // Premium $199: + IA prédictive, auto stock, unlimited products/shops, daily reports, API, account manager
+  // Standard $99: product analysis (50/mo), title rewrite, price suggestions, 1 shop, monthly report
+  // Pro $199: + description rewrite, image recs, cross-sell/bundles, 500/mo, 3 shops, weekly reports, automated actions, invoices
+  // Premium $299: + IA prédictive, auto stock, unlimited products/shops, daily reports, API, account manager
   const PLAN_GATES = {
     // feature_key: minimum plan required
     'product_analysis': 'standard',
@@ -172,14 +124,10 @@ export default function Dashboard() {
   const userPlanRank = PLAN_RANK[subscription?.plan] || 0
   const canAccess = (feature) => userPlanRank >= (PLAN_RANK[PLAN_GATES[feature]] || 1)
   const getProductLimit = () => ({ standard: 50, pro: 500, premium: Infinity }[subscription?.plan] || 50)
-  const planLabel = (feature) => PLAN_GATES[feature] === 'premium' ? 'PREMIUM' : 'GROW'
+  const planLabel = (feature) => PLAN_GATES[feature] === 'premium' ? 'Premium' : 'Pro'
   const [showPlanMenu, setShowPlanMenu] = useState(false)
   const [showProfileMenu, setShowProfileMenu] = useState(false)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
-  const [isMobileView, setIsMobileView] = useState(() => {
-    if (typeof window === 'undefined') return false
-    return window.matchMedia('(max-width: 767px)').matches
-  })
   const [showSettingsModal, setShowSettingsModal] = useState(false)
   const [settingsTab, setSettingsTab] = useState(() => {
     if (typeof window === 'undefined') return 'profile'
@@ -230,8 +178,6 @@ export default function Dashboard() {
   const [chatLoading, setChatLoading] = useState(false)
 
   const blockersRequestIdRef = useRef(0)
-  const integrationOauthPopupRef = useRef(null)
-  const integrationOauthPopupHandledRef = useRef(false)
   
   // Settings form states
   const [profileFirstName, setProfileFirstName] = useState(profile?.first_name || '')
@@ -241,7 +187,6 @@ export default function Dashboard() {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [darkMode, setDarkMode] = useState(true)
   const { t, language, setLanguage, LANGUAGES } = useTranslation()
-  const [interfaceLanguageDraft, setInterfaceLanguageDraft] = useState(language)
   // Language is now managed by LanguageContext
   const [notifications, setNotifications] = useState({
     email_notifications: true,
@@ -255,11 +200,6 @@ export default function Dashboard() {
   const avatarInputRef = useRef(null)
   const [apiKeys, setApiKeys] = useState([])
   const [apiLoading, setApiLoading] = useState(false)
-  const [connectionsOverview, setConnectionsOverview] = useState(null)
-  const [connectionsLoading, setConnectionsLoading] = useState(false)
-  const [integrationConnectProvider, setIntegrationConnectProvider] = useState(null)
-  const [metaAccountOptions, setMetaAccountOptions] = useState([])
-  const [metaAccountsLoading, setMetaAccountsLoading] = useState(false)
   const [applyingRecommendationId, setApplyingRecommendationId] = useState(null)
   const [applyingBlockerActionId, setApplyingBlockerActionId] = useState(null)
   const [statusByKey, setStatusByKey] = useState({})
@@ -268,7 +208,6 @@ export default function Dashboard() {
   const chatEndRef = useRef(null)
   const [showChatPanel, setShowChatPanel] = useState(false)
   const [chatExpanded, setChatExpanded] = useState(false)
-  const hasLoadedRemoteConversationsRef = useRef(false)
   const [chatConversations, setChatConversations] = useState(() => {
     if (typeof window === 'undefined') return []
     try {
@@ -325,10 +264,6 @@ export default function Dashboard() {
   const [analyticsData, setAnalyticsData] = useState(null)
   const [analyticsLoading, setAnalyticsLoading] = useState(false)
   const [analyticsError, setAnalyticsError] = useState('')
-  const analyticsCacheRef = useRef(new Map())
-  const analyticsInFlightRef = useRef(new Set())
-  const ANALYTICS_CACHE_TTL_MS = 60_000
-  const ANALYTICS_POLL_MS = isMobileView ? 20_000 : 10_000
   const [insightsData, setInsightsData] = useState(null)
   const [insightsLoading, setInsightsLoading] = useState(false)
   const [insightsError, setInsightsError] = useState('')
@@ -546,10 +481,10 @@ export default function Dashboard() {
 
   const renderInsightItems = (items, formatter) => {
     if (insightsLoading) {
-      return <p className="text-xs text-[#8A8AA3] mt-2">{t('loading')}</p>
+      return <p className="text-xs text-[#8A8AA3] mt-2">Chargement...</p>
     }
     if (!Array.isArray(items) || items.length === 0) {
-      return <p className="text-xs text-[#8A8AA3] mt-2">{t('noSignalDetected')}</p>
+      return <p className="text-xs text-[#8A8AA3] mt-2">Aucun signal détecté.</p>
     }
     return (
       <ul className="mt-2 space-y-1 text-xs text-[#6A6A85]">
@@ -572,13 +507,15 @@ export default function Dashboard() {
     const endDate = new Date()
     const startDate = new Date()
     startDate.setDate(endDate.getDate() - days)
-    const loc = language === 'fr' ? 'fr-FR' : (language === 'es' ? 'es-ES' : 'en-US')
-    return `${startDate.toLocaleDateString(loc)} — ${endDate.toLocaleDateString(loc)}`
+    return `Du ${startDate.toLocaleDateString('fr-FR')} au ${endDate.toLocaleDateString('fr-FR')}`
   }
 
   const formatPlan = (plan) => {
     const normalized = String(plan || '').toLowerCase()
-    return PLAN_DISPLAY[normalized] || '—'
+    if (normalized === 'standard') return 'STANDARD'
+    if (normalized === 'pro') return 'PRO'
+    if (normalized === 'premium') return 'PREMIUM'
+    return '—'
   }
 
   const getPlanFeatures = (plan) => {
@@ -621,6 +558,7 @@ export default function Dashboard() {
     if (str) {
       // Never show raw database/internal errors
       if (/column.*does not exist|relation.*does not exist|42703|42P01|SQLSTATE/i.test(str)) return fallback
+      if (/invalidrequesterror|no such customer|no such subscription|request req_|stripe/i.test(str)) return fallback
       return str
     }
     return fallback
@@ -641,6 +579,9 @@ export default function Dashboard() {
     }
     // Never show raw database/internal errors to user
     if (/column.*does not exist|relation.*does not exist|42703|42P01|syntax error at|SQLSTATE/i.test(raw)) {
+      return fallback
+    }
+    if (/invalidrequesterror|no such customer|no such subscription|request req_|stripe/i.test(raw)) {
       return fallback
     }
     return raw || fallback
@@ -771,331 +712,11 @@ export default function Dashboard() {
             disabled={insightsLoading}
             className="shrink-0 bg-[#FF6B35] hover:bg-[#E85A28] text-white text-xs font-bold py-1.5 px-4 rounded-md disabled:opacity-50 transition-colors"
           >
-            {t('retry')}
+            {t('retry') || 'Réessayer'}
           </button>
         )}
       </div>
     )
-  }
-
-  const buildIntegrationFormFromAccount = (provider, account) => {
-    const defaults = createEmptyIntegrationForms()[provider] || {}
-    if (!account) return defaults
-    return {
-      ...defaults,
-      external_account_id: account.external_account_id || '',
-      display_name: account.display_name || '',
-      external_account_name: account.external_account_name || '',
-      api_version: account.api_version || defaults.api_version || '',
-    }
-  }
-
-  const hydrateIntegrationForms = (groupedIntegrations) => {
-    setIntegrationForms((prev) => {
-      const next = { ...prev }
-      Object.keys(INTEGRATION_PROVIDER_CONFIG).forEach((provider) => {
-        const accounts = groupedIntegrations?.[provider] || []
-        const primary = accounts.find((account) => account.is_primary) || accounts[0] || null
-        next[provider] = buildIntegrationFormFromAccount(provider, primary)
-      })
-      return next
-    })
-  }
-
-  const handleIntegrationFormChange = (provider, field, value) => {
-    setIntegrationForms((prev) => ({
-      ...prev,
-      [provider]: {
-        ...prev[provider],
-        ...(provider === 'meta' && field === 'access_token'
-          ? {
-              external_account_id: '',
-              external_account_name: '',
-            }
-          : {}),
-        [field]: value,
-      },
-    }))
-
-    if (provider === 'meta' && field === 'access_token') {
-      setMetaAccountOptions([])
-    }
-  }
-
-  const isAdsProvider = (provider) => ['meta', 'tiktok', 'google'].includes(provider)
-
-  const isProviderOauthConfigured = (provider) => integrationOAuthConfig?.[provider]?.configured !== false
-
-  const getProviderVisual = (provider) => {
-    if (provider === 'shopify') return { icon: 'S', accent: 'bg-[#ECF8D9] text-[#5D7F1F]' }
-    if (provider === 'meta') return { icon: 'M', accent: 'bg-[#EEF2FF] text-[#4338CA]' }
-    if (provider === 'tiktok') return { icon: 'T', accent: 'bg-[#F3F4F6] text-[#111827]' }
-    if (provider === 'google') return { icon: 'G', accent: 'bg-[#EFF6FF] text-[#1D4ED8]' }
-    return { icon: '$', accent: 'bg-[#F5F3FF] text-[#6D28D9]' }
-  }
-
-  const formatProviderConnectionError = (provider, rawError) => {
-    const message = String(rawError || '').trim()
-    if (!message) return ''
-    if (/TRUTH_[A-Z0-9_]+/i.test(message) || /Missing required credentials/i.test(message)) {
-      return tr('integrationSetupRequired', 'This source still needs valid credentials before it can sync.')
-    }
-    if (provider === 'meta' && /domain/i.test(message) && /app/i.test(message)) {
-      return tr('integrationMetaDomainIssue', 'Meta OAuth is blocked by the Meta app configuration. Add the backend domain to App Domains and valid OAuth redirect URIs, or use manual token connection.')
-    }
-    return message
-  }
-
-  const getProviderConnectionSummary = (provider, connected) => {
-    if (provider === 'shopify') {
-      return connected
-        ? tr('connectionSummaryShopifyConnected', 'Your store data is available for revenue, orders, and product insights.')
-        : tr('connectionSummaryShopifyDisconnected', 'Connect Shopify first to unlock real revenue, orders, and catalog data.')
-    }
-    if (provider === 'stripe') {
-      return connected
-        ? tr('connectionSummaryStripeConnected', 'Billing verification is active for subscriptions and payments.')
-        : tr('connectionSummaryStripeDisconnected', 'Stripe verifies billing status and subscription access on the platform.')
-    }
-    return connected
-      ? tr('connectionSummaryAdsConnected', 'This ads source is ready to feed spend and campaign truth into the Truth Engine.')
-      : tr('connectionSummaryAdsDisconnected', 'Connect this source to sync real ad spend, campaigns, and attribution signals.')
-  }
-
-  const getProviderNextAction = (provider) => {
-    if (provider === 'meta') return tr('integrationNextActionMeta', 'Paste a valid Meta access token, then select the ad account to sync.')
-    if (provider === 'tiktok') return tr('integrationNextActionTiktok', 'Use OAuth or paste a valid TikTok access token and advertiser ID.')
-    if (provider === 'google') return tr('integrationNextActionGoogle', 'Paste the Google Ads client ID, client secret, and refresh token needed to validate the connection.')
-    return ''
-  }
-
-  const getIntegrationRequiredLabels = (provider) => {
-    if (provider === 'meta') {
-      return [
-        t('integrationsAccessToken'),
-        tr('integrationMetaAccountSelectorLabel', 'Ad account'),
-      ]
-    }
-    return getIntegrationFieldDefinitions(provider)
-      .filter((field) => field.required)
-      .map((field) => field.label)
-  }
-
-  const clearIntegrationOauthPopupMonitor = () => {
-    if (integrationOauthPopupRef.current?.intervalId) {
-      window.clearInterval(integrationOauthPopupRef.current.intervalId)
-    }
-    integrationOauthPopupRef.current = null
-    integrationOauthPopupHandledRef.current = false
-  }
-
-  const getIntegrationFieldDefinitions = (provider) => {
-    if (provider === 'meta') {
-      return [
-        {
-          field: 'access_token',
-          label: t('integrationsAccessToken'),
-          placeholder: t('integrationsAccessTokenPlaceholder'),
-          required: true,
-          type: 'password',
-        },
-      ]
-    }
-
-    if (provider === 'tiktok') {
-      return [
-        {
-          field: 'external_account_id',
-          label: tr('integrationTiktokAdvertiserIdLabel', 'Advertiser ID'),
-          placeholder: tr('integrationTiktokAdvertiserIdPlaceholder', 'Ex: 7123456789012345678'),
-          required: true,
-          type: 'text',
-        },
-        {
-          field: 'access_token',
-          label: t('integrationsAccessToken'),
-          placeholder: t('integrationsAccessTokenPlaceholder'),
-          required: true,
-          type: 'password',
-        },
-      ]
-    }
-
-    return [
-      {
-        field: 'refresh_token',
-        label: t('integrationsRefreshToken'),
-        placeholder: t('integrationsRefreshTokenPlaceholder'),
-        required: true,
-        type: 'password',
-      },
-      {
-        field: 'developer_token',
-        label: t('integrationsDeveloperToken'),
-        placeholder: t('integrationsDeveloperTokenPlaceholder'),
-        required: true,
-        type: 'password',
-      },
-    ]
-  }
-
-  const buildIntegrationPayload = (provider) => {
-    const form = integrationForms[provider] || {}
-    const payload = {
-      external_account_id: form.external_account_id?.trim() || undefined,
-      connection_mode: 'manual',
-      is_primary: true,
-    }
-
-    if (provider === 'meta' || provider === 'tiktok') {
-      payload.access_token = form.access_token?.trim() || undefined
-    }
-
-    if (provider === 'meta') {
-      payload.external_account_name = form.external_account_name?.trim() || undefined
-    }
-
-    if (provider === 'google') {
-      payload.refresh_token = form.refresh_token?.trim() || undefined
-      payload.client_id = form.client_id?.trim() || undefined
-      payload.client_secret = form.client_secret?.trim() || undefined
-    }
-
-    return payload
-  }
-
-  const loadMetaAdAccounts = async ({ accessToken, preserveSelection = true } = {}) => {
-    const token = String(accessToken || integrationForms?.meta?.access_token || '').trim()
-    if (!token) {
-      setStatus('integrations-meta', 'warning', tr('integrationMetaTokenFirst', 'Enter a Meta access token first.'))
-      return []
-    }
-
-    try {
-      setMetaAccountsLoading(true)
-      clearStatus('integrations-meta')
-      const session = await getCachedSession()
-      if (!session) {
-        setStatus('integrations-meta', 'error', t('sessionExpiredReconnect'))
-        return []
-      }
-
-      const response = await fetch(`${API_URL}/api/integrations/meta/ad-accounts`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ access_token: token }),
-      })
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok || !data.success) {
-        throw new Error(data.detail || tr('integrationMetaAccountsLoadError', 'Unable to load Meta ad accounts.'))
-      }
-
-      const accounts = Array.isArray(data.accounts) ? data.accounts : []
-      const currentId = preserveSelection ? String(integrationForms?.meta?.external_account_id || '').trim() : ''
-      const selectedAccount = accounts.find((account) => account.external_account_id === currentId) || (accounts.length === 1 ? accounts[0] : null)
-
-      setMetaAccountOptions(accounts)
-      setIntegrationForms((prev) => ({
-        ...prev,
-        meta: {
-          ...prev.meta,
-          external_account_id: selectedAccount?.external_account_id || prev.meta.external_account_id || '',
-          external_account_name: selectedAccount?.external_account_name || prev.meta.external_account_name || '',
-        },
-      }))
-
-      setStatus('integrations-meta', 'success', `${accounts.length} ${tr('integrationMetaAccountsLoaded', 'Meta ad accounts loaded.')}`)
-      return accounts
-    } catch (err) {
-      setMetaAccountOptions([])
-      setStatus('integrations-meta', 'error', formatUserFacingError(err, tr('integrationMetaAccountsLoadError', 'Unable to load Meta ad accounts.')))
-      return []
-    } finally {
-      setMetaAccountsLoading(false)
-    }
-  }
-
-  const openIntegrationConnectModal = (provider) => {
-    clearIntegrationOauthPopupMonitor()
-    clearStatus(`integrations-${provider}`)
-    if (provider === 'meta') {
-      const currentMeta = integrationForms?.meta || {}
-      setMetaAccountOptions(
-        currentMeta.external_account_id
-          ? [{
-              external_account_id: currentMeta.external_account_id,
-              external_account_name: currentMeta.external_account_name || currentMeta.external_account_id,
-            }]
-          : []
-      )
-    }
-    setIntegrationConnectProvider(provider)
-  }
-
-  const closeIntegrationConnectModal = () => {
-    clearIntegrationOauthPopupMonitor()
-    setMetaAccountsLoading(false)
-    setMetaAccountOptions([])
-    setIntegrationConnectProvider(null)
-  }
-
-  const getIntegrationMissingLabels = (provider, payload) => {
-    const labels = getIntegrationFieldDefinitions(provider)
-      .filter((field) => field.required && !String(payload[field.field] || '').trim())
-      .map((field) => field.label)
-
-    if (provider === 'meta' && !String(payload.external_account_id || '').trim()) {
-      labels.push(tr('integrationMetaAccountSelectorLabel', 'Ad account'))
-    }
-
-    return [...new Set(labels)]
-  }
-
-  const getIntegrationOauthReasonMessage = (reason, provider) => {
-    const reasonMessages = {
-      missing_params: t('oauthMissingParams'),
-      expired: t('oauthExpired'),
-      state_mismatch: t('oauthStateMismatch'),
-      timeout: t('oauthTimeout'),
-      exchange_failed: t('oauthExchangeFailed'),
-      no_token: t('oauthNoToken'),
-      no_refresh_token: t('oauthNoRefreshToken'),
-      provider_denied: t('oauthProviderDenied'),
-      internal: t('oauthInternal'),
-    }
-    if (provider === 'meta' && reason === 'provider_denied') {
-      return tr('integrationMetaOauthDenied', 'Meta OAuth was denied or blocked. If Meta reports a domain issue, add the backend domain to your Meta app settings or use manual token connection.')
-    }
-    return reasonMessages[reason] || `${t('integrationsOauthError')}: ${reason}`
-  }
-
-  const applyIntegrationOauthResult = async ({ status, provider, reason }) => {
-    const normalizedProvider = ['meta', 'tiktok', 'google'].includes(provider) ? provider : 'meta'
-    clearIntegrationOauthPopupMonitor()
-    setShowSettingsModal(true)
-    setSettingsTab('connections')
-    setIntegrationOAuthProvider(null)
-
-    if (status === 'connected') {
-      setStatus(`integrations-${normalizedProvider}`, 'success', t('integrationsOauthConnected'))
-      setStatus('connections', 'success', `${t(`integrationProvider${normalizedProvider.charAt(0).toUpperCase()}${normalizedProvider.slice(1)}`)} · ${tr('integrationConnectedSuccess', 'Connected successfully')}`)
-      setIntegrationConnectProvider(null)
-    } else if (status === 'partial') {
-      setIntegrationConnectProvider(normalizedProvider)
-      setStatus(`integrations-${normalizedProvider}`, 'warning', t('integrationsOauthPartial'))
-      setStatus('connections', 'warning', `${t(`integrationProvider${normalizedProvider.charAt(0).toUpperCase()}${normalizedProvider.slice(1)}`)} · ${t('integrationsOauthPartial')}`)
-    } else {
-      setIntegrationConnectProvider(normalizedProvider)
-      const errorMessage = getIntegrationOauthReasonMessage(reason, normalizedProvider)
-      setStatus(`integrations-${normalizedProvider}`, 'error', errorMessage)
-      setStatus('connections', 'error', `${t(`integrationProvider${normalizedProvider.charAt(0).toUpperCase()}${normalizedProvider.slice(1)}`)} · ${errorMessage}`)
-    }
-
-    await loadIntegrations({ silent: true })
-    await loadConnectionsOverview()
   }
 
   // Translations are now managed by LanguageContext
@@ -1286,35 +907,9 @@ export default function Dashboard() {
         window.location.hash = window.location.hash.replace('success=true', '')
       }, 120000)
     } else {
-      // ── Integrations OAuth / Shopify OAuth return handlers ──
-      const integrationOauthStatus = hashParams.get('integration_oauth')
+      // ── Shopify OAuth return handler ──
       const shopifyStatus = hashParams.get('shopify')
-      if (integrationOauthStatus) {
-        const provider = hashParams.get('provider') || 'meta'
-        const reason = hashParams.get('reason') || 'unknown'
-
-        if (window.opener && window.opener !== window) {
-          try {
-            localStorage.setItem(INTEGRATION_OAUTH_STORAGE_KEY, JSON.stringify({
-              status: integrationOauthStatus,
-              provider,
-              reason,
-              ts: Date.now(),
-            }))
-          } catch {}
-
-          setTimeout(() => {
-            window.close()
-          }, 150)
-          return
-        }
-
-        applyIntegrationOauthResult({ status: integrationOauthStatus, provider, reason })
-        setTimeout(() => {
-          const cleanHash = hash.split('?')[0] || '#/dashboard'
-          window.location.hash = cleanHash
-        }, 1500)
-      } else if (shopifyStatus) {
+      if (shopifyStatus) {
         if (shopifyStatus === 'connected') {
           const connectedShop = hashParams.get('shop') || ''
           console.log('✅ Shopify OAuth connected:', connectedShop)
@@ -1325,7 +920,7 @@ export default function Dashboard() {
           }
           setActiveTab('settings')
           setTimeout(() => {
-            setStatus('shopify', 'success', `${t('shopifyConnectedSuccess')}${connectedShop ? ` (${connectedShop})` : ''} ! 🎉`)
+            setStatus('shopify', 'success', `Boutique Shopify connectée avec succès${connectedShop ? ` (${connectedShop})` : ''} ! 🎉`)
           }, 500)
           // Refresh shop list and products
           initializeUser(true).then(() => {
@@ -1337,27 +932,27 @@ export default function Dashboard() {
           const limit = hashParams.get('limit') || ''
           setActiveTab('settings')
           setTimeout(() => {
-            setStatus('shopify', 'warning', t('shopLimitReached').replace('{limit}', limit).replace('{plan}', plan))
+            setStatus('shopify', 'warning', `Limite de ${limit} boutique${limit > 1 ? 's' : ''} atteinte (plan ${plan}). Passez au plan supérieur pour en ajouter.`)
           }, 500)
           initializeUser(true)
         } else if (shopifyStatus === 'error') {
           const reason = hashParams.get('reason') || 'unknown'
           const reasonMessages = {
-            missing_params: t('oauthMissingParams'),
-            server_config: t('oauthServerConfig'),
-            hmac_failed: t('oauthHmacFailed'),
-            expired: t('oauthExpired'),
-            state_mismatch: t('oauthStateMismatch'),
-            no_user: t('oauthNoUser'),
-            timeout: t('oauthTimeout'),
-            exchange_failed: t('oauthExchangeFailed'),
-            token_invalid: t('oauthTokenInvalid'),
-            no_token: t('oauthNoToken'),
-            internal: t('oauthInternal'),
+            missing_params: 'Paramètres manquants dans la réponse Shopify.',
+            server_config: 'Configuration Shopify incomplète sur le serveur.',
+            hmac_failed: 'Vérification de sécurité échouée. Réessayez.',
+            expired: 'La session OAuth a expiré. Réessayez.',
+            state_mismatch: 'Erreur de vérification. Réessayez.',
+            no_user: 'Session utilisateur introuvable. Reconnectez-vous.',
+            timeout: 'Délai d\'attente dépassé. Réessayez.',
+            exchange_failed: 'Échec de l\'échange de token. Réessayez.',
+            token_invalid: 'Le token obtenu est invalide. Réessayez.',
+            no_token: 'Aucun token reçu de Shopify. Réessayez.',
+            internal: 'Erreur interne. Réessayez.',
           }
           setActiveTab('settings')
           setTimeout(() => {
-            setStatus('shopify', 'error', reasonMessages[reason] || `${t('oauthGenericError')}: ${reason}`)
+            setStatus('shopify', 'error', reasonMessages[reason] || `Erreur Shopify OAuth: ${reason}`)
           }, 500)
           initializeUser(true)
         } else {
@@ -1374,40 +969,6 @@ export default function Dashboard() {
       }
     }
   }, [])
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return undefined
-
-    const consumeOauthResult = async (rawValue) => {
-      if (!rawValue) return
-      try {
-        const parsed = JSON.parse(rawValue)
-        localStorage.removeItem(INTEGRATION_OAUTH_STORAGE_KEY)
-        if (parsed?.status && parsed?.provider) {
-          integrationOauthPopupHandledRef.current = true
-          await applyIntegrationOauthResult(parsed)
-        }
-      } catch {
-        localStorage.removeItem(INTEGRATION_OAUTH_STORAGE_KEY)
-      }
-    }
-
-    const pending = localStorage.getItem(INTEGRATION_OAUTH_STORAGE_KEY)
-    if (pending) {
-      consumeOauthResult(pending)
-    }
-
-    const handleStorage = (event) => {
-      if (event.key === INTEGRATION_OAUTH_STORAGE_KEY && event.newValue) {
-        consumeOauthResult(event.newValue)
-      }
-    }
-
-    window.addEventListener('storage', handleStorage)
-    return () => {
-      window.removeEventListener('storage', handleStorage)
-    }
-  }, [language])
 
   // 🔄 Auto-refresh subscription when user returns from Stripe Billing Portal / external redirect
   // The portal redirects to #dashboard with no session_id, so we detect tab visibility change
@@ -1436,18 +997,6 @@ export default function Dashboard() {
     }
   }, [showSettingsModal, settingsTab])
 
-  useEffect(() => {
-    if (showSettingsModal && settingsTab === 'connections') {
-      loadConnectionsOverview()
-    }
-  }, [showSettingsModal, settingsTab])
-
-  useEffect(() => {
-    if (showSettingsModal && settingsTab === 'interface') {
-      setInterfaceLanguageDraft(language)
-    }
-  }, [showSettingsModal, settingsTab, language])
-
   const loadApiKeys = async () => {
     try {
       setApiLoading(true)
@@ -1470,34 +1019,6 @@ export default function Dashboard() {
     }
   }
 
-  const loadConnectionsOverview = async () => {
-    try {
-      setConnectionsLoading(true)
-      const session = await getCachedSession()
-      if (!session) {
-        setStatus('connections', 'error', t('sessionExpiredReconnect'))
-        return
-      }
-
-      const response = await fetch(`${API_URL}/api/connections/overview`, {
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      })
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok || !data.success) {
-        throw new Error(data.detail || `HTTP ${response.status}`)
-      }
-
-      setConnectionsOverview(data)
-      clearStatus('connections')
-    } catch (err) {
-      setStatus('connections', 'error', formatUserFacingError(err, tr('connectionsLoadError', 'Unable to refresh connection statuses.')))
-    } finally {
-      setConnectionsLoading(false)
-    }
-  }
-
   const handleGenerateApiKey = async () => {
     try {
       setApiLoading(true)
@@ -1517,7 +1038,7 @@ export default function Dashboard() {
         setStatus('api', 'success', t('keyGenerated') + ': ' + data.api_key)
         setApiKeys((prev) => [data.key, ...prev])
       } else {
-        setStatus('api', 'error', t('error') + ': ' + (data.detail || t('error')))
+        setStatus('api', 'error', t('error') + ': ' + formatErrorDetail(data.detail, t('errorGeneratingKey')))
       }
     } catch (err) {
       console.error('API key generate error:', err)
@@ -1553,7 +1074,7 @@ export default function Dashboard() {
         setApiKeys((prev) => prev.map((k) => k.id === keyId ? { ...k, revoked: true } : k))
         setStatus('api', 'success', t('keyRevoked'))
       } else {
-        setStatus('api', 'error', t('error') + ': ' + (data.detail || t('error')))
+        setStatus('api', 'error', t('error') + ': ' + formatErrorDetail(data.detail, t('errorRevokingKey')))
       }
     } catch (err) {
       console.error('API key revoke error:', err)
@@ -1573,7 +1094,6 @@ export default function Dashboard() {
   useEffect(() => {
     const allowedTabs = [
       'overview',
-      'integrations',
       'underperforming',
       'action-blockers',
       'action-rewrite',
@@ -1592,14 +1112,6 @@ export default function Dashboard() {
   }, [activeTab])
 
   useEffect(() => {
-    if (typeof window === 'undefined') return
-    const pendingTab = localStorage.getItem('dashboardRouteTab')
-    if (!pendingTab) return
-    setActiveTab(pendingTab)
-    localStorage.removeItem('dashboardRouteTab')
-  }, [])
-
-  useEffect(() => {
     if (typeof window !== 'undefined') {
       localStorage.setItem('settingsTab', settingsTab)
     }
@@ -1607,7 +1119,6 @@ export default function Dashboard() {
 
   // Auto-load bundles when tab is opened (no button needed)
   const bundlesAutoLoadedRef = useRef(false)
-  const bundlesHistoryAutoLoadedRef = useRef(false)
   useEffect(() => {
     if (activeTab === 'action-bundles' && !bundlesAutoLoadedRef.current && !insightsLoading && subscription?.has_subscription) {
       // Only auto-load once per session, or if no data yet
@@ -1616,11 +1127,6 @@ export default function Dashboard() {
         bundlesAutoLoadedRef.current = true
         loadBundlesAsync().catch(() => {})
       }
-    }
-    // Auto-load history in background when tab opens
-    if (activeTab === 'action-bundles' && !bundlesHistoryAutoLoadedRef.current && subscription?.has_subscription) {
-      bundlesHistoryAutoLoadedRef.current = true
-      loadBundlesHistory({ openDropdown: false }).catch(() => {})
     }
   }, [activeTab])
 
@@ -1751,33 +1257,6 @@ export default function Dashboard() {
   }, [showConversationMenu])
 
   useEffect(() => {
-    if (showChatPanel) {
-      setShowConversationMenu(false)
-    }
-  }, [showChatPanel])
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    const mediaQuery = window.matchMedia('(max-width: 767px)')
-    const onChange = (event) => {
-      setIsMobileView(event.matches)
-    }
-    setIsMobileView(mediaQuery.matches)
-    if (mediaQuery.addEventListener) {
-      mediaQuery.addEventListener('change', onChange)
-      return () => mediaQuery.removeEventListener('change', onChange)
-    }
-    mediaQuery.addListener(onChange)
-    return () => mediaQuery.removeListener(onChange)
-  }, [])
-
-  useEffect(() => {
-    if (!showChatPanel || hasLoadedRemoteConversationsRef.current) return
-    hasLoadedRemoteConversationsRef.current = true
-    loadConversationsFromServer()
-  }, [showChatPanel, loadConversationsFromServer])
-
-  useEffect(() => {
     if (typeof window !== 'undefined' && profile) {
       localStorage.setItem('profileCache', JSON.stringify(profile))
     }
@@ -1838,9 +1317,8 @@ export default function Dashboard() {
 
   // ⚡ Warmup: ping backend immediately so cold start happens in parallel
   useEffect(() => {
-    if (isMobileView) return
     fetch(`${API_URL}/health`, { signal: AbortSignal.timeout(120000) }).catch(() => {})
-  }, [isMobileView])
+  }, [])
 
   // Safety valve: if loading screen persists for 8s, fall through to dashboard
   useEffect(() => {
@@ -1946,7 +1424,6 @@ export default function Dashboard() {
         if (initData.interface) {
           if (initData.interface.language) {
             setLanguage(initData.interface.language)
-            setInterfaceLanguageDraft(initData.interface.language)
           }
         }
 
@@ -1980,6 +1457,9 @@ export default function Dashboard() {
 
         setLoading(false)
 
+        // ⚡ Load conversation history from Supabase in background
+        loadConversationsFromServer()
+
         // Subscription — trust the backend (Stripe-verified), never override locally
         const subData = normalizeSubscription(initData.subscription || {})
         
@@ -1994,17 +1474,11 @@ export default function Dashboard() {
           initRetryRef.current = 0
           clearBackgroundInitRetry()
           console.log(`⚡ Subscription: ${subData.plan} — loading products + analytics in parallel...`)
-          if (isMobileView) {
+          // Load products and analytics IN PARALLEL
+          Promise.all([
+            loadProducts(),
             loadAnalytics(analyticsRange)
-            setTimeout(() => {
-              loadProducts()
-            }, 600)
-          } else {
-            Promise.all([
-              loadProducts(),
-              loadAnalytics(analyticsRange)
-            ])
-          }
+          ])
           return subData
         } else {
           const cachedSub = readStoredSubscription()
@@ -2028,7 +1502,7 @@ export default function Dashboard() {
             console.log(`🔄 No subscription found, retrying in ${delay/1000}s (attempt ${initRetryRef.current}/6)...`)
             setTimeout(() => initializeUser(true), delay)
           } else {
-            setError(t('backendStarting'))
+            setError(t('backendStarting') || 'Le serveur est en cours de démarrage. Veuillez rafraîchir la page dans quelques secondes.')
             scheduleBackgroundInitRetry(15000)
           }
           return subData
@@ -2086,14 +1560,7 @@ export default function Dashboard() {
           setSubscriptionMissing(false)
           initRetryRef.current = 0
           clearBackgroundInitRetry()
-          if (isMobileView) {
-            loadAnalytics(analyticsRange)
-            setTimeout(() => {
-              loadProducts()
-            }, 600)
-          } else {
-            Promise.all([loadProducts(), loadAnalytics(analyticsRange)])
-          }
+          Promise.all([loadProducts(), loadAnalytics(analyticsRange)])
           return normalizedSub
         } else {
           const cachedSub = readStoredSubscription()
@@ -2117,7 +1584,7 @@ export default function Dashboard() {
             console.log(`🔄 Fallback: no subscription, retrying in ${delay/1000}s...`)
             setTimeout(() => initializeUser(true), delay)
           } else {
-            setError(t('backendStarting'))
+            setError(t('backendStarting') || 'Le serveur est en cours de démarrage. Veuillez rafraîchir la page dans quelques secondes.')
             scheduleBackgroundInitRetry(15000)
           }
           return normalizedSub
@@ -2148,7 +1615,7 @@ export default function Dashboard() {
         setTimeout(() => initializeUser(true), delay)
       } else {
         // Only show a soft warning after all retries exhausted — NOT a scary auth error
-        setError(t('backendStarting'))
+        setError(t('backendStarting') || 'Le serveur est en cours de démarrage. Veuillez rafraîchir la page dans quelques secondes.')
         scheduleBackgroundInitRetry(15000)
       }
     } finally {
@@ -2328,7 +1795,7 @@ export default function Dashboard() {
       ))
     } else if (chatMessages.length > 0 && !activeConversationId) {
       const firstUserMsg = chatMessages.find(m => m.role === 'user')
-      const tempTitle = firstUserMsg ? firstUserMsg.text.slice(0, 40) + (firstUserMsg.text.length > 40 ? '...' : '') : t('newConversation')
+      const tempTitle = firstUserMsg ? firstUserMsg.text.slice(0, 40) + (firstUserMsg.text.length > 40 ? '...' : '') : 'Nouvelle conversation'
       const newConvId = Date.now().toString()
       const newConv = {
         id: newConvId,
@@ -2419,31 +1886,25 @@ export default function Dashboard() {
     const today = new Date()
     const yesterday = new Date(today)
     yesterday.setDate(yesterday.getDate() - 1)
-    if (date.toDateString() === today.toDateString()) return t('today')
+    if (date.toDateString() === today.toDateString()) return "Aujourd'hui"
     if (date.toDateString() === yesterday.toDateString()) return t('yesterday')
-    return date.toLocaleDateString(language === 'fr' ? 'fr-FR' : 'en-US', { day: 'numeric', month: 'long' })
+    return date.toLocaleDateString(language === 'fr' ? 'fr-FR' : language === 'es' ? 'es-ES' : language === 'de' ? 'de-DE' : 'en-US', { day: 'numeric', month: 'long' })
   }
 
-  const filteredConversations = useMemo(() => (
-    chatConversations
-      .filter(c => !conversationSearch || c.title.toLowerCase().includes(conversationSearch.toLowerCase()))
-      .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
-  ), [chatConversations, conversationSearch])
+  const filteredConversations = chatConversations
+    .filter(c => !conversationSearch || c.title.toLowerCase().includes(conversationSearch.toLowerCase()))
+    .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
 
-  const groupedConversations = useMemo(() => (
-    filteredConversations.reduce((acc, conv) => {
-      const label = getConversationDateLabel(conv.updatedAt || conv.createdAt)
-      if (!acc[label]) acc[label] = []
-      acc[label].push(conv)
-      return acc
-    }, {})
-  ), [filteredConversations, language])
+  const groupedConversations = filteredConversations.reduce((acc, conv) => {
+    const label = getConversationDateLabel(conv.updatedAt || conv.createdAt)
+    if (!acc[label]) acc[label] = []
+    acc[label].push(conv)
+    return acc
+  }, {})
 
-  const activeConversationTitle = useMemo(() => (
-    activeConversationId
-      ? (chatConversations.find(c => c.id === activeConversationId)?.title || t('conversation'))
-      : t('newConversation')
-  ), [activeConversationId, chatConversations, t])
+  const activeConversationTitle = activeConversationId
+    ? (chatConversations.find(c => c.id === activeConversationId)?.title || 'Conversation')
+    : 'Nouvelle conversation'
 
   // ============ ATTACHMENTS & VOICE ============
   useEffect(() => {
@@ -2775,7 +2236,7 @@ export default function Dashboard() {
       setChatInput('')
       // Shrink textarea back to default
       setChatTextareaFocused(false)
-      if (chatTextareaRef.current) chatTextareaRef.current.style.height = '48px'
+      if (chatTextareaRef.current) chatTextareaRef.current.style.height = '44px'
       
       // Auto-create conversation on first message
       let isNewConversation = false
@@ -2799,7 +2260,7 @@ export default function Dashboard() {
       if (!session) throw new Error(t('sessionExpiredReconnect'))
 
       // Build payload with images if attached
-      const chatPayload = { message: userMessage || t('defaultVisionPrompt'), language: language }
+      const chatPayload = { message: userMessage || t('defaultVisionPrompt') }
       if (currentAttachments.length > 0) {
         chatPayload.images = currentAttachments
           .filter(a => a.preview && a.type?.startsWith('image/'))
@@ -2810,81 +2271,80 @@ export default function Dashboard() {
 
       // 1. Active tab context
       const tabNameMap = {
-        overview: t('ctxOverview'),
-        underperforming: t('ctxUnderperforming'),
-        'action-blockers': t('ctxBlockers'),
-        'action-rewrite': t('ctxRewrite'),
-        'action-price': t('ctxPriceOptimization'),
-        'action-images': t('ctxImages'),
-        'action-bundles': t('ctxBundles'),
-        'action-stock': t('ctxStockAlerts'),
-        'action-returns': t('ctxReturns'),
-        invoices: t('ctxInvoices'),
-        ai: t('ctxFullAnalysis'),
-        analysis: t('ctxAnalysisResults'),
-        settings: t('ctxSettings'),
-        integrations: t('ctxIntegrations')
+        overview: 'Vue d\'ensemble (revenus, commandes, AOV)',
+        underperforming: 'Produits sous-performants',
+        'action-blockers': 'Bloqueurs de conversion',
+        'action-rewrite': 'Réécriture IA de fiches produit',
+        'action-price': 'Optimisation dynamique des prix',
+        'action-images': 'Assistance images IA',
+        'action-bundles': 'Bundles & cross-sell',
+        'action-stock': 'Alertes stock',
+        'action-returns': 'Anti-retours',
+        invoices: 'Factures',
+        ai: 'Analyse IA complète',
+        analysis: 'Résultats d\'analyse',
+        settings: 'Paramètres'
       }
-      ctxParts.push(`[DASHBOARD CONTEXT]`)
-      ctxParts.push(`Active tab: ${tabNameMap[activeTab] || activeTab}`)
+      ctxParts.push(`[CONTEXTE TABLEAU DE BORD EN TEMPS RÉEL]`)
+      ctxParts.push(`Onglet actif: ${tabNameMap[activeTab] || activeTab}`)
 
       // 2. Subscription & shop info
-      ctxParts.push(`Plan: ${subscription?.plan || 'none'} | ${t('activeShop')}: ${shopifyUrl || t('notConnected')} | ${t('connected')}: ${shopifyConnected ? t('yes') : t('no')} | Shops: ${shopList.length}/${shopLimit === null ? '∞' : shopLimit}`)
+      ctxParts.push(`Plan: ${subscription?.plan || 'none'} | Boutique active: ${shopifyUrl || 'non connectée'} | Connectée: ${shopifyConnected ? 'oui' : 'non'} | Boutiques: ${shopList.length}/${shopLimit === null ? '∞' : shopLimit}`)
 
       // 3. Products summary
       if (products && products.length > 0) {
-        ctxParts.push(t('ctxProductCount').replace('{count}', products.length))
+        ctxParts.push(`Nombre de produits Shopify: ${products.length}`)
         const topProducts = products.slice(0, 5).map(p => `${p.title} (${p.variants?.[0]?.price || '?'}$)`).join(', ')
-        ctxParts.push(`Examples: ${topProducts}`)
+        ctxParts.push(`Exemples: ${topProducts}`)
       } else {
-        ctxParts.push(t('ctxNoProducts'))
+        ctxParts.push(`Produits: aucun chargé`)
       }
 
       // 4. Analytics data (if on overview or available)
       if (analyticsData?.totals) {
         const t2 = analyticsData.totals
         const cur = analyticsData.currency || 'EUR'
-        ctxParts.push(`${t('ctxRevenue')} (${analyticsRange}): ${t2.revenue || 0} ${cur} | ${t('ctxOrders')}: ${t2.orders || 0} | AOV: ${t2.aov || 0} ${cur}`)
+        ctxParts.push(`Revenus (${analyticsRange}): ${t2.revenue || 0} ${cur} | Commandes: ${t2.orders || 0} | AOV: ${t2.aov || 0} ${cur}`)
       }
 
       // 5. Tab-specific live data
       if (activeTab === 'underperforming' && underperformingData?.underperformers?.length > 0) {
         const items = underperformingData.underperformers.slice(0, 5)
-        ctxParts.push(`${t('ctxUnderperforming')} (${underperformingData.underperformers.length} total): ${items.map(i => `${i.title} (score:${i.score}, ${i.orders} cmd, CA:${i.revenue})`).join(' | ')}`)
+        ctxParts.push(`Produits sous-performants (${underperformingData.underperformers.length} total): ${items.map(i => `${i.title} (score:${i.score}, ${i.orders} cmd, CA:${i.revenue})`).join(' | ')}`)
       }
       if (activeTab === 'action-price' && insightsData) {
         const priceItems = insightsData?.price_suggestions || insightsData?.price_analysis?.suggestions || []
-        ctxParts.push(`${t('ctxPriceSuggestions')}: ${priceItems.length} ${t('opportunities')}`)
+        ctxParts.push(`Suggestions de prix: ${priceItems.length} opportunités`)
         if (priceItems.length > 0) {
           ctxParts.push(priceItems.slice(0, 3).map(i => `${i.title}: ${i.current_price}→${i.suggested_price}$ (${i.suggestion})`).join(' | '))
         }
       }
       if (activeTab === 'action-bundles') {
         const bundleItems = insightsData?.bundle_suggestions || []
-        ctxParts.push(`Bundles: ${bundleItems.length} suggestions | Diagnostics: ${bundlesDiagnostics ? JSON.stringify(bundlesDiagnostics) : t('ctxNotLoaded')}`)
+        ctxParts.push(`Bundles: ${bundleItems.length} suggestions | Diagnostics: ${bundlesDiagnostics ? JSON.stringify(bundlesDiagnostics) : 'non chargé'}`)
       }
       if (activeTab === 'action-stock' && stockProducts?.length > 0) {
         const lowStock = stockProducts.filter(p => p.inventory <= (p.threshold || 5))
-        ctxParts.push(t('ctxStockStatus').replace('{tracked}', stockProducts.length).replace('{alerts}', lowStock.length))
+        ctxParts.push(`Stock: ${stockProducts.length} produits suivis, ${lowStock.length} en alerte basse`)
       }
       if (activeTab === 'action-returns' && insightsData?.return_risks?.length > 0) {
-        ctxParts.push(t('ctxReturnRisks').replace('{count}', insightsData.return_risks.length))
+        ctxParts.push(`Retours: ${insightsData.return_risks.length} produits à risque`)
       }
       if (activeTab === 'action-images' && insightsData?.image_recommendations?.length > 0) {
-        ctxParts.push(t('ctxImagesAnalyzed').replace('{count}', insightsData.image_recommendations.length))
+        ctxParts.push(`Images: ${insightsData.image_recommendations.length} produits analysés`)
       }
       if ((activeTab === 'analysis' || activeTab === 'ai') && analysisResults) {
-        ctxParts.push(t('ctxAnalysisResultsSummary').replace('{products}', analysisResults.overview?.total_products || '?').replace('{recommendations}', analysisResults.strategic_recommendations?.total_recommendations || 0))
+        ctxParts.push(`Résultats analyse: ${analysisResults.overview?.total_products || '?'} produits, ${analysisResults.strategic_recommendations?.total_recommendations || 0} recommandations`)
       }
       if (activeTab === 'action-blockers' && blockersData?.blockers?.length > 0) {
-        ctxParts.push(`${t('tabBlockers')}: ${blockersData.blockers.length}`)
+        ctxParts.push(`Bloqueurs: ${blockersData.blockers.length} détectés`)
       }
 
       // 6. Error states
-      if (analyticsError) ctxParts.push(t('ctxAnalyticsError').replace('{error}', analyticsError))
-      if (insightsError) ctxParts.push(t('ctxInsightsError').replace('{error}', insightsError))
+      if (analyticsError) ctxParts.push(`Erreur analytics: ${analyticsError}`)
+      if (insightsError) ctxParts.push(`Erreur insights: ${insightsError}`)
 
-      ctxParts.push(`[END CONTEXT — Respond based on the user's current situation. If they ask about their data, use the context above. Respond in ${language === 'fr' ? 'French' : language === 'en' ? 'English' : language}.]`)
+      ctxParts.push(`[FIN CONTEXTE — Réponds en fonction de la situation actuelle de l'utilisateur. S'il pose une question sur ses données, utilise le contexte ci-dessus.]`)
 
       chatPayload.dashboard_context = ctxParts.join('\n')
 
@@ -2954,7 +2414,7 @@ export default function Dashboard() {
       } else {
         setChatMessages(prev => [...prev, { 
           role: 'assistant', 
-          text: t('error') + ': ' + (data.detail || t('unknownError')) 
+          text: t('error') + ': ' + formatErrorDetail(data.detail, t('unknownError')) 
         }])
       }
     } catch (err) {
@@ -3009,7 +2469,7 @@ export default function Dashboard() {
         setProfile((prev) => prev ? { ...prev, avatar_url: data.avatar_url } : prev)
         setStatus('profile', 'success', t('avatarUpdated'))
       } else {
-        setStatus('profile', 'error', t('error') + ': ' + (data.detail || t('unknownError')))
+        setStatus('profile', 'error', t('error') + ': ' + formatErrorDetail(data.detail, t('unknownError')))
       }
     } catch (err) {
       console.error('Avatar upload error:', err)
@@ -3041,7 +2501,7 @@ export default function Dashboard() {
         setStatus('profile', 'success', t('profileUpdated'))
         await initializeUser()
       } else {
-        setStatus('profile', 'error', t('error') + ': ' + (data.detail || t('error')))
+        setStatus('profile', 'error', t('error') + ': ' + formatErrorDetail(data.detail, t('profileError')))
       }
     } catch (err) {
       setStatus('profile', 'error', formatUserFacingError(err, t('profileError')))
@@ -3085,7 +2545,7 @@ export default function Dashboard() {
         setNewPassword('')
         setConfirmPassword('')
       } else {
-        setStatus('password', 'error', t('error') + ': ' + (data.detail || t('error')))
+        setStatus('password', 'error', t('error') + ': ' + formatErrorDetail(data.detail, t('passwordError')))
       }
     } catch (err) {
       setStatus('password', 'error', formatUserFacingError(err, t('passwordError')))
@@ -3112,7 +2572,7 @@ export default function Dashboard() {
         setTwoFAEnabled(!twoFAEnabled)
         setStatus('2fa', 'success', '2FA ' + (twoFAEnabled ? t('disabled') : t('enabled')))
       } else {
-        setStatus('2fa', 'error', t('error') + ': ' + (data.detail || t('error')))
+        setStatus('2fa', 'error', t('error') + ': ' + formatErrorDetail(data.detail, t('error2FA')))
       }
     } catch (err) {
       setStatus('2fa', 'error', formatUserFacingError(err, t('error2FA')))
@@ -3124,11 +2584,8 @@ export default function Dashboard() {
   const handleSaveInterface = async () => {
     try {
       setSaveLoading(true)
-      const nextLanguage = (interfaceLanguageDraft === 'fr' || interfaceLanguageDraft === 'en')
-        ? interfaceLanguageDraft
-        : language
       // Always save locally first (works immediately)
-      localStorage.setItem('language', nextLanguage)
+      localStorage.setItem('language', language)
       localStorage.setItem('darkMode', JSON.stringify(darkMode))
 
       // Try backend save (best-effort — table may not exist yet)
@@ -3143,7 +2600,7 @@ export default function Dashboard() {
           },
           body: JSON.stringify({
             dark_mode: darkMode,
-            language: nextLanguage
+            language: language
           })
         })
         const data = await response.json()
@@ -3153,8 +2610,6 @@ export default function Dashboard() {
       } catch (backendErr) {
         console.warn('Backend interface save unavailable (using localStorage):', backendErr.message)
       }
-
-      setLanguage(nextLanguage)
 
       setStatus('interface', 'success', t('settingsUpdated'))
     } catch (err) {
@@ -3231,12 +2686,12 @@ export default function Dashboard() {
   const startShopifyOAuth = async (shopDomain) => {
     let shop = (shopDomain || oauthShopInput || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '')
     if (!shop) {
-      setStatus('shopify', 'warning', t('enterShopName'))
+      setStatus('shopify', 'warning', 'Entrez le nom de votre boutique Shopify.')
       return
     }
     if (!shop.includes('.')) shop = `${shop}.myshopify.com`
     if (!shop.endsWith('.myshopify.com')) {
-      setStatus('shopify', 'warning', t('shopUrlFormat'))
+      setStatus('shopify', 'warning', 'Format attendu : ma-boutique.myshopify.com')
       return
     }
     try {
@@ -3250,7 +2705,7 @@ export default function Dashboard() {
       window.location.href = `${API_URL}/api/shopify/oauth/authorize?shop=${encodeURIComponent(shop)}&token=${encodeURIComponent(session.access_token)}`
     } catch (err) {
       console.error('OAuth start error:', err)
-      setStatus('shopify', 'error', formatUserFacingError(err, t('oauthStartError')))
+      setStatus('shopify', 'error', formatUserFacingError(err, 'Erreur démarrage OAuth'))
     }
   }
 
@@ -3398,21 +2853,21 @@ export default function Dashboard() {
         setInsightsData(null)
         setProducts(null)
         setShopList(prev => prev.map(s => ({ ...s, is_active: s.shop_domain === domain })))
-        setStatus('shopify', 'success', `${t('activeShop')}: ${domain}`)
+        setStatus('shopify', 'success', `Boutique active: ${domain}`)
         await loadProducts()
       } else {
         const err = await resp.json().catch(() => ({}))
-        setStatus('shopify', 'error', err.detail || t('shopSwitchError'))
+        setStatus('shopify', 'error', err.detail || 'Erreur lors du changement de boutique')
       }
     } catch (e) {
-      setStatus('shopify', 'error', formatUserFacingError(e, t('shopSwitchError')))
+      setStatus('shopify', 'error', formatUserFacingError(e, 'Erreur changement boutique'))
     } finally {
       setSwitchingShop(false)
     }
   }
 
   const deleteShop = async (domain) => {
-    if (!confirm(t('confirmDeleteShop').replace('{domain}', domain))) return
+    if (!confirm(`Supprimer la boutique ${domain} ? Cette action est irréversible.`)) return
     try {
       const session = await getCachedSession()
       if (!session) return
@@ -3421,7 +2876,7 @@ export default function Dashboard() {
         headers: { 'Authorization': `Bearer ${session.access_token}` }
       })
       if (resp.ok) {
-        setStatus('shopify', 'success', `${domain} ${t('shopDeleted')}`)
+        setStatus('shopify', 'success', `Boutique ${domain} supprimée`)
         await refreshShopList()
         if (shopifyUrl === domain) {
           const remaining = shopList.filter(s => s.shop_domain !== domain)
@@ -3434,7 +2889,7 @@ export default function Dashboard() {
         }
       } else {
         const err = await resp.json().catch(() => ({}))
-        setStatus('shopify', 'error', err.detail || t('deleteError'))
+        setStatus('shopify', 'error', err.detail || 'Erreur suppression')
       }
     } catch (e) {
       setStatus('shopify', 'error', formatUserFacingError(e, 'Erreur suppression'))
@@ -3449,12 +2904,12 @@ export default function Dashboard() {
     let url = newShopUrl.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '')
     if (!url.includes('.')) url = `${url}.myshopify.com`
     if (!url.endsWith('.myshopify.com')) {
-      setStatus('shopify', 'warning', t('shopUrlFormatShort'))
+      setStatus('shopify', 'warning', 'Format: boutique.myshopify.com')
       return
     }
     // Check limit client-side
     if (shopLimit !== null && shopList.length >= shopLimit) {
-      setStatus('shopify', 'warning', `${t('shopLimitReached')} (${shopList.length}/${shopLimit}). ${t('upgrade')}`)
+      setStatus('shopify', 'warning', `Limite de boutiques atteinte (${shopList.length}/${shopLimit}). Passez au plan supérieur.`)
       return
     }
     try {
@@ -3469,10 +2924,10 @@ export default function Dashboard() {
       })
       if (!testResp.ok) {
         const err = await testResp.json().catch(() => ({}))
-        throw new Error(err.detail || t('connectionTestFailed'))
+        throw new Error(err.detail || 'Test de connexion échoué')
       }
       const testData = await testResp.json()
-      if (!testData.ready_to_save) throw new Error(t('invalidConnection'))
+      if (!testData.ready_to_save) throw new Error('Connexion invalide')
       // Save
       const saveResp = await fetch(`${API_URL}/api/user/profile/update`, {
         method: 'POST',
@@ -3481,9 +2936,9 @@ export default function Dashboard() {
       })
       if (!saveResp.ok) {
         const err = await saveResp.json().catch(() => ({}))
-        throw new Error(err.detail || t('saveError'))
+        throw new Error(err.detail || 'Erreur sauvegarde')
       }
-      setStatus('shopify', 'success', `${url} ${t('connectedSuccessfully')}`)
+      setStatus('shopify', 'success', `${url} connectée avec succès !`)
       setNewShopUrl('')
       setNewShopToken('')
       setShowAddShop(false)
@@ -3492,217 +2947,9 @@ export default function Dashboard() {
       await refreshShopList()
       await loadProducts()
     } catch (e) {
-      setStatus('shopify', 'error', formatUserFacingError(e, t('newShopConnectionError')))
+      setStatus('shopify', 'error', formatUserFacingError(e, 'Erreur connexion nouvelle boutique'))
     } finally {
       setLoading(false)
-    }
-  }
-
-  const loadIntegrations = async ({ silent = false } = {}) => {
-    try {
-      if (!silent) setIntegrationsLoading(true)
-      const session = await getCachedSession()
-      if (!session) {
-        setStatus('integrations', 'error', t('sessionExpiredReconnect'))
-        return null
-      }
-
-      const response = await fetch(`${API_URL}/api/integrations`, {
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      })
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok || !data.success) {
-        throw new Error(data.detail || `HTTP ${response.status}`)
-      }
-
-      const grouped = data.integrations || { meta: [], tiktok: [], google: [] }
-      setIntegrationOAuthConfig(data.oauth || { meta: { configured: false }, tiktok: { configured: false }, google: { configured: false } })
-      setIntegrationsData(grouped)
-      hydrateIntegrationForms(grouped)
-      clearStatus('integrations')
-      return grouped
-    } catch (err) {
-      setStatus('integrations', 'error', formatUserFacingError(err, t('integrationsLoadError')))
-      return null
-    } finally {
-      if (!silent) setIntegrationsLoading(false)
-    }
-  }
-
-  const saveIntegration = async (provider, options = {}) => {
-    const {
-      closeOnSuccess = false,
-      refreshConnections = false,
-      parentStatusKey = null,
-    } = options
-
-    const payload = buildIntegrationPayload(provider)
-    const missingFields = getIntegrationMissingLabels(provider, payload)
-
-    if (missingFields.length > 0) {
-      setStatus(`integrations-${provider}`, 'warning', `${tr('integrationMissingFields', 'Required fields')}: ${missingFields.join(', ')}`)
-      return
-    }
-
-    try {
-      setIntegrationSavingProvider(provider)
-      const session = await getCachedSession()
-      if (!session) {
-        setStatus(`integrations-${provider}`, 'error', t('sessionExpiredReconnect'))
-        return
-      }
-
-      const validationResponse = await fetch(`${API_URL}/api/integrations/${provider}/validate`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      })
-      const validationData = await validationResponse.json().catch(() => ({}))
-      if (!validationResponse.ok || !validationData.success) {
-        throw new Error(validationData.detail || tr('integrationConnectionFailed', 'Connection failed'))
-      }
-
-      setStatus(`integrations-${provider}`, 'info', validationData.warning || validationData.message || tr('integrationValidationSuccess', 'Connection validated successfully.'))
-
-      const response = await fetch(`${API_URL}/api/integrations/${provider}/manual-connect`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      })
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok || !data.success) {
-        throw new Error(data.detail || `HTTP ${response.status}`)
-      }
-
-      const successMessage = validationData.warning
-        ? `${tr('integrationConnectedSuccess', 'Connected successfully')} — ${validationData.warning}`
-        : tr('integrationConnectedSuccess', 'Connected successfully')
-
-      setStatus(`integrations-${provider}`, 'success', successMessage)
-      await loadIntegrations({ silent: true })
-      if (refreshConnections) {
-        await loadConnectionsOverview()
-      }
-      if (closeOnSuccess) {
-        closeIntegrationConnectModal()
-        setSettingsTab('connections')
-      }
-      if (parentStatusKey) {
-        setStatus(parentStatusKey, 'success', `${t(`integrationProvider${provider.charAt(0).toUpperCase()}${provider.slice(1)}`)} · ${successMessage}`)
-      }
-    } catch (err) {
-      setStatus(`integrations-${provider}`, 'error', formatUserFacingError(err, tr('integrationConnectionFailed', 'Connection failed')))
-    } finally {
-      setIntegrationSavingProvider(null)
-    }
-  }
-
-  const deleteIntegration = async (provider) => {
-    try {
-      setIntegrationDeletingProvider(provider)
-      const session = await getCachedSession()
-      if (!session) {
-        setStatus(`integrations-${provider}`, 'error', t('sessionExpiredReconnect'))
-        return
-      }
-
-      const response = await fetch(`${API_URL}/api/integrations/${provider}`, {
-        method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      })
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok || !data.success) {
-        throw new Error(data.detail || `HTTP ${response.status}`)
-      }
-
-      setStatus(`integrations-${provider}`, 'success', t('integrationDeleted'))
-      setIntegrationForms((prev) => ({
-        ...prev,
-        [provider]: createEmptyIntegrationForms()[provider],
-      }))
-      await loadIntegrations({ silent: true })
-    } catch (err) {
-      setStatus(`integrations-${provider}`, 'error', formatUserFacingError(err, t('integrationDeleteError')))
-    } finally {
-      setIntegrationDeletingProvider(null)
-    }
-  }
-
-  const startIntegrationOAuth = async (provider) => {
-    try {
-      setIntegrationOAuthProvider(provider)
-      clearStatus(`integrations-${provider}`)
-      const session = await getCachedSession()
-      if (!session) {
-        setStatus(`integrations-${provider}`, 'error', t('sessionExpiredReconnect'))
-        return
-      }
-
-      const form = integrationForms[provider] || {}
-      const payload = {
-        external_account_id: form.external_account_id?.trim() || undefined,
-      }
-
-      if (provider === 'google') {
-        payload.developer_token = form.developer_token?.trim() || undefined
-        payload.manager_account_id = form.manager_account_id?.trim() || undefined
-      }
-
-      const response = await fetch(`${API_URL}/api/integrations/${provider}/oauth/start`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      })
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok || !data.success || !data.auth_url) {
-        throw new Error(data.detail || `HTTP ${response.status}`)
-      }
-
-      setStatus(`integrations-${provider}`, 'info', tr('integrationOauthOpening', 'Opening secure OAuth window...'))
-      integrationOauthPopupHandledRef.current = false
-
-      const popup = window.open(
-        data.auth_url,
-        `shopbrain-oauth-${provider}`,
-        'popup=yes,width=720,height=820,menubar=no,toolbar=no,location=yes,resizable=yes,scrollbars=yes,status=no'
-      )
-
-      if (!popup) {
-        setStatus(`integrations-${provider}`, 'warning', tr('integrationOauthPopupBlocked', 'Popup blocked by the browser. Redirecting in the current tab...'))
-        window.location.href = data.auth_url
-        return
-      }
-
-      popup.focus()
-      clearIntegrationOauthPopupMonitor()
-      integrationOauthPopupRef.current = {
-        provider,
-        intervalId: window.setInterval(() => {
-          if (!popup.closed) return
-          clearIntegrationOauthPopupMonitor()
-          setIntegrationOAuthProvider(null)
-          if (!integrationOauthPopupHandledRef.current) {
-            setStatus(`integrations-${provider}`, 'warning', getIntegrationOauthReasonMessage('provider_denied', provider))
-          }
-        }, 700),
-      }
-    } catch (err) {
-      setStatus(`integrations-${provider}`, 'error', formatUserFacingError(err, t('integrationsOauthStartError')))
-      clearIntegrationOauthPopupMonitor()
-      setIntegrationOAuthProvider(null)
     }
   }
 
@@ -3756,81 +3003,15 @@ export default function Dashboard() {
     }
   }
 
-  const buildAnalyticsCacheKey = (rangeValue) => {
-    const uid = user?.id || 'anon'
-    const shop = shopifyUrl || 'no-shop'
-    return `${uid}::${shop}::${rangeValue}`
-  }
-
-  const readAnalyticsCache = (cacheKey) => {
-    const memoryHit = analyticsCacheRef.current.get(cacheKey)
-    if (memoryHit && (Date.now() - (memoryHit.ts || 0) < ANALYTICS_CACHE_TTL_MS)) {
-      return memoryHit
-    }
-    if (typeof window === 'undefined') return null
-    try {
-      const raw = localStorage.getItem(`analyticsCache:${cacheKey}`)
-      if (!raw) return null
-      const parsed = JSON.parse(raw)
-      if (!parsed?.data || !parsed?.ts) return null
-      if (Date.now() - parsed.ts > ANALYTICS_CACHE_TTL_MS) return null
-      analyticsCacheRef.current.set(cacheKey, parsed)
-      return parsed
-    } catch {
-      return null
-    }
-  }
-
-  const writeAnalyticsCache = (cacheKey, payload) => {
-    const entry = { data: payload, ts: Date.now() }
-    analyticsCacheRef.current.set(cacheKey, entry)
-    if (typeof window !== 'undefined') {
-      try {
-        localStorage.setItem(`analyticsCache:${cacheKey}`, JSON.stringify(entry))
-      } catch {
-      }
-    }
-  }
-
-  const loadAnalytics = async (rangeOverride, opts = {}) => {
+  const loadAnalytics = async (rangeOverride) => {
     try {
       const rangeValue = rangeOverride || analyticsRange
-      const options = {
-        silent: false,
-        force: false,
-        useCache: true,
-        ...opts
-      }
-      const cacheKey = buildAnalyticsCacheKey(rangeValue)
-      const hasVisibleData = !!(analyticsData?.totals)
-
-      if (options.useCache) {
-        const cached = readAnalyticsCache(cacheKey)
-        if (cached?.data) {
-          setAnalyticsData(cached.data)
-          if (!options.force && !options.silent) {
-            setAnalyticsLoading(false)
-          }
-          if (!options.force) {
-            return cached.data
-          }
-        }
-      }
-
-      if (!options.silent && !hasVisibleData) {
-        setAnalyticsLoading(true)
-      }
+      setAnalyticsLoading(true)
       setAnalyticsError('')
-
-      if (analyticsInFlightRef.current.has(cacheKey)) {
-        return
-      }
-      analyticsInFlightRef.current.add(cacheKey)
       const session = await getCachedSession()
 
       if (!session) {
         setAnalyticsError(t('sessionExpiredReconnect'))
-        analyticsInFlightRef.current.delete(cacheKey)
         return
       }
 
@@ -3848,17 +3029,7 @@ export default function Dashboard() {
 
       const data = await response.json()
       if (data.success) {
-        writeAnalyticsCache(cacheKey, data)
-        setAnalyticsData((prev) => {
-          if (!prev) return data
-          try {
-            const prevStr = JSON.stringify(prev)
-            const nextStr = JSON.stringify(data)
-            return prevStr === nextStr ? prev : data
-          } catch {
-            return data
-          }
-        })
+        setAnalyticsData(data)
       } else {
         setAnalyticsError(t('analyticsUnavailable'))
       }
@@ -3866,12 +3037,7 @@ export default function Dashboard() {
       console.error('Error loading analytics:', err)
       setAnalyticsError(formatUserFacingError(err, t('errorAnalytics')))
     } finally {
-      const rangeValue = rangeOverride || analyticsRange
-      const cacheKey = buildAnalyticsCacheKey(rangeValue)
-      analyticsInFlightRef.current.delete(cacheKey)
-      if (!opts?.silent) {
-        setAnalyticsLoading(false)
-      }
+      setAnalyticsLoading(false)
     }
   }
 
@@ -4187,7 +3353,7 @@ export default function Dashboard() {
       await waitForBackendReady({ retries: 14, retryDelayMs: 4000, timeoutMs: 30000 })
       await warmupBackend(session.access_token)
       // Lancer le job async
-      const resp = await fetch(`${API_URL}/api/shopify/bundles/async?range=${encodeURIComponent(analyticsRange)}&limit=10&language=${encodeURIComponent(language)}`, {
+      const resp = await fetch(`${API_URL}/api/shopify/bundles/async?range=${encodeURIComponent(analyticsRange)}&limit=10`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
@@ -4272,17 +3438,17 @@ export default function Dashboard() {
     setBundlesDiagnostics(diagnostics)
   }
 
-  const loadBundlesHistory = async ({ openDropdown = false } = {}) => {
+  const loadBundlesHistory = async () => {
     try {
       setBundlesHistoryLoading(true)
       setInsightsError('')
-      if (openDropdown) setBundlesHistoryOpen(true)
+      setBundlesHistoryOpen(true)
       clearStatus('action-bundles')
       const session = await getCachedSession()
       if (!session) throw new Error(t('sessionExpiredReconnect'))
       await waitForBackendReady({ retries: 14, retryDelayMs: 4000, timeoutMs: 30000 })
       await warmupBackend(session.access_token)
-      const resp = await fetch(`${API_URL}/api/shopify/bundles/list?language=${encodeURIComponent(language)}`, {
+      const resp = await fetch(`${API_URL}/api/shopify/bundles/list`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${session.access_token}`
@@ -4459,7 +3625,7 @@ export default function Dashboard() {
       }
       const requiredFeature = actionGateMap[actionKey]
       if (requiredFeature && !canAccess(requiredFeature)) {
-        setStatus(actionKey, 'warning', `${t('featureReservedPlan')} ${planLabel(requiredFeature)} ${t('orHigher')}`)
+        setStatus(actionKey, 'warning', `Fonctionnalité réservée au plan ${planLabel(requiredFeature)} ou supérieur.`)
         return
       }
 
@@ -4477,7 +3643,7 @@ export default function Dashboard() {
         const data = await loadReturnRisks(undefined)
         const returnsList = Array.isArray(data?.return_risks) ? data.return_risks : []
         if (returnsList.length === 0) {
-          setStatus(actionKey, 'info', t('analysisNoReturnSignal'))
+          setStatus(actionKey, 'info', 'Analyse terminée : aucun signal de retour détecté sur la période sélectionnée.')
           return
         }
         setStatus(actionKey, 'success', t('analysisComplete'))
@@ -4654,7 +3820,7 @@ export default function Dashboard() {
         } catch (err) {
           const message = normalizeNetworkErrorMessage(err, t('errorAnalysis'))
           if (String(message || '').toLowerCase().includes('ia images non configurée') || String(message || '').includes('OPENAI_API_KEY')) {
-            setStatus(actionKey, 'error', t('aiImagesNotConfigured'))
+            setStatus(actionKey, 'error', 'IA images non configurée côté backend (OPENAI_API_KEY). Ajoute la clé puis relance l’analyse.')
           } else {
             setStatus(actionKey, 'error', message)
           }
@@ -4795,7 +3961,7 @@ export default function Dashboard() {
         const maybeList = listByActionKey[actionKey]
         if (Array.isArray(maybeList) && maybeList.length === 0) {
           if (actionKey === 'action-returns') {
-            setStatus(actionKey, 'info', t('analysisNoReturnSignal'))
+            setStatus(actionKey, 'info', 'Analyse terminée : aucun signal de retour détecté sur la période sélectionnée.')
           } else {
             setStatus(actionKey, 'warning', t('analysisNoOpportunity'))
           }
@@ -4812,7 +3978,7 @@ export default function Dashboard() {
     const plan = String(subscription?.plan || '').toLowerCase()
     // Standard can only apply title rewrites, descriptions need Pro+
     if (action.type === 'description' && !canAccess('content_generation')) {
-      setStatus(statusKey, 'warning', t('rewriteReservedPro'))
+      setStatus(statusKey, 'warning', 'Réécriture des descriptions réservée au plan Pro ou supérieur.')
       return
     }
     if (!['standard', 'pro', 'premium'].includes(plan)) {
@@ -4863,16 +4029,14 @@ export default function Dashboard() {
         throw new Error(errorData.detail || `HTTP ${response.status}`)
       }
 
-      setStatus(statusKey, 'success', '✅ ' + t('modificationApplied'))
+      setStatus(statusKey, 'success', '✅ Modification appliquée avec succès sur Shopify !')
       setTimeout(() => clearStatus(statusKey), 8000)
       loadBlockers()
     } catch (err) {
       console.error('Error applying blocker action:', err)
       const errMsg = err?.name === 'AbortError'
         ? t('requestTimeout')
-        : (err?.message && err.message !== 'Failed to fetch')
-          ? err.message
-          : t('errorApplyingRetry')
+        : formatUserFacingError(err, t('errorApplyingRetry'))
       setStatus(statusKey, 'error', errMsg)
     } finally {
       setApplyingBlockerActionId(null)
@@ -4972,18 +4136,13 @@ export default function Dashboard() {
       }
       const data = await response.json()
       if (data.success) {
-        setStatus('invoice', 'success', `${t('invoiceSentTo')} ${row.email}`)
+        setStatus('invoice', 'success', `Facture envoyée à ${row.email}`)
       } else {
-        setStatus('invoice', 'error', t('invoiceSendFailed'))
+        setStatus('invoice', 'error', 'Échec envoi facture')
       }
     } catch (err) {
       console.error('Error sending invoice:', err)
-      const invoiceErrMsg = String(err?.message || '')
-      if (/gmail oauth2 refresh failed|invalid_grant|connexion gmail expirée|refresh token invalide/i.test(invoiceErrMsg)) {
-        setStatus('invoice', 'error', t('invoiceEmailAuthExpired'))
-      } else {
-        setStatus('invoice', 'error', formatUserFacingError(err, t('errorSendingInvoice')))
-      }
+      setStatus('invoice', 'error', formatUserFacingError(err, t('errorSendingInvoice')))
     } finally {
       setSendingInvoiceFor(null)
     }
@@ -4991,12 +4150,12 @@ export default function Dashboard() {
 
   const addInvoiceItem = () => {
     if (!invoiceProductId) {
-      setStatus('invoice', 'warning', t('selectProduct'))
+      setStatus('invoice', 'warning', 'Sélectionne un produit')
       return
     }
     const product = (products || []).find((p) => String(p.id) === String(invoiceProductId))
     if (!product || !product.variants || product.variants.length === 0) {
-      setStatus('invoice', 'error', t('invalidProductNoVariant'))
+      setStatus('invoice', 'error', 'Produit invalide ou sans variante')
       return
     }
     const variant = product.variants[0]
@@ -5021,11 +4180,11 @@ export default function Dashboard() {
 
   const submitInvoice = async () => {
     if (!invoiceItems.length) {
-      setStatus('invoice', 'warning', t('addAtLeastOneProduct'))
+      setStatus('invoice', 'warning', 'Ajoute au moins un produit')
       return
     }
     if (!invoiceCustomerId && !invoiceCustomerEmail) {
-      setStatus('invoice', 'warning', t('selectClientOrEmail'))
+      setStatus('invoice', 'warning', 'Sélectionne un client ou un email')
       return
     }
 
@@ -5084,13 +4243,10 @@ export default function Dashboard() {
   useEffect(() => {
     // ⚡ Re-fetch analytics when range changes or tab becomes active
     if (activeTab === 'overview') {
-      loadAnalytics(analyticsRange, { silent: !!analyticsData, useCache: true })
-    }
-    if (activeTab === 'integrations') {
-      loadIntegrations({ silent: false })
+      loadAnalytics(analyticsRange)
     }
     if (activeTab === 'underperforming') {
-      loadAnalytics(analyticsRange, { silent: !!analyticsData, useCache: true })
+      loadAnalytics(analyticsRange)
       if (!underperformingData) loadUnderperforming(analyticsRange)
     }
     if (activeTab === 'action-blockers') {
@@ -5098,22 +4254,6 @@ export default function Dashboard() {
       if (!pixelStatus) loadPixelStatus()
     }
   }, [activeTab, analyticsRange])
-
-  useEffect(() => {
-    if (activeTab !== 'overview') return
-    let stopped = false
-
-    const poll = async () => {
-      if (stopped || document.hidden) return
-      await loadAnalytics(analyticsRange, { silent: true, force: true, useCache: true })
-    }
-
-    const intervalId = window.setInterval(poll, ANALYTICS_POLL_MS)
-    return () => {
-      stopped = true
-      window.clearInterval(intervalId)
-    }
-  }, [activeTab, analyticsRange, shopifyUrl, user?.id, ANALYTICS_POLL_MS])
 
   useEffect(() => {
     if (activeTab === 'invoices' && customers.length === 0) {
@@ -5166,19 +4306,16 @@ export default function Dashboard() {
     }
 
     checkShopifyConnection()
-    intervalId = window.setInterval(
-      checkShopifyConnection,
-      isMobileView ? 15 * 60 * 1000 : 10 * 60 * 1000
-    )
+    intervalId = window.setInterval(checkShopifyConnection, 10 * 60 * 1000)  // ⚡ Every 10 min instead of 5
 
     return () => {
       if (intervalId) window.clearInterval(intervalId)
     }
-  }, [user, shopList.length, shopifyUrl, isMobileView])
+  }, [user, shopList.length, shopifyUrl])
 
   const analyzeProducts = async () => {
     if (!products || products.length === 0) {
-      setStatus('analyze', 'warning', t('loadProductsFirst'))
+      setStatus('analyze', 'warning', 'Charge tes produits d\'abord')
       return
     }
     
@@ -5209,7 +4346,7 @@ export default function Dashboard() {
         setActiveTab('analysis')
         setStatus('analyze', 'success', t('analysisCompleteResults'))
       } else {
-        setStatus('analyze', 'error', t('errorAnalysis') + ': ' + (data.detail || t('unknownError')))
+        setStatus('analyze', 'error', t('errorAnalysis') + ': ' + formatErrorDetail(data.detail, t('unknownError')))
       }
     } catch (err) {
       console.error('Erreur analyse:', err)
@@ -5299,11 +4436,11 @@ export default function Dashboard() {
   const handleApplyRecommendation = async (productId, recommendationType, extraData = {}) => {
     // Standard can apply titles only, descriptions/images need Pro+
     if (recommendationType === 'description' && !canAccess('content_generation')) {
-      setStatus(`rec-${productId}-${recommendationType}`, 'warning', t('rewriteReservedPro'))
+      setStatus(`rec-${productId}-${recommendationType}`, 'warning', 'Réécriture des descriptions réservée au plan Pro ou supérieur.')
       return
     }
     if (recommendationType === 'images' && !canAccess('image_recommendations')) {
-      setStatus(`rec-${productId}-${recommendationType}`, 'warning', t('imageRecsReserved'))
+      setStatus(`rec-${productId}-${recommendationType}`, 'warning', 'Recommandations d\'images réservées au plan Pro ou supérieur.')
       return
     }
     if (!subscription?.plan) {
@@ -5371,9 +4508,9 @@ export default function Dashboard() {
       <div className="min-h-screen bg-[#F7F8FA] flex items-center justify-center px-4">
         <div className="text-center text-[#1A1A2E] max-w-md w-full">
           <div className="text-3xl mb-3">🔒</div>
-          <div className="text-lg sm:text-xl mb-2 font-semibold">{t('sessionExpired')}</div>
-          <div className="text-[#4A4A68] text-sm mb-4">{t('pleaseReconnect')}</div>
-          <button onClick={() => { window.location.hash = '#/' }} className="bg-[#FF6B35] hover:bg-[#E85A28] px-5 py-2.5 rounded-lg text-white text-sm font-medium transition-colors">{t('backToHome')}</button>
+          <div className="text-lg sm:text-xl mb-2 font-semibold">Session expirée</div>
+          <div className="text-[#4A4A68] text-sm mb-4">Veuillez vous reconnecter.</div>
+          <button onClick={() => { window.location.hash = '#/' }} className="bg-[#FF6B35] hover:bg-[#E85A28] px-5 py-2.5 rounded-lg text-white text-sm font-medium transition-colors">Retour à l'accueil</button>
         </div>
       </div>
     )
@@ -5403,7 +4540,7 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F7F8FA] overflow-x-hidden w-full max-w-full">
+    <div className="min-h-screen bg-[#F7F8FA]">
       {/* Mobile header with hamburger */}
       <div className="md:hidden flex items-center justify-between bg-white border-b border-[#E8E8EE] px-4 py-3 sticky top-0 z-40">
         <button onClick={() => setMobileSidebarOpen(true)} className="text-[#1A1A2E] p-1">
@@ -5418,7 +4555,7 @@ export default function Dashboard() {
         <div className="fixed inset-0 bg-black/30 z-50 md:hidden" onClick={() => setMobileSidebarOpen(false)} />
       )}
 
-      <div className="flex h-screen overflow-hidden w-full max-w-full">
+      <div className="flex h-screen overflow-hidden">
         <aside className={`${
           mobileSidebarOpen ? 'fixed inset-y-0 left-0 z-50' : 'hidden'
         } md:sticky md:top-0 md:flex md:h-screen w-64 bg-white border-r border-[#E8E8EE] p-4 flex flex-col gap-4 overflow-y-auto shrink-0`}>
@@ -5450,7 +4587,7 @@ export default function Dashboard() {
                   <button
                     onClick={() => setShowProfileMenu(false)}
                     className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center rounded-full hover:bg-[#EFF1F5] text-[#6A6A85] hover:text-[#1A1A2E] transition"
-                    aria-label={t('close')}
+                    aria-label="Fermer"
                   >✕</button>
                   <div className="font-semibold text-[#1A1A2E]">{profile?.full_name || user?.email}</div>
                   <div className="text-sm text-[#6A6A85]">{user?.email}</div>
@@ -5469,14 +4606,14 @@ export default function Dashboard() {
                     onClick={() => { setShowProfileMenu(false); clearStatus('change-plan'); setPendingPlanConfirm(null); setShowPlanMenu(true) }}
                     className="w-full text-left px-3 py-2 rounded hover:bg-[#EFF1F5] flex items-center gap-2 text-sm text-[#1A1A2E]"
                   >
-                    {t('subscriptionAndBilling')}
+                    Abonnement et facturation
                   </button>
                   <div className="border-t border-[#E8E8EE] my-2"></div>
                   <button
                     onClick={() => { setShowProfileMenu(false); handleLogout() }}
                     className="w-full text-left px-3 py-2 rounded hover:bg-[#EFF1F5] text-sm text-[#4A4A68] hover:text-[#1A1A2E]"
                   >
-                    {t('logout')}
+                    Déconnexion
                   </button>
                 </div>
               </div>
@@ -5484,14 +4621,14 @@ export default function Dashboard() {
           </div>
 
           <div className="bg-[#F7F8FA] rounded-lg p-3">
-            <div className="text-xs text-[#6A6A85] mb-1">{t('currentPlan')}</div>
+            <div className="text-xs text-[#6A6A85] mb-1">Plan actuel</div>
             <div className="font-bold text-[#FF6B35] text-lg">{formatPlan(subscription?.plan)}</div>
           </div>
 
           {/* ── Shop Switcher ── */}
           {shopList.length > 0 && (
             <div className="bg-[#F7F8FA] rounded-lg p-3">
-              <div className="text-xs text-[#6A6A85] mb-1.5">🏪 {t('activeShop')}</div>
+              <div className="text-xs text-[#6A6A85] mb-1.5">🏪 Boutique active</div>
               {shopList.length === 1 ? (
                 <div className="text-sm font-semibold text-[#1A1A2E] truncate">{shopifyUrl}</div>
               ) : (
@@ -5509,7 +4646,7 @@ export default function Dashboard() {
                 </select>
               )}
               <div className="text-[10px] text-[#8A8AA3] mt-1">
-                {shopList.length} / {shopLimit === null ? '∞' : shopLimit} {t('shopCount')}
+                {shopList.length} / {shopLimit === null ? '∞' : shopLimit} boutique{shopLimit !== 1 ? 's' : ''}
               </div>
             </div>
           )}
@@ -5535,7 +4672,7 @@ export default function Dashboard() {
                   key={item.key}
                   onClick={() => {
                     if (locked) {
-                      setStatus('upgrade', 'warning', `${item.label} — ${t('featureReservedPlan')} ${planLabel(item.gate)} ${t('orHigher')}.`)
+                      setStatus('upgrade', 'warning', `${item.label} — Réservé au plan ${planLabel(item.gate)} ou supérieur.`)
                       return
                     }
                     setActiveTab(item.key); setMobileSidebarOpen(false)
@@ -5556,7 +4693,7 @@ export default function Dashboard() {
           </nav>
         </aside>
 
-        <main className="flex-1 overflow-y-auto overflow-x-hidden w-full max-w-full">
+        <main className="flex-1 overflow-y-auto">
           <div className="min-h-full">
 
       {/* Plan Change Menu — with confirmation step */}
@@ -5580,53 +4717,46 @@ export default function Dashboard() {
                       : tr('planChangeEffectiveAtNextRenewal', 'The change will take effect at your next renewal date.')}
                   </p>
                 </div>
-                {statusByKey['change-plan']?.type === 'success' ? (
-                  /* ── Success state: hide action buttons, show close only ── */
-                  <div className="flex flex-col items-center gap-4">
-                    {renderStatus('change-plan')}
-                    <button
-                      onClick={() => { setPendingPlanConfirm(null); clearStatus('change-plan'); setShowPlanMenu(false) }}
-                      className="mt-1 px-6 py-2.5 rounded-lg bg-[#1A1A2E] hover:bg-[#2A2A42] text-white font-semibold text-sm transition-colors"
-                    >
-                      ✕ &nbsp;{tr('close', 'Close')}
-                    </button>
-                  </div>
-                ) : (
-                  /* ── Normal state: cancel + confirm buttons ── */
-                  <>
-                    <div className="flex gap-3">
-                      <button
-                        onClick={() => { setPendingPlanConfirm(null); clearStatus('change-plan') }}
-                        disabled={changePlanLoading}
-                        className="flex-1 px-4 py-3 rounded-lg border border-[#E8E8EE] text-[#6A6A85] hover:bg-[#EFF1F5] disabled:opacity-50"
-                      >
-                        {tr('cancel', 'Cancel')}
-                      </button>
-                      <button
-                        onClick={async () => { await handleChangePlan(pendingPlanConfirm.plan) }}
-                        disabled={changePlanLoading}
-                        className="flex-1 px-4 py-3 rounded-lg bg-[#FF6B35] hover:bg-[#E85A28] text-white font-semibold disabled:opacity-50"
-                      >
-                        {changePlanLoading ? tr('switching', 'Switching...') : tr('confirmSwitch', 'Confirm & Switch')}
-                      </button>
-                    </div>
-                    {renderStatus('change-plan')}
-                  </>
-                )}
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => { setPendingPlanConfirm(null); clearStatus('change-plan') }}
+                    disabled={changePlanLoading}
+                    className="flex-1 px-4 py-3 rounded-lg border border-[#E8E8EE] text-[#6A6A85] hover:bg-[#EFF1F5] disabled:opacity-50"
+                  >
+                    {tr('cancel', 'Cancel')}
+                  </button>
+                  <button
+                    onClick={async () => {
+                      await handleChangePlan(pendingPlanConfirm.plan)
+                      // Only dismiss confirmation if switch succeeded
+                      if (!changePlanLoading) {
+                        const statusObj = statusByKey['change-plan']
+                        if (statusObj?.type === 'success' || statusObj?.type === 'info') {
+                          setPendingPlanConfirm(null)
+                        }
+                      }
+                    }}
+                    disabled={changePlanLoading}
+                    className="flex-1 px-4 py-3 rounded-lg bg-[#FF6B35] hover:bg-[#E85A28] text-white font-semibold disabled:opacity-50"
+                  >
+                    {changePlanLoading ? tr('switching', 'Switching...') : tr('confirmSwitch', 'Confirm & Switch')}
+                  </button>
+                </div>
+                {renderStatus('change-plan')}
               </>
             ) : (
               /* ── Plan selection step ── */
               <>
                 <h3 className="text-xl font-bold text-[#1A1A2E] mb-4">{tr('changeYourPlan', 'Change Your Plan')}</h3>
                 <div className="space-y-2">
-                  {[{plan:'standard',price:PLAN_PRICE.standard,desc:'50 produits/mo'},{plan:'pro',price:PLAN_PRICE.pro,desc:'500 produits/mo + reports'},{plan:'premium',price:PLAN_PRICE.premium,desc:'Unlimited + auto actions'}].filter(p => p.plan !== subscription?.plan).map(opt => (
+                  {[{plan:'standard',price:'99',desc:'50 produits/mo'},{plan:'pro',price:'199',desc:'500 produits/mo + reports'},{plan:'premium',price:'299',desc:'Unlimited + auto actions'}].filter(p => p.plan !== subscription?.plan).map(opt => (
                     <button
                       key={opt.plan}
                       onClick={() => { clearStatus('change-plan'); setPendingPlanConfirm({ plan: opt.plan, price: opt.price }) }}
                       disabled={changePlanLoading}
                       className="w-full text-left px-4 py-3 rounded-lg bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E] disabled:opacity-50"
                     >
-                      <div className="font-semibold">{formatPlan(opt.plan)} - ${opt.price}/{tr('month', 'month')}</div>
+                      <div className="font-semibold">{opt.plan.toUpperCase()} - ${opt.price}/{tr('month', 'month')}</div>
                       <div className="text-sm text-[#6A6A85]">{opt.desc}</div>
                     </button>
                   ))}
@@ -5677,7 +4807,7 @@ export default function Dashboard() {
         {!subscriptionReady && !error && (
           <div className="bg-white border border-[#E8E8EE] text-[#4A4A68] p-4 rounded-lg mb-6 flex items-center gap-3">
             <div className="w-5 h-5 border-2 border-[#D8D8E2] border-t-[#FF6B35] rounded-full animate-spin shrink-0"></div>
-            <span className="text-sm">{t('backendStarting')}</span>
+            <span className="text-sm">{t('backendStarting') || 'Le serveur démarre, vos données arrivent...'}</span>
           </div>
         )}
 
@@ -5686,40 +4816,6 @@ export default function Dashboard() {
             {error}
           </div>
         )}
-
-        <div className="bg-white border border-[#E8E8EE] rounded-2xl p-4 md:p-5 mb-6 shadow-sm flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.14em] text-[#8A8AA3] font-semibold mb-2">TRUTH</p>
-            <h2 className="text-xl md:text-2xl font-semibold text-[#1A1A2E]">{t('truthTitle')}</h2>
-            <p className="text-sm text-[#6A6A85] mt-1 max-w-2xl">{t('truthDashboardCta')}</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => setActiveTab('overview')}
-              className="px-4 py-2 rounded-full border border-[#E8E8EE] text-sm font-medium text-[#1A1A2E] hover:bg-[#F7F8FA]"
-            >
-              {t('truthNavDashboard')}
-            </button>
-            <button
-              onClick={() => setActiveTab('underperforming')}
-              className="px-4 py-2 rounded-full border border-[#E8E8EE] text-sm font-medium text-[#1A1A2E] hover:bg-[#F7F8FA]"
-            >
-              {t('truthNavProducts')}
-            </button>
-            <button
-              onClick={() => setActiveTab('integrations')}
-              className="px-4 py-2 rounded-full border border-[#E8E8EE] text-sm font-medium text-[#1A1A2E] hover:bg-[#F7F8FA]"
-            >
-              {t('truthNavAds')}
-            </button>
-            <button
-              onClick={() => { window.location.hash = '#truth' }}
-              className="px-4 py-2 rounded-full bg-[#1A1A2E] text-white text-sm font-medium shadow-sm"
-            >
-              {t('truthNavTruth')}
-            </button>
-          </div>
-        </div>
 
         {/* Overview Tab */}
         {activeTab === 'overview' && (
@@ -5730,216 +4826,8 @@ export default function Dashboard() {
               <div className="px-4 md:px-6 pt-4 md:pt-5 pb-0 flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
                 <div>
                   <div className="flex items-center gap-2">
-
-              {activeTab === 'integrations' && (
-                <div className="space-y-6">
-                  <div className="bg-white border border-[#E8E8EE] rounded-2xl p-5 md:p-6 shadow-sm">
-                    <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
-                      <div>
-                        <p className="text-[11px] uppercase tracking-[0.14em] text-[#8A8AA3] font-semibold mb-2">ADS CONNECT</p>
-                        <h3 className="text-xl md:text-2xl font-semibold text-[#1A1A2E]">{t('integrationsTitle')}</h3>
-                        <p className="text-sm text-[#6A6A85] mt-1 max-w-3xl">{t('integrationsSubtitle')}</p>
-                      </div>
-                      <button
-                        onClick={() => loadIntegrations({ silent: false })}
-                        className="px-4 py-2 rounded-lg border border-[#E8E8EE] text-sm font-medium text-[#1A1A2E] hover:bg-[#F7F8FA]"
-                      >
-                        {integrationsLoading ? t('loading') : t('integrationsRefresh')}
-                      </button>
-                    </div>
-                    {renderStatus('integrations')}
-                  </div>
-
-                  <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-                    {Object.entries(INTEGRATION_PROVIDER_CONFIG).map(([provider, config]) => {
-                      const accounts = integrationsData?.[provider] || []
-                      const primary = accounts.find((account) => account.is_primary) || accounts[0] || null
-                      const form = integrationForms?.[provider] || createEmptyIntegrationForms()[provider]
-                      const isSaving = integrationSavingProvider === provider
-                      const isDeleting = integrationDeletingProvider === provider
-                      const isOAuthLoading = integrationOAuthProvider === provider
-                      const oauthConfigured = integrationOAuthConfig?.[provider]?.configured !== false
-                      const isConnected = Boolean(primary?.status === 'connected')
-
-                      return (
-                        <div key={provider} className="bg-white border border-[#E8E8EE] rounded-2xl p-5 shadow-sm flex flex-col gap-4">
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <h4 className="text-lg font-semibold text-[#1A1A2E]">{t(`integrationProvider${provider.charAt(0).toUpperCase()}${provider.slice(1)}`)}</h4>
-                              <p className="text-sm text-[#6A6A85] mt-1">{t(`integrationProvider${provider.charAt(0).toUpperCase()}${provider.slice(1)}Desc`)}</p>
-                            </div>
-                            <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${isConnected ? 'bg-teal-50 text-teal-700' : 'bg-[#F7F8FA] text-[#6A6A85]'}`}>
-                              {isConnected ? t('truthConnected') : t('truthDisconnected')}
-                            </span>
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-3 text-sm">
-                            <div className="bg-[#F7F8FA] rounded-xl p-3 border border-[#EFF1F5]">
-                              <p className="text-[11px] uppercase tracking-[0.12em] text-[#8A8AA3]">{t('integrationsAccounts')}</p>
-                              <p className="mt-1 text-lg font-semibold text-[#1A1A2E]">{accounts.length}</p>
-                            </div>
-                            <div className="bg-[#F7F8FA] rounded-xl p-3 border border-[#EFF1F5]">
-                              <p className="text-[11px] uppercase tracking-[0.12em] text-[#8A8AA3]">{t('integrationsLastSync')}</p>
-                              <p className="mt-1 text-sm font-medium text-[#1A1A2E]">{primary?.last_sync_at ? formatDate(primary.last_sync_at) : '—'}</p>
-                            </div>
-                          </div>
-
-                          <div className="rounded-xl border border-[#E8E8EE] bg-[#FCFCFD] p-4 space-y-2">
-                            <div className="flex items-center justify-between gap-3">
-                              <p className="text-sm font-semibold text-[#1A1A2E]">{primary?.display_name || t('integrationNoAccount')}</p>
-                              {primary?.is_primary && (
-                                <span className="px-2 py-1 rounded-full bg-[#1A1A2E] text-white text-[10px] uppercase tracking-[0.12em]">{t('integrationsPrimary')}</span>
-                              )}
-                            </div>
-                            <p className="text-xs text-[#6A6A85]">{t('integrationsAccountId')}: <span className="font-mono text-[#1A1A2E]">{primary?.external_account_id || '—'}</span></p>
-                            <p className="text-xs text-[#6A6A85]">{t('integrationsMode')}: <span className="text-[#1A1A2E]">{primary?.connection_mode || 'manual'}</span></p>
-                            {primary?.last_error && (
-                              <p className="text-xs text-[#E85A28]">{primary.last_error}</p>
-                            )}
-                          </div>
-
-                          <div className="space-y-3">
-                            <div>
-                              <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1">{t('integrationsDisplayName')}</label>
-                              <input
-                                value={form.display_name || ''}
-                                onChange={(e) => handleIntegrationFormChange(provider, 'display_name', e.target.value)}
-                                className="w-full rounded-xl border border-[#D8D8E2] px-3 py-2.5 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
-                                placeholder={t('integrationsDisplayNamePlaceholder')}
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1">{t('integrationsAccountId')}</label>
-                              <input
-                                value={form.external_account_id || ''}
-                                onChange={(e) => handleIntegrationFormChange(provider, 'external_account_id', e.target.value)}
-                                className="w-full rounded-xl border border-[#D8D8E2] px-3 py-2.5 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
-                                placeholder={t('integrationsAccountIdPlaceholder')}
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1">{t('integrationsAccountName')}</label>
-                              <input
-                                value={form.external_account_name || ''}
-                                onChange={(e) => handleIntegrationFormChange(provider, 'external_account_name', e.target.value)}
-                                className="w-full rounded-xl border border-[#D8D8E2] px-3 py-2.5 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
-                                placeholder={t('integrationsAccountNamePlaceholder')}
-                              />
-                            </div>
-
-                            {(provider === 'meta' || provider === 'tiktok') && (
-                              <>
-                                <div>
-                                  <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1">{t('integrationsAccessToken')}</label>
-                                  <input
-                                    type="password"
-                                    value={form.access_token || ''}
-                                    onChange={(e) => handleIntegrationFormChange(provider, 'access_token', e.target.value)}
-                                    className="w-full rounded-xl border border-[#D8D8E2] px-3 py-2.5 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
-                                    placeholder={t('integrationsAccessTokenPlaceholder')}
-                                  />
-                                </div>
-                                <div>
-                                  <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1">{t('integrationsApiVersion')}</label>
-                                  <input
-                                    value={form.api_version || ''}
-                                    onChange={(e) => handleIntegrationFormChange(provider, 'api_version', e.target.value)}
-                                    className="w-full rounded-xl border border-[#D8D8E2] px-3 py-2.5 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
-                                    placeholder={provider === 'meta' ? 'v20.0' : 'v1.3'}
-                                  />
-                                </div>
-                              </>
-                            )}
-
-                            {provider === 'google' && (
-                              <>
-                                <div>
-                                  <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1">{t('integrationsRefreshToken')}</label>
-                                  <input
-                                    type="password"
-                                    value={form.refresh_token || ''}
-                                    onChange={(e) => handleIntegrationFormChange(provider, 'refresh_token', e.target.value)}
-                                    className="w-full rounded-xl border border-[#D8D8E2] px-3 py-2.5 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
-                                    placeholder={t('integrationsRefreshTokenPlaceholder')}
-                                  />
-                                </div>
-                                <div>
-                                  <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1">{t('integrationsDeveloperToken')}</label>
-                                  <input
-                                    type="password"
-                                    value={form.developer_token || ''}
-                                    onChange={(e) => handleIntegrationFormChange(provider, 'developer_token', e.target.value)}
-                                    className="w-full rounded-xl border border-[#D8D8E2] px-3 py-2.5 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
-                                    placeholder={t('integrationsDeveloperTokenPlaceholder')}
-                                  />
-                                </div>
-                                <div>
-                                  <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1">{t('integrationsClientId')}</label>
-                                  <input
-                                    value={form.client_id || ''}
-                                    onChange={(e) => handleIntegrationFormChange(provider, 'client_id', e.target.value)}
-                                    className="w-full rounded-xl border border-[#D8D8E2] px-3 py-2.5 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
-                                    placeholder={t('integrationsClientIdPlaceholder')}
-                                  />
-                                </div>
-                                <div>
-                                  <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1">{t('integrationsClientSecret')}</label>
-                                  <input
-                                    type="password"
-                                    value={form.client_secret || ''}
-                                    onChange={(e) => handleIntegrationFormChange(provider, 'client_secret', e.target.value)}
-                                    className="w-full rounded-xl border border-[#D8D8E2] px-3 py-2.5 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
-                                    placeholder={t('integrationsClientSecretPlaceholder')}
-                                  />
-                                </div>
-                                <div>
-                                  <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1">{t('integrationsManagerId')}</label>
-                                  <input
-                                    value={form.manager_account_id || ''}
-                                    onChange={(e) => handleIntegrationFormChange(provider, 'manager_account_id', e.target.value)}
-                                    className="w-full rounded-xl border border-[#D8D8E2] px-3 py-2.5 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
-                                    placeholder={t('integrationsManagerIdPlaceholder')}
-                                  />
-                                </div>
-                              </>
-                            )}
-                          </div>
-
-                          <div className="flex flex-wrap gap-2 pt-2">
-                            <button
-                              onClick={() => startIntegrationOAuth(provider)}
-                              disabled={isOAuthLoading || !oauthConfigured}
-                              className="px-4 py-2 rounded-lg border border-[#FF6B35]/30 text-sm font-semibold text-[#FF6B35] hover:bg-[#FFF4EF] disabled:opacity-40"
-                            >
-                              {isOAuthLoading ? t('loading') : (isConnected ? t('integrationsOAuthReconnect') : t('integrationsOAuthButton'))}
-                            </button>
-                            <button
-                              onClick={() => saveIntegration(provider)}
-                              disabled={isSaving}
-                              className="px-4 py-2 rounded-lg bg-[#FF6B35] hover:bg-[#E85A28] text-white text-sm font-semibold disabled:opacity-50"
-                            >
-                              {isSaving ? t('saving') : t('integrationsSaveButton')}
-                            </button>
-                            <button
-                              onClick={() => deleteIntegration(provider)}
-                              disabled={isDeleting || accounts.length === 0}
-                              className="px-4 py-2 rounded-lg border border-[#E8E8EE] text-sm font-semibold text-[#1A1A2E] hover:bg-[#F7F8FA] disabled:opacity-40"
-                            >
-                              {isDeleting ? t('updating') : t('integrationsDeleteButton')}
-                            </button>
-                          </div>
-                          {!oauthConfigured && (
-                            <p className="text-xs text-[#8A8AA3]">{t('integrationsOAuthNotConfigured')}</p>
-                          )}
-                          {renderStatus(`integrations-${provider}`)}
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
                     <div className="w-2 h-2 rounded-full bg-[#FF6B35] animate-pulse" />
-                    <p className="text-xs uppercase tracking-[0.25em] text-[#FF6B35] font-semibold">{t('realTimeSales')}</p>
+                    <p className="text-xs uppercase tracking-[0.25em] text-[#FF6B35] font-semibold">Ventes en temps réel</p>
                   </div>
                   <p className="text-sm text-[#8A8AA3] mt-1">Source Shopify · {getRangeLabel(analyticsData?.range || analyticsRange)}</p>
                 </div>
@@ -5961,7 +4849,7 @@ export default function Dashboard() {
                 <div className="flex flex-col gap-3">
                   {/* Hero: Total Sales */}
                   <div>
-                    <p className="text-[11px] uppercase tracking-[0.2em] text-[#8A8AA3] mb-1">{t('totalSalesOverTime')}</p>
+                    <p className="text-[11px] uppercase tracking-[0.2em] text-[#8A8AA3] mb-1">Total sales over time</p>
                     <p className="text-3xl md:text-4xl font-extrabold text-[#1A1A2E] leading-none">
                       {analyticsLoading ? <span className="inline-block w-40 h-9 bg-[#F0F0F5] rounded-lg animate-pulse" /> : formatCurrency(analyticsData?.totals?.total_sales ?? analyticsData?.totals?.revenue, analyticsData?.currency || 'CAD')}
                     </p>
@@ -5970,7 +4858,7 @@ export default function Dashboard() {
                   <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 border-t border-[#F0F0F5] pt-3">
                     <div className="flex items-center gap-1.5">
                       <div className="w-1.5 h-1.5 rounded-full bg-[#1A1A2E]" />
-                      <p className="text-[10px] uppercase tracking-[0.12em] text-[#8A8AA3]">{t('grossSales')}</p>
+                      <p className="text-[10px] uppercase tracking-[0.12em] text-[#8A8AA3]">Ventes brutes</p>
                       <p className="text-xs font-semibold text-[#1A1A2E] ml-1">
                         {analyticsLoading ? '...' : formatCurrency(analyticsData?.totals?.gross_revenue, analyticsData?.currency || 'CAD')}
                       </p>
@@ -5978,7 +4866,7 @@ export default function Dashboard() {
                     {(analyticsData?.totals?.discounts > 0) && (
                       <div className="flex items-center gap-1.5">
                         <div className="w-1.5 h-1.5 rounded-full bg-[#FF6B35]" />
-                        <p className="text-[10px] uppercase tracking-[0.12em] text-[#8A8AA3]">{t('discounts')}</p>
+                        <p className="text-[10px] uppercase tracking-[0.12em] text-[#8A8AA3]">Remises</p>
                         <p className="text-xs font-semibold text-[#FF6B35] ml-1">
                           −{formatCurrency(analyticsData?.totals?.discounts, analyticsData?.currency || 'CAD')}
                         </p>
@@ -5987,7 +4875,7 @@ export default function Dashboard() {
                     {(analyticsData?.totals?.returns > 0) && (
                       <div className="flex items-center gap-1.5">
                         <div className="w-1.5 h-1.5 rounded-full bg-[#E85A28]" />
-                        <p className="text-[10px] uppercase tracking-[0.12em] text-[#8A8AA3]">{t('returns')}</p>
+                        <p className="text-[10px] uppercase tracking-[0.12em] text-[#8A8AA3]">Retours</p>
                         <p className="text-xs font-semibold text-[#E85A28] ml-1">
                           −{formatCurrency(analyticsData?.totals?.returns, analyticsData?.currency || 'CAD')}
                         </p>
@@ -5995,14 +4883,14 @@ export default function Dashboard() {
                     )}
                     <div className="flex items-center gap-1.5">
                       <div className="w-1.5 h-1.5 rounded-full bg-[#6A6A85]" />
-                      <p className="text-[10px] uppercase tracking-[0.12em] text-[#8A8AA3]">{t('orders')}</p>
+                      <p className="text-[10px] uppercase tracking-[0.12em] text-[#8A8AA3]">Commandes</p>
                       <p className="text-xs font-semibold text-[#1A1A2E] ml-1">
                         {analyticsLoading ? '...' : (analyticsData?.totals?.orders || 0)}
                       </p>
                     </div>
                     <div className="flex items-center gap-1.5">
                       <div className="w-1.5 h-1.5 rounded-full bg-[#6A6A85]" />
-                      <p className="text-[10px] uppercase tracking-[0.12em] text-[#8A8AA3]">{t('averageCart')}</p>
+                      <p className="text-[10px] uppercase tracking-[0.12em] text-[#8A8AA3]">Panier moyen</p>
                       <p className="text-xs font-semibold text-[#1A1A2E] ml-1">
                         {analyticsLoading ? '...' : formatCurrency(analyticsData?.totals?.aov, analyticsData?.currency || 'CAD')}
                       </p>
@@ -6019,7 +4907,7 @@ export default function Dashboard() {
                     <div className="flex items-center justify-center py-20">
                       <div className="flex flex-col items-center gap-2">
                         <div className="w-6 h-6 border-2 border-[#E8E8EE] border-t-[#FF6B35] rounded-full animate-spin" />
-                        <p className="text-xs text-[#8A8AA3]">{t('chartLoading')}</p>
+                        <p className="text-xs text-[#8A8AA3]">Chargement du graphique...</p>
                       </div>
                     </div>
                   ) : analyticsData?.series?.length ? (() => {
@@ -6118,16 +5006,16 @@ export default function Dashboard() {
                       <div className="w-12 h-12 rounded-full bg-[#F7F8FA] flex items-center justify-center mb-3">
                         <svg className="w-6 h-6 text-[#D8D8E2]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" /></svg>
                       </div>
-                      <p className="text-sm text-[#8A8AA3]">{t('noSalesInPeriod')}</p>
-                      <p className="text-xs text-[#B0B0C4] mt-1">{t('tryWiderRange')}</p>
+                      <p className="text-sm text-[#8A8AA3]">Aucune vente sur cette période</p>
+                      <p className="text-xs text-[#B0B0C4] mt-1">Essaie une plage plus large</p>
                     </div>
                   ) : (
                     <div className="flex flex-col items-center justify-center py-16 text-center">
                       <div className="w-12 h-12 rounded-full bg-[#FFF5F0] flex items-center justify-center mb-3">
                         <span className="text-xl">🏪</span>
                       </div>
-                      <p className="text-sm font-medium text-[#4A4A68]">{t('connectYourShopify')}</p>
-                      <p className="text-xs text-[#8A8AA3] mt-1">{t('toShowRealTimeSales')}</p>
+                      <p className="text-sm font-medium text-[#4A4A68]">Connecte ta boutique Shopify</p>
+                      <p className="text-xs text-[#8A8AA3] mt-1">pour afficher tes ventes en temps réel</p>
                     </div>
                   )}
                 </div>
@@ -6135,7 +5023,7 @@ export default function Dashboard() {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="bg-white rounded-lg p-5 border border-[#E8E8EE]">
-              <h3 className="text-[#6A6A85] text-sm uppercase mb-2">{t('activePlan')}</h3>
+              <h3 className="text-[#6A6A85] text-sm uppercase mb-2">Plan Actif</h3>
               <div className="flex items-center justify-between">
                 <p className="text-[#1A1A2E] text-2xl font-bold">{formatPlan(subscription?.plan)}</p>
                 {subscription?.plan !== 'premium' && (
@@ -6149,22 +5037,22 @@ export default function Dashboard() {
               </div>
               <p className="text-[#6A6A85] text-sm mt-2">Depuis: {formatDate(subscription?.started_at)}</p>
               {subscription?.plan === 'standard' && (
-                <p className="text-[#6A6A85] text-xs mt-1">{t('limitedFeatures')}</p>
+                <p className="text-[#6A6A85] text-xs mt-1">Fonctionnalités limitées — Upgrade vers PRO pour plus.</p>
               )}
               {subscription?.plan === 'pro' && (
-                <p className="text-[#6A6A85] text-xs mt-1">{t('goodChoiceUpgrade')}</p>
+                <p className="text-[#6A6A85] text-xs mt-1">Bon choix — Upgrade vers PREMIUM pour tout débloquer.</p>
               )}
               {renderStatus('upgrade')}
             </div>
             
             <div className="bg-white rounded-lg p-5 border border-[#E8E8EE]">
-              <h3 className="text-[#6A6A85] text-sm uppercase mb-2">{t('products')}</h3>
+              <h3 className="text-[#6A6A85] text-sm uppercase mb-2">Produits</h3>
               <p className="text-[#1A1A2E] text-2xl font-bold">{subscription?.capabilities?.product_limit === null ? '∞' : subscription?.capabilities?.product_limit || 50}</p>
-              <p className="text-[#6A6A85] text-sm mt-2">{t('monthlyLimit')}</p>
+              <p className="text-[#6A6A85] text-sm mt-2">Limite mensuelle</p>
             </div>
             
             <div className="bg-white rounded-lg p-5 border border-[#E8E8EE]">
-              <h3 className="text-[#6A6A85] text-sm uppercase mb-2">{t('features')}</h3>
+              <h3 className="text-[#6A6A85] text-sm uppercase mb-2">Fonctionnalités</h3>
               <ul className="text-sm space-y-1">
                 {getPlanFeatures(subscription?.plan).map((feature, i) => (
                   <li key={i} className="text-[#4A4A68]">• {feature}</li>
@@ -6176,7 +5064,7 @@ export default function Dashboard() {
             <div className="hidden md:grid grid-cols-1 md:grid-cols-4 gap-4">
               {[
                 {
-                  label: t('totalSales'),
+                  label: 'Ventes totales',
                   value: analyticsLoading ? '...' : formatCurrency(analyticsData?.totals?.total_sales ?? analyticsData?.totals?.revenue, analyticsData?.currency || 'CAD'),
                   hint: analyticsRange
                 },
@@ -6188,7 +5076,7 @@ export default function Dashboard() {
                 {
                   label: t('aov'),
                   value: analyticsLoading ? '...' : formatCurrency(analyticsData?.totals?.aov, analyticsData?.currency || 'CAD'),
-                  hint: t('averageCartHint')
+                  hint: 'panier moyen'
                 },
                 {
                   label: t('activeProducts'),
@@ -6207,24 +5095,24 @@ export default function Dashboard() {
             <div className="hidden md:grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className="bg-white rounded-lg p-5 border border-[#E8E8EE]">
                 <h4 className="text-[#6A6A85] text-xs uppercase tracking-[0.2em] mb-3">Ops Center</h4>
-                <p className="text-[#1A1A2E] text-lg font-semibold mb-2">{t('unifiedShopifyFlow')}</p>
-                <p className="text-[#6A6A85] text-sm">{t('opsDesc')}</p>
+                <p className="text-[#1A1A2E] text-lg font-semibold mb-2">Flux Shopify unifié</p>
+                <p className="text-[#6A6A85] text-sm">Suivi des produits, erreurs et actions en temps réel depuis un seul hub.</p>
               </div>
               <div className="bg-white rounded-lg p-5 border border-[#E8E8EE]">
                 <h4 className="text-[#6A6A85] text-xs uppercase tracking-[0.2em] mb-3">Insights</h4>
-                <p className="text-[#1A1A2E] text-lg font-semibold mb-2">{t('dailyAIPriorities')}</p>
-                <p className="text-[#6A6A85] text-sm">{t('optimizationsRanked')}</p>
+                <p className="text-[#1A1A2E] text-lg font-semibold mb-2">Priorités IA quotidiennes</p>
+                <p className="text-[#6A6A85] text-sm">Optimisations classées par impact, effort et urgence business.</p>
               </div>
               <div className="bg-white rounded-lg p-5 border border-[#E8E8EE]">
                 <h4 className="text-[#6A6A85] text-xs uppercase tracking-[0.2em] mb-3">Automation</h4>
-                <p className="text-[#1A1A2E] text-lg font-semibold mb-2">{t('premiumScenarios')}</p>
-                <p className="text-[#6A6A85] text-sm">{t('automationDesc')}</p>
+                <p className="text-[#1A1A2E] text-lg font-semibold mb-2">Scénarios premium</p>
+                <p className="text-[#6A6A85] text-sm">Automatisations planifiées sur prix, contenu et collections.</p>
               </div>
             </div>
 
             <div className="hidden md:grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="bg-white rounded-lg p-5 border border-[#E8E8EE]">
-                <h4 className="text-[#6A6A85] text-xs uppercase tracking-[0.2em] mb-4">{t('recentActivity')}</h4>
+                <h4 className="text-[#6A6A85] text-xs uppercase tracking-[0.2em] mb-4">Activité récente</h4>
                 <ul className="space-y-3 text-sm text-[#4A4A68]">
                   <li className="flex items-center justify-between">
                     <span>{t('tabPriceOpt')}</span>
@@ -6232,16 +5120,16 @@ export default function Dashboard() {
                   </li>
                   <li className="flex items-center justify-between">
                     <span>{t('aiDescriptions')}</span>
-                    <span className="text-[#8A8AA3]">{t('yesterday')}</span>
+                    <span className="text-[#8A8AA3]">Hier</span>
                   </li>
                   <li className="flex items-center justify-between">
                     <span>{t('fullCatalogAnalysis')}</span>
-                    <span className="text-[#8A8AA3]">{t('twoDaysAgo')}</span>
+                    <span className="text-[#8A8AA3]">Il y a 2 jours</span>
                   </li>
                 </ul>
               </div>
               <div className="bg-white rounded-lg p-5 border border-[#E8E8EE]">
-                <h4 className="text-[#6A6A85] text-xs uppercase tracking-[0.2em] mb-4">{t('executionQueue')}</h4>
+                <h4 className="text-[#6A6A85] text-xs uppercase tracking-[0.2em] mb-4">File d’exécution</h4>
                 <div className="space-y-3">
                   {[
                     { label: t('titleOptimization'), status: t('inProgress') },
@@ -6259,7 +5147,7 @@ export default function Dashboard() {
 
             <div className="hidden md:grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="bg-white rounded-lg p-5 border border-[#E8E8EE]">
-                <h4 className="text-[#6A6A85] text-xs uppercase tracking-[0.2em] mb-4">{t('criticalAlerts')}</h4>
+                <h4 className="text-[#6A6A85] text-xs uppercase tracking-[0.2em] mb-4">Alertes critiques</h4>
                 <ul className="space-y-3 text-sm text-[#4A4A68]">
                   <li className="flex items-center justify-between">
                     <span>{t('zeroPriceProducts')}</span>
@@ -6281,8 +5169,8 @@ export default function Dashboard() {
             <div className="space-y-6">
               <div className="bg-white rounded-2xl p-6 border border-[#E8E8EE]">
                 <h4 className="text-[#6A6A85] text-xs uppercase tracking-[0.2em] mb-3">Executive Summary</h4>
-                <p className="text-[#1A1A2E] text-xl font-semibold mb-2">{t('accountGlobalState')}</p>
-                <p className="text-[#4A4A68] text-sm">{t('execSummaryDesc')}</p>
+                <p className="text-[#1A1A2E] text-xl font-semibold mb-2">État global du compte</p>
+                <p className="text-[#4A4A68] text-sm">Stabilité excellente, 2 alertes à corriger pour maximiser le ROI.</p>
                 <div className="mt-4 space-y-2 text-sm text-[#4A4A68]">
                   <div className="flex items-center justify-between">
                     <span>{t('plan')}</span>
@@ -6310,8 +5198,8 @@ export default function Dashboard() {
             <div className="bg-white rounded-2xl p-4 md:p-6 border border-[#E8E8EE]">
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.3em] text-[#FF6B35]">{t('billing')}</p>
-                  <h2 className="text-[#1A1A2E] text-xl md:text-2xl font-bold mt-2">{t('customerOrders')}</h2>
+                  <p className="text-xs uppercase tracking-[0.3em] text-[#FF6B35]">Facturation</p>
+                  <h2 className="text-[#1A1A2E] text-xl md:text-2xl font-bold mt-2">Commandes clients</h2>
                   <p className="text-sm text-[#6A6A85] mt-1">Liste des achats de vos clients. Envoyez une facture par email en un clic.</p>
                 </div>
                 <button
@@ -6327,25 +5215,25 @@ export default function Dashboard() {
             {/* Orders List */}
             <div className="bg-white rounded-2xl p-4 md:p-6 border border-[#E8E8EE]">
               <h3 className="text-[#1A1A2E] text-lg font-semibold mb-4">
-                {ordersList.length > 0 ? t('purchaseCount').replace('{count}', ordersList.length) : t('customerPurchases')}
+                {ordersList.length > 0 ? `${ordersList.length} achat(s)` : 'Achats clients'}
               </h3>
 
               {ordersListLoading ? (
-                <div className="text-center py-8 text-[#8A8AA3] text-sm">{t('loadingShopifyOrders')}</div>
+                <div className="text-center py-8 text-[#8A8AA3] text-sm">⏳ Chargement des commandes Shopify...</div>
               ) : ordersList.length === 0 ? (
                 <div className="text-center py-8">
-                  <p className="text-[#8A8AA3] text-sm">{t('noOrdersFound')}</p>
-                  <p className="text-gray-600 text-xs mt-1">{t('connectShopOrders')}</p>
+                  <p className="text-[#8A8AA3] text-sm">Aucune commande trouvée.</p>
+                  <p className="text-gray-600 text-xs mt-1">Connecte ta boutique Shopify et les achats apparaîtront automatiquement.</p>
                 </div>
               ) : (
                 <div className="space-y-3">
                   {/* Desktop header row */}
                   <div className="hidden md:grid grid-cols-12 gap-3 px-4 py-2 text-xs uppercase tracking-[0.15em] text-[#8A8AA3] border-b border-[#E8E8EE]">
-                    <div className="col-span-3">{t('customerEmail')}</div>
-                    <div className="col-span-3">{t('product')}</div>
-                    <div className="col-span-1 text-center">{t('qty')}</div>
-                    <div className="col-span-2 text-right">{t('priceLabel')}</div>
-                    <div className="col-span-3 text-right">{t('action')}</div>
+                    <div className="col-span-3">Email client</div>
+                    <div className="col-span-3">Produit</div>
+                    <div className="col-span-1 text-center">Qté</div>
+                    <div className="col-span-2 text-right">Prix</div>
+                    <div className="col-span-3 text-right">Action</div>
                   </div>
 
                   {ordersList.map((row, index) => (
@@ -6353,7 +5241,7 @@ export default function Dashboard() {
                       {/* Mobile layout */}
                       <div className="md:hidden space-y-2">
                         <div className="flex items-center justify-between">
-                          <span className="text-[#1A1A2E] text-sm font-medium truncate max-w-[200px]">{row.email || t('noEmail')}</span>
+                          <span className="text-[#1A1A2E] text-sm font-medium truncate max-w-[200px]">{row.email || 'Pas d\'email'}</span>
                           <span className="text-xs text-[#8A8AA3]">{row.order_name}</span>
                         </div>
                         <div className="flex items-center justify-between">
@@ -6421,14 +5309,14 @@ export default function Dashboard() {
             <div className="bg-white rounded-2xl p-6 border border-[#E8E8EE]">
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.3em] text-amber-400">{t('commercialPerformance')}</p>
-                  <h3 className="text-[#1A1A2E] text-2xl font-bold mt-2">{t('underperformingProducts')}</h3>
-                  <p className="text-sm text-[#6A6A85] mt-1">{t('underperformingDesc')}</p>
+                  <p className="text-xs uppercase tracking-[0.3em] text-amber-400">📉 Performance commerciale</p>
+                  <h3 className="text-[#1A1A2E] text-2xl font-bold mt-2">Produits sous-performants</h3>
+                  <p className="text-sm text-[#6A6A85] mt-1">Produits avec peu de ventes, faible CA ou stock dormant.</p>
                 </div>
                 <div className="text-right">
-                  <div className="text-xs text-[#8A8AA3]">{underperformingData?.underperforming_count ?? '—'} / {underperformingData?.total_products ?? '—'} {t('products')}</div>
+                  <div className="text-xs text-[#8A8AA3]">{underperformingData?.underperforming_count ?? '—'} / {underperformingData?.total_products ?? '—'} produits</div>
                   {underperformingData?.benchmarks && (
-                    <div className="text-xs text-gray-600 mt-1">{t('avgOrdersLabel')} {underperformingData.benchmarks.avg_orders} • {t('avgRevenueLabel')} {formatCurrency(underperformingData.benchmarks.avg_revenue, underperformingData?.currency || 'EUR')}</div>
+                    <div className="text-xs text-gray-600 mt-1">Moy. commandes: {underperformingData.benchmarks.avg_orders} • Moy. CA: {formatCurrency(underperformingData.benchmarks.avg_revenue, underperformingData?.currency || 'EUR')}</div>
                   )}
                 </div>
               </div>
@@ -6437,24 +5325,24 @@ export default function Dashboard() {
                 {underperformingLoading ? (
                   <div className="px-4 py-8 text-sm text-[#8A8AA3] text-center">⏳ {t('salesAnalysisInProgress')}</div>
                 ) : (!underperformingData?.underperformers || underperformingData.underperformers.length === 0) ? (
-                  <div className="px-4 py-8 text-sm text-[#8A8AA3] text-center">✅ {t('allProductsPerforming')}</div>
+                  <div className="px-4 py-8 text-sm text-[#8A8AA3] text-center">✅ Tous vos produits performent correctement.</div>
                 ) : (
                   underperformingData.underperformers.slice(0, 10).map((item) => (
                     <div key={item.product_id || item.title} className="bg-[#F7F8FA]/70 border border-[#E8E8EE] rounded-xl p-4">
                       <div className="flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-sm">{item.category}</span>
-                          <span className="text-xs bg-orange-100 text-[#E85A28] px-2 py-0.5 rounded-full">{t('score')}: {item.score}/100</span>
+                          <span className="text-xs bg-orange-100 text-[#E85A28] px-2 py-0.5 rounded-full">Score: {item.score}/100</span>
                         </div>
-                        <p className="text-[#1A1A2E] font-semibold mt-1">{item.title || t('productHeader')}</p>
+                        <p className="text-[#1A1A2E] font-semibold mt-1">{item.title || 'Produit'}</p>
                         <div className="flex flex-wrap gap-3 mt-2 text-xs text-[#6A6A85]">
-                          <span>🛒 {t('ordersCountShort').replace('{count}', item.orders)}</span>
+                          <span>🛒 {item.orders} cmd{item.orders !== 1 ? 's' : ''}</span>
                           <span>💰 CA: {formatCurrency(item.revenue, underperformingData?.currency || 'EUR')}</span>
-                          <span>📦 {t('stockHeader')}: {item.inventory}</span>
+                          <span>📦 Stock: {item.inventory}</span>
                           <span>🏷️ Prix: {formatCurrency(item.price, underperformingData?.currency || 'EUR')}</span>
-                          {item.daily_sales != null && <span>📊 {item.daily_sales}{t('perDay')}</span>}
-                          {item.days_of_stock != null && <span>⏱️ {t('daysOfStock').replace('{days}', item.days_of_stock)}</span>}
-                          {item.refund_count > 0 && <span className="text-red-500">↩️ {t('returnsCountShort').replace('{count}', item.refund_count)} ({(item.refund_rate * 100).toFixed(0)}%)</span>}
+                          {item.daily_sales != null && <span>📊 {item.daily_sales}/jour</span>}
+                          {item.days_of_stock != null && <span>⏱️ {item.days_of_stock}j de stock</span>}
+                          {item.refund_count > 0 && <span className="text-red-500">↩️ {item.refund_count} retour{item.refund_count > 1 ? 's' : ''} ({(item.refund_rate * 100).toFixed(0)}%)</span>}
                         </div>
                         {item.reasons?.length > 0 && (
                           <div className="mt-2 space-y-1">
@@ -6479,11 +5367,11 @@ export default function Dashboard() {
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                 <div>
                   <p className="text-xs uppercase tracking-[0.3em] text-red-500">🚫 {t('conversionAnalysis')}</p>
-                  <h3 className="text-[#1A1A2E] text-2xl font-bold mt-2">{t('blockerProductsLabel')}</h3>
-                  <p className="text-sm text-[#6A6A85] mt-1">{t('blockerProductsDesc')}</p>
+                  <h3 className="text-[#1A1A2E] text-2xl font-bold mt-2">Produits freins</h3>
+                  <p className="text-sm text-[#6A6A85] mt-1">Produits qui cassent la conversion : vus mais pas ajoutés au panier, ou ajoutés mais pas achetés.</p>
                 </div>
                 <div className="text-right">
-                  <div className="text-xs text-[#8A8AA3]">{blockersData?.blockers?.length ?? '—'} {t('blockerProductsLabel')}</div>
+                  <div className="text-xs text-[#8A8AA3]">{blockersData?.blockers?.length ?? '—'} produit{(blockersData?.blockers?.length ?? 0) > 1 ? 's' : ''} frein{(blockersData?.blockers?.length ?? 0) > 1 ? 's' : ''}</div>
                 </div>
               </div>
 
@@ -6493,7 +5381,7 @@ export default function Dashboard() {
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-[#4A4A68]">Shopify Pixel :</span>
                     {pixelLoading ? (
-                      <span className="text-xs text-[#8A8AA3]">{t('verifying')}</span>
+                      <span className="text-xs text-[#8A8AA3]">⏳ Vérification...</span>
                     ) : pixelStatus ? (
                       <span className={`text-xs font-medium ${
                         pixelStatus.status === 'active' ? 'text-[#0D9488]' :
@@ -6511,18 +5399,18 @@ export default function Dashboard() {
                     className="flex items-center gap-1 px-2 py-1 rounded-md bg-white hover:bg-[#EFF1F5] border border-[#D8D8E2] text-xs text-[#4A4A68] hover:text-[#1A1A2E] transition"
                   >
                     <span>{showPixelGuide ? '−' : '+'}</span>
-                    <span>{t('howToConnectPixel')}</span>
+                    <span>Comment connecter le Shopify Pixel</span>
                   </button>
                 </div>
 
                 {pixelStatus?.has_recent_events && (
                   <div className="px-3 pb-2">
-                    <p className="text-xs text-[#0D9488]/70">{t('pixelEventsReceived')}</p>
+                    <p className="text-xs text-[#0D9488]/70">✅ Des événements Pixel ont été reçus au cours des 30 derniers jours.</p>
                   </div>
                 )}
                 {pixelStatus && !pixelStatus.pixel_installed && !showPixelGuide && (
                   <div className="px-3 pb-3">
-                    <p className="text-xs text-[#8A8AA3]">{t('withoutPixelData')} pas disponibles.</p>
+                    <p className="text-xs text-[#8A8AA3]">Sans le Pixel, les données de vues et d'ajouts panier ne sont pas disponibles.</p>
                   </div>
                 )}
 
@@ -6535,15 +5423,15 @@ export default function Dashboard() {
                       <div className="flex gap-3">
                         <span className="flex-shrink-0 w-6 h-6 rounded-full bg-red-50 text-red-500 flex items-center justify-center text-xs font-bold">1</span>
                         <div>
-                          <p className="text-sm text-[#1A1A2E] font-medium">{t('pixelStep1Title')}</p>
-                          <p className="text-xs text-[#6A6A85]">{t('pixelStep2')} <span className="text-[#1A1A2E] font-mono bg-white px-1 rounded">Settings</span> {t('pixelSettingsHint')}</p>
+                          <p className="text-sm text-[#1A1A2E] font-medium">Ouvre ton admin Shopify</p>
+                          <p className="text-xs text-[#6A6A85]">Va dans <span className="text-[#1A1A2E] font-mono bg-white px-1 rounded">Settings</span> (Paramètres) en bas à gauche.</p>
                         </div>
                       </div>
 
                       <div className="flex gap-3">
                         <span className="flex-shrink-0 w-6 h-6 rounded-full bg-red-50 text-red-500 flex items-center justify-center text-xs font-bold">2</span>
                         <div>
-                          <p className="text-sm text-[#1A1A2E] font-medium">{t('pixelStep2Title')}</p>
+                          <p className="text-sm text-[#1A1A2E] font-medium">Clique sur « Customer events »</p>
                           <p className="text-xs text-[#6A6A85]">{t('pixelStep2FrenchNote')}</p>
                         </div>
                       </div>
@@ -6551,7 +5439,7 @@ export default function Dashboard() {
                       <div className="flex gap-3">
                         <span className="flex-shrink-0 w-6 h-6 rounded-full bg-red-50 text-red-500 flex items-center justify-center text-xs font-bold">3</span>
                         <div>
-                          <p className="text-sm text-[#1A1A2E] font-medium">{t('pixelStep3Title')}</p>
+                          <p className="text-sm text-[#1A1A2E] font-medium">Clique « Add custom pixel »</p>
                           <p className="text-xs text-[#6A6A85]">{t('pixelStep3FrenchNote')}</p>
                         </div>
                       </div>
@@ -6559,7 +5447,7 @@ export default function Dashboard() {
                       <div className="flex gap-3">
                         <span className="flex-shrink-0 w-6 h-6 rounded-full bg-red-50 text-red-500 flex items-center justify-center text-xs font-bold">4</span>
                         <div>
-                          <p className="text-sm text-[#1A1A2E] font-medium">{t('pixelStep4Title')}</p>
+                          <p className="text-sm text-[#1A1A2E] font-medium">Nomme le pixel</p>
                           <p className="text-xs text-[#6A6A85]">{t('pixelStep4Desc')}</p>
                         </div>
                       </div>
@@ -6567,7 +5455,7 @@ export default function Dashboard() {
                       <div className="flex gap-3">
                         <span className="flex-shrink-0 w-6 h-6 rounded-full bg-red-50 text-red-500 flex items-center justify-center text-xs font-bold">5</span>
                         <div>
-                          <p className="text-sm text-[#1A1A2E] font-medium">{t('pixelStep5Title')}</p>
+                          <p className="text-sm text-[#1A1A2E] font-medium">Paramètres de confidentialité</p>
                           <p className="text-xs text-[#6A6A85]"><b>{t('permission')}:</b> « Not required » · <b>{t('dataSale')}:</b> « Data collected does not qualify as data sale ».</p>
                         </div>
                       </div>
@@ -6575,8 +5463,8 @@ export default function Dashboard() {
                       <div className="flex gap-3">
                         <span className="flex-shrink-0 w-6 h-6 rounded-full bg-red-50 text-red-500 flex items-center justify-center text-xs font-bold">6</span>
                         <div>
-                          <p className="text-sm text-[#1A1A2E] font-medium">{t('pixelStep6Title')}</p>
-                          <p className="text-xs text-[#6A6A85]">{t('pixelStep3')} :</p>
+                          <p className="text-sm text-[#1A1A2E] font-medium">Colle le code ci-dessous</p>
+                          <p className="text-xs text-[#6A6A85]">Supprime tout le contenu par défaut dans la zone de code et colle uniquement ce script :</p>
                         </div>
                       </div>
                     </div>
@@ -6659,7 +5547,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     <div className="flex gap-3">
                       <span className="flex-shrink-0 w-6 h-6 rounded-full bg-red-50 text-red-500 flex items-center justify-center text-xs font-bold">7</span>
                       <div>
-                        <p className="text-sm text-[#1A1A2E] font-medium">{t('pixelStep7Title')}</p>
+                        <p className="text-sm text-[#1A1A2E] font-medium">Clique « Save » puis « Connect »</p>
                         <p className="text-xs text-[#6A6A85]">{t('pixelStep7Desc')}</p>
                       </div>
                     </div>
@@ -6675,7 +5563,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         }}
                         className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#FF6B35]/20 hover:bg-[#FF6B35]/30 border border-[#FF6B35]/30 text-xs text-[#FF8B60] hover:text-[#E85A28] transition"
                       >
-                        🤖 {t('askAiQuestion')}
+                        🤖 Tu as des questions ? Demande à l'IA
                       </button>
                     </div>
                   </div>
@@ -6694,16 +5582,16 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     <div key={item.product_id || item.title} className="bg-[#F7F8FA]/70 border border-[#E8E8EE] rounded-xl p-4">
                       <div className="flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm">{item.category || '⚠️ ' + t('blockerDetected')}</span>
+                          <span className="text-sm">{item.category || '⚠️ Frein détecté'}</span>
                         </div>
-                        <p className="text-[#1A1A2E] font-semibold mt-1">{item.title || t('productHeader')}</p>
+                        <p className="text-[#1A1A2E] font-semibold mt-1">{item.title || 'Produit'}</p>
                         <div className="flex flex-wrap gap-3 mt-2 text-xs text-[#6A6A85]">
-                          <span>🛒 {t('ordersCountShort').replace('{count}', item.orders)}</span>
+                          <span>🛒 {item.orders} cmd{item.orders !== 1 ? 's' : ''}</span>
                           <span>💰 {formatCurrency(item.revenue, blockersData?.currency || analyticsData?.currency || 'EUR')}</span>
-                          {item.views > 0 && <span>👁️ {t('viewsCount').replace('{count}', item.views)}</span>}
-                          {item.add_to_cart > 0 && <span>🛒 {t('addToCartCount').replace('{count}', item.add_to_cart)}</span>}
-                          {item.view_to_cart_rate != null && <span className={item.view_to_cart_rate < 0.03 ? 'text-red-500' : 'text-[#0D9488]'}>{t('viewToCartRate').replace('{rate}', (item.view_to_cart_rate * 100).toFixed(1))}</span>}
-                          {item.cart_to_order_rate != null && <span className={item.cart_to_order_rate < 0.2 ? 'text-red-500' : 'text-[#0D9488]'}>{t('cartToOrderRate').replace('{rate}', (item.cart_to_order_rate * 100).toFixed(1))}</span>}
+                          {item.views > 0 && <span>👁️ {item.views} vues</span>}
+                          {item.add_to_cart > 0 && <span>🛒 {item.add_to_cart} ajouts panier</span>}
+                          {item.view_to_cart_rate != null && <span className={item.view_to_cart_rate < 0.03 ? 'text-red-500' : 'text-[#0D9488]'}>Vue→Panier: {(item.view_to_cart_rate * 100).toFixed(1)}%</span>}
+                          {item.cart_to_order_rate != null && <span className={item.cart_to_order_rate < 0.2 ? 'text-red-500' : 'text-[#0D9488]'}>Panier→Achat: {(item.cart_to_order_rate * 100).toFixed(1)}%</span>}
                         </div>
                       </div>
                     </div>
@@ -6717,11 +5605,11 @@ analytics.subscribe("product_added_to_cart", (event) => {
         {activeTab === 'action-rewrite' && (
           <div className="bg-white rounded-lg p-6 border border-[#E8E8EE] space-y-6">
             <div>
-              <h2 className="text-[#1A1A2E] text-xl font-bold mb-2">{t('smartRewrite')}</h2>
-              <p className="text-[#6A6A85]">{t('rewriteDesc')}</p>
+              <h2 className="text-[#1A1A2E] text-xl font-bold mb-2">Réécriture intelligente</h2>
+              <p className="text-[#6A6A85]">Réécrit titres et descriptions selon la performance réelle.</p>
             </div>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <p className="text-sm text-[#6A6A85]">{getInsightCount(insightsData?.rewrite_opportunities)} {t('productsToRewrite')}</p>
+              <p className="text-sm text-[#6A6A85]">{getInsightCount(insightsData?.rewrite_opportunities)} produits analysés</p>
               <div className="flex flex-col sm:flex-row gap-3">
                 <select
                   value={rewriteProductId}
@@ -6745,7 +5633,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
               </div>
             </div>
             <div>
-              <label className="block text-sm font-medium text-[#6A6A85] mb-1">{t('customInstructions')}</label>
+              <label className="block text-sm font-medium text-[#6A6A85] mb-1">📝 Instructions personnalisées (optionnel)</label>
               <textarea
                 value={rewriteInstructions}
                 onChange={(e) => setRewriteInstructions(e.target.value)}
@@ -6753,7 +5641,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 className="w-full bg-[#F7F8FA] border border-[#E8E8EE] text-[#1A1A2E] text-sm rounded-lg px-3 py-2 min-h-[80px] resize-y placeholder-gray-600 focus:border-[#FF6B35] focus:ring-1 focus:ring-[#FF6B35] outline-none"
                 rows={3}
               />
-              <p className="text-xs text-gray-600 mt-1">{t('aiWillUseInstructions')}</p>
+              <p className="text-xs text-gray-600 mt-1">L'IA prendra ces instructions en compte pour générer le titre et la description.</p>
             </div>
             {renderStatus('action-rewrite')}
             {insightsData?.rewrite_ai?.notes?.length ? (
@@ -6763,15 +5651,15 @@ analytics.subscribe("product_added_to_cart", (event) => {
             ) : null}
             <div className="space-y-3">
               {!rewriteProductId ? (
-                <p className="text-sm text-[#8A8AA3]">{t('selectProductToAnalyze')}</p>
+                <p className="text-sm text-[#8A8AA3]">Sélectionne un produit pour lancer l'analyse.</p>
               ) : !insightsLoading && (!insightsData?.rewrite_opportunities || insightsData.rewrite_opportunities.length === 0) ? (
-                <p className="text-sm text-[#8A8AA3]">{t('noSuggestionsYet')}</p>
+                <p className="text-sm text-[#8A8AA3]">Aucune suggestion disponible pour l'instant.</p>
               ) : (
                 insightsData?.rewrite_opportunities?.slice(0, 1).map((item, index) => (
                   <div key={item.product_id || index} className="bg-[#F7F8FA]/70 border border-[#E8E8EE] rounded-lg p-6 space-y-4">
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <p className="text-[#1A1A2E] font-semibold text-lg">{item.title || t('productHeader')}</p>
+                        <p className="text-[#1A1A2E] font-semibold text-lg">{item.title || 'Produit'}</p>
                         <p className="text-sm text-[#6A6A85]">{(item.reasons || []).join(' · ')}</p>
                       </div>
                       <div className="flex gap-2">
@@ -6785,7 +5673,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             }`}
                             disabled={applyingBlockerActionId === `${item.product_id}-title`}
                           >
-                            {t('applyTitle')}
+                            Appliquer titre
                           </button>
                         )}
                         {(item.recommendations || []).includes('description') && (
@@ -6798,7 +5686,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             }`}
                             disabled={applyingBlockerActionId === `${item.product_id}-description`}
                           >
-                            {t('applyDescription')}
+                            Appliquer description
                           </button>
                         )}
                       </div>
@@ -6806,7 +5694,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                     <div className="grid md:grid-cols-2 gap-4">
                       <div className="bg-[#F7F8FA] border border-[#E8E8EE] rounded-lg p-4">
-                        <p className="text-sm font-semibold text-[#4A4A68] mb-2">{t('currentContent')}</p>
+                        <p className="text-sm font-semibold text-[#4A4A68] mb-2">Contenu actuel</p>
                         <div className="text-sm text-[#6A6A85] space-y-2">
                           <p><span className="text-[#8A8AA3]">Titre:</span> {item.current_title || '—'}</p>
                           <div className="max-h-56 overflow-y-auto pr-2 text-base text-[#4A4A68] whitespace-pre-wrap">
@@ -6815,10 +5703,10 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         </div>
                       </div>
                       <div className="bg-[#F7F8FA] border border-[#E8E8EE] rounded-lg p-4">
-                        <p className="text-sm font-semibold text-[#4A4A68] mb-2">{t('aiSuggestions')}</p>
+                        <p className="text-sm font-semibold text-[#4A4A68] mb-2">Suggestions IA</p>
                         <div className="text-sm text-[#4A4A68] space-y-3">
                           {item.suggested_title ? (
-                            <p className="text-base"><span className="text-[#8A8AA3]">{t('suggestedTitle')}:</span> {stripHtmlTags(item.suggested_title)}</p>
+                            <p className="text-base"><span className="text-[#8A8AA3]">Titre suggéré:</span> {stripHtmlTags(item.suggested_title)}</p>
                           ) : null}
                           <div className="max-h-72 overflow-y-auto pr-2 text-base text-[#2A2A42] whitespace-pre-wrap">
                             {stripHtmlTags(item.suggested_description) || '—'}
@@ -7415,96 +6303,27 @@ analytics.subscribe("product_added_to_cart", (event) => {
           <div className="bg-white rounded-lg p-6 border border-[#E8E8EE] space-y-6">
             <div>
               <h2 className="text-[#1A1A2E] text-xl font-bold mb-2">Bundles & cross-sell</h2>
-              <p className="text-[#6A6A85]">{t('bundlesDescription')}</p>
+              <p className="text-[#6A6A85]">Packs basés sur les commandes passées pour booster l’AOV.</p>
             </div>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <p className="text-sm text-[#6A6A85]">{insightsLoading ? t('analysisInProgress') : `${getInsightCount(insightsData?.bundle_suggestions)} suggestions`}</p>
-              <div className="relative">
-                <button
-                  onClick={() => {
-                    if (!bundlesHistoryOpen) loadBundlesHistory({ openDropdown: true })
-                    else setBundlesHistoryOpen(false)
-                  }}
-                  disabled={bundlesHistoryLoading}
-                  className="flex items-center gap-1.5 text-sm text-[#2A2A42] hover:text-[#1A1A2E] font-medium transition-colors border border-[#E8E8EE] rounded-full px-4 py-2 hover:bg-[#F7F8FA]"
-                >
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" className={bundlesHistoryOpen ? 'rotate-45' : ''} style={{transition:'transform .2s', transformOrigin:'8px 8px'}}/></svg>
-                  <span>{bundlesHistoryLoading ? t('loadingDots') : t('history')}</span>
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="shrink-0">
-                    <path d={bundlesHistoryOpen ? "M3 7.5L6 4.5L9 7.5" : "M3 4.5L6 7.5L9 4.5"} stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                </button>
-
-                {/* ── Dropdown historique bundles ── */}
-                {bundlesHistoryOpen && (
-                  <div className="absolute top-full right-0 mt-2 w-96 bg-white border border-[#E8E8EE] rounded-xl shadow-2xl z-[60] overflow-hidden">
-                    <div className="px-4 py-3 border-b border-[#E8E8EE]/40">
-                      <span className="text-sm font-semibold text-[#1A1A2E]">Historique des analyses</span>
-                    </div>
-                    <div className="max-h-72 overflow-y-auto">
-                      {bundlesHistory.length === 0 ? (
-                        <p className="px-4 py-4 text-sm text-[#8A8AA3]">{t('noOldResults')}</p>
-                      ) : (
-                        bundlesHistory.map((job, idx) => {
-                          const isSelected = selectedBundlesHistoryJobId === (job.job_id || '')
-                          const raw = job.finished_at || job.started_at || job.created_at
-                          let dateStr = '—'
-                          if (raw) {
-                            const ts = typeof raw === 'number' ? (raw > 1e12 ? raw : raw * 1000) : Date.parse(raw)
-                            if (ts && !isNaN(ts)) dateStr = new Date(ts).toLocaleString('fr-CA', { dateStyle: 'medium', timeStyle: 'short' })
-                          }
-                          const suggestions = job.result?.bundle_suggestions || job.bundle_suggestions || []
-                          const count = suggestions.length
-                          // Build a summary of product names in the bundles
-                          const bundleNames = suggestions.slice(0, 3).map(s => {
-                            const t0 = s.titles?.[0] || ''
-                            const t1 = s.titles?.[1] || ''
-                            // Shorten each title to ~25 chars
-                            const short = (t) => t.length > 25 ? t.slice(0, 23) + '…' : t
-                            return `${short(t0)} + ${short(t1)}`
-                          })
-                          return (
-                            <button
-                              key={job.id || job.job_id || idx}
-                              onClick={() => { applyBundlesHistoryJob(job); setBundlesHistoryOpen(false) }}
-                              className={`w-full flex items-center justify-between px-4 py-3 text-left hover:bg-[#EFF1F5]/60 transition-colors border-b border-[#E8E8EE]/20 last:border-b-0 ${
-                                isSelected ? 'bg-[#EFF1F5]/40' : ''
-                              }`}
-                            >
-                              <div className="flex flex-col gap-0.5 min-w-0 flex-1 mr-2">
-                                {bundleNames.length > 0 ? bundleNames.map((name, i) => (
-                                  <span key={i} className="text-sm text-[#2A2A42] font-medium truncate">{name}</span>
-                                )) : (
-                                  <span className="text-sm text-[#2A2A42] font-medium truncate">{count} suggestion{count !== 1 ? 's' : ''}</span>
-                                )}
-                                <span className="text-xs text-[#8A8AA3]">{dateStr} — {count} bundle{count !== 1 ? 's' : ''}</span>
-                              </div>
-                              <div className="flex items-center gap-2 shrink-0">
-                                <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
-                                  job.status === 'completed' ? 'bg-green-50 text-green-700' : job.status === 'failed' ? 'bg-red-50 text-red-600' : 'bg-yellow-50 text-yellow-700'
-                                }`}>{job.status === 'completed' ? '✓' : job.status === 'failed' ? '✗' : '…'}</span>
-                                {isSelected && (
-                                  <span className="w-1.5 h-1.5 rounded-full bg-[#0D9488]"></span>
-                                )}
-                              </div>
-                            </button>
-                          )
-                        })
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
+              <button
+                onClick={loadBundlesHistory}
+                disabled={bundlesHistoryLoading}
+                className="bg-[#0D9488] hover:bg-[#0F766E] text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
+              >
+                {bundlesHistoryLoading ? 'Chargement historique...' : 'Historique'}
+              </button>
             </div>
             {bundlesJobStatus !== 'idle' && (
-              <p className="text-xs text-[#6A6A85]">{t('jobStatusLabel')}: {bundlesJobStatus}</p>
+              <p className="text-xs text-[#6A6A85]">État job: {bundlesJobStatus}</p>
             )}
             {renderStatus('action-bundles')}
             {bundlesDiagnostics && (
               <div className="bg-[#F7F8FA]/60 border border-[#E8E8EE] rounded-lg p-4 text-sm">
-                <div className="text-[#1A1A2E] font-semibold mb-1">{t('analysisDiagnostics')}</div>
+                <div className="text-[#1A1A2E] font-semibold mb-1">Diagnostic analyse</div>
                 <div className="text-[#4A4A68]">
-                  {bundlesDiagnostics.orders_scanned || 0} {t('ordersScanned')} • {bundlesDiagnostics.orders_with_2plus_items || 0} {t('multiItemOrders')} • {bundlesDiagnostics.pairs_found || 0} {t('pairsFound')}
+                  {bundlesDiagnostics.orders_scanned || 0} commandes scannées • {bundlesDiagnostics.orders_with_2plus_items || 0} commandes avec 2+ articles • {bundlesDiagnostics.pairs_found || 0} paires trouvées
                 </div>
                 {bundlesDiagnostics.no_result_reason ? (
                   <div className="text-[#FF6B35] mt-2">{bundlesDiagnostics.no_result_reason}</div>
@@ -7516,7 +6335,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
             )}
             <div className="space-y-3">
               {!insightsLoading && (!insightsData?.bundle_suggestions || insightsData.bundle_suggestions.length === 0) ? (
-                <p className="text-sm text-[#8A8AA3]">{t('noSuggestionDetected')}</p>
+                <p className="text-sm text-[#8A8AA3]">Aucune suggestion détectée.</p>
               ) : (
                 insightsData?.bundle_suggestions?.slice(0, 8).map((item, index) => (
                   <div key={index} className="bg-[#F7F8FA]/70 border border-[#E8E8EE] rounded-lg p-4">
@@ -7526,29 +6345,29 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           {item.titles?.[0] || `#${item.pair?.[0] || 'A'}`} + {item.titles?.[1] || `#${item.pair?.[1] || 'B'}`}
                         </p>
                         <p className="text-xs text-[#8A8AA3]">
-                          {item.count || 0} {t('orders')?.toLowerCase() || 'orders'}
-                          {item.confidence ? ` • ${t('confidenceLabel')} ${item.confidence}` : ''}
-                          {Array.isArray(item.discount_range_pct) && item.discount_range_pct.length >= 2 ? ` • ${t('discountLabel')} ${item.discount_range_pct[0]}–${item.discount_range_pct[1]}%` : ''}
+                          {item.count || 0} commandes
+                          {item.confidence ? ` • confiance ${item.confidence}` : ''}
+                          {Array.isArray(item.discount_range_pct) && item.discount_range_pct.length >= 2 ? ` • remise ${item.discount_range_pct[0]}–${item.discount_range_pct[1]}%` : ''}
                         </p>
                       </div>
 
                       {item.offer?.message ? (
                         <div className="text-sm text-[#4A4A68]">
-                          <div className="text-[#1A1A2E] font-semibold">{t('offer')}</div>
+                          <div className="text-[#1A1A2E] font-semibold">Offre</div>
                           <div className="text-[#4A4A68]">{item.offer.message}</div>
                         </div>
                       ) : null}
 
                       {Array.isArray(item.placements) && item.placements.length > 0 ? (
                         <div className="text-sm text-[#4A4A68]">
-                          <div className="text-[#1A1A2E] font-semibold">{t('whereToDisplay')}</div>
+                          <div className="text-[#1A1A2E] font-semibold">Où l’afficher</div>
                           <div className="text-[#6A6A85]">{item.placements.slice(0, 3).join(' · ')}</div>
                         </div>
                       ) : null}
 
                       {Array.isArray(item.copy) && item.copy.length > 0 ? (
                         <div className="text-sm text-[#4A4A68]">
-                          <div className="text-[#1A1A2E] font-semibold">{t('copyExamples')}</div>
+                          <div className="text-[#1A1A2E] font-semibold">Copy (exemples)</div>
                           <div className="text-[#6A6A85]">{item.copy.slice(0, 2).join(' · ')}</div>
                         </div>
                       ) : null}
@@ -7557,6 +6376,35 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 ))
               )}
             </div>
+            {/* Historique des jobs bundles */}
+            {bundlesHistoryOpen && (
+              <div className="mt-6">
+                <h3 className="text-[#1A1A2E] font-bold mb-2">Historique des analyses</h3>
+                {bundlesHistory.length === 0 ? (
+                  <p className="text-sm text-[#8A8AA3]">Aucun ancien résultat disponible.</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {bundlesHistory.map((job, idx) => (
+                      <li key={job.id || job.job_id || idx} className="bg-[#F7F8FA]/70 border border-[#E8E8EE] rounded-lg p-3 flex flex-col gap-2">
+                        <span className="text-xs text-[#6A6A85]">
+                          {job.finished_at || job.started_at || job.created_at || '—'} • {job.status || 'unknown'}
+                        </span>
+                        {(job.result?.bundle_suggestions || job.bundle_suggestions) && (
+                          <span className="text-sm text-[#1A1A2E]">{(job.result?.bundle_suggestions || job.bundle_suggestions || []).length} suggestions</span>
+                        )}
+                        <button
+                          onClick={() => applyBundlesHistoryJob(job)}
+                          className="self-start bg-[#0D9488] hover:bg-[#0F766E] text-white text-xs font-semibold py-1 px-3 rounded"
+                          type="button"
+                        >
+                          {selectedBundlesHistoryJobId && selectedBundlesHistoryJobId === (job.job_id || '') ? t('resultShown') : t('loadResult')}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -7564,15 +6412,15 @@ analytics.subscribe("product_added_to_cart", (event) => {
           <div className="bg-white rounded-lg border border-[#E8E8EE]">
             <div className="px-6 py-5 border-b border-[#E8E8EE]">
               <h2 className="text-[#1A1A2E] text-xl font-bold flex items-center gap-2">
-                {t('stockAlertTitle')}
+                <span>📦</span> Alertes rupture de stock
               </h2>
-              <p className="text-[#6A6A85] text-sm mt-1">{t('stockAlertDesc')}</p>
+              <p className="text-[#6A6A85] text-sm mt-1">Entrez un seuil à côté de chaque produit. La sauvegarde est automatique. Vous recevrez un email si le stock atteint le seuil.</p>
             </div>
 
             {stockProductsLoading ? (
               <div className="p-8 text-center">
                 <svg className="animate-spin h-6 w-6 text-[#FF6B35] mx-auto mb-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                <p className="text-[#6A6A85] text-sm">{t('loadingProducts')}</p>
+                <p className="text-[#6A6A85] text-sm">Chargement des produits...</p>
               </div>
             ) : stockProducts.length === 0 ? (
               <div className="p-8 text-center">
@@ -7583,9 +6431,9 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-[#E8E8EE] bg-[#F7F8FA]">
-                      <th className="text-left px-6 py-3 text-xs text-[#6A6A85] font-semibold uppercase">{t('productHeader')}</th>
-                      <th className="text-center px-4 py-3 text-xs text-[#6A6A85] font-semibold uppercase w-28">{t('stockHeader')}</th>
-                      <th className="text-center px-4 py-3 text-xs text-[#6A6A85] font-semibold uppercase w-36">{t('alertThreshold')}</th>
+                      <th className="text-left px-6 py-3 text-xs text-[#6A6A85] font-semibold uppercase">Produit</th>
+                      <th className="text-center px-4 py-3 text-xs text-[#6A6A85] font-semibold uppercase w-28">Stock</th>
+                      <th className="text-center px-4 py-3 text-xs text-[#6A6A85] font-semibold uppercase w-36">Seuil d'alerte</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#E8E8EE]">
@@ -7622,7 +6470,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
             )}
 
             <div className="px-6 py-3 border-t border-[#E8E8EE] bg-[#F7F8FA]/30">
-              <p className="text-xs text-[#8A8AA3]">{t('serverChecksStock')} <span className="text-[#FF6B35]">{t('every5Minutes')}</span>{t('stockAlertEmailNotice')}</p>
+              <p className="text-xs text-[#8A8AA3]">Le serveur vérifie automatiquement vos stocks <span className="text-[#FF6B35]">toutes les 5 minutes</span>, 24/7. Un email est envoyé quand le stock atteint le seuil configuré.</p>
             </div>
           </div>
         )}
@@ -7630,11 +6478,11 @@ analytics.subscribe("product_added_to_cart", (event) => {
         {activeTab === 'action-returns' && (
           <div className="bg-white rounded-lg p-6 border border-[#E8E8EE] space-y-6">
             <div>
-              <h2 className="text-[#1A1A2E] text-xl font-bold mb-2">{t('antiReturns')}</h2>
-              <p className="text-[#6A6A85]">{t('antiReturnsDescription')}</p>
+              <h2 className="text-[#1A1A2E] text-xl font-bold mb-2">Anti-retours</h2>
+              <p className="text-[#6A6A85]">Identifie les produits les plus susceptibles d'être retournés selon l'historique de remboursements, le contenu et les signaux de performance.</p>
             </div>
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <p className="text-sm text-[#6A6A85]">{getInsightCount(insightsData?.return_risks)} {t('productsAtRisk')}</p>
+              <p className="text-sm text-[#6A6A85]">{getInsightCount(insightsData?.return_risks)} produits à risque</p>
               <button
                 onClick={() => runActionAnalysis('action-returns')}
                 disabled={insightsLoading}
@@ -7647,13 +6495,13 @@ analytics.subscribe("product_added_to_cart", (event) => {
             <div className="space-y-4">
               {!insightsLoading && (!insightsData?.return_risks || insightsData.return_risks.length === 0) ? (
                 <div className="text-center py-8">
-                  <p className="text-[#8A8AA3]">{t('noRiskProductsDetected')}</p>
-                  <p className="text-xs text-[#B0B0C0] mt-1">{t('clickAnalyzeToStart')}</p>
+                  <p className="text-[#8A8AA3]">Aucun produit à risque détecté pour le moment.</p>
+                  <p className="text-xs text-[#B0B0C0] mt-1">Cliquez sur « Analyser les produits » pour lancer l'analyse.</p>
                 </div>
               ) : (
                 insightsData?.return_risks?.slice(0, 10).map((item, index) => {
-                  const riskColor = (item.risk_level === 'élevé' || item.risk_level === 'high') ? '#EF4444' : (item.risk_level === 'modéré' || item.risk_level === 'medium') ? '#F59E0B' : '#6B7280'
-                  const riskBg = (item.risk_level === 'élevé' || item.risk_level === 'high') ? 'bg-red-50 border-red-200' : (item.risk_level === 'modéré' || item.risk_level === 'medium') ? 'bg-amber-50 border-amber-200' : 'bg-gray-50 border-gray-200'
+                  const riskColor = item.risk_level === 'élevé' ? '#EF4444' : item.risk_level === 'modéré' ? '#F59E0B' : '#6B7280'
+                  const riskBg = item.risk_level === 'élevé' ? 'bg-red-50 border-red-200' : item.risk_level === 'modéré' ? 'bg-amber-50 border-amber-200' : 'bg-gray-50 border-gray-200'
                   const returnedOrders = Number(item?.returned_orders ?? item?.refunds ?? 0)
                   const returnedItems = Number(item?.returned_items ?? 0)
                   const orderRate = (item?.return_rate_orders ?? item?.refund_rate)
@@ -7663,10 +6511,10 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         <div className="flex-1">
                           <p className="text-[#1A1A2E] font-bold text-base">{item.title || item.product_id}</p>
                           <div className="flex flex-wrap items-center gap-3 mt-1 text-xs text-[#6A6A85]">
-                            {returnedOrders > 0 && <span>🔁 {returnedOrders} {t('returnedOrders')}</span>}
-                            {returnedItems > 0 && <span>📦 {returnedItems} {t('refundedItems')}</span>}
+                            {returnedOrders > 0 && <span>🔁 {returnedOrders} commande(s) retournée(s)</span>}
+                            {returnedItems > 0 && <span>📦 {returnedItems} item(s) remboursé(s)</span>}
                             {orderRate !== null && orderRate !== undefined && Number(orderRate) > 0 && (
-                              <span>📊 {t('orderReturnRate')}: {Math.round(Number(orderRate) * 100)}%</span>
+                              <span>📊 Taux retour commandes: {Math.round(Number(orderRate) * 100)}%</span>
                             )}
                             {item.signals?.orders > 0 && <span>📦 {item.signals.orders} commande(s)</span>}
                             {item.signals?.price > 0 && <span>💰 {item.signals.price}$</span>}
@@ -7676,14 +6524,14 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           className="text-xs font-bold px-3 py-1 rounded-full whitespace-nowrap"
                           style={{ backgroundColor: riskColor + '20', color: riskColor }}
                         >
-                          {t('riskLevel')} {item.risk_level || t('notSpecified')} {item.risk_score ? `(${Math.round(item.risk_score)})` : ''}
+                          Risque {item.risk_level || 'inconnu'} {item.risk_score ? `(${Math.round(item.risk_score)})` : ''}
                         </span>
                       </div>
 
                       {/* Raisons du risque */}
                       {Array.isArray(item.reasons) && item.reasons.length > 0 && (
                         <div className="mb-3">
-                          <p className="text-xs font-semibold text-[#1A1A2E] mb-1">{t('riskSignals')}</p>
+                          <p className="text-xs font-semibold text-[#1A1A2E] mb-1">⚠️ Signaux de risque :</p>
                           <ul className="text-xs text-[#6A6A85] space-y-0.5 pl-4 list-disc">
                             {item.reasons.map((r, i) => <li key={i}>{r}</li>)}
                           </ul>
@@ -7693,7 +6541,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                       {/* Recommandations */}
                       {Array.isArray(item.recommendations) && item.recommendations.length > 0 && (
                         <div className="bg-white/60 rounded-md p-3">
-                          <p className="text-xs font-semibold text-[#0D9488] mb-1">{t('recommendations')}</p>
+                          <p className="text-xs font-semibold text-[#0D9488] mb-1">💡 Recommandations :</p>
                           <ul className="text-xs text-[#6A6A85] space-y-0.5 pl-4 list-disc">
                             {item.recommendations.map((r, i) => <li key={i}>{r}</li>)}
                           </ul>
@@ -7715,7 +6563,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
             
             {products && products.length > 0 ? (
               <div>
-                <p className="text-[#6A6A85] mb-4">{products.length} {t('productsToAnalyze')}</p>
+                <p className="text-[#6A6A85] mb-4">{products.length} produits à analyser</p>
                 <button
                   onClick={analyzeProducts}
                   disabled={loading}
@@ -7726,7 +6574,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 {renderStatus('analyze')}
               </div>
             ) : (
-              <p className="text-[#6A6A85]">{t('loadProductsFirst')}</p>
+              <p className="text-[#6A6A85]">Charge tes produits Shopify d'abord</p>
             )}
           </div>
         )}
@@ -7741,10 +6589,10 @@ analytics.subscribe("product_added_to_cart", (event) => {
                   <div className="bg-gradient-to-r from-teal-50 to-orange-50 border-2 border-[#2DD4BF]/40 rounded-lg p-6 shadow-sm">
                     <div className="flex items-center justify-between">
                       <div>
-                        <h3 className="text-[#1A1A2E] text-xl font-bold mb-2">{t('autoAIActions')}</h3>
-                        <p className="text-[#0D9488] text-sm">{t('aiCanAutoApply')}</p>
+                        <h3 className="text-[#1A1A2E] text-xl font-bold mb-2">Actions Automatiques IA</h3>
+                        <p className="text-[#0D9488] text-sm">L'IA peut appliquer automatiquement les optimisations recommandées à votre boutique Shopify.</p>
                         {subscription?.plan === 'premium' && (
-                          <p className="text-[#FF6B35] text-xs mt-1">{t('premiumAutoUnlimited')}</p>
+                          <p className="text-[#FF6B35] text-xs mt-1">Premium: Modifications automatiques sans limites</p>
                         )}
                       </div>
                       <button
@@ -7764,24 +6612,24 @@ analytics.subscribe("product_added_to_cart", (event) => {
                   <h2 className="text-[#1A1A2E] text-2xl font-bold mb-4">Vue d'ensemble de votre boutique</h2>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div className="bg-[#EFF1F5] p-4 rounded-lg">
-                      <p className="text-[#6A6A85] text-sm">{t('totalProducts')}</p>
+                      <p className="text-[#6A6A85] text-sm">Produits totaux</p>
                       <p className="text-[#1A1A2E] text-2xl font-bold">{analysisResults.overview?.total_products}</p>
                     </div>
                     <div className="bg-[#EFF1F5] p-4 rounded-lg">
-                      <p className="text-[#6A6A85] text-sm">{t('published')}</p>
+                      <p className="text-[#6A6A85] text-sm">Publiés</p>
                       <p className="text-[#0D9488] text-2xl font-bold">{analysisResults.overview?.published}</p>
                     </div>
                     <div className="bg-[#EFF1F5] p-4 rounded-lg">
-                      <p className="text-[#6A6A85] text-sm">{t('variants')}</p>
+                      <p className="text-[#6A6A85] text-sm">Variantes</p>
                       <p className="text-[#2DD4BF] text-2xl font-bold">{analysisResults.overview?.total_variants}</p>
                     </div>
                     <div className="bg-[#EFF1F5] p-4 rounded-lg">
-                      <p className="text-[#6A6A85] text-sm">{t('averagePrice')}</p>
+                      <p className="text-[#6A6A85] text-sm">Prix moyen</p>
                       <p className="text-[#FF6B35] text-2xl font-bold">{analysisResults.overview?.price_range?.average?.toFixed(2)}$</p>
                     </div>
                   </div>
                   <div className="mt-4 bg-[#EFF1F5] p-4 rounded-lg">
-                    <p className="text-[#6A6A85] text-sm">{t('catalogHealth')}</p>
+                    <p className="text-[#6A6A85] text-sm">Santé du catalogue</p>
                     <p className="text-[#1A1A2E] text-xl font-bold">{analysisResults.overview?.catalog_health}</p>
                   </div>
                 </div>
@@ -7789,27 +6637,27 @@ analytics.subscribe("product_added_to_cart", (event) => {
                 {/* Points critiques */}
                 {analysisResults.critical_issues && analysisResults.critical_issues.length > 0 && (
                   <div className="bg-white border-2 border-[#E85A28] rounded-lg p-6">
-                    <h2 className="text-[#1A1A2E] text-2xl font-bold mb-4">{t('criticalPointsNow')}</h2>
+                    <h2 className="text-[#1A1A2E] text-2xl font-bold mb-4">Points critiques à corriger MAINTENANT</h2>
                     <div className="space-y-4">
                       {analysisResults.critical_issues.map((issue, idx) => (
                         <div key={idx} className="bg-[#F7F8FA] p-4 rounded-lg">
                           <div className="flex items-start gap-3">
                             <div className="flex-1">
-                              <p className="text-[#FF6B35] font-bold text-sm mb-1">{t('severity')}: {issue.severity}</p>
+                              <p className="text-[#FF6B35] font-bold text-sm mb-1">SÉVÉRITÉ: {issue.severity}</p>
                               <p className="text-[#1A1A2E] font-bold mb-2">{issue.issue}</p>
                               <p className="text-[#4A4A68] text-sm mb-2">{issue.impact}</p>
                               <div className="bg-white p-3 rounded mt-2">
-                                <p className="text-[#1A1A2E] font-bold text-sm">{t('immediateAction')}:</p>
+                                <p className="text-[#1A1A2E] font-bold text-sm">Action immédiate:</p>
                                 <p className="text-[#2A2A42] text-sm mt-1">{issue.action}</p>
                                 {issue.affected_products && issue.affected_products.length > 0 && (
                                   <div className="mt-2 pt-2 border-t border-gray-200">
-                                    <p className="text-[#6A6A85] text-xs font-semibold mb-1">{t('affectedProducts')}:</p>
+                                    <p className="text-[#6A6A85] text-xs font-semibold mb-1">Produits concernés :</p>
                                     <div className="flex flex-wrap gap-1">
                                       {issue.affected_products.slice(0, 12).map((name, pidx) => (
                                         <span key={pidx} className="inline-block bg-[#FFF4F0] text-[#E85A28] text-xs px-2 py-0.5 rounded-full border border-[#FF6B35]/20">{name}</span>
                                       ))}
                                       {issue.affected_products.length > 12 && (
-                                        <span className="text-[#6A6A85] text-xs">+{issue.affected_products.length - 12} {t('others')}</span>
+                                        <span className="text-[#6A6A85] text-xs">+{issue.affected_products.length - 12} autres</span>
                                       )}
                                     </div>
                                   </div>
@@ -7825,12 +6673,12 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                 {/* Actions immédiates */}
                 <div className="bg-gradient-to-r from-teal-50 to-orange-50 border-2 border-[#2DD4BF]/30 rounded-lg p-6">
-                  <h2 className="text-[#1A1A2E] text-2xl font-bold mb-4">🎯 {t('actionsNow')}</h2>
+                  <h2 className="text-[#1A1A2E] text-2xl font-bold mb-4">🎯 Actions à faire MAINTENANT</h2>
                   <div className="space-y-4">
                     {analysisResults.immediate_actions?.map((action, idx) => (
                       <div key={idx} className="bg-teal-50/50 p-5 rounded-lg">
                         <div className="flex items-center gap-2 mb-3">
-                          <span className="bg-[#FF6B35] text-white font-bold px-3 py-1 rounded-full text-sm">{t('priority')} {action.priority}</span>
+                          <span className="bg-[#FF6B35] text-white font-bold px-3 py-1 rounded-full text-sm">PRIORITÉ {action.priority}</span>
                           <h3 className="text-[#1A1A2E] font-bold text-lg">{action.action}</h3>
                         </div>
                         <div className="space-y-2 mb-3">
@@ -7839,8 +6687,8 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           ))}
                         </div>
                         <div className="flex gap-4 text-sm">
-                          <span className="text-[#4A4A68]">{t('timeLabel')}: {action.time_required}</span>
-                          <span className="text-[#FF6B35]">{t('impactLabel')}: {action.expected_impact}</span>
+                          <span className="text-[#4A4A68]">Temps: {action.time_required}</span>
+                          <span className="text-[#FF6B35]">Impact: {action.expected_impact}</span>
                         </div>
                       </div>
                     ))}
@@ -7849,10 +6697,10 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                 {/* Recommandations stratégiques */}
                 <div className="bg-white rounded-lg p-6 border border-[#E8E8EE]">
-                  <h2 className="text-[#1A1A2E] text-2xl font-bold mb-4">🎯 {t('strategicRecommendations')}</h2>
+                  <h2 className="text-[#1A1A2E] text-2xl font-bold mb-4">🎯 Recommandations stratégiques</h2>
                   <p className="text-[#6A6A85] mb-4">
-                    {analysisResults.strategic_recommendations?.total_recommendations} {t('recommendationsFound')} 
-                    ({analysisResults.strategic_recommendations?.high_priority} {t('highPriority')})
+                    {analysisResults.strategic_recommendations?.total_recommendations} recommandations trouvées 
+                    ({analysisResults.strategic_recommendations?.high_priority} haute priorité)
                   </p>
                   <div className="space-y-4">
                     {analysisResults.strategic_recommendations?.recommendations?.map((rec, idx) => (
@@ -7886,11 +6734,11 @@ analytics.subscribe("product_added_to_cart", (event) => {
                   <h2 className="text-[#1A1A2E] text-2xl font-bold mb-4">💰 Optimisation des prix</h2>
                   <div className="space-y-4">
                     <div className="bg-[#EFF1F5] p-4 rounded-lg">
-                      <h3 className="text-[#1A1A2E] font-bold mb-2">{t('currentStrategy')}</h3>
+                      <h3 className="text-[#1A1A2E] font-bold mb-2">Stratégie actuelle</h3>
                       <p className="text-[#4A4A68]">{analysisResults.pricing_strategy?.current_strategy}</p>
                     </div>
                     
-                    <h3 className="text-[#1A1A2E] font-bold mt-4">{t('suggestedOptimizations')}</h3>
+                    <h3 className="text-[#1A1A2E] font-bold mt-4">Optimisations suggérées (Top 5 produits):</h3>
                     <div className="space-y-3">
                       {analysisResults.pricing_strategy?.optimizations?.map((opt, idx) => (
                         <div key={idx} className="bg-[#EFF1F5] p-4 rounded-lg">
@@ -7906,7 +6754,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               <p className="text-[#1A1A2E] text-lg font-bold">{opt.current_price}$</p>
                             </div>
                             <div>
-                              <p className="text-[#6A6A85] text-sm">{t('suggestedPrice')}</p>
+                              <p className="text-[#6A6A85] text-sm">Prix suggéré</p>
                               <p className="text-[#0D9488] text-lg font-bold">{opt.suggested_price}$</p>
                             </div>
                           </div>
@@ -7916,7 +6764,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                       ))}
                     </div>
 
-                    <h3 className="text-[#1A1A2E] font-bold mt-4">{t('pricingOpportunities')}:</h3>
+                    <h3 className="text-[#1A1A2E] font-bold mt-4">Opportunités de pricing:</h3>
                     <div className="space-y-3">
                       {analysisResults.pricing_strategy?.opportunities?.map((opp, idx) => (
                         <div key={idx} className="bg-teal-50 p-4 rounded-lg border border-[#2DD4BF]/20">
@@ -7931,7 +6779,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                 {/* Qualité du contenu */}
                 <div className="bg-white rounded-lg p-6 border border-[#E8E8EE]">
-                  <h2 className="text-[#1A1A2E] text-2xl font-bold mb-4">📝 {t('contentQuality')}</h2>
+                  <h2 className="text-[#1A1A2E] text-2xl font-bold mb-4">📝 Qualité du contenu</h2>
                   <div className="bg-[#EFF1F5] p-4 rounded-lg mb-4">
                     <p className="text-[#6A6A85] text-sm mb-2">Score global</p>
                     <div className="flex items-center gap-3">
@@ -7950,7 +6798,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                   {analysisResults.content_improvements?.issues_found?.length > 0 && (
                     <>
-                      <h3 className="text-[#1A1A2E] font-bold mb-3">{t('detectedIssues')}:</h3>
+                      <h3 className="text-[#1A1A2E] font-bold mb-3">Problèmes détectés:</h3>
                       <div className="space-y-3 mb-4">
                         {analysisResults.content_improvements.issues_found.map((issue, idx) => (
                           <div key={idx} className="bg-orange-50 p-4 rounded-lg border border-[#FF6B35]/20">
@@ -7970,7 +6818,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     </>
                   )}
 
-                  <h3 className="text-[#1A1A2E] font-bold mb-3">{t('quickWins')}:</h3>
+                  <h3 className="text-[#1A1A2E] font-bold mb-3">Quick Wins (résultats rapides):</h3>
                   <div className="space-y-3">
                     {analysisResults.content_improvements?.quick_wins?.map((win, idx) => (
                       <div key={idx} className="bg-[#F7F8FA] p-4 rounded-lg border border-[#E8E8EE]">
@@ -7984,17 +6832,17 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                 {/* Stratégies de vente */}
                 <div className="bg-white rounded-lg p-6 border border-[#E8E8EE]">
-                  <h2 className="text-[#1A1A2E] text-2xl font-bold mb-4">{t('upsellCrossSellStrategies')}</h2>
+                  <h2 className="text-[#1A1A2E] text-2xl font-bold mb-4">Stratégies Upsell & Cross-sell</h2>
                   
                   {analysisResults.sales_strategies?.upsell_opportunities?.length > 0 && (
                     <>
-                      <h3 className="text-[#1A1A2E] font-bold mb-3">{t('upsellOpportunities')}:</h3>
+                      <h3 className="text-[#1A1A2E] font-bold mb-3">Opportunités d'Upsell:</h3>
                       <div className="space-y-3 mb-6">
                         {analysisResults.sales_strategies.upsell_opportunities.map((upsell, idx) => (
                           <div key={idx} className="bg-[#F7F8FA] p-4 rounded-lg border border-[#E8E8EE]">
                             <h4 className="text-[#FF6B35] font-bold mb-2">{upsell.strategy}</h4>
                             <p className="text-[#4A4A68] text-sm mb-2">{upsell.description}</p>
-                            {upsell.example && <p className="text-[#4A4A68] text-sm mb-2">{t('example')}: {upsell.example}</p>}
+                            {upsell.example && <p className="text-[#4A4A68] text-sm mb-2">Exemple: {upsell.example}</p>}
                             <p className="text-[#0D9488] text-sm font-bold">{upsell.expected_impact}</p>
                           </div>
                         ))}
@@ -8004,13 +6852,13 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                   {analysisResults.sales_strategies?.cross_sell_bundles?.length > 0 && (
                     <>
-                      <h3 className="text-[#1A1A2E] font-bold mb-3">{t('suggestedBundles')}:</h3>
+                      <h3 className="text-[#1A1A2E] font-bold mb-3">Bundles suggérés:</h3>
                       <div className="space-y-3 mb-6">
                         {analysisResults.sales_strategies.cross_sell_bundles.map((bundle, idx) => (
                           <div key={idx} className="bg-[#F7F8FA] p-4 rounded-lg border border-[#E8E8EE]">
                             <h4 className="text-[#FF6B35] font-bold mb-2">{bundle.bundle_name} (-{bundle.discount})</h4>
                             <div className="mb-2">
-                              <p className="text-[#6A6A85] text-sm mb-1">{t('includedProducts')}:</p>
+                              <p className="text-[#6A6A85] text-sm mb-1">Produits inclus:</p>
                               <ul className="list-disc list-inside text-[#4A4A68] text-sm">
                                 {bundle.products?.map((p, pidx) => (
                                   <li key={pidx}>{p}</li>
@@ -8025,7 +6873,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     </>
                   )}
 
-                  <h3 className="text-[#1A1A2E] font-bold mb-3">{t('psychologicalTriggers')}:</h3>
+                  <h3 className="text-[#1A1A2E] font-bold mb-3">Triggers psychologiques:</h3>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     {analysisResults.sales_strategies?.psychological_triggers?.map((trigger, idx) => (
                       <div key={idx} className="bg-[#EFF1F5] p-4 rounded-lg">
@@ -8039,7 +6887,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                 {/* Opportunités de croissance */}
                 <div className="bg-gradient-to-r from-teal-50 to-orange-50 rounded-lg p-6 border border-[#2DD4BF]/30">
-                  <h2 className="text-[#1A1A2E] text-2xl font-bold mb-4">{t('growthOpportunities')}</h2>
+                  <h2 className="text-[#1A1A2E] text-2xl font-bold mb-4">Opportunités de croissance</h2>
                   <div className="space-y-4">
                     {analysisResults.growth_opportunities?.map((opp, idx) => (
                       <div key={idx} className="bg-white p-5 rounded-lg border border-[#E8E8EE]">
@@ -8050,15 +6898,15 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         <p className="text-[#2A2A42] mb-4">{opp.description}</p>
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
                           <div className="bg-white p-3 rounded">
-                            <p className="text-[#6A6A85] text-xs mb-1">{t('investment')}</p>
+                            <p className="text-[#6A6A85] text-xs mb-1">Investissement</p>
                             <p className="text-[#1A1A2E] font-bold">{opp.investment}</p>
                           </div>
                           <div className="bg-white p-3 rounded">
-                            <p className="text-[#6A6A85] text-xs mb-1">{t('expectedReturn')}</p>
+                            <p className="text-[#6A6A85] text-xs mb-1">Retour attendu</p>
                             <p className="text-[#0D9488] font-bold">{opp.expected_return}</p>
                           </div>
                           <div className="bg-white p-3 rounded">
-                            <p className="text-[#6A6A85] text-xs mb-1">{t('difficulty')}</p>
+                            <p className="text-[#6A6A85] text-xs mb-1">Difficulté</p>
                             <p className="text-[#FF6B35] font-bold">{opp.difficulty}</p>
                           </div>
                         </div>
@@ -8069,7 +6917,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
 
                 {/* Recommandations par produit */}
                 <div className="bg-white rounded-lg p-6 border border-[#E8E8EE]">
-                  <h2 className="text-[#1A1A2E] text-2xl font-bold mb-4">{t('productRecommendationsTop10')}</h2>
+                  <h2 className="text-[#1A1A2E] text-2xl font-bold mb-4">🎨 Recommandations par produit (Top 10)</h2>
                   <div className="space-y-4">
                     {analysisResults.product_recommendations?.map((rec, idx) => (
                       <div key={idx} className="bg-[#EFF1F5] p-5 rounded-lg">
@@ -8115,7 +6963,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                                     </button>
                                   )}
                                   {subscription?.plan !== 'premium' && (
-                                    <span className="text-xs text-[#FF6B35]">{t('premiumRequired')}</span>
+                                    <span className="text-xs text-[#FF6B35]">Premium requis</span>
                                   )}
                                 </div>
                                 {renderStatus(`rec-${rec.product_id}-${recItem.type}`)}
@@ -8123,7 +6971,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             ))}
                           </div>
                         ) : (
-                          <p className="text-[#0D9488]">{t('noCriticalImprovement')}</p>
+                          <p className="text-[#0D9488]">Aucune amélioration critique nécessaire</p>
                         )}
                       </div>
                     ))}
@@ -8142,7 +6990,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
               </>
             ) : (
               <div className="bg-white rounded-lg p-6 border border-[#E8E8EE] text-center">
-                <p className="text-[#6A6A85] mb-4">{t('noAnalysisAvailable')}</p>
+                <p className="text-[#6A6A85] mb-4">Aucune analyse disponible</p>
                 <button
                   onClick={() => setActiveTab('ai')}
                   className="bg-[#FF6B35] hover:bg-[#E85A28] text-white font-bold py-3 px-6 rounded-lg"
@@ -8182,10 +7030,10 @@ analytics.subscribe("product_added_to_cart", (event) => {
             <div className="p-6 overflow-y-auto max-h-[calc(80vh-200px)]">
               <div className="bg-[#FFF4F0] border border-[#FF6B35] rounded-lg p-4 mb-6">
                 <p className="text-[#FF6B35] font-bold mb-2">Attention</p>
-                <p className="text-[#FF8B60] text-sm">{t('aiWillModify').replace('{n}', selectedActions.length)}</p>
+                <p className="text-[#FF8B60] text-sm">L'IA va modifier {selectedActions.length} éléments dans votre boutique Shopify. Cette action est irréversible.</p>
               </div>
 
-              <h3 className="text-[#1A1A2E] font-bold mb-4 text-lg">{t('modificationsToApply')}:</h3>
+              <h3 className="text-[#1A1A2E] font-bold mb-4 text-lg">Modifications à appliquer:</h3>
               
               <div className="space-y-3">
                 {selectedActions.map((action, idx) => (
@@ -8290,7 +7138,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
               {/* Sidebar - horizontal on mobile, vertical on desktop */}
               <div className="md:w-64 bg-white md:border-r border-b md:border-b-0 border-[#E8E8EE] p-2 md:p-4 overflow-x-auto md:overflow-x-visible shrink-0">
                 <nav className="flex md:flex-col md:space-y-1 gap-1 md:gap-0 min-w-max md:min-w-0">
-                  {['profile', 'security', 'interface', 'connections', 'notifications', 'shopify', 'billing', 'api'].map(tab => (
+                  {['profile', 'security', 'interface', 'notifications', 'shopify', 'billing', 'api'].map(tab => (
                     <button
                       key={tab}
                       onClick={() => setSettingsTab(tab)}
@@ -8301,7 +7149,6 @@ analytics.subscribe("product_added_to_cart", (event) => {
                       {tab === 'profile' && t('tabProfile')}
                       {tab === 'security' && t('tabSecurity')}
                       {tab === 'interface' && t('tabInterface')}
-                      {tab === 'connections' && tr('tabConnections', 'Connections')}
                       {tab === 'notifications' && t('tabNotifications')}
                       {tab === 'shopify' && t('tabShopify')}
                       {tab === 'billing' && t('tabBilling')}
@@ -8411,7 +7258,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     <div className="space-y-4">
                       <div className="bg-white rounded-lg p-4 border border-[#E8E8EE]">
                         <h4 className="text-[#1A1A2E] font-semibold mb-2">{t('language')}</h4>
-                        <select value={interfaceLanguageDraft} onChange={(e) => setInterfaceLanguageDraft(e.target.value)} className="w-full bg-[#EFF1F5] border border-[#D8D8E2] rounded-lg px-4 py-2 text-[#1A1A2E]">
+                        <select value={language} onChange={(e) => setLanguage(e.target.value)} className="w-full bg-[#EFF1F5] border border-[#D8D8E2] rounded-lg px-4 py-2 text-[#1A1A2E]">
                           {LANGUAGES.map(l => (
                             <option key={l.code} value={l.code}>{l.flag} {l.name}</option>
                           ))}
@@ -8425,167 +7272,6 @@ analytics.subscribe("product_added_to_cart", (event) => {
                   </div>
                 )}
 
-                {settingsTab === 'connections' && (
-                  <div className="space-y-6">
-                    <div className="rounded-2xl border border-[#E8E8EE] bg-gradient-to-br from-white via-white to-[#F7F8FA] p-5 sm:p-6 space-y-5">
-                      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                        <div className="max-w-2xl">
-                          <h3 className="text-2xl font-bold text-[#1A1A2E]">{tr('connectionsTitle', 'Connections')}</h3>
-                          <p className="text-[#6A6A85] text-sm mt-2">
-                            {tr('connectionsSubtitle', 'These statuses come from your real Shopify, ads, and billing connections only.')}
-                          </p>
-                        </div>
-                        <button
-                          onClick={loadConnectionsOverview}
-                          disabled={connectionsLoading}
-                          className="inline-flex items-center justify-center bg-[#0D9488] hover:bg-[#0F766E] disabled:opacity-50 px-4 py-2.5 rounded-xl text-white font-semibold text-sm"
-                        >
-                          {connectionsLoading ? tr('refreshing', 'Refreshing...') : tr('refreshConnections', 'Refresh statuses')}
-                        </button>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div className="rounded-2xl border border-[#E8E8EE] bg-white p-4">
-                          <p className="text-[#8A8AA3] text-xs uppercase tracking-[0.16em]">{tr('connectionsSummary', 'Connected sources')}</p>
-                          <p className="text-3xl font-bold text-[#1A1A2E] mt-3">
-                            {connectionsOverview?.summary?.connected_count ?? 0}
-                            <span className="text-base font-medium text-[#8A8AA3]">/{connectionsOverview?.summary?.total_count ?? 5}</span>
-                          </p>
-                        </div>
-                        <div className="rounded-2xl border border-[#E8E8EE] bg-white p-4">
-                          <p className="text-[#8A8AA3] text-xs uppercase tracking-[0.16em]">{tr('truthReadiness', 'Truth readiness')}</p>
-                          <p className={`text-base font-bold mt-3 ${(connectionsOverview?.summary?.truth_ready) ? 'text-[#0D9488]' : 'text-[#FF6B35]'}`}>
-                            {(connectionsOverview?.summary?.truth_ready)
-                              ? tr('truthReady', 'Ready for real Truth analysis')
-                              : tr('truthNotReady', 'Connect Shopify + at least one ads source')}
-                          </p>
-                        </div>
-                        <div className="rounded-2xl border border-[#E8E8EE] bg-white p-4">
-                          <p className="text-[#8A8AA3] text-xs uppercase tracking-[0.16em]">{tr('adsCoverage', 'Ads sources')}</p>
-                          <p className="text-3xl font-bold text-[#1A1A2E] mt-3">{connectionsOverview?.summary?.ads_connected ?? 0}</p>
-                          <p className="text-sm text-[#8A8AA3] mt-1">{tr('adsCoverageHint', 'Meta, TikTok, Google connected')}</p>
-                        </div>
-                      </div>
-                    </div>
-
-                    {renderStatus('connections')}
-
-                    {connectionsLoading && !connectionsOverview && (
-                      <div className="bg-white rounded-2xl p-6 border border-[#E8E8EE] text-[#6A6A85]">
-                        {tr('loadingConnections', 'Loading connection overview...')}
-                      </div>
-                    )}
-
-                    <div className="space-y-4">
-                      {(connectionsOverview?.providers || []).map((provider) => {
-                        const connected = Boolean(provider?.connected)
-                        const completeness = Number(provider?.completeness || 0)
-                        const reliability = Number(provider?.reliability || 0)
-                        const lastSyncLabel = provider?.last_sync
-                          ? new Date(provider.last_sync).toLocaleString(language === 'fr' ? 'fr-FR' : 'en-US')
-                          : tr('neverSynced', 'Not synced yet')
-                        const primaryLabel = provider?.primary_account?.display_name || provider?.connection?.shop_domain || provider?.label
-                        const providerError = formatProviderConnectionError(provider?.provider, provider?.error)
-                        const statusTone = connected ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-orange-50 text-[#E85A28] border-[#FF6B35]/30'
-                        const visual = getProviderVisual(provider?.provider)
-                        const oauthAvailable = isAdsProvider(provider?.provider) ? isProviderOauthConfigured(provider?.provider) : false
-
-                        return (
-                          <div key={provider.provider} className="bg-white rounded-2xl p-5 border border-[#E8E8EE] shadow-sm shadow-black/[0.02]">
-                            <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-                              <div className="flex items-start gap-4 min-w-0">
-                                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-bold text-lg ${visual.accent}`}>
-                                  {visual.icon}
-                                </div>
-                                <div className="min-w-0">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <h4 className="text-lg font-semibold text-[#1A1A2E]">{provider.label}</h4>
-                                    <span className={`px-2.5 py-1 rounded-full text-xs font-semibold border ${statusTone}`}>
-                                      {connected ? tr('connectedLabel', 'Connected') : tr('attentionLabel', 'Attention needed')}
-                                    </span>
-                                  </div>
-                                  <p className="text-sm text-[#4A4A68] mt-2">{getProviderConnectionSummary(provider?.provider, connected)}</p>
-                                  <p className="text-sm text-[#8A8AA3] mt-2 truncate">{connected ? (primaryLabel || '—') : getProviderNextAction(provider?.provider)}</p>
-                                  {isAdsProvider(provider?.provider) && (
-                                    <div className="flex flex-wrap gap-2 mt-3">
-                                      <span className="px-2.5 py-1 rounded-full bg-[#F7F8FA] text-[#6A6A85] text-xs font-semibold border border-[#E8E8EE]">
-                                        OAuth {oauthAvailable ? tr('availableLabel', 'available') : tr('unavailableLabel', 'unavailable')}
-                                      </span>
-                                      <span className="px-2.5 py-1 rounded-full bg-[#F7F8FA] text-[#6A6A85] text-xs font-semibold border border-[#E8E8EE]">
-                                        {tr('manualCredentialsLabel', 'Manual credentials')}
-                                      </span>
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-
-                              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 lg:min-w-[320px]">
-                                <div className="rounded-2xl bg-[#F7F8FA] p-3 border border-[#E8E8EE]">
-                                  <div className="text-[#8A8AA3] text-[11px] uppercase tracking-[0.14em]">{tr('accountsConnectedLabel', 'Accounts')}</div>
-                                  <div className="text-[#1A1A2E] font-bold text-lg mt-1">{provider?.account_count ?? 0}</div>
-                                </div>
-                                <div className="rounded-2xl bg-[#F7F8FA] p-3 border border-[#E8E8EE]">
-                                  <div className="text-[#8A8AA3] text-[11px] uppercase tracking-[0.14em]">{tr('coverageLabel', 'Coverage')}</div>
-                                  <div className="text-[#1A1A2E] font-bold text-lg mt-1">{Math.round(completeness)}%</div>
-                                </div>
-                                <div className="rounded-2xl bg-[#F7F8FA] p-3 border border-[#E8E8EE] col-span-2 sm:col-span-1">
-                                  <div className="text-[#8A8AA3] text-[11px] uppercase tracking-[0.14em]">{tr('reliabilityLabel', 'Reliability')}</div>
-                                  <div className="text-[#1A1A2E] font-bold text-lg mt-1">{Math.round(reliability)}%</div>
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="flex flex-col gap-3 mt-5">
-                              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-sm text-[#6A6A85]">
-                                <span>{tr('lastSyncLabel', 'Last sync')}: <span className="text-[#1A1A2E] font-medium">{lastSyncLabel}</span></span>
-                                {provider?.provider === 'shopify' && typeof provider?.shop_limit !== 'undefined' && (
-                                  <span>{tr('shopsConnectedLabel', 'Shops')}: <span className="text-[#1A1A2E] font-medium">{provider?.shop_count ?? 0}{provider?.shop_limit === null ? ' / ∞' : ` / ${provider.shop_limit}`}</span></span>
-                                )}
-                              </div>
-
-                              {providerError && (
-                                <div className="rounded-2xl border border-[#FF6B35]/20 bg-[#FFF7F2] px-4 py-3 text-sm text-[#E85A28]">
-                                  {providerError}
-                                </div>
-                              )}
-
-                              <div className="flex flex-wrap gap-3">
-                                {provider?.provider === 'shopify' && (
-                                  <button
-                                    onClick={() => setSettingsTab('shopify')}
-                                    className="bg-[#96BF48] hover:bg-[#7FA83D] px-4 py-2.5 rounded-xl text-white text-sm font-semibold"
-                                  >
-                                    {connected ? tr('manageConnection', 'Manage connection') : tr('connectNow', 'Connect now')}
-                                  </button>
-                                )}
-                                {isAdsProvider(provider?.provider) && (
-                                  <button
-                                    onClick={() => {
-                                      loadIntegrations({ silent: true })
-                                      openIntegrationConnectModal(provider.provider)
-                                    }}
-                                    className="bg-[#0D9488] hover:bg-[#0F766E] px-4 py-2.5 rounded-xl text-white text-sm font-semibold"
-                                  >
-                                    {connected ? tr('manageAdsConnections', 'Manage ads connections') : tr('connectAdsSource', 'Connect ads source')}
-                                  </button>
-                                )}
-                                {provider?.provider === 'stripe' && (
-                                  <button
-                                    onClick={() => setSettingsTab('billing')}
-                                    className="bg-[#635BFF] hover:bg-[#4F46E5] px-4 py-2.5 rounded-xl text-white text-sm font-semibold"
-                                  >
-                                    {tr('openBilling', 'Open billing')}
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )}
-
                 {settingsTab === 'shopify' && (
                   <div className="space-y-6">
                     <h3 className="text-xl font-bold text-[#1A1A2E] mb-4">{t('shopifyConnection')}</h3>
@@ -8594,8 +7280,8 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     <div className="flex items-center gap-2 text-sm text-[#6A6A85] bg-[#F7F8FA] border border-[#E8E8EE] rounded-lg px-4 py-2">
                       <span>🏪</span>
                       <span>
-                        {shopList.length} {t('shopsConnected')}
-                        {shopLimit !== null ? ` / ${shopLimit} max` : ` (${t('unlimited')})`}
+                        {shopList.length} boutique{shopList.length !== 1 ? 's' : ''} connectée{shopList.length !== 1 ? 's' : ''}
+                        {shopLimit !== null ? ` / ${shopLimit} max (plan ${(subscription?.plan || 'standard').charAt(0).toUpperCase() + (subscription?.plan || 'standard').slice(1)})` : ' (illimité)'}
                       </span>
                     </div>
 
@@ -8609,8 +7295,8 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               <div className="min-w-0">
                                 <p className="text-[#1A1A2E] font-semibold truncate">{shop.shop_domain}</p>
                                 <p className="text-xs text-[#8A8AA3]">
-                                  {shop.is_active ? '✅ ' + t('activeShop') : t('inactive')}
-                                  {shop.updated_at && ` · ${t('updatedAt')} ${new Date(shop.updated_at).toLocaleDateString()}`}
+                                  {shop.is_active ? '✅ Boutique active' : 'Inactive'}
+                                  {shop.updated_at && ` · Mis à jour ${new Date(shop.updated_at).toLocaleDateString()}`}
                                 </p>
                               </div>
                             </div>
@@ -8639,7 +7325,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     {/* ── Add New Shop (if no shops yet, show inline; else toggle) ── */}
                     {shopList.length === 0 ? (
                       <div className="bg-white rounded-lg p-6 border border-[#E8E8EE] max-w-2xl space-y-5">
-                        <p className="text-[#6A6A85] text-sm">{t('connectFirstShop')}</p>
+                        <p className="text-[#6A6A85] text-sm">Connectez votre première boutique Shopify pour commencer.</p>
 
                         {/* ── OAuth Connect (recommended) ── */}
                         <div className="space-y-3">
@@ -8658,7 +7344,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           >
                             Connecter avec Shopify
                           </button>
-                          <p className="text-xs text-[#8A8AA3] text-center">{t('secureOAuthConnection')} copier.</p>
+                          <p className="text-xs text-[#8A8AA3] text-center">Connexion sécurisée via OAuth 2.0 — aucun token à copier.</p>
                         </div>
 
                         {/* ── Manual fallback (advanced) ── */}
@@ -8667,7 +7353,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             onClick={() => setShowManualConnect(!showManualConnect)}
                             className="text-xs text-[#8A8AA3] hover:text-[#6A6A85] underline"
                           >
-                            {showManualConnect ? t('hideManualConnect') : '⚙️ ' + t('manualConnectAdvanced')}
+                            {showManualConnect ? 'Masquer la connexion manuelle' : '⚙️ Connexion manuelle (avancé)'}
                           </button>
                           {showManualConnect && (
                             <div className="mt-3 space-y-3">
@@ -8682,7 +7368,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                                 />
                               </div>
                               <div>
-                                <label className="block text-[#6A6A85] text-sm mb-2">{t('accessToken')}</label>
+                                <label className="block text-[#6A6A85] text-sm mb-2">Token d'accès</label>
                                 <input
                                   type="password"
                                   placeholder="shpat_..."
@@ -8706,7 +7392,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           <button
                             onClick={() => {
                               if (shopLimit !== null && shopList.length >= shopLimit) {
-                                setStatus('shopify', 'warning', `${t('shopLimitReached')} (${shopLimit}).`)
+                                setStatus('shopify', 'warning', `Limite de ${shopLimit} boutique${shopLimit > 1 ? 's' : ''} atteinte. Passez au plan supérieur pour en ajouter.`)
                               } else {
                                 setShowAddShop(true)
                               }
@@ -8719,7 +7405,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           <div className="bg-white rounded-lg p-6 border border-[#E8E8EE] space-y-4">
                             <div className="flex items-center justify-between">
                               <h4 className="font-semibold text-[#1A1A2E]">Ajouter une boutique</h4>
-                              <button onClick={() => setShowAddShop(false)} className="text-[#8A8AA3] hover:text-[#1A1A2E] text-sm">✕ {t('cancel')}</button>
+                              <button onClick={() => setShowAddShop(false)} className="text-[#8A8AA3] hover:text-[#1A1A2E] text-sm">✕ Annuler</button>
                             </div>
                             {/* OAuth for adding new shops */}
                             <div className="space-y-3">
@@ -8738,7 +7424,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               >
                                 Connecter avec Shopify
                               </button>
-                              <p className="text-xs text-[#8A8AA3] text-center">{t('secureOAuthConnection')}</p>
+                              <p className="text-xs text-[#8A8AA3] text-center">Connexion sécurisée via OAuth 2.0</p>
                             </div>
                             {/* Manual fallback for adding shops */}
                             <div className="border-t border-[#E8E8EE] pt-3">
@@ -8746,7 +7432,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                                 onClick={() => setShowManualConnect(!showManualConnect)}
                                 className="text-xs text-[#8A8AA3] hover:text-[#6A6A85] underline"
                               >
-                                {showManualConnect ? t('hide') : '⚙️ ' + t('manualConnectAdvanced')}
+                                {showManualConnect ? 'Masquer' : '⚙️ Connexion manuelle (avancé)'}
                               </button>
                               {showManualConnect && (
                                 <div className="mt-3 space-y-3">
@@ -8761,7 +7447,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                                     />
                                   </div>
                                   <div>
-                                    <label className="block text-[#6A6A85] text-sm mb-2">{t('accessToken')}</label>
+                                    <label className="block text-[#6A6A85] text-sm mb-2">Token d'accès</label>
                                     <input
                                       type="password"
                                       placeholder="shpat_..."
@@ -8793,7 +7479,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               onClick={() => setShowShopifyToken((prev) => !prev)}
                               className="w-full bg-transparent hover:bg-[#EFF1F5] text-[#8A8AA3] py-1.5 px-4 rounded-lg text-xs"
                             >
-                              {showShopifyToken ? t('hide') : `⚙️ ${t('updateTokenManually')}`}
+                              {showShopifyToken ? 'Masquer' : `⚙️ Mettre à jour le token manuellement`}
                             </button>
                             {showShopifyToken && (
                               <div className="mt-2 space-y-3 bg-white rounded-lg p-4 border border-[#E8E8EE]">
@@ -8805,7 +7491,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                                   className="w-full bg-[#EFF1F5] text-[#1A1A2E] px-4 py-2 rounded-lg border border-[#D8D8E2]"
                                 />
                                 <button onClick={connectShopify} className="w-full bg-[#FF6B35] hover:bg-[#E85A28] text-white font-bold py-2 px-4 rounded-lg">
-                                  {t('update')}
+                                  Mettre à jour
                                 </button>
                               </div>
                             )}
@@ -8862,7 +7548,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         </div>
                         <div className="sm:text-right">
                           <div className="text-xl sm:text-2xl font-bold text-[#0D9488]">
-                            ${PLAN_PRICE[subscription?.plan] || PLAN_PRICE.standard}/mo
+                            ${subscription?.plan === 'standard' ? '99' : subscription?.plan === 'pro' ? '199' : '299'}/mo
                           </div>
                         </div>
                       </div>
@@ -8873,7 +7559,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         {pendingPlanConfirm ? (
                           <div className="bg-[#FFF7ED] border border-[#FF6B35]/30 rounded-lg p-4 mb-2">
                             <p className="text-sm text-[#1A1A2E] mb-1">{tr('youAreAboutToSwitch', 'You Are About to Switch To:')}</p>
-                            <p className="text-lg font-bold text-[#FF6B35]">{formatPlan(pendingPlanConfirm.plan)} — ${pendingPlanConfirm.price}/mo</p>
+                            <p className="text-lg font-bold text-[#FF6B35]">{pendingPlanConfirm.plan.toUpperCase()} — ${pendingPlanConfirm.price}/mo</p>
                             <p className="text-xs text-[#6A6A85] mt-1 mb-3">
                               {subscription?.current_period_end
                                 ? `${tr('planChangeEffectiveOn', 'The change will take effect on your next renewal date')}: ${new Date(subscription.current_period_end).toLocaleDateString()}.`
@@ -8889,13 +7575,13 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             {['standard', 'pro', 'premium'].filter(p => p !== subscription?.plan).map(targetPlan => (
                               <button
                                 key={targetPlan}
-                                onClick={() => { clearStatus('change-plan'); setPendingPlanConfirm({ plan: targetPlan, price: PLAN_PRICE[targetPlan] || PLAN_PRICE.standard }) }}
+                                onClick={() => { clearStatus('change-plan'); setPendingPlanConfirm({ plan: targetPlan, price: targetPlan === 'standard' ? '99' : targetPlan === 'pro' ? '199' : '299' }) }}
                                 disabled={changePlanLoading}
                                 className="flex-1 px-4 py-3 rounded-lg border border-[#E8E8EE] bg-[#EFF1F5] hover:bg-[#E8E8EE] text-[#1A1A2E] disabled:opacity-50 transition text-left"
                               >
                                 <div className="font-semibold text-sm">{formatPlan(targetPlan)}</div>
                                 <div className="text-xs text-[#6A6A85]">
-                                  ${PLAN_PRICE[targetPlan] || PLAN_PRICE.standard}/{t('month') || 'mo'}
+                                  ${targetPlan === 'standard' ? '99' : targetPlan === 'pro' ? '199' : '299'}/{t('month') || 'mo'}
                                 </div>
                               </button>
                             ))}
@@ -8932,7 +7618,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     </div>
                     {apiLoading && <div className="text-[#6A6A85]">Chargement...</div>}
                     {!apiLoading && apiKeys.length === 0 && (
-                      <div className="text-[#6A6A85]">{t('noApiKeyAvailable')}</div>
+                      <div className="text-[#6A6A85]">Aucune clé API disponible.</div>
                     )}
                     <div className="space-y-4">
                       {apiKeys.map((keyItem) => (
@@ -8947,7 +7633,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                               disabled={keyItem.revoked || apiLoading}
                               className="bg-[#EFF1F5] hover:bg-[#E8E8EE] disabled:opacity-50 px-4 py-2 rounded-lg text-[#1A1A2E] text-sm"
                             >
-                              {keyItem.revoked ? t('revoked') : t('revoke')}
+                              {keyItem.revoked ? 'Révoquée' : t('revoke')}
                             </button>
                           </div>
                           {pendingRevokeKeyId === keyItem.id && !keyItem.revoked && (
@@ -8988,200 +7674,6 @@ analytics.subscribe("product_added_to_cart", (event) => {
           </div>
         </div>
       )}
-
-      {showSettingsModal && integrationConnectProvider && (
-        <div className="fixed inset-0 bg-black/75 z-[60] flex items-center justify-center p-3 sm:p-4" onClick={closeIntegrationConnectModal}>
-          <div className="w-full max-w-3xl h-[92vh] max-h-[920px] overflow-hidden rounded-[28px] bg-white border border-[#E8E8EE] shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
-            <div className="px-5 sm:px-6 py-5 border-b border-[#E8E8EE] flex items-start justify-between gap-4 bg-white">
-              <div>
-                <p className="text-[11px] uppercase tracking-[0.14em] text-[#8A8AA3] font-semibold mb-2">{tr('connectSourceLabel', 'Connect source')}</p>
-                <h3 className="text-2xl font-bold text-[#1A1A2E]">
-                  {t(`integrationProvider${integrationConnectProvider.charAt(0).toUpperCase()}${integrationConnectProvider.slice(1)}`)}
-                </h3>
-                <p className="text-sm text-[#6A6A85] mt-2 max-w-2xl">
-                  {tr('integrationModalSubtitle', 'Enter the API credentials below, then click Connect to validate the source and start the first sync.')}
-                </p>
-              </div>
-              <button onClick={closeIntegrationConnectModal} className="text-[#6A6A85] hover:bg-[#EFF1F5] p-2 rounded-xl">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            <div className="flex-1 min-h-0 overflow-y-auto p-5 sm:p-6 space-y-6 bg-[#F7F8FA]">
-              <div className="bg-white rounded-2xl border border-[#E8E8EE] p-5 space-y-4">
-                <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-semibold text-[#1A1A2E]">{tr('integrationConnectionMethodsTitle', 'Choose your connection method')}</p>
-                    <p className="text-sm text-[#6A6A85] mt-1">{tr('integrationConnectionMethodsSubtitle', 'OAuth is the easiest path. Manual connection stays available if you already have the required credentials.')}</p>
-                  </div>
-                  <div className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${((connectionsOverview?.providers || []).find((item) => item.provider === integrationConnectProvider)?.connected) ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-orange-50 text-[#E85A28] border-[#FF6B35]/30'}`}>
-                    {((connectionsOverview?.providers || []).find((item) => item.provider === integrationConnectProvider)?.connected)
-                      ? tr('connectedLabel', 'Connected')
-                      : tr('attentionLabel', 'Attention needed')}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  <div className={`rounded-2xl border p-4 ${isProviderOauthConfigured(integrationConnectProvider) ? 'border-[#0D9488]/20 bg-[#F0FDFA]' : 'border-[#E8E8EE] bg-[#FAFAFB]'}`}>
-                    <p className="text-sm font-semibold text-[#1A1A2E]">{tr('integrationOAuthCardTitle', 'OAuth connection')}</p>
-                    <p className="text-sm text-[#6A6A85] mt-1">{tr('integrationOAuthCardSubtitle', 'Recommended when available: fewer fields, safer access, faster setup.')}</p>
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <span className="px-2.5 py-1 rounded-full bg-white text-[#0D9488] text-xs font-semibold border border-[#0D9488]/20">{tr('integrationRecommendedLabel', 'Recommended')}</span>
-                      {!isProviderOauthConfigured(integrationConnectProvider) && (
-                        <span className="px-2.5 py-1 rounded-full bg-white text-[#8A8AA3] text-xs font-semibold border border-[#E8E8EE]">{tr('unavailableLabel', 'unavailable')}</span>
-                      )}
-                    </div>
-                    <div className="mt-4">
-                      {isProviderOauthConfigured(integrationConnectProvider) ? (
-                        <button
-                          onClick={() => startIntegrationOAuth(integrationConnectProvider)}
-                          disabled={integrationOAuthProvider === integrationConnectProvider}
-                          className="w-full px-4 py-3 rounded-xl bg-[#0D9488] hover:bg-[#0F766E] text-white text-sm font-semibold disabled:opacity-50"
-                        >
-                          {integrationOAuthProvider === integrationConnectProvider ? tr('integrationOauthOpening', 'Opening secure OAuth window...') : t('integrationsOAuthButton')}
-                        </button>
-                      ) : (
-                        <div className="rounded-xl border border-[#E8E8EE] bg-white px-4 py-3 text-sm text-[#6A6A85]">
-                          {t('integrationsOAuthNotConfigured')}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-[#E8E8EE] bg-white p-4">
-                    <p className="text-sm font-semibold text-[#1A1A2E]">{tr('integrationManualCardTitle', 'Manual connection')}</p>
-                    <p className="text-sm text-[#6A6A85] mt-1">{getProviderNextAction(integrationConnectProvider)}</p>
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      {getIntegrationRequiredLabels(integrationConnectProvider).map((label) => (
-                        <span key={label} className="px-2.5 py-1 rounded-full bg-[#FFF4EF] text-[#FF6B35] text-xs font-semibold border border-[#FF6B35]/20">
-                          {label}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {integrationConnectProvider === 'meta' && isProviderOauthConfigured('meta') && (
-                <div className="rounded-2xl border border-[#F59E0B]/25 bg-[#FFF9ED] px-4 py-3 text-sm text-[#9A6700]">
-                  {tr('integrationMetaOauthHint', 'If Meta shows a domain error, add the backend domain to your Meta app settings (App Domains + valid OAuth redirect URIs), then retry. Manual token connection remains available below.')}
-                </div>
-              )}
-
-              <div className="bg-white rounded-2xl border border-[#E8E8EE] p-5 space-y-4">
-                <div>
-                  <p className="text-sm font-semibold text-[#1A1A2E]">{tr('integrationManualFieldsTitle', 'Enter only the required credentials')}</p>
-                  <p className="text-sm text-[#6A6A85] mt-1">{tr('integrationManualFieldsSubtitle', 'No extra display fields. Only the credentials needed to validate and save the connection.')}</p>
-                </div>
-
-                {integrationConnectProvider === 'meta' ? (
-                  <div className="space-y-4">
-                    {getIntegrationFieldDefinitions('meta').map((field) => {
-                      const value = integrationForms?.meta?.[field.field] || ''
-                      return (
-                        <div key={field.field}>
-                          <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1.5">
-                            {field.label} {field.required && <span className="text-[#FF6B35]">*</span>}
-                          </label>
-                          <input
-                            type={field.type}
-                            value={value}
-                            onChange={(e) => handleIntegrationFormChange('meta', field.field, e.target.value)}
-                            className="w-full rounded-xl border border-[#D8D8E2] bg-white px-3 py-3 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
-                            placeholder={field.placeholder}
-                          />
-                        </div>
-                      )
-                    })}
-
-                    <div className="rounded-2xl border border-[#E8E8EE] bg-[#FAFAFB] p-4 space-y-4">
-                      <div className="flex flex-col sm:flex-row sm:items-end gap-3">
-                        <div className="flex-1">
-                          <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1.5">
-                            {tr('integrationMetaAccountSelectorLabel', 'Ad account')} <span className="text-[#FF6B35]">*</span>
-                          </label>
-                          <select
-                            value={integrationForms?.meta?.external_account_id || ''}
-                            onChange={(e) => {
-                              const selected = metaAccountOptions.find((account) => account.external_account_id === e.target.value)
-                              handleIntegrationFormChange('meta', 'external_account_id', e.target.value)
-                              handleIntegrationFormChange('meta', 'external_account_name', selected?.external_account_name || '')
-                            }}
-                            className="w-full rounded-xl border border-[#D8D8E2] bg-white px-3 py-3 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
-                          >
-                            <option value="">{tr('integrationMetaAccountSelectorPlaceholder', 'Load and select an ad account')}</option>
-                            {metaAccountOptions.map((account) => (
-                              <option key={account.external_account_id} value={account.external_account_id}>
-                                {account.external_account_name || account.external_account_id}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <button
-                          onClick={() => loadMetaAdAccounts({ preserveSelection: true })}
-                          disabled={metaAccountsLoading || !String(integrationForms?.meta?.access_token || '').trim()}
-                          className="shrink-0 px-4 py-3 rounded-xl border border-[#0D9488]/20 text-[#0D9488] bg-white hover:bg-[#F0FDFA] text-sm font-semibold disabled:opacity-50"
-                        >
-                          {metaAccountsLoading ? tr('integrationMetaLoadingAccounts', 'Loading accounts...') : tr('integrationMetaLoadAccounts', 'Load ad accounts')}
-                        </button>
-                      </div>
-                      <p className="text-xs text-[#8A8AA3]">
-                        {metaAccountOptions.length > 0
-                          ? `${metaAccountOptions.length} ${tr('integrationMetaAccountsFound', 'accounts available')}`
-                          : tr('integrationMetaAccountsHint', 'Use the access token to fetch the ad accounts you can connect.')}
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {getIntegrationFieldDefinitions(integrationConnectProvider).map((field) => {
-                      const value = integrationForms?.[integrationConnectProvider]?.[field.field] || ''
-                      return (
-                        <div key={field.field} className={field.field === 'access_token' || field.field === 'refresh_token' || field.field === 'client_secret' ? 'sm:col-span-2' : 'sm:col-span-1'}>
-                          <label className="block text-xs font-semibold uppercase tracking-[0.12em] text-[#8A8AA3] mb-1.5">
-                            {field.label} {field.required && <span className="text-[#FF6B35]">*</span>}
-                          </label>
-                          <input
-                            type={field.type}
-                            value={value}
-                            onChange={(e) => handleIntegrationFormChange(integrationConnectProvider, field.field, e.target.value)}
-                            className="w-full rounded-xl border border-[#D8D8E2] bg-white px-3 py-3 text-sm text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#FF6B35]/20"
-                            placeholder={field.placeholder}
-                          />
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-
-              <div className="h-4" />
-            </div>
-
-            <div className="border-t border-[#E8E8EE] bg-white px-5 sm:px-6 py-4 space-y-3">
-              {renderStatus(`integrations-${integrationConnectProvider}`)}
-
-              <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3">
-                <button
-                  onClick={closeIntegrationConnectModal}
-                  className="px-4 py-2.5 rounded-xl border border-[#E8E8EE] text-sm font-semibold text-[#1A1A2E] hover:bg-white"
-                >
-                  {t('cancel')}
-                </button>
-                <button
-                  onClick={() => saveIntegration(integrationConnectProvider, { closeOnSuccess: true, refreshConnections: true, parentStatusKey: 'connections' })}
-                  disabled={integrationSavingProvider === integrationConnectProvider}
-                  className="px-5 py-2.5 rounded-xl bg-[#FF6B35] hover:bg-[#E85A28] text-white text-sm font-semibold disabled:opacity-50"
-                >
-                  {integrationSavingProvider === integrationConnectProvider ? tr('integrationConnecting', 'Connecting...') : tr('integrationConnectNow', 'Connect')}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
           </div>
 
           {/* ====== FAB Bouton Assistant IA ====== */}
@@ -9194,7 +7686,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
               }, 100)
             }}
             className="fixed bottom-6 right-6 z-40 group"
-            title={t('aiAssistant')}
+            title="Assistant IA"
           >
             <div className="relative w-14 h-14 rounded-full bg-gradient-to-br from-[#FF6B35] to-[#0D9488] shadow-2xl shadow-[#FF6B35]/30 flex items-center justify-center border-2 border-[#2DD4BF]/40 transition-all duration-200 group-hover:scale-110 group-hover:shadow-[#FF6B35]/50">
               <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
@@ -9251,7 +7743,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             </svg>
                             <input
                               type="text"
-                              placeholder={t('searchConversations')}
+                              placeholder="Rechercher des conversations..."
                               value={conversationSearch}
                               onChange={(e) => setConversationSearch(e.target.value)}
                               className="w-full bg-[#F7F8FA] text-sm text-[#1A1A2E] pl-9 pr-8 py-2 rounded-lg border border-[#E8E8EE]/50 focus:border-[#FF6B35]/50 focus:outline-none placeholder:text-gray-600"
@@ -9269,7 +7761,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-[#4A4A68] hover:bg-[#EFF1F5]/60 transition-colors"
                           >
                             <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 3V13M3 8H13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-                            {t('newConversation')}
+                            Nouvelle conversation
                           </button>
                           {Object.entries(groupedConversations).map(([dateLabel, convs]) => (
                             <div key={dateLabel}>
@@ -9298,14 +7790,14 @@ analytics.subscribe("product_added_to_cart", (event) => {
                                   <button
                                     onClick={(e) => { e.stopPropagation(); setRenamingConversationId(conv.id); setRenamingValue(conv.title) }}
                                     className="opacity-0 group-hover:opacity-100 text-[#8A8AA3] hover:text-[#4A4A68] p-0.5 transition-opacity"
-                                    title={t('rename')}
+                                    title="Renommer"
                                   >
                                     <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M11 2L14 5L5 14H2V11L11 2Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/></svg>
                                   </button>
                                   <button
                                     onClick={(e) => { e.stopPropagation(); deleteConversation(conv.id) }}
                                     className="opacity-0 group-hover:opacity-100 text-[#8A8AA3] hover:text-red-500 p-0.5 transition-opacity"
-                                    title={t('delete')}
+                                    title="Supprimer"
                                   >
                                     <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
                                   </button>
@@ -9314,7 +7806,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             </div>
                           ))}
                           {filteredConversations.length === 0 && (
-                            <div className="px-4 py-6 text-center text-sm text-gray-600">t('noConversation')</div>
+                            <div className="px-4 py-6 text-center text-sm text-gray-600">Aucune conversation</div>
                           )}
                         </div>
                       </div>
@@ -9325,14 +7817,14 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     <button
                       onClick={startNewConversation}
                       className="p-2 text-[#6A6A85] hover:text-[#1A1A2E] rounded-lg hover:bg-[#EFF1F5]/60 transition-colors"
-                      title={t('newConversation')}
+                      title="Nouvelle conversation"
                     >
                       <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3V13M3 8H13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
                     </button>
                     <button
                       onClick={() => setChatExpanded(!chatExpanded)}
                       className="p-2 text-[#6A6A85] hover:text-[#1A1A2E] rounded-lg hover:bg-[#EFF1F5]/60 transition-colors"
-                      title={chatExpanded ? t('collapse') : t('expand')}
+                      title={chatExpanded ? 'Réduire' : 'Agrandir'}
                     >
                       {chatExpanded ? (
                         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 2V6H14M6 14V10H2M14 10H10V14M2 6H6V2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>
@@ -9343,7 +7835,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     <button
                       onClick={() => setShowChatPanel(false)}
                       className="p-2 text-[#6A6A85] hover:text-[#1A1A2E] rounded-lg hover:bg-[#EFF1F5]/60 transition-colors"
-                      title={t('close')}
+                      title="Fermer"
                     >
                       <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
                     </button>
@@ -9366,13 +7858,13 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           <circle cx="24" cy="8" r="1.5" fill="#2DD4BF" opacity="0.7"/>
                         </svg>
                       </div>
-                      <p className="text-[#8A8AA3] text-sm mb-1">{getGreeting()}, {profile?.first_name || user?.user_metadata?.full_name?.split(' ')[0] || (language === 'fr' ? 'là' : 'there')}</p>
-                      <h3 className="text-[#1A1A2E] text-lg font-semibold mb-6">{t('howCanIHelp')}</h3>
+                      <p className="text-[#8A8AA3] text-sm mb-1">{getGreeting()}, {profile?.first_name || user?.user_metadata?.full_name?.split(' ')[0] || 'là'}</p>
+                      <h3 className="text-[#1A1A2E] text-lg font-semibold mb-6">Comment puis-je vous aider ?</h3>
                       <button
-                        onClick={() => sendChatMessage(t('whatsNew'))}
+                        onClick={() => sendChatMessage('Quoi de neuf ?')}
                         className="px-5 py-2 rounded-full border border-[#D8D8E2] text-[#6A6A85] text-sm hover:border-[#FF6B35]/50 hover:text-[#FF6B35] transition-all duration-200"
                       >
-                        {t('whatsNew')}
+                        Quoi de neuf ?
                       </button>
                     </div>
                   ) : (
@@ -9454,7 +7946,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                   {showProductPicker && (
                     <div className="mb-3 bg-white border border-[#FF6B35]/30 rounded-xl overflow-hidden" ref={productPickerRef}>
                       <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#E8E8EE]">
-                        <span className="text-sm font-semibold text-[#FF6B35]">🛍️ {t('mentionProduct')}</span>
+                        <span className="text-sm font-semibold text-[#FF6B35]">🛍️ Mentionner un produit</span>
                         <button onClick={() => { setShowProductPicker(false); setProductPickerSearch('') }} className="text-[#6A6A85] hover:text-[#1A1A2E] text-lg">✕</button>
                       </div>
                       <div className="px-3 py-2">
@@ -9462,14 +7954,14 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           type="text"
                           value={productPickerSearch}
                           onChange={(e) => setProductPickerSearch(e.target.value)}
-                          placeholder={t('searchProduct')}
+                          placeholder="Rechercher un produit..."
                           className="w-full bg-white text-[#1A1A2E] px-3 py-2 rounded-lg border border-[#E8E8EE] text-sm placeholder:text-[#8A8AA3] outline-none focus:border-[#FF6B35]/40"
                           autoFocus
                         />
                       </div>
                       <div className="max-h-48 overflow-y-auto px-1 pb-2">
                         {(!products || products.length === 0) ? (
-                          <p className="text-center text-[#8A8AA3] text-xs py-4">{t('connectShopifyToSeeProducts')}</p>
+                          <p className="text-center text-[#8A8AA3] text-xs py-4">Connecte Shopify pour voir tes produits.</p>
                         ) : (
                           (products || []).filter(p =>
                             !productPickerSearch || p.title?.toLowerCase().includes(productPickerSearch.toLowerCase())
@@ -9519,11 +8011,11 @@ analytics.subscribe("product_added_to_cart", (event) => {
                       </div>
                       <div className="flex flex-wrap gap-1.5">
                         {[
-                          t('chatSuggestionDescription'),
-                          t('chatSuggestionPhotos'),
-                          t('chatSuggestionSEO'),
-                          t('chatSuggestionPrice'),
-                          t('chatSuggestionStrengths'),
+                          'Ma description est-elle bonne ?',
+                          'Mes photos sont-elles attrayantes ?',
+                          'Comment améliorer mon titre SEO ?',
+                          'Quel prix recommandes-tu ?',
+                          'Quels sont les points forts et faibles ?',
                         ].map((q) => (
                           <button
                             key={q}
@@ -9556,7 +8048,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     </div>
                   )}
 
-                  <div className={`flex items-end gap-2 bg-[#F7F8FA] border border-[#E8E8EE] rounded-xl px-3 md:px-4 py-2.5 min-h-[56px] transition-colors ${
+                  <div className={`flex items-end gap-2 bg-[#F7F8FA] border border-[#E8E8EE] rounded-xl px-3 py-2 transition-colors ${
                     voiceDictationMode ? 'border-[#E8E8EE]/50' : 'focus-within:border-[#FF6B35]/40'
                   }`}>
                     {/* Left buttons: + (always visible) */}
@@ -9569,7 +8061,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             className={`p-1.5 rounded-lg transition-colors ${
                               showAttachMenu ? 'text-[#FF6B35] bg-[#EFF1F5]/60' : 'text-[#8A8AA3] hover:text-[#4A4A68] hover:bg-[#EFF1F5]/30'
                             }`}
-                            title={t('add')}
+                            title="Ajouter"
                           >
                             {showAttachMenu ? (
                               <svg width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
@@ -9582,15 +8074,15 @@ analytics.subscribe("product_added_to_cart", (event) => {
                             <div className="absolute bottom-full left-0 mb-2 w-60 bg-white border border-[#E8E8EE] rounded-xl shadow-2xl z-[60] overflow-hidden py-1">
                               <button onClick={() => { fileInputRef.current?.click() }} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#4A4A68] hover:bg-[#EFF1F5]/60 transition-colors">
                                 <svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-[#6A6A85]"><path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" stroke="currentColor" strokeWidth="1.5"/></svg>
-                                {t('files')}
+                                Fichiers
                               </button>
                               <button onClick={() => { fileInputRef.current?.click() }} className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#4A4A68] hover:bg-[#EFF1F5]/60 transition-colors">
                                 <svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-[#6A6A85]"><path d="M5 15L10 5L15 15" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><circle cx="10" cy="3" r="1.5" fill="currentColor"/></svg>
-                                {t('uploadFromDevice')}
+                                Charger depuis l'appareil
                               </button>
                               <div className="border-t border-[#E8E8EE]/40 my-1"></div>
                               <button onClick={() => { setShowProductPicker(true); setShowAttachMenu(false); if (!products || products.length === 0) loadProducts() }} className="w-full flex items-center justify-between px-4 py-2.5 text-sm text-[#FF6B35] hover:bg-[#FF6B35]/10 transition-colors">
-                                <span className="flex items-center gap-3"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-[#FF6B35]"><path d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17M17 17a2 2 0 100-4 2 2 0 000 4zM7 17a2 2 0 100-4 2 2 0 000 4z" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>{t('mentionProduct')}</span>
+                                <span className="flex items-center gap-3"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" className="text-[#FF6B35]"><path d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17M17 17a2 2 0 100-4 2 2 0 000 4zM7 17a2 2 0 100-4 2 2 0 000 4z" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>Mentionner un produit</span>
                                 <span className="text-xs text-[#E85A28]/70 bg-[#FFF4F0] px-1.5 py-0.5 rounded">🛍️</span>
                               </button>
                             </div>
@@ -9603,7 +8095,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     {voiceDictationMode ? (
                       voiceTranscribing ? (
                         <div className="flex-1 flex items-center justify-center h-11 px-1">
-                          <span className="text-sm text-[#4A4A68]">{t('transcribing')}…</span>
+                          <span className="text-sm text-[#4A4A68]">Retranscription en cours…</span>
                         </div>
                       ) : (
                         /* ChatGPT-style dense waveform across full width */
@@ -9624,7 +8116,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     ) : (
                       <textarea
                         ref={chatTextareaRef}
-                        placeholder={t('chatPlaceholder')}
+                        placeholder="Posez n'importe quelle question..."
                         value={chatInput}
                         onChange={(e) => setChatInput(e.target.value)}
                         onFocus={() => {
@@ -9637,7 +8129,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         onBlur={() => {
                           if (!chatInput.trim()) {
                             setChatTextareaFocused(false)
-                            if (chatTextareaRef.current) chatTextareaRef.current.style.height = '48px'
+                            if (chatTextareaRef.current) chatTextareaRef.current.style.height = '44px'
                           }
                         }}
                         onKeyDown={(e) => {
@@ -9648,8 +8140,8 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         }}
                         disabled={chatLoading}
                         rows={1}
-                        className="flex-1 resize-none bg-transparent text-[#2A2A42] text-sm leading-6 placeholder:text-gray-600 outline-none py-2.5 pr-1 overflow-y-auto"
-                        style={{ minHeight: '48px', maxHeight: '168px', height: chatTextareaFocused ? undefined : '48px' }}
+                        className="flex-1 resize-none bg-transparent text-[#2A2A42] text-sm placeholder:text-gray-600 outline-none py-2 overflow-y-auto"
+                        style={{ minHeight: '44px', maxHeight: '168px', height: chatTextareaFocused ? undefined : '44px' }}
                         onInput={(e) => {
                           e.target.style.height = 'auto'
                           e.target.style.height = Math.min(e.target.scrollHeight, 168) + 'px'
@@ -9664,14 +8156,14 @@ analytics.subscribe("product_added_to_cart", (event) => {
                           <button
                             onClick={cancelDictation}
                             className="w-8 h-8 flex items-center justify-center text-[#4A4A68] hover:text-[#1A1A2E] bg-[#EFF1F5]/50 hover:bg-[#E8E8EE]/70 rounded-full transition-colors"
-                            title={t('cancel')}
+                            title="Annuler"
                           >
                             <span className="text-base font-semibold">✕</span>
                           </button>
                           <button
                             onClick={confirmDictation}
                             className="w-8 h-8 flex items-center justify-center text-white bg-[#0D9488]/80 hover:bg-[#0D9488] rounded-full transition-colors"
-                            title={t('confirm')}
+                            title="Valider"
                           >
                             <span className="text-base font-semibold">✓</span>
                           </button>
@@ -9683,7 +8175,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                         onClick={() => sendChatMessage()}
                         disabled={chatLoading}
                         className="p-1.5 text-[#FF6B35] hover:text-[#FF6B35] disabled:text-gray-600 transition-colors shrink-0"
-                        title={t('send')}
+                        title="Envoyer"
                       >
                         <svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor">
                           <path d="M3.105 2.29a1 1 0 011.265-.42l13 6.5a1 1 0 010 1.79l-13 6.5A1 1 0 013 15.79V11.5l8-1.5-8-1.5V4.21a1 1 0 01.105-.92z"/>
@@ -9694,7 +8186,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                       <button
                         onClick={startDictation}
                         className="p-1.5 text-[#8A8AA3] hover:text-[#4A4A68] transition-colors shrink-0 rounded-lg"
-                        title={t('voiceDictation')}
+                        title="Dictée vocale"
                       >
                         <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
                           <rect x="7" y="2" width="6" height="10" rx="3" stroke="currentColor" strokeWidth="1.5"/>
@@ -9706,7 +8198,7 @@ analytics.subscribe("product_added_to_cart", (event) => {
                   </div>
 
                   <div className="flex items-center justify-center mt-2 px-1">
-                    <p className="text-[10px] text-gray-600">{t('aiDisclaimer')}</p>
+                    <p className="text-[10px] text-gray-600">ShopBrain IA peut faire des erreurs. Vérifiez les informations importantes.</p>
                   </div>
 
                   <input

@@ -130,6 +130,18 @@ export default function App() {
     return true
   }, [readAppSubscriptionCache])
 
+  const normalizeSubscriptionStatusMessage = React.useCallback((message) => {
+    const rawMessage = String(message || '').trim()
+    if (!rawMessage) return t('subscriptionNotDetectedRetry')
+
+    const normalizedMessage = rawMessage.toLowerCase()
+    if (normalizedMessage.includes('payment not yet validated') || normalizedMessage.includes('not yet validated')) {
+      return t('subscriptionNotDetectedRetry')
+    }
+
+    return rawMessage
+  }, [t])
+
   const cleanupAuthQueryParams = React.useCallback(() => {
     if (typeof window === 'undefined') return
     const url = new URL(window.location.href)
@@ -165,6 +177,15 @@ export default function App() {
     }
 
     return 'Connexion Google échouée. Réessaie dans quelques secondes.'
+  }, [])
+
+  const sanitizeCheckoutError = React.useCallback((detail, fallback) => {
+    const raw = typeof detail === 'string' ? detail : typeof detail?.message === 'string' ? detail.message : ''
+    if (!raw) return fallback
+    if (/invalidrequesterror|no such customer|no such subscription|request req_|column.*does not exist|relation.*does not exist|sqlstate|stripe/i.test(raw)) {
+      return fallback
+    }
+    return raw
   }, [])
 
   // ── One-time setup: scroll, auth listener, payment success ──
@@ -442,7 +463,7 @@ export default function App() {
           ...prev,
           dashboardHero: {
             type: 'warning',
-            message: data?.message || 'No active plan found. Please purchase a plan to access your dashboard.'
+            message: normalizeSubscriptionStatusMessage(data?.message)
           }
         }))
       }
@@ -669,7 +690,7 @@ export default function App() {
         const errorData = await response.json().catch(() => ({}))
         setLandingStatusByKey((prev) => ({
           ...prev,
-          pricing: { type: 'error', message: `${t('error')}: ${errorData.detail || response.statusText || t('unableToCreateCheckoutSession')}` }
+          pricing: { type: 'error', message: `${t('error')}: ${sanitizeCheckoutError(errorData.detail, response.statusText || t('unableToCreateCheckoutSession'))}` }
         }))
         console.error('Checkout session error:', errorData)
         return
@@ -689,7 +710,7 @@ export default function App() {
     } catch (error) {
       setLandingStatusByKey((prev) => ({
         ...prev,
-        pricing: { type: 'error', message: `${t('connectionError')}: ${error.message}` }
+        pricing: { type: 'error', message: `${t('connectionError')}: ${sanitizeCheckoutError(error?.message, t('unableToCreateCheckoutSession'))}` }
       }))
       console.error('Stripe checkout error:', error)
     }
@@ -1249,7 +1270,7 @@ export default function App() {
                 disabled={isCheckingSubscription}
                 className="px-12 py-4 text-base font-semibold rounded-full transition-all bg-[#FF6B35] text-white hover:bg-[#E85A28] hover:shadow-lg shadow-[0_8px_24px_rgba(255,107,53,0.25)]"
               >
-                {isCheckingSubscription ? (t('loading') || 'Loading...') : 'Accéder à mon Dashboard'}
+                {isCheckingSubscription ? (t('loading') || 'Loading...') : t('accessMyDashboard')}
               </button>
               {!hasSubscription && renderLandingStatus('dashboardHero')}
             </div>

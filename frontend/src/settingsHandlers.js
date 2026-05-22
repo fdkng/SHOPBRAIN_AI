@@ -1,11 +1,23 @@
 // Settings handlers for Dashboard component
 export const createSettingsHandlers = (state, setState, supabase, API_URL) => {
 
+  const formatErrorDetail = (detail, fallback = 'Erreur') => {
+    const raw = typeof detail === 'string' ? detail : typeof detail?.message === 'string' ? detail.message : ''
+    if (!raw) return fallback
+    if (/column.*does not exist|relation.*does not exist|42703|42P01|SQLSTATE|invalidrequesterror|no such customer|no such subscription|request req_|stripe/i.test(raw)) {
+      return fallback
+    }
+    return raw
+  }
+
   const formatUserFacingError = (err, fallback = 'Une erreur est survenue') => {
     const raw = String(err?.message || '').trim()
     const isNetwork = err?.name === 'AbortError' || /Failed to fetch|NetworkError|Load failed|fetch/i.test(raw)
     if (isNetwork) {
       return 'Connexion au backend impossible pour le moment (serveur en réveil). Réessaie dans 10-20 secondes.'
+    }
+    if (/column.*does not exist|relation.*does not exist|42703|42P01|SQLSTATE|invalidrequesterror|no such customer|no such subscription|request req_|stripe/i.test(raw)) {
+      return fallback
     }
     return raw || fallback
   }
@@ -33,7 +45,7 @@ export const createSettingsHandlers = (state, setState, supabase, API_URL) => {
         // Trigger profile reload
         window.location.reload()
       } else {
-        alert('❌ Erreur: ' + (data.detail || 'Erreur'))
+        alert('❌ Erreur: ' + formatErrorDetail(data.detail, 'Erreur'))
       }
     } catch (err) {
       alert('❌ ' + formatUserFacingError(err, 'Erreur'))
@@ -82,7 +94,7 @@ export const createSettingsHandlers = (state, setState, supabase, API_URL) => {
           confirmPassword: ''
         }))
       } else {
-        alert('❌ Erreur: ' + (data.detail || 'Erreur'))
+        alert('❌ Erreur: ' + formatErrorDetail(data.detail, 'Erreur'))
       }
     } catch (err) {
       alert('❌ ' + formatUserFacingError(err, 'Erreur'))
@@ -110,7 +122,7 @@ export const createSettingsHandlers = (state, setState, supabase, API_URL) => {
         setState(prev => ({ ...prev, twoFAEnabled: !prev.twoFAEnabled }))
         alert('✅ 2FA ' + (state.twoFAEnabled ? 'désactivée' : 'activée'))
       } else {
-        alert('❌ Erreur: ' + (data.detail || 'Erreur'))
+        alert('❌ Erreur: ' + formatErrorDetail(data.detail, 'Erreur'))
       }
     } catch (err) {
       alert('❌ ' + formatUserFacingError(err, 'Erreur'))
@@ -142,7 +154,7 @@ export const createSettingsHandlers = (state, setState, supabase, API_URL) => {
         localStorage.setItem('darkMode', state.darkMode)
         localStorage.setItem('language', state.language)
       } else {
-        alert('❌ Erreur: ' + (data.detail || 'Erreur'))
+        alert('❌ Erreur: ' + formatErrorDetail(data.detail, 'Erreur'))
       }
     } catch (err) {
       alert('❌ ' + formatUserFacingError(err, 'Erreur'))
@@ -169,7 +181,7 @@ export const createSettingsHandlers = (state, setState, supabase, API_URL) => {
       if (data.success) {
         alert('✅ Préférences de notifications mises à jour')
       } else {
-        alert('❌ Erreur: ' + (data.detail || 'Erreur'))
+        alert('❌ Erreur: ' + formatErrorDetail(data.detail, 'Erreur'))
       }
     } catch (err) {
       alert('❌ ' + formatUserFacingError(err, 'Erreur'))
@@ -198,7 +210,7 @@ export const createSettingsHandlers = (state, setState, supabase, API_URL) => {
         alert('✅ Abonnement annulé')
         window.location.reload()
       } else {
-        alert('❌ Erreur: ' + (data.detail || 'Erreur'))
+        alert('❌ Erreur: ' + formatErrorDetail(data.detail, 'Erreur'))
       }
     } catch (err) {
       alert('❌ ' + formatUserFacingError(err, 'Erreur'))
@@ -224,7 +236,7 @@ export const createSettingsHandlers = (state, setState, supabase, API_URL) => {
       if (data.success && data.portal_url) {
         window.location.href = data.portal_url
       } else {
-        alert('❌ Erreur: ' + (data.detail || 'Erreur'))
+        alert('❌ Erreur: ' + formatErrorDetail(data.detail, 'Erreur'))
       }
     } catch (err) {
       alert('❌ ' + formatUserFacingError(err, 'Erreur'))

@@ -13,7 +13,6 @@ import re
 import json
 import time
 import uuid
-import secrets
 import hashlib
 import base64
 import hmac
@@ -21,7 +20,6 @@ import smtplib
 import ssl
 import requests
 import threading
-from urllib.parse import urlparse, parse_qs, urlencode
 from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, HTTPException, Request, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
@@ -133,49 +131,14 @@ FRONTEND_ORIGIN = _sanitize_url(
     os.getenv("FRONTEND_ORIGIN"),
     "https://fdkng.github.io/SHOPBRAIN_AI",
 )
-BACKEND_BASE_URL = _sanitize_url(
-    os.getenv("BACKEND_BASE_URL"),
-    "https://shopbrain-backend.onrender.com",
-)
 SERPAPI_KEY = os.getenv("SERPAPI_KEY") or os.getenv("SERPAPI_API_KEY")
 MARKET_TOLERANCE_PCT = float(os.getenv("MARKET_TOLERANCE_PCT", "5"))
 SERP_MAX_PRODUCTS = int(os.getenv("SERP_MAX_PRODUCTS", "8"))
 SERP_NUM_RESULTS = int(os.getenv("SERP_NUM_RESULTS", "20"))
 
-META_ADS_APP_ID = os.getenv("META_ADS_APP_ID") or os.getenv("META_APP_ID") or os.getenv("FACEBOOK_APP_ID")
-META_ADS_APP_SECRET = os.getenv("META_ADS_APP_SECRET") or os.getenv("META_APP_SECRET") or os.getenv("FACEBOOK_APP_SECRET")
-META_ADS_REDIRECT_URI = _sanitize_url(
-    os.getenv("META_ADS_REDIRECT_URI"),
-    f"{BACKEND_BASE_URL}/auth/integrations/meta/callback",
-)
-META_ADS_SCOPES = os.getenv("META_ADS_SCOPES", "ads_read,business_management")
-
-GOOGLE_ADS_CLIENT_ID = os.getenv("GOOGLE_ADS_CLIENT_ID") or os.getenv("TRUTH_GOOGLE_CLIENT_ID")
-GOOGLE_ADS_CLIENT_SECRET = os.getenv("GOOGLE_ADS_CLIENT_SECRET") or os.getenv("TRUTH_GOOGLE_CLIENT_SECRET")
-GOOGLE_ADS_REDIRECT_URI = _sanitize_url(
-    os.getenv("GOOGLE_ADS_REDIRECT_URI"),
-    f"{BACKEND_BASE_URL}/auth/integrations/google/callback",
-)
-GOOGLE_ADS_SCOPES = os.getenv("GOOGLE_ADS_SCOPES", "https://www.googleapis.com/auth/adwords")
-
-TIKTOK_ADS_CLIENT_ID = os.getenv("TIKTOK_ADS_CLIENT_ID") or os.getenv("TIKTOK_CLIENT_ID") or os.getenv("TIKTOK_APP_ID") or os.getenv("TIKTOK_CLIENT_KEY")
-TIKTOK_ADS_CLIENT_SECRET = os.getenv("TIKTOK_ADS_CLIENT_SECRET") or os.getenv("TIKTOK_CLIENT_SECRET") or os.getenv("TIKTOK_SECRET")
-TIKTOK_ADS_REDIRECT_URI = _sanitize_url(
-    os.getenv("TIKTOK_ADS_REDIRECT_URI"),
-    f"{BACKEND_BASE_URL}/auth/integrations/tiktok/callback",
-)
-TIKTOK_ADS_SCOPES = os.getenv("TIKTOK_ADS_SCOPES", "ads.read")
-
-TRUTH_INTEGRATION_PROVIDER_LABELS = {
-    "meta": "Meta Ads",
-    "tiktok": "TikTok Ads",
-    "google": "Google Ads",
-}
-
 _SERP_CACHE: dict[str, dict] = {}
 _SHOP_CACHE: dict[str, dict] = {}
 _BLOCKERS_CACHE: dict[str, dict] = {}
-_INTEGRATION_OAUTH_STATES: dict[str, dict] = {}
 _MEM_CACHE_LOCK = threading.Lock()
 
 
@@ -725,50 +688,39 @@ def _market_reason_text(
     suggested_price: float,
     snapshot: dict,
     currency_code: str | None,
-    language: str = "en",
 ) -> str:
     count = int(snapshot.get("count") or 0)
     curr_label = _currency_label(currency_code)
-    lang = "fr" if (language or "").strip().lower() == "fr" else "en"
 
     if count < 3:
         seen = snapshot.get("seen_currencies")
         if isinstance(seen, list) and seen and currency_code and currency_code.upper() not in seen:
             return (
-                (f"I did not find enough comparable offers in the same currency ({curr_label}). I keep the current price to avoid unreliable advice.")
-                if lang == "en"
-                else (f"Je n’ai pas trouvé assez d’offres comparables dans la même devise ({curr_label}). Je garde donc le prix pour éviter une recommandation hasardeuse.")
+                f"Je n’ai pas trouvé assez d’offres comparables dans la même devise ({curr_label}). "
+                "Je garde donc le prix pour éviter une recommandation hasardeuse."
             )
         return (
-            "I did not find enough reliable comparable offers (fewer than 3). I keep the current price to avoid unreliable advice."
-            if lang == "en"
-            else "Je n’ai pas trouvé assez d’offres comparables fiables (moins de 3). Je garde donc le prix pour éviter une recommandation hasardeuse."
+            "Je n’ai pas trouvé assez d’offres comparables fiables (moins de 3). "
+            "Je garde donc le prix pour éviter une recommandation hasardeuse."
         )
 
     median = snapshot.get("median")
     if not isinstance(median, (int, float)) or median <= 0:
-        return (
-            "Market results do not contain usable prices; keeping current price."
-            if lang == "en"
-            else "Les résultats marché ne contiennent pas de prix exploitable; je garde le prix actuel."
-        )
+        return "Les résultats marché ne contiennent pas de prix exploitable; je garde le prix actuel."
 
     if action == "keep":
         return (
-            (f"Across {count} similar offers ({curr_label}), your current price is already within market range. No change recommended.")
-            if lang == "en"
-            else (f"Sur {count} offres similaires ({curr_label}), ton prix est déjà dans la zone du marché. Aucun changement recommandé.")
+            f"Sur {count} offres similaires ({curr_label}), ton prix est déjà dans la zone du marché. "
+            "Aucun changement recommandé."
         )
     if action == "increase":
         return (
-            (f"Across {count} similar offers ({curr_label}), your price appears below market level. I recommend increasing toward {round(float(suggested_price), 2)} for better alignment.")
-            if lang == "en"
-            else (f"Sur {count} offres similaires ({curr_label}), ton prix est plutôt en dessous du niveau du marché. Je recommande d’augmenter vers {round(float(suggested_price), 2)} pour mieux s’aligner.")
+            f"Sur {count} offres similaires ({curr_label}), ton prix est plutôt en dessous du niveau du marché. "
+            f"Je recommande d’augmenter vers {round(float(suggested_price), 2)} pour mieux s’aligner."
         )
     return (
-        (f"Across {count} similar offers ({curr_label}), your price appears above market level. I recommend decreasing toward {round(float(suggested_price), 2)} for better alignment.")
-        if lang == "en"
-        else (f"Sur {count} offres similaires ({curr_label}), ton prix est plutôt au-dessus du niveau du marché. Je recommande de baisser vers {round(float(suggested_price), 2)} pour mieux s’aligner.")
+        f"Sur {count} offres similaires ({curr_label}), ton prix est plutôt au-dessus du niveau du marché. "
+        f"Je recommande de baisser vers {round(float(suggested_price), 2)} pour mieux s’aligner."
     )
 
 
@@ -1432,40 +1384,16 @@ def _deactivate_subscription_row(supabase_client, row_id: str, reason: str = "",
 
 # Stripe price IDs - Mapping tier names to price IDs
 STRIPE_PLANS = {
-    "standard": "price_1TSiKwPSvADOSbOz1u7GmrkY",
-    "pro": "price_1TSiO8PSvADOSbOzQBuDLKqr",
-    "premium": "price_1TSiPbPSvADOSbOzQ2VdVeII",
-}
-
-STRIPE_PLAN_AMOUNT_CENTS = {
-    "standard": 3500,
-    "pro": 9900,
-    "premium": 19900,
-}
-
-STRIPE_PLAN_VALUE_ALIASES = {
-    "35": "standard",
-    "99": "pro",
-    "199": "premium",
-    "299": "premium",
-    "standard": "standard",
-    "grow": "pro",
-    "pro": "pro",
-    "premium": "premium",
-}
-
-STRIPE_PLAN_AMOUNT_TO_TIER = {
-    3500: "standard",
-    9900: "pro",
-    19900: "premium",
-    29900: "premium",
+    "standard": "price_1SQfzmPSvADOSbOzpxoK8hG3",
+    "pro": "price_1SQg0xPSvADOSbOzrZbOGs06",
+    "premium": "price_1SQg3CPSvADOSbOzHXSoDkGN",
 }
 
 # Reverse mapping: price_id -> tier
 PRICE_TO_TIER = {
-    "price_1TSiKwPSvADOSbOz1u7GmrkY": "standard",
-    "price_1TSiO8PSvADOSbOzQBuDLKqr": "pro",
-    "price_1TSiPbPSvADOSbOzQ2VdVeII": "premium",
+    "price_1SQfzmPSvADOSbOzpxoK8hG3": "standard",
+    "price_1SQg0xPSvADOSbOzrZbOGs06": "pro",
+    "price_1SQg3CPSvADOSbOzHXSoDkGN": "premium",
 }
 
 
@@ -1729,20 +1657,18 @@ def _subscription_period_is_valid(row: dict | None) -> bool:
     return end_dt > datetime.utcnow()
 
 
-def _subscription_status_allows_access(status: str | None) -> bool:
-    normalized = str(status or "").lower().strip()
-    return normalized in ("active", "cancelling", "trialing")
-
-
 def _is_paid_subscription_row(row: dict | None) -> bool:
     if not row:
         return False
     status = str(row.get("status") or row.get("subscription_status") or "").strip().lower()
+    # Robustly check paid/plan — DB may return bool True, string "true", or int 1
     raw_paid = row.get("paid")
     raw_plan = row.get("plan")
     paid = raw_paid is True or str(raw_paid).lower().strip() in ("true", "1")
     plan_ok = raw_plan is True or str(raw_plan).lower().strip() in ("true", "1")
-    return _subscription_status_allows_access(status) and (paid or plan_ok)
+    # Accept both 'active' and 'cancelling' (user paid, just scheduled to cancel at period end)
+    # period_is_valid check removed — the columns end_date/current_period_end don't exist in Supabase
+    return status in ("active", "cancelling") and (paid or plan_ok)
 
 
 def _inactive_subscription_payload(message: str | None = None) -> dict:
@@ -1763,11 +1689,18 @@ def _resolve_plan_from_stripe_subscription(subscription_obj) -> str | None:
     if not subscription_obj:
         return None
 
-    tier_map = STRIPE_PLAN_VALUE_ALIASES
+    tier_map = {
+        '99': 'standard',
+        '199': 'pro',
+        '299': 'premium',
+        'standard': 'standard',
+        'pro': 'pro',
+        'premium': 'premium'
+    }
 
     items_container = _sg(subscription_obj, "items", {})
     items = _sg(items_container, "data", []) if items_container else []
-    exact_amount_map = STRIPE_PLAN_AMOUNT_TO_TIER
+    exact_amount_map = {9900: 'standard', 19900: 'pro', 29900: 'premium'}
 
     # IMPORTANT: price_id / amount is the source of truth for upgrades/downgrades.
     # metadata.plan can be stale (e.g., user upgraded from standard -> pro).
@@ -1817,7 +1750,7 @@ def _extract_upcoming_plan_change(subscription_obj) -> dict:
     try:
         current_plan = _resolve_plan_from_stripe_subscription(subscription_obj)
         now_ts = int(time.time())
-        exact_amount_map = STRIPE_PLAN_AMOUNT_TO_TIER
+        exact_amount_map = {9900: 'standard', 19900: 'pro', 29900: 'premium'}
 
         schedule_obj = _sg(subscription_obj, "schedule")
         schedule_id = None
@@ -1945,1059 +1878,6 @@ def get_user_id(request: Request) -> str:
     
     print(f"❌ Missing Bearer token or user_id.")
     raise HTTPException(status_code=401, detail="Missing or invalid token")
-
-
-class ClientIntegrationConnectRequest(BaseModel):
-    external_account_id: str
-    external_account_name: str | None = None
-    display_name: str | None = None
-    access_token: str | None = None
-    refresh_token: str | None = None
-    token_expires_at: str | None = None
-    connection_mode: str = "manual"
-    api_version: str | None = None
-    config: dict | None = None
-    metadata: dict | None = None
-    is_primary: bool = True
-    developer_token: str | None = None
-    client_id: str | None = None
-    client_secret: str | None = None
-    manager_account_id: str | None = None
-
-
-class ClientIntegrationOAuthStartRequest(BaseModel):
-    external_account_id: str | None = None
-    external_account_name: str | None = None
-    display_name: str | None = None
-    api_version: str | None = None
-    developer_token: str | None = None
-    manager_account_id: str | None = None
-
-
-class IntegrationTokenLookupRequest(BaseModel):
-    access_token: str
-
-
-def _truth_build_manual_integration(provider: str, req: ClientIntegrationConnectRequest) -> dict:
-    normalized_provider = _truth_require_provider(provider)
-    config: dict = _truth_safe_dict(req.config)
-
-    if normalized_provider == "google":
-        if req.developer_token:
-            config["developer_token"] = req.developer_token
-        if req.client_id:
-            config["client_id"] = req.client_id
-        if req.client_secret:
-            config["client_secret"] = req.client_secret
-        if req.manager_account_id:
-            config["manager_account_id"] = req.manager_account_id
-
-    return {
-        "provider": normalized_provider,
-        "external_account_id": str(req.external_account_id or "").strip(),
-        "external_account_name": str(req.external_account_name or "").strip() or None,
-        "display_name": str(req.display_name or "").strip() or None,
-        "access_token": str(req.access_token or "").strip() or None,
-        "refresh_token": str(req.refresh_token or "").strip() or None,
-        "api_version": str(req.api_version or "").strip() or None,
-        "config": config or None,
-    }
-
-
-def _truth_manual_required_fields(provider: str, req: ClientIntegrationConnectRequest) -> list[str]:
-    normalized_provider = _truth_require_provider(provider)
-    required: list[str] = []
-    if normalized_provider in {"meta", "tiktok"}:
-        if not str(req.external_account_id or "").strip():
-            required.append("external_account_id")
-        if not str(req.access_token or "").strip():
-            required.append("access_token")
-    elif normalized_provider == "google":
-        if not str(req.refresh_token or "").strip():
-            required.append("refresh_token")
-        if not str(req.client_id or "").strip():
-            required.append("client_id")
-        if not str(req.client_secret or "").strip():
-            required.append("client_secret")
-
-    return sorted(set(required))
-
-
-def _truth_humanize_validation_error(provider: str, raw_error: str) -> str:
-    normalized_provider = _truth_require_provider(provider)
-    message = str(raw_error or "Connection failed").strip()
-    lower = message.lower()
-
-    if "missing" in lower and "credential" in lower:
-        return "Missing required credentials"
-    if "invalid oauth access token" in lower or "oauth" in lower and "invalid" in lower:
-        return "Invalid token"
-    if "invalid_grant" in lower:
-        return "Invalid refresh token"
-    if "invalid_client" in lower:
-        return "Invalid client ID or client secret"
-    if "permission" in lower or "access denied" in lower:
-        return "Permission denied for this ad account"
-    if normalized_provider == "google" and "not yet wired" in lower:
-        return "Google Ads credentials are valid, but campaign sync is not fully available yet"
-    return message or "Connection failed"
-
-
-def _truth_validate_manual_integration(provider: str, req: ClientIntegrationConnectRequest) -> dict:
-    normalized_provider = _truth_require_provider(provider)
-    missing_fields = _truth_manual_required_fields(normalized_provider, req)
-    if missing_fields:
-        raise HTTPException(status_code=400, detail=f"Missing required fields: {', '.join(missing_fields)}")
-
-    integration = _truth_build_manual_integration(normalized_provider, req)
-    cache_scope = f"validate:{uuid.uuid4()}"
-
-    if normalized_provider == "meta":
-        rows, meta = _truth_fetch_meta_ads_rows(30, integration=integration, cache_scope=cache_scope)
-        if not meta.get("connected"):
-            raise HTTPException(status_code=400, detail=_truth_humanize_validation_error(normalized_provider, meta.get("error") or "Connection failed"))
-        return {
-            "provider": normalized_provider,
-            "connected": True,
-            "message": "Connected successfully",
-            "campaigns": len(rows),
-            "last_sync": meta.get("last_sync") or _truth_now_iso(),
-        }
-
-    if normalized_provider == "tiktok":
-        rows, meta = _truth_fetch_tiktok_ads_rows(30, integration=integration, cache_scope=cache_scope)
-        if not meta.get("connected"):
-            raise HTTPException(status_code=400, detail=_truth_humanize_validation_error(normalized_provider, meta.get("error") or "Connection failed"))
-        return {
-            "provider": normalized_provider,
-            "connected": True,
-            "message": "Connected successfully",
-            "campaigns": len(rows),
-            "last_sync": meta.get("last_sync") or _truth_now_iso(),
-        }
-
-    credentials = _truth_build_provider_credentials(normalized_provider, integration)
-    token_response = requests.post(
-        "https://oauth2.googleapis.com/token",
-        data={
-            "client_id": credentials.get("client_id"),
-            "client_secret": credentials.get("client_secret"),
-            "refresh_token": credentials.get("refresh_token"),
-            "grant_type": "refresh_token",
-        },
-        timeout=20,
-    )
-    if token_response.status_code != 200:
-        payload = token_response.json() if token_response.content else {}
-        error_message = payload.get("error_description") or payload.get("error") or token_response.text[:300]
-        raise HTTPException(status_code=400, detail=_truth_humanize_validation_error(normalized_provider, error_message))
-
-    token_payload = token_response.json() or {}
-    if not token_payload.get("access_token"):
-        raise HTTPException(status_code=400, detail="Connection failed")
-
-    return {
-        "provider": normalized_provider,
-        "connected": True,
-        "message": "Connected successfully",
-        "campaigns": 0,
-        "last_sync": _truth_now_iso(),
-        "warning": "Google Ads credentials are valid. Campaign sync may stay limited until customer and developer access are fully configured.",
-    }
-
-
-def _truth_normalize_provider(provider: str | None) -> str:
-    normalized = str(provider or "").strip().lower().replace("-", "_").replace(" ", "_")
-    aliases = {
-        "facebook": "meta",
-        "instagram": "meta",
-        "fb": "meta",
-        "ig": "meta",
-        "tik_tok": "tiktok",
-        "googleads": "google",
-        "google_ads": "google",
-        "gads": "google",
-    }
-    return aliases.get(normalized, normalized)
-
-
-def _truth_require_provider(provider: str | None) -> str:
-    normalized = _truth_normalize_provider(provider)
-    if normalized not in TRUTH_INTEGRATION_PROVIDER_LABELS:
-        raise HTTPException(status_code=404, detail=f"Unsupported integration provider: {provider}")
-    return normalized
-
-
-def _truth_provider_label(provider: str | None) -> str:
-    normalized = _truth_normalize_provider(provider)
-    return TRUTH_INTEGRATION_PROVIDER_LABELS.get(normalized, str(provider or "Unknown"))
-
-
-def _supabase_admin_client():
-    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
-        raise HTTPException(status_code=500, detail="Supabase not configured")
-    return create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-
-
-def _truth_parse_iso_datetime(value: str | None) -> str | None:
-    raw = str(value or "").strip()
-    if not raw:
-        return None
-    try:
-        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid ISO datetime: {value}") from exc
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def _truth_mask_secret(value: str | None) -> str | None:
-    raw = str(value or "").strip()
-    if not raw:
-        return None
-    if len(raw) <= 8:
-        return "*" * len(raw)
-    return f"{raw[:4]}…{raw[-4:]}"
-
-
-def _truth_safe_dict(value) -> dict:
-    return value if isinstance(value, dict) else {}
-
-
-def _truth_is_pending_account_id(value: str | None) -> bool:
-    return str(value or "").strip().lower().startswith("pending:")
-
-
-def _truth_integration_ready(provider: str, row: dict) -> bool:
-    config = _truth_safe_dict(row.get("config"))
-    if provider in {"meta", "tiktok"}:
-        return bool(
-            row.get("access_token")
-            and row.get("external_account_id")
-            and not _truth_is_pending_account_id(row.get("external_account_id"))
-        ) or bool(config.get("campaigns_json"))
-    if provider == "google":
-        return (
-            bool(config.get("campaigns_json"))
-            or bool(
-                row.get("refresh_token")
-                and config.get("client_id")
-                and config.get("client_secret")
-            )
-        )
-    return False
-
-
-def _truth_serialize_integration(row: dict) -> dict:
-    provider = _truth_normalize_provider(row.get("provider"))
-    config = _truth_safe_dict(row.get("config"))
-    metadata = _truth_safe_dict(row.get("metadata"))
-    return {
-        "id": row.get("id"),
-        "provider": provider,
-        "provider_label": _truth_provider_label(provider),
-        "display_name": row.get("display_name") or row.get("external_account_name") or _truth_provider_label(provider),
-        "external_account_id": row.get("external_account_id"),
-        "external_account_name": row.get("external_account_name"),
-        "status": row.get("status") or ("connected" if _truth_integration_ready(provider, row) else "pending"),
-        "connection_mode": row.get("connection_mode") or "manual",
-        "is_primary": bool(row.get("is_primary")),
-        "api_version": row.get("api_version"),
-        "last_sync_at": row.get("last_sync_at"),
-        "last_error": row.get("last_error"),
-        "token_expires_at": row.get("token_expires_at"),
-        "has_access_token": bool(row.get("access_token")),
-        "has_refresh_token": bool(row.get("refresh_token")),
-        "access_token_preview": _truth_mask_secret(row.get("access_token")),
-        "refresh_token_preview": _truth_mask_secret(row.get("refresh_token")),
-        "config_summary": {
-            "has_campaigns_json": bool(config.get("campaigns_json")),
-            "has_developer_token": bool(config.get("developer_token")),
-            "has_client_id": bool(config.get("client_id")),
-            "has_client_secret": bool(config.get("client_secret")),
-            "manager_account_id": config.get("manager_account_id"),
-        },
-        "metadata": metadata,
-        "created_at": row.get("created_at"),
-        "updated_at": row.get("updated_at"),
-    }
-
-
-def _truth_get_user_integrations(user_id: str, provider: str | None = None) -> list[dict]:
-    if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
-        return []
-    try:
-        supabase = _supabase_admin_client()
-        query = supabase.table("client_integrations").select("*").eq("user_id", user_id)
-        normalized_provider = _truth_normalize_provider(provider) if provider else None
-        if normalized_provider:
-            query = query.eq("provider", normalized_provider)
-        response = query.order("is_primary", desc=True).order("updated_at", desc=True).execute()
-        rows = response.data or []
-        normalized_rows: list[dict] = []
-        for row in rows:
-            row_provider = _truth_normalize_provider(row.get("provider"))
-            if row_provider in TRUTH_INTEGRATION_PROVIDER_LABELS:
-                row["provider"] = row_provider
-                normalized_rows.append(row)
-        return normalized_rows
-    except Exception as exc:
-        print(f"⚠️ [INTEGRATIONS] unable to read client_integrations: {exc}")
-        return []
-
-
-def _truth_get_primary_integration(user_id: str, provider: str, integrations: list[dict] | None = None) -> dict | None:
-    normalized_provider = _truth_require_provider(provider)
-    rows = integrations if integrations is not None else _truth_get_user_integrations(user_id, normalized_provider)
-    provider_rows = [row for row in rows if _truth_normalize_provider(row.get("provider")) == normalized_provider]
-    if not provider_rows:
-        return None
-    primary = next((row for row in provider_rows if row.get("is_primary")), provider_rows[0])
-    primary["provider"] = normalized_provider
-    return primary
-
-
-def _truth_set_primary_integration(supabase, user_id: str, provider: str, integration_id: str) -> None:
-    try:
-        (
-            supabase.table("client_integrations")
-            .update({"is_primary": False})
-            .eq("user_id", user_id)
-            .eq("provider", provider)
-            .neq("id", integration_id)
-            .execute()
-        )
-    except Exception as exc:
-        print(f"⚠️ [INTEGRATIONS] unable to rebalance primary integration for {provider}: {exc}")
-
-
-def _truth_upsert_integration(user_id: str, provider: str, req: ClientIntegrationConnectRequest) -> dict:
-    normalized_provider = _truth_require_provider(provider)
-    external_account_id = str(req.external_account_id or "").strip()
-    if normalized_provider == "meta":
-        external_account_id = external_account_id.replace("act_", "")
-    if not external_account_id:
-        if normalized_provider == "google":
-            external_account_id = f"pending:{normalized_provider}:{secrets.token_hex(6)}"
-        else:
-            raise HTTPException(status_code=400, detail=f"{_truth_provider_label(normalized_provider)} account id is required")
-
-    config = dict(req.config or {})
-    metadata = dict(req.metadata or {})
-    if req.developer_token:
-        config["developer_token"] = req.developer_token.strip()
-    if req.client_id:
-        config["client_id"] = req.client_id.strip()
-    if req.client_secret:
-        config["client_secret"] = req.client_secret.strip()
-    if req.manager_account_id:
-        config["manager_account_id"] = req.manager_account_id.strip()
-
-    token_expires_at = _truth_parse_iso_datetime(req.token_expires_at)
-    now_iso = _truth_now_iso()
-    payload = {
-        "user_id": user_id,
-        "provider": normalized_provider,
-        "display_name": (req.display_name or req.external_account_name or _truth_provider_label(normalized_provider)).strip(),
-        "external_account_id": external_account_id,
-        "external_account_name": (req.external_account_name or req.display_name or "").strip() or None,
-        "access_token": (req.access_token or "").strip() or None,
-        "refresh_token": (req.refresh_token or "").strip() or None,
-        "token_expires_at": token_expires_at,
-        "connection_mode": (req.connection_mode or "manual").strip() or "manual",
-        "api_version": (req.api_version or "").strip() or None,
-        "config": config,
-        "metadata": metadata,
-        "is_primary": bool(req.is_primary),
-        "status": "pending",
-        "last_error": None,
-        "updated_at": now_iso,
-    }
-    payload["status"] = "connected" if _truth_integration_ready(normalized_provider, payload) else "pending"
-
-    supabase = _supabase_admin_client()
-    try:
-        existing = (
-            supabase.table("client_integrations")
-            .select("*")
-            .eq("user_id", user_id)
-            .eq("provider", normalized_provider)
-            .eq("external_account_id", external_account_id)
-            .limit(1)
-            .execute()
-        )
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail="`client_integrations` table missing. Run the new Supabase migration first.",
-        ) from exc
-
-    if existing.data:
-        existing_row = existing.data[0]
-        integration_id = existing_row.get("id")
-        if not payload.get("access_token"):
-            payload["access_token"] = existing_row.get("access_token")
-        if not payload.get("refresh_token"):
-            payload["refresh_token"] = existing_row.get("refresh_token")
-        if not payload.get("token_expires_at"):
-            payload["token_expires_at"] = existing_row.get("token_expires_at")
-        if not payload.get("external_account_name"):
-            payload["external_account_name"] = existing_row.get("external_account_name")
-        if not payload.get("display_name"):
-            payload["display_name"] = existing_row.get("display_name")
-        if not payload.get("api_version"):
-            payload["api_version"] = existing_row.get("api_version")
-        merged_config = {
-            **_truth_safe_dict(existing_row.get("config")),
-            **payload.get("config", {}),
-        }
-        merged_metadata = {
-            **_truth_safe_dict(existing_row.get("metadata")),
-            **payload.get("metadata", {}),
-        }
-        payload["config"] = merged_config
-        payload["metadata"] = merged_metadata
-        payload["status"] = "connected" if _truth_integration_ready(normalized_provider, {**existing_row, **payload}) else (existing_row.get("status") or "pending")
-        payload_to_write = dict(payload)
-        payload_to_write.pop("user_id", None)
-        (
-            supabase.table("client_integrations")
-            .update(payload_to_write)
-            .eq("id", integration_id)
-            .execute()
-        )
-    else:
-        payload["created_at"] = now_iso
-        response = supabase.table("client_integrations").insert(payload).execute()
-        integration_id = response.data[0].get("id") if response.data else None
-
-    if req.is_primary and integration_id:
-        _truth_set_primary_integration(supabase, user_id, normalized_provider, integration_id)
-
-    refreshed = (
-        supabase.table("client_integrations")
-        .select("*")
-        .eq("user_id", user_id)
-        .eq("provider", normalized_provider)
-        .eq("external_account_id", external_account_id)
-        .limit(1)
-        .execute()
-    )
-    if not refreshed.data:
-        raise HTTPException(status_code=500, detail="Unable to persist integration")
-    return refreshed.data[0]
-
-
-def _truth_build_provider_credentials(provider: str, integration: dict | None = None) -> dict:
-    normalized_provider = _truth_require_provider(provider)
-    config = _truth_safe_dict(integration.get("config")) if integration else {}
-    if normalized_provider == "meta":
-        access_token = (integration.get("access_token") if integration else os.getenv("TRUTH_META_ACCESS_TOKEN", "")) or ""
-        account_id = (integration.get("external_account_id") if integration else os.getenv("TRUTH_META_AD_ACCOUNT_ID", "")) or ""
-        return {
-            "access_token": str(access_token).strip(),
-            "account_id": str(account_id).strip().replace("act_", ""),
-            "api_version": str((integration.get("api_version") if integration else os.getenv("TRUTH_META_API_VERSION", "v20.0")) or config.get("api_version") or "v20.0").strip(),
-            "campaigns_json": config.get("campaigns_json") if integration else None,
-        }
-    if normalized_provider == "tiktok":
-        access_token = (integration.get("access_token") if integration else os.getenv("TRUTH_TIKTOK_ACCESS_TOKEN", "")) or ""
-        account_id = (integration.get("external_account_id") if integration else os.getenv("TRUTH_TIKTOK_ADVERTISER_ID", "")) or ""
-        return {
-            "access_token": str(access_token).strip(),
-            "account_id": str(account_id).strip(),
-            "api_version": str((integration.get("api_version") if integration else os.getenv("TRUTH_TIKTOK_API_VERSION", "v1.3")) or config.get("api_version") or "v1.3").strip(),
-            "campaigns_json": config.get("campaigns_json") if integration else None,
-        }
-    developer_token = (config.get("developer_token") if integration else os.getenv("TRUTH_GOOGLE_DEVELOPER_TOKEN", "")) or ""
-    customer_id = (integration.get("external_account_id") if integration else os.getenv("TRUTH_GOOGLE_CUSTOMER_ID", "")) or ""
-    refresh_token = (integration.get("refresh_token") if integration else os.getenv("TRUTH_GOOGLE_REFRESH_TOKEN", "")) or ""
-    client_id = (config.get("client_id") if integration else os.getenv("TRUTH_GOOGLE_CLIENT_ID", "")) or ""
-    client_secret = (config.get("client_secret") if integration else os.getenv("TRUTH_GOOGLE_CLIENT_SECRET", "")) or ""
-    return {
-        "developer_token": str(developer_token).strip(),
-        "customer_id": str(customer_id).strip(),
-        "refresh_token": str(refresh_token).strip(),
-        "client_id": str(client_id).strip(),
-        "client_secret": str(client_secret).strip(),
-        "campaigns_json": config.get("campaigns_json") if integration else None,
-        "manager_account_id": config.get("manager_account_id") if integration else None,
-    }
-
-
-def _truth_ads_cache_scope(user_id: str, provider: str, integration: dict | None = None) -> str:
-    normalized_provider = _truth_require_provider(provider)
-    credentials = _truth_build_provider_credentials(normalized_provider, integration)
-    identity = "|".join([
-        user_id or "anonymous",
-        normalized_provider,
-        str(credentials.get("account_id") or credentials.get("customer_id") or ""),
-        str(credentials.get("access_token") or ""),
-        str(credentials.get("refresh_token") or ""),
-        str(credentials.get("developer_token") or ""),
-        str(credentials.get("client_id") or ""),
-    ])
-    return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
-
-
-def _truth_cleanup_oauth_states(ttl_seconds: int = 900) -> None:
-    cutoff = time.time() - ttl_seconds
-    expired = [key for key, value in _INTEGRATION_OAUTH_STATES.items() if float(value.get("ts", 0)) < cutoff]
-    for key in expired:
-        _INTEGRATION_OAUTH_STATES.pop(key, None)
-
-
-def _truth_oauth_redirect(status: str, provider: str, **params) -> RedirectResponse:
-    query = urlencode({
-        "integration_oauth": status,
-        "provider": _truth_normalize_provider(provider),
-        **{key: value for key, value in params.items() if value not in (None, "")},
-    })
-    return RedirectResponse(url=f"{FRONTEND_ORIGIN}/#/dashboard?{query}")
-
-
-def _truth_provider_oauth_settings(provider: str) -> dict:
-    normalized_provider = _truth_require_provider(provider)
-    if normalized_provider == "meta":
-        return {
-            "client_id": META_ADS_APP_ID,
-            "client_secret": META_ADS_APP_SECRET,
-            "redirect_uri": META_ADS_REDIRECT_URI,
-            "scopes": META_ADS_SCOPES,
-            "auth_url": "https://www.facebook.com/v20.0/dialog/oauth",
-            "token_url": "https://graph.facebook.com/v20.0/oauth/access_token",
-        }
-    if normalized_provider == "google":
-        return {
-            "client_id": GOOGLE_ADS_CLIENT_ID,
-            "client_secret": GOOGLE_ADS_CLIENT_SECRET,
-            "redirect_uri": GOOGLE_ADS_REDIRECT_URI,
-            "scopes": GOOGLE_ADS_SCOPES,
-            "auth_url": "https://accounts.google.com/o/oauth2/v2/auth",
-            "token_url": "https://oauth2.googleapis.com/token",
-        }
-    return {
-        "client_id": TIKTOK_ADS_CLIENT_ID,
-        "client_secret": TIKTOK_ADS_CLIENT_SECRET,
-        "redirect_uri": TIKTOK_ADS_REDIRECT_URI,
-        "scopes": TIKTOK_ADS_SCOPES,
-        "auth_url": "https://ads.tiktok.com/marketing_api/auth",
-        "token_url": "https://business-api.tiktok.com/open_api/v1.3/oauth2/access_token/",
-    }
-
-
-def _truth_provider_oauth_ready(provider: str) -> bool:
-    settings = _truth_provider_oauth_settings(provider)
-    return bool(settings.get("client_id") and settings.get("client_secret") and settings.get("redirect_uri"))
-
-
-def _truth_oauth_prefill_payload(provider: str, req: ClientIntegrationOAuthStartRequest | None) -> dict:
-    normalized_provider = _truth_require_provider(provider)
-    payload = {
-        "external_account_id": str((req.external_account_id if req else "") or "").strip() or None,
-        "external_account_name": str((req.external_account_name if req else "") or "").strip() or None,
-        "display_name": str((req.display_name if req else "") or "").strip() or None,
-        "api_version": str((req.api_version if req else "") or "").strip() or None,
-        "developer_token": str((req.developer_token if req else "") or "").strip() or None,
-        "manager_account_id": str((req.manager_account_id if req else "") or "").strip() or None,
-        "provider": normalized_provider,
-    }
-    if normalized_provider == "meta" and not payload["api_version"]:
-        payload["api_version"] = "v20.0"
-    if normalized_provider == "tiktok" and not payload["api_version"]:
-        payload["api_version"] = "v1.3"
-    return payload
-
-
-def _truth_fetch_meta_oauth_account(access_token: str) -> dict | None:
-    accounts = _truth_fetch_meta_oauth_accounts(access_token)
-    return accounts[0] if accounts else None
-
-
-def _truth_fetch_meta_oauth_accounts(access_token: str) -> list[dict]:
-    try:
-        response = requests.get(
-            "https://graph.facebook.com/v20.0/me/adaccounts",
-            params={
-                "fields": "id,account_id,name,account_status",
-                "limit": 50,
-                "access_token": access_token,
-            },
-            timeout=20,
-        )
-        response.raise_for_status()
-        data = response.json().get("data") or []
-        accounts: list[dict] = []
-        for account in data:
-            account_id = str(account.get("account_id") or account.get("id") or "").replace("act_", "").strip()
-            if not account_id:
-                continue
-            accounts.append({
-                "external_account_id": account_id,
-                "external_account_name": account.get("name") or f"Meta Ads {account_id}",
-                "status": account.get("account_status"),
-            })
-        return accounts
-    except Exception as exc:
-        print(f"⚠️ [INTEGRATIONS-OAUTH] unable to fetch Meta ad accounts: {exc}")
-        return []
-
-
-def _truth_fetch_tiktok_oauth_account(access_token: str, api_version: str = "v1.3") -> dict | None:
-    try:
-        response = requests.get(
-            f"https://business-api.tiktok.com/open_api/{api_version}/oauth2/advertiser/get/",
-            headers={"Access-Token": access_token},
-            timeout=20,
-        )
-        response.raise_for_status()
-        payload = response.json() if response.content else {}
-        data = payload.get("data") if isinstance(payload, dict) else None
-        candidates = []
-        if isinstance(data, dict):
-            candidates = data.get("list") or data.get("advertisers") or []
-            if not candidates and data.get("advertiser_ids"):
-                candidates = [{"advertiser_id": data.get("advertiser_ids")[0]}]
-        if not candidates:
-            return None
-        account = candidates[0] if isinstance(candidates[0], dict) else {"advertiser_id": candidates[0]}
-        account_id = str(account.get("advertiser_id") or account.get("id") or "").strip()
-        if not account_id:
-            return None
-        return {
-            "external_account_id": account_id,
-            "external_account_name": account.get("name") or account.get("advertiser_name") or f"TikTok Ads {account_id}",
-        }
-    except Exception as exc:
-        print(f"⚠️ [INTEGRATIONS-OAUTH] unable to fetch TikTok advertisers: {exc}")
-        return None
-
-
-def _truth_build_oauth_connect_request(
-    provider: str,
-    *,
-    access_token: str | None = None,
-    refresh_token: str | None = None,
-    token_expires_at: str | None = None,
-    prefill: dict | None = None,
-    discovered_account: dict | None = None,
-    metadata: dict | None = None,
-) -> ClientIntegrationConnectRequest:
-    normalized_provider = _truth_require_provider(provider)
-    payload = dict(prefill or {})
-    account = discovered_account or {}
-    external_account_id = str(payload.get("external_account_id") or account.get("external_account_id") or "").strip()
-    if not external_account_id:
-        external_account_id = f"pending:{normalized_provider}:{secrets.token_hex(6)}"
-
-    config: dict = {}
-    if normalized_provider == "google":
-        if payload.get("developer_token"):
-            config["developer_token"] = payload.get("developer_token")
-        if GOOGLE_ADS_CLIENT_ID:
-            config["client_id"] = GOOGLE_ADS_CLIENT_ID
-        if GOOGLE_ADS_CLIENT_SECRET:
-            config["client_secret"] = GOOGLE_ADS_CLIENT_SECRET
-        if payload.get("manager_account_id"):
-            config["manager_account_id"] = payload.get("manager_account_id")
-
-    return ClientIntegrationConnectRequest(
-        external_account_id=external_account_id,
-        external_account_name=(payload.get("external_account_name") or account.get("external_account_name") or None),
-        display_name=(payload.get("display_name") or account.get("external_account_name") or _truth_provider_label(normalized_provider)),
-        access_token=access_token,
-        refresh_token=refresh_token,
-        token_expires_at=token_expires_at,
-        connection_mode="oauth",
-        api_version=payload.get("api_version"),
-        config=config or None,
-        metadata=metadata or None,
-        is_primary=True,
-        developer_token=payload.get("developer_token") or None,
-        client_id=GOOGLE_ADS_CLIENT_ID if normalized_provider == "google" else None,
-        client_secret=GOOGLE_ADS_CLIENT_SECRET if normalized_provider == "google" else None,
-        manager_account_id=payload.get("manager_account_id") or None,
-    )
-
-
-@app.get("/api/integrations")
-async def get_client_integrations(request: Request):
-    user_id = get_user_id(request)
-    rows = _truth_get_user_integrations(user_id)
-    grouped = {provider: [] for provider in TRUTH_INTEGRATION_PROVIDER_LABELS}
-    for row in rows:
-        provider = _truth_normalize_provider(row.get("provider"))
-        if provider in grouped:
-            grouped[provider].append(_truth_serialize_integration(row))
-
-    providers = []
-    for provider, label in TRUTH_INTEGRATION_PROVIDER_LABELS.items():
-        accounts = grouped.get(provider, [])
-        providers.append({
-            "provider": provider,
-            "label": label,
-            "connected": any(account.get("status") == "connected" for account in accounts),
-            "account_count": len(accounts),
-            "primary_account": next((account for account in accounts if account.get("is_primary")), accounts[0] if accounts else None),
-        })
-
-    return {
-        "success": True,
-        "providers": providers,
-        "integrations": grouped,
-        "oauth": {
-            provider: {
-                "configured": _truth_provider_oauth_ready(provider),
-            }
-            for provider in TRUTH_INTEGRATION_PROVIDER_LABELS
-        },
-    }
-
-
-@app.get("/api/integrations/{provider}/status")
-async def get_client_integration_status(provider: str, request: Request):
-    user_id = get_user_id(request)
-    normalized_provider = _truth_require_provider(provider)
-    rows = _truth_get_user_integrations(user_id, normalized_provider)
-    primary = _truth_get_primary_integration(user_id, normalized_provider, rows)
-    return {
-        "success": True,
-        "provider": normalized_provider,
-        "label": _truth_provider_label(normalized_provider),
-        "connected": bool(primary and _truth_integration_ready(normalized_provider, primary)),
-        "account_count": len(rows),
-        "primary": _truth_serialize_integration(primary) if primary else None,
-        "accounts": [_truth_serialize_integration(row) for row in rows],
-    }
-
-
-@app.post("/api/integrations/meta/ad-accounts")
-async def get_meta_ad_accounts(req: IntegrationTokenLookupRequest, request: Request):
-    get_user_id(request)
-    access_token = str(req.access_token or "").strip()
-    if not access_token:
-        raise HTTPException(status_code=400, detail="Access token is required")
-
-    accounts = _truth_fetch_meta_oauth_accounts(access_token)
-    if not accounts:
-        raise HTTPException(status_code=400, detail="No ad accounts found for this token")
-
-    return {
-        "success": True,
-        "provider": "meta",
-        "accounts": accounts,
-    }
-
-
-@app.post("/api/integrations/{provider}/validate")
-async def validate_client_integration(provider: str, req: ClientIntegrationConnectRequest, request: Request):
-    get_user_id(request)
-    validation = _truth_validate_manual_integration(provider, req)
-    return {
-        "success": True,
-        **validation,
-    }
-
-
-@app.post("/api/integrations/{provider}/manual-connect")
-async def connect_client_integration(provider: str, req: ClientIntegrationConnectRequest, request: Request):
-    user_id = get_user_id(request)
-    saved = _truth_upsert_integration(user_id, provider, req)
-    return {
-        "success": True,
-        "provider": _truth_normalize_provider(provider),
-        "integration": _truth_serialize_integration(saved),
-    }
-
-
-@app.post("/api/integrations/{provider}/oauth/start")
-async def start_client_integration_oauth(provider: str, request: Request, req: ClientIntegrationOAuthStartRequest | None = None):
-    user_id = get_user_id(request)
-    normalized_provider = _truth_require_provider(provider)
-    settings = _truth_provider_oauth_settings(normalized_provider)
-    if not _truth_provider_oauth_ready(normalized_provider):
-        raise HTTPException(status_code=500, detail=f"{_truth_provider_label(normalized_provider)} OAuth is not configured on the server")
-
-    _truth_cleanup_oauth_states()
-    state = secrets.token_urlsafe(32)
-    prefill = _truth_oauth_prefill_payload(normalized_provider, req)
-    _INTEGRATION_OAUTH_STATES[state] = {
-        "ts": time.time(),
-        "provider": normalized_provider,
-        "user_id": user_id,
-        "prefill": prefill,
-    }
-
-    if normalized_provider == "meta":
-        auth_url = f"{settings['auth_url']}?{urlencode({'client_id': settings['client_id'], 'redirect_uri': settings['redirect_uri'], 'scope': settings['scopes'], 'response_type': 'code', 'state': state})}"
-    elif normalized_provider == "google":
-        auth_url = f"{settings['auth_url']}?{urlencode({'client_id': settings['client_id'], 'redirect_uri': settings['redirect_uri'], 'response_type': 'code', 'access_type': 'offline', 'prompt': 'consent', 'include_granted_scopes': 'true', 'scope': settings['scopes'], 'state': state})}"
-    else:
-        auth_url = f"{settings['auth_url']}?{urlencode({'app_id': settings['client_id'], 'redirect_uri': settings['redirect_uri'], 'state': state, 'scope': settings['scopes']})}"
-
-    return {
-        "success": True,
-        "provider": normalized_provider,
-        "auth_url": auth_url,
-    }
-
-
-@app.get("/auth/integrations/{provider}/callback")
-async def integration_oauth_callback(provider: str, request: Request):
-    normalized_provider = _truth_require_provider(provider)
-    query_params = dict(request.query_params)
-    state = str(query_params.get("state") or "").strip()
-    code = str(query_params.get("code") or query_params.get("auth_code") or "").strip()
-    error = str(query_params.get("error") or query_params.get("message") or "").strip()
-
-    if error:
-        return _truth_oauth_redirect("error", normalized_provider, reason="provider_denied")
-    if not state or not code:
-        return _truth_oauth_redirect("error", normalized_provider, reason="missing_params")
-
-    saved_state = _INTEGRATION_OAUTH_STATES.pop(state, None)
-    if not saved_state:
-        return _truth_oauth_redirect("error", normalized_provider, reason="expired")
-    if saved_state.get("provider") != normalized_provider:
-        return _truth_oauth_redirect("error", normalized_provider, reason="state_mismatch")
-
-    user_id = saved_state.get("user_id")
-    prefill = _truth_safe_dict(saved_state.get("prefill"))
-    settings = _truth_provider_oauth_settings(normalized_provider)
-
-    try:
-        access_token = None
-        refresh_token = None
-        expires_in = None
-        discovered_account = None
-        metadata = {"oauth_connected_at": _truth_now_iso()}
-
-        if normalized_provider == "meta":
-            token_response = requests.get(
-                settings["token_url"],
-                params={
-                    "client_id": settings["client_id"],
-                    "client_secret": settings["client_secret"],
-                    "redirect_uri": settings["redirect_uri"],
-                    "code": code,
-                },
-                timeout=20,
-            )
-            token_response.raise_for_status()
-            token_payload = token_response.json()
-            access_token = token_payload.get("access_token")
-            expires_in = token_payload.get("expires_in")
-            discovered_account = _truth_fetch_meta_oauth_account(access_token) if access_token else None
-        elif normalized_provider == "google":
-            token_response = requests.post(
-                settings["token_url"],
-                data={
-                    "client_id": settings["client_id"],
-                    "client_secret": settings["client_secret"],
-                    "redirect_uri": settings["redirect_uri"],
-                    "grant_type": "authorization_code",
-                    "code": code,
-                },
-                timeout=20,
-            )
-            token_response.raise_for_status()
-            token_payload = token_response.json()
-            access_token = token_payload.get("access_token")
-            refresh_token = token_payload.get("refresh_token")
-            expires_in = token_payload.get("expires_in")
-            metadata["scope"] = token_payload.get("scope")
-        else:
-            token_response = requests.post(
-                settings["token_url"],
-                json={
-                    "app_id": settings["client_id"],
-                    "secret": settings["client_secret"],
-                    "auth_code": code,
-                },
-                timeout=20,
-            )
-            token_response.raise_for_status()
-            token_payload = token_response.json() if token_response.content else {}
-            token_data = token_payload.get("data") if isinstance(token_payload, dict) else None
-            access_token = (token_data or {}).get("access_token") or token_payload.get("access_token")
-            refresh_token = (token_data or {}).get("refresh_token") or token_payload.get("refresh_token")
-            expires_in = (token_data or {}).get("expires_in") or token_payload.get("expires_in")
-            advertiser_ids = (token_data or {}).get("advertiser_ids") or []
-            if advertiser_ids and not prefill.get("external_account_id"):
-                prefill["external_account_id"] = str(advertiser_ids[0])
-            discovered_account = _truth_fetch_tiktok_oauth_account(access_token, prefill.get("api_version") or "v1.3") if access_token else None
-
-        if not access_token and normalized_provider in {"meta", "tiktok"}:
-            return _truth_oauth_redirect("error", normalized_provider, reason="no_token")
-        if not refresh_token and normalized_provider == "google":
-            return _truth_oauth_redirect("error", normalized_provider, reason="no_refresh_token")
-
-        token_expires_at = None
-        if expires_in:
-            try:
-                token_expires_at = (
-                    datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
-                ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-            except Exception:
-                token_expires_at = None
-
-        connect_req = _truth_build_oauth_connect_request(
-            normalized_provider,
-            access_token=access_token,
-            refresh_token=refresh_token,
-            token_expires_at=token_expires_at,
-            prefill=prefill,
-            discovered_account=discovered_account,
-            metadata=metadata,
-        )
-        saved = _truth_upsert_integration(user_id, normalized_provider, connect_req)
-        serialized = _truth_serialize_integration(saved)
-        status = "connected" if serialized.get("status") == "connected" else "partial"
-        return _truth_oauth_redirect(
-            status,
-            normalized_provider,
-            account_id=serialized.get("external_account_id"),
-        )
-    except requests.exceptions.Timeout:
-        return _truth_oauth_redirect("error", normalized_provider, reason="timeout")
-    except requests.exceptions.HTTPError as exc:
-        print(f"❌ [INTEGRATIONS-OAUTH] HTTP error during {normalized_provider} callback: {exc}")
-        return _truth_oauth_redirect("error", normalized_provider, reason="exchange_failed")
-    except Exception as exc:
-        print(f"❌ [INTEGRATIONS-OAUTH] callback failed for {normalized_provider}: {exc}")
-        return _truth_oauth_redirect("error", normalized_provider, reason="internal")
-
-
-@app.delete("/api/integrations/{provider}")
-async def delete_client_integrations(provider: str, request: Request):
-    user_id = get_user_id(request)
-    normalized_provider = _truth_require_provider(provider)
-    supabase = _supabase_admin_client()
-    try:
-        (
-            supabase.table("client_integrations")
-            .delete()
-            .eq("user_id", user_id)
-            .eq("provider", normalized_provider)
-            .execute()
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Unable to delete {normalized_provider} integrations") from exc
-
-    return {
-        "success": True,
-        "provider": normalized_provider,
-        "deleted": True,
-    }
-
-
-@app.get("/api/connections/overview")
-async def get_connections_overview(request: Request):
-    user_id = get_user_id(request)
-
-    shop_domain, access_token = _get_shopify_connection(user_id)
-    shopify_connected = bool(shop_domain and access_token)
-    integrations = _truth_get_user_integrations(user_id)
-    ads_rows, ads_integrations = _truth_collect_ads_rows(30, user_id)
-    shopify_info = await get_shopify_connection(request)
-
-    source_status = _truth_build_source_statuses(
-        orders=[],
-        tracked_orders=0,
-        ads_integrations=ads_integrations,
-        shopify_connected=shopify_connected,
-    )
-
-    providers = []
-
-    def _push_provider(provider_key: str, label: str, status: dict, primary: dict | None = None, account_count: int = 0, **extra):
-        providers.append({
-            "provider": provider_key,
-            "label": label,
-            "connected": bool(status.get("connected")),
-            "last_sync": status.get("last_sync") or (primary or {}).get("last_sync_at"),
-            "completeness": status.get("completeness", 0),
-            "reliability": status.get("reliability", 0),
-            "error": status.get("error") or (primary or {}).get("last_error"),
-            "account_count": account_count,
-            "primary_account": primary,
-            **extra,
-        })
-
-    _push_provider(
-        "shopify",
-        "Shopify",
-        source_status.get("shopify_orders", {}),
-        primary={
-            "display_name": shop_domain,
-            "external_account_id": shop_domain,
-            "status": "connected" if shopify_connected else "pending",
-        } if shop_domain else None,
-        account_count=int(shopify_info.get("shop_count") or 0),
-        shop_count=shopify_info.get("shop_count") or 0,
-        shop_limit=shopify_info.get("shop_limit"),
-        connection=shopify_info.get("connection"),
-        connections=shopify_info.get("connections") or [],
-        oauth={
-            "configured": bool(SHOPIFY_API_KEY and SHOPIFY_API_SECRET),
-        },
-    )
-
-    for provider_key, status_key in (("meta", "meta_ads"), ("tiktok", "tiktok_ads"), ("google", "google_ads")):
-        provider_rows = [row for row in integrations if _truth_normalize_provider(row.get("provider")) == provider_key]
-        primary_row = _truth_get_primary_integration(user_id, provider_key, provider_rows)
-        serialized_primary = _truth_serialize_integration(primary_row) if primary_row else None
-        provider_status = source_status.get(status_key, {})
-        primary_connected = bool(serialized_primary and serialized_primary.get("status") == "connected")
-        merged_status = {
-            **provider_status,
-            "connected": bool(provider_status.get("connected") or primary_connected),
-            "last_sync": provider_status.get("last_sync") or (serialized_primary or {}).get("last_sync_at"),
-            "completeness": provider_status.get("completeness", 0) if provider_status.get("connected") else (55 if primary_connected else provider_status.get("completeness", 0)),
-            "reliability": provider_status.get("reliability", 0) if provider_status.get("connected") else (78 if primary_connected else provider_status.get("reliability", 0)),
-            "error": None if primary_connected else provider_status.get("error"),
-        }
-        _push_provider(
-            provider_key,
-            _truth_provider_label(provider_key),
-            merged_status,
-            primary=serialized_primary,
-            account_count=len(provider_rows),
-            oauth={
-                "configured": _truth_provider_oauth_ready(provider_key),
-            },
-        )
-
-    stripe_status = source_status.get("stripe", {})
-    _push_provider(
-        "stripe",
-        "Stripe",
-        stripe_status,
-        primary={
-            "display_name": "Stripe billing",
-            "status": "connected" if stripe_status.get("connected") else "pending",
-        } if stripe_status.get("connected") else None,
-        account_count=1 if stripe_status.get("connected") else 0,
-        mode="platform_billing",
-        optional=True,
-    )
-
-    connected_count = sum(1 for provider in providers if provider.get("connected"))
-    ads_connected = sum(1 for provider in providers if provider.get("provider") in {"meta", "tiktok", "google"} and provider.get("connected"))
-
-    return {
-        "success": True,
-        "providers": providers,
-        "summary": {
-            "connected_count": connected_count,
-            "total_count": len(providers),
-            "shopify_connected": shopify_connected,
-            "ads_connected": ads_connected,
-            "truth_ready": bool(shopify_connected and ads_connected > 0),
-            "has_ads_data": bool(ads_rows),
-        },
-    }
 
 
 class OptimizeRequest(BaseModel):
@@ -3189,7 +2069,10 @@ async def fast_init(request: Request):
         #   Stripe API call is ONLY used as background auto-heal, NEVER blocks access.
         subscription_data = {"has_subscription": False, "plan": None, "paid": False, "status": "inactive"}
         try:
-            tier_map = STRIPE_PLAN_VALUE_ALIASES
+            tier_map = {
+                '99': 'standard', '199': 'pro', '299': 'premium',
+                'standard': 'standard', 'pro': 'pro', 'premium': 'premium',
+            }
             capabilities = {
                 'standard': {'product_limit': 50, 'shop_limit': 1, 'report_frequency': 'monthly', 'features': ['product_analysis', 'title_optimization', 'price_suggestions']},
                 'pro': {'product_limit': 500, 'shop_limit': 3, 'report_frequency': 'weekly', 'features': ['product_analysis', 'title_optimization', 'price_suggestions', 'content_generation', 'image_recommendations', 'cross_sell', 'reports', 'automated_actions', 'invoicing']},
@@ -3199,7 +2082,7 @@ async def fast_init(request: Request):
             # Step 1: Read from DB
             sub_row = None
             try:
-                sub_result = supabase_client.table("subscriptions").select("*").eq("user_id", user_id).in_("status", ["active", "cancelling", "trialing"]).order("updated_at", desc=True).limit(1).execute()
+                sub_result = supabase_client.table("subscriptions").select("*").eq("user_id", user_id).in_("status", ["active", "cancelling"]).order("updated_at", desc=True).limit(1).execute()
                 if sub_result.data:
                     sub_row = sub_result.data[0]
                 else:
@@ -3221,7 +2104,7 @@ async def fast_init(request: Request):
 
                 # Step 2: DECISION — if DB says paid=true + valid plan + active status → GRANT ACCESS
                 payment_date = sub_row.get('payment_date')
-                if paid_flag and plan and _subscription_status_allows_access(sub_status):
+                if paid_flag and plan and sub_status in ('active', 'cancelling'):
                     # CRITICAL: Always verify plan from Stripe (source of truth) when we have a sub ID
                     # This prevents stale DB plan_tier from showing the wrong plan after upgrades/downgrades
                     stripe_verified_plan = None
@@ -3319,11 +2202,6 @@ async def fast_init(request: Request):
                             if cust_subs.data:
                                 stripe_sub_id = _normalize_stripe_subscription_id(cust_subs.data[0])
                                 print(f"  🔍 [INIT-SUB] Recovered sub_id from customer {sub_row['stripe_customer_id']}: {stripe_sub_id}")
-                            else:
-                                trial_subs = stripe.Subscription.list(customer=sub_row['stripe_customer_id'], status='trialing', limit=1)
-                                if trial_subs.data:
-                                    stripe_sub_id = _normalize_stripe_subscription_id(trial_subs.data[0])
-                                    print(f"  🔍 [INIT-SUB] Recovered TRIALING sub_id from customer {sub_row['stripe_customer_id']}: {stripe_sub_id}")
                         except Exception as cust_err:
                             print(f"  ⚠️ [INIT-SUB] Customer sub lookup warning: {cust_err}")
 
@@ -3370,7 +2248,7 @@ async def fast_init(request: Request):
                                 if healed_plan:
                                     upcoming_change = _extract_upcoming_plan_change(stripe_sub)
                                     plan = healed_plan
-                                    sub_status = 'trialing' if stripe_status == 'trialing' else 'active'
+                                    sub_status = 'active'
                                     payment_date = sub_row.get('payment_date') or _resolve_payment_date(_sg(stripe_sub, "created"))
                                     # Update DB so next call is instant
                                     try:
@@ -3467,7 +2345,7 @@ async def health():
     """Health check endpoint for Render - MUST ALWAYS WORK"""
     return {
         "status": "ok",
-        "version": "3.3-bundles-persist",
+        "version": "3.2-anti-retours",
         "build": "20260417-return-risks",
         "timestamp": datetime.utcnow().isoformat(),
         "services": {
@@ -3586,11 +2464,7 @@ async def repair_subscription(email: str = "", secret: str = ""):
         # Resolve plan from subscription
         plan_tier = _resolve_plan_from_stripe_subscription(active_sub)
         if not plan_tier:
-            return {
-                "error": "Unable to resolve plan from active Stripe subscription",
-                "stripe_subscription_id": active_sub.id,
-                "stripe_customer_id": active_customer_id,
-            }
+            plan_tier = "standard"
 
         stripe_sub_id = active_sub.id
         cancel_at_period_end = getattr(active_sub, 'cancel_at_period_end', False)
@@ -3748,17 +2622,17 @@ async def create_payment_link(payload: dict, request: Request):
         "standard": {
             "name": "ShopBrain AI - Standard",
             "description": "Analyse 50 produits/mois",
-            "amount": STRIPE_PLAN_AMOUNT_CENTS["standard"],
+            "amount": 9900,  # $99.00
         },
         "pro": {
             "name": "ShopBrain AI - Pro",
             "description": "Analyse 500 produits/mois + Support prioritaire",
-            "amount": STRIPE_PLAN_AMOUNT_CENTS["pro"],
+            "amount": 19900,  # $199.00
         },
         "premium": {
             "name": "ShopBrain AI - Premium",
             "description": "Analyse illimitée + Support 24/7",
-            "amount": STRIPE_PLAN_AMOUNT_CENTS["premium"],
+            "amount": 29900,  # $299.00
         }
     }
     
@@ -3847,8 +2721,9 @@ async def create_checkout(payload: dict, request: Request):
     raw_plan = payload.get("plan")
     customer_email = payload.get("email")
     
-    # Normalize plan key: accept both numeric and named values
-    plan = STRIPE_PLAN_VALUE_ALIASES.get(str(raw_plan).lower(), raw_plan)
+    # Normalize plan key: accept both numeric ('99','199','299') and named ('standard','pro','premium')
+    _plan_normalize = {'99': 'standard', '199': 'pro', '299': 'premium'}
+    plan = _plan_normalize.get(str(raw_plan), raw_plan)
     
     print(f"📊 Plan: {plan} (raw: {raw_plan}), Email: {customer_email}")
     
@@ -4445,6 +3320,7 @@ async def stripe_webhook(request: Request):
                     expanded_session = stripe.checkout.Session.retrieve(session.get("id"), expand=["line_items"])
                     line_items_container = _sg(expanded_session, "line_items", {})
                     line_items_data = _sg(line_items_container, "data", []) if line_items_container else []
+                    exact_amount_map = {9900: "standard", 19900: "pro", 29900: "premium"}
                     for li in line_items_data:
                         li_price = _sg(li, "price", {})
                         price_id = _sg(li_price, "id")
@@ -4452,7 +3328,7 @@ async def stripe_webhook(request: Request):
                         plan_tier = PRICE_TO_TIER.get(price_id)
                         if not plan_tier and amount is not None:
                             try:
-                                plan_tier = STRIPE_PLAN_AMOUNT_TO_TIER.get(int(amount))
+                                plan_tier = exact_amount_map.get(int(amount))
                             except Exception:
                                 pass
                         if plan_tier:
@@ -4461,7 +3337,7 @@ async def stripe_webhook(request: Request):
                 except Exception as li_err:
                     print(f"  ⚠️ [WEBHOOK] line_items fallback warning: {li_err}")
             if plan_tier:
-                plan_tier = STRIPE_PLAN_VALUE_ALIASES.get(str(plan_tier).lower(), str(plan_tier).lower())
+                plan_tier = {"99": "standard", "199": "pro", "299": "premium"}.get(str(plan_tier).lower(), str(plan_tier).lower())
             # If still no plan, do NOT default — log error and skip DB write to avoid wrong plan
             if not plan_tier:
                 print(f"  ❌ [WEBHOOK] checkout.session.completed: Could not resolve plan_tier — skipping DB write to prevent wrong plan")
@@ -4686,7 +3562,8 @@ async def stripe_webhook(request: Request):
                 if lines:
                     price = _sg(lines[0], "price", {})
                     amount = _sg(price, "unit_amount")
-                    plan_tier = PRICE_TO_TIER.get(_sg(price, "id")) or STRIPE_PLAN_AMOUNT_TO_TIER.get(int(amount) if amount is not None else None)
+                    exact_amount_map = {9900: "standard", 19900: "pro", 29900: "premium"}
+                    plan_tier = PRICE_TO_TIER.get(_sg(price, "id")) or exact_amount_map.get(int(amount) if amount is not None else None)
             if not plan_tier:
                 print(f"  ❌ [WEBHOOK] invoice.payment_succeeded could not resolve plan_tier — skipping DB write to prevent wrong plan")
                 return {"received": True, "warning": "plan_tier_unresolvable", "event_type": event_type}
@@ -6729,7 +5606,6 @@ def _get_user_id_by_shop_domain(shop_domain: str) -> str | None:
 
 
 _ORDERS_CACHE: dict[tuple[str, int, str], tuple[float, list[dict]]] = {}
-_TRUTH_ADS_CACHE: dict[tuple[str, int, str], tuple[float, list[dict], dict]] = {}
 
 # Bundles job store: simple in-memory registry for async jobs
 _BUNDLES_JOBS: dict[str, dict] = {}
@@ -6783,7 +5659,7 @@ def _fetch_shopify_orders(shop_domain: str, access_token: str, range_days: int =
     next_url = (
         f"https://{shop_domain}/admin/api/2024-10/orders.json"
         f"?status=any&created_at_min={start_date}&limit=250"
-        f"&fields=id,created_at,total_price,financial_status,currency,line_items,refunds,order_number,name,note_attributes,landing_site,referring_site,source_name,customer"
+        f"&fields=id,created_at,total_price,financial_status,currency,line_items,refunds,order_number,name"
     )
     page_count = 0
     max_pages = int(os.getenv("SHOPIFY_ORDERS_MAX_PAGES", "3"))
@@ -6805,1248 +5681,6 @@ def _fetch_shopify_orders(shop_domain: str, access_token: str, range_days: int =
 
     _cache_set_orders(shop_domain, range_days, access_token, orders)
     return orders
-
-
-def _truth_range_to_days(range_value: str) -> int:
-    mapping = {
-        "7d": 7,
-        "30d": 30,
-        "90d": 90,
-    }
-    return mapping.get(str(range_value or "30d").lower(), 30)
-
-
-def _truth_float(value, default: float = 0.0) -> float:
-    try:
-        if value in (None, ""):
-            return default
-        return float(value)
-    except Exception:
-        return default
-
-
-def _truth_safe_div(numerator: float, denominator: float) -> float | None:
-    if not denominator:
-        return None
-    try:
-        return numerator / denominator
-    except Exception:
-        return None
-
-
-def _truth_now_iso() -> str:
-    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
-
-
-def _truth_pct(value, default: float = 0.0) -> int:
-    try:
-        numeric = float(value)
-    except Exception:
-        numeric = default
-    return max(0, min(100, int(round(numeric))))
-
-
-def _truth_slug(value: str | None) -> str:
-    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
-
-
-def _truth_normalize_platform(source: str | None) -> str:
-    normalized = str(source or "").strip().lower()
-    if normalized in {"meta", "facebook", "fb", "instagram", "ig"}:
-        return "Meta"
-    if normalized in {"tiktok", "tt", "tik_tok"}:
-        return "TikTok"
-    if normalized in {"google", "googleads", "google_ads", "google ads", "gads"}:
-        return "Google Ads"
-    return "Unknown"
-
-
-def _truth_extract_utm(order: dict) -> dict:
-    payload = {
-        "utm_source": None,
-        "utm_campaign": None,
-        "utm_content": None,
-    }
-
-    for attr in order.get("note_attributes") or []:
-        name = str(attr.get("name") or attr.get("key") or "").strip().lower()
-        value = str(attr.get("value") or "").strip()
-        if name in payload and value:
-            payload[name] = value
-
-    for raw_url in [order.get("landing_site"), order.get("referring_site")]:
-        if not raw_url:
-            continue
-        try:
-            query = parse_qs(urlparse(str(raw_url)).query)
-        except Exception:
-            query = {}
-        for key in payload.keys():
-            if payload.get(key):
-                continue
-            values = query.get(key)
-            if values:
-                payload[key] = str(values[0]).strip() or None
-
-    return payload
-
-
-def _truth_cache_get_ads(platform: str, range_days: int, scope_key: str = "global") -> tuple[list[dict], dict] | None:
-    ttl = int(os.getenv("TRUTH_ADS_CACHE_TTL", "300"))
-    if ttl <= 0:
-        return None
-    key = (platform.lower(), int(range_days), scope_key)
-    entry = _TRUTH_ADS_CACHE.get(key)
-    if not entry:
-        return None
-    ts, rows, meta = entry
-    if time.time() - ts > ttl:
-        _TRUTH_ADS_CACHE.pop(key, None)
-        return None
-    return rows, meta
-
-
-def _truth_cache_set_ads(platform: str, range_days: int, rows: list[dict], meta: dict, scope_key: str = "global") -> None:
-    ttl = int(os.getenv("TRUTH_ADS_CACHE_TTL", "300"))
-    if ttl <= 0:
-        return
-    key = (platform.lower(), int(range_days), scope_key)
-    _TRUTH_ADS_CACHE[key] = (time.time(), rows, meta)
-
-
-def _truth_range_dates(range_days: int) -> tuple[str, str]:
-    end_dt = datetime.utcnow().date()
-    start_dt = end_dt - timedelta(days=max(int(range_days) - 1, 0))
-    return start_dt.isoformat(), end_dt.isoformat()
-
-
-def _truth_meta_reported_revenue(item: dict, spend: float) -> float | None:
-    action_value_types = {
-        "purchase",
-        "omni_purchase",
-        "offsite_conversion.fb_pixel_purchase",
-        "onsite_web_purchase",
-    }
-    total = 0.0
-    found = False
-    for row in item.get("action_values") or []:
-        action_type = str(row.get("action_type") or "").strip().lower()
-        if action_type in action_value_types:
-            total += _truth_float(row.get("value"))
-            found = True
-    if found:
-        return total
-
-    for key in ("purchase_roas", "website_purchase_roas"):
-        for row in item.get(key) or []:
-            action_type = str(row.get("action_type") or "").strip().lower()
-            if not action_type or action_type in action_value_types:
-                return _truth_float(row.get("value")) * spend
-    return None
-
-
-def _truth_fetch_meta_ads_rows(range_days: int, integration: dict | None = None, cache_scope: str = "global") -> tuple[list[dict], dict]:
-    cached = _truth_cache_get_ads("meta", range_days, cache_scope)
-    if cached:
-        return cached
-
-    credentials = _truth_build_provider_credentials("meta", integration)
-    access_token = credentials.get("access_token", "")
-    ad_account_id = credentials.get("account_id", "")
-    api_version = str(credentials.get("api_version") or "v20.0").strip()
-    fallback_rows = _truth_parse_integration_ads_rows("Meta", integration)
-
-    if not access_token or not ad_account_id:
-        if fallback_rows:
-            meta = {
-                "connected": True,
-                "configured": True,
-                "source": "integration_json",
-                "campaigns": len(fallback_rows),
-                "error": None,
-                "last_sync": _truth_now_iso(),
-            }
-            _truth_cache_set_ads("meta", range_days, fallback_rows, meta, cache_scope)
-            return fallback_rows, meta
-        meta = {
-            "connected": False,
-            "configured": bool(integration),
-            "source": "api",
-            "error": "Missing TRUTH_META_ACCESS_TOKEN or TRUTH_META_AD_ACCOUNT_ID",
-        }
-        _truth_cache_set_ads("meta", range_days, [], meta, cache_scope)
-        return [], meta
-
-    start_date, end_date = _truth_range_dates(range_days)
-    rows: list[dict] = []
-    url = f"https://graph.facebook.com/{api_version}/act_{ad_account_id}/insights"
-    params = {
-        "level": "campaign",
-        "limit": 200,
-        "time_range": json.dumps({"since": start_date, "until": end_date}),
-        "fields": "campaign_id,campaign_name,spend,clicks,impressions,ctr,cpc,purchase_roas,website_purchase_roas,actions,action_values",
-        "access_token": access_token,
-    }
-    try:
-        page_count = 0
-        next_url = url
-        next_params = params
-        while next_url and page_count < 5:
-            response = requests.get(next_url, params=next_params, timeout=20)
-            if response.status_code != 200:
-                raise HTTPException(status_code=response.status_code, detail=f"Meta Ads API error: {response.text[:300]}")
-            payload = response.json() or {}
-            for item in payload.get("data") or []:
-                spend = _truth_float(item.get("spend"))
-                clicks = int(_truth_float(item.get("clicks")))
-                impressions = int(_truth_float(item.get("impressions")))
-                rows.append({
-                    "platform": "Meta",
-                    "campaign_id": str(item.get("campaign_id") or _truth_slug(item.get("campaign_name")) or uuid.uuid4()),
-                    "campaign_name": str(item.get("campaign_name") or "Untitled campaign").strip(),
-                    "spend": spend,
-                    "clicks": clicks,
-                    "impressions": impressions,
-                    "ctr": _truth_float(item.get("ctr")) if item.get("ctr") not in (None, "") else (_truth_safe_div(clicks, impressions) * 100 if impressions else None),
-                    "cpc": _truth_float(item.get("cpc")) if item.get("cpc") not in (None, "") else (_truth_safe_div(spend, clicks) if clicks else None),
-                    "platform_revenue": _truth_meta_reported_revenue(item, spend),
-                })
-            paging = payload.get("paging") or {}
-            next_url = paging.get("next")
-            next_params = None
-            page_count += 1
-
-        meta = {
-            "connected": True,
-            "configured": True,
-            "source": "api",
-            "campaigns": len(rows),
-            "error": None,
-            "last_sync": _truth_now_iso(),
-        }
-        _truth_cache_set_ads("meta", range_days, rows, meta, cache_scope)
-        return rows, meta
-    except Exception as exc:
-        meta = {
-            "connected": False,
-            "configured": True,
-            "source": "api",
-            "error": str(exc),
-            "last_sync": None,
-        }
-        _truth_cache_set_ads("meta", range_days, [], meta, cache_scope)
-        return [], meta
-
-
-def _truth_tiktok_get_value(item: dict, key: str):
-    if key in item:
-        return item.get(key)
-    dimensions = item.get("dimensions") or {}
-    metrics = item.get("metrics") or {}
-    return metrics.get(key) if key in metrics else dimensions.get(key)
-
-
-def _truth_parse_single_ads_payload(default_platform: str, raw) -> list[dict]:
-    rows: list[dict] = []
-    if not raw:
-        return rows
-    if isinstance(raw, (dict, list)):
-        payload = raw
-    else:
-        try:
-            payload = json.loads(str(raw))
-        except Exception as exc:
-            print(f"⚠️ [TRUTH] invalid ads JSON for {default_platform}: {exc}")
-            return rows
-
-    items = payload.get("campaigns") if isinstance(payload, dict) else payload
-    if not isinstance(items, list):
-        return rows
-
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        campaign_name = str(item.get("campaign_name") or item.get("name") or "Untitled campaign").strip()
-        spend = _truth_float(item.get("spend"))
-        clicks = int(_truth_float(item.get("clicks")))
-        impressions = int(_truth_float(item.get("impressions")))
-        ctr = item.get("ctr")
-        cpc = item.get("cpc")
-        platform_revenue = item.get("platform_revenue")
-        roas = item.get("roas")
-        if platform_revenue in (None, "") and roas not in (None, ""):
-            platform_revenue = _truth_float(roas) * spend
-
-        rows.append({
-            "platform": str(item.get("platform") or default_platform),
-            "campaign_id": str(item.get("campaign_id") or _truth_slug(campaign_name) or str(uuid.uuid4())),
-            "campaign_name": campaign_name,
-            "spend": spend,
-            "clicks": clicks,
-            "impressions": impressions,
-            "ctr": _truth_float(ctr) if ctr not in (None, "") else (_truth_safe_div(clicks, impressions) * 100 if impressions else None),
-            "cpc": _truth_float(cpc) if cpc not in (None, "") else (_truth_safe_div(spend, clicks) if clicks else None),
-            "platform_revenue": _truth_float(platform_revenue) if platform_revenue not in (None, "") else None,
-        })
-    return rows
-
-
-def _truth_parse_integration_ads_rows(default_platform: str, integration: dict | None) -> list[dict]:
-    if not integration:
-        return []
-    config = _truth_safe_dict(integration.get("config"))
-    return _truth_parse_single_ads_payload(default_platform, config.get("campaigns_json"))
-
-
-def _truth_fetch_tiktok_ads_rows(range_days: int, integration: dict | None = None, cache_scope: str = "global") -> tuple[list[dict], dict]:
-    cached = _truth_cache_get_ads("tiktok", range_days, cache_scope)
-    if cached:
-        return cached
-
-    credentials = _truth_build_provider_credentials("tiktok", integration)
-    access_token = credentials.get("access_token", "")
-    advertiser_id = credentials.get("account_id", "")
-    api_version = str(credentials.get("api_version") or "v1.3").strip().lstrip("/")
-    fallback_rows = _truth_parse_integration_ads_rows("TikTok", integration)
-
-    if not access_token or not advertiser_id:
-        if fallback_rows:
-            meta = {
-                "connected": True,
-                "configured": True,
-                "source": "integration_json",
-                "campaigns": len(fallback_rows),
-                "error": None,
-                "last_sync": _truth_now_iso(),
-            }
-            _truth_cache_set_ads("tiktok", range_days, fallback_rows, meta, cache_scope)
-            return fallback_rows, meta
-        meta = {
-            "connected": False,
-            "configured": bool(integration),
-            "source": "api",
-            "error": "Missing TRUTH_TIKTOK_ACCESS_TOKEN or TRUTH_TIKTOK_ADVERTISER_ID",
-        }
-        _truth_cache_set_ads("tiktok", range_days, [], meta, cache_scope)
-        return [], meta
-
-    start_date, end_date = _truth_range_dates(range_days)
-    rows: list[dict] = []
-    url = f"https://business-api.tiktok.com/open_api/{api_version}/report/integrated/get/"
-    base_params = {
-        "advertiser_id": advertiser_id,
-        "service_type": "AUCTION",
-        "report_type": "BASIC",
-        "data_level": "AUCTION_CAMPAIGN",
-        "start_date": start_date,
-        "end_date": end_date,
-        "dimensions": json.dumps(["campaign_id", "campaign_name"]),
-        "metrics": json.dumps(["spend", "clicks", "impressions", "ctr", "cpc", "conversion", "conversion_rate", "real_time_conversion_value"]),
-        "page_size": 100,
-    }
-    headers = {
-        "Access-Token": access_token,
-        "Content-Type": "application/json",
-    }
-
-    try:
-        page = 1
-        while page <= 10:
-            params = {**base_params, "page": page}
-            response = requests.get(url, params=params, headers=headers, timeout=20)
-            if response.status_code != 200:
-                raise HTTPException(status_code=response.status_code, detail=f"TikTok Ads API error: {response.text[:300]}")
-            payload = response.json() or {}
-            if payload.get("code") not in (0, "0"):
-                raise HTTPException(status_code=502, detail=f"TikTok Ads API error: {payload.get('message') or payload}")
-            data = payload.get("data") or {}
-            items = data.get("list") or data.get("rows") or []
-            if not items:
-                break
-            for item in items:
-                spend = _truth_float(_truth_tiktok_get_value(item, "spend"))
-                clicks = int(_truth_float(_truth_tiktok_get_value(item, "clicks")))
-                impressions = int(_truth_float(_truth_tiktok_get_value(item, "impressions")))
-                rows.append({
-                    "platform": "TikTok",
-                    "campaign_id": str(_truth_tiktok_get_value(item, "campaign_id") or uuid.uuid4()),
-                    "campaign_name": str(_truth_tiktok_get_value(item, "campaign_name") or "Untitled campaign").strip(),
-                    "spend": spend,
-                    "clicks": clicks,
-                    "impressions": impressions,
-                    "ctr": _truth_float(_truth_tiktok_get_value(item, "ctr")) if _truth_tiktok_get_value(item, "ctr") not in (None, "") else (_truth_safe_div(clicks, impressions) * 100 if impressions else None),
-                    "cpc": _truth_float(_truth_tiktok_get_value(item, "cpc")) if _truth_tiktok_get_value(item, "cpc") not in (None, "") else (_truth_safe_div(spend, clicks) if clicks else None),
-                    "platform_revenue": _truth_float(_truth_tiktok_get_value(item, "real_time_conversion_value")) if _truth_tiktok_get_value(item, "real_time_conversion_value") not in (None, "") else None,
-                })
-            page_info = data.get("page_info") or {}
-            total_pages = int(page_info.get("total_page") or page_info.get("total_pages") or page)
-            if page >= total_pages:
-                break
-            page += 1
-
-        meta = {
-            "connected": True,
-            "configured": True,
-            "source": "api",
-            "campaigns": len(rows),
-            "error": None,
-            "last_sync": _truth_now_iso(),
-        }
-        _truth_cache_set_ads("tiktok", range_days, rows, meta, cache_scope)
-        return rows, meta
-    except Exception as exc:
-        meta = {
-            "connected": False,
-            "configured": True,
-            "source": "api",
-            "error": str(exc),
-            "last_sync": None,
-        }
-        _truth_cache_set_ads("tiktok", range_days, [], meta, cache_scope)
-        return [], meta
-
-
-def _truth_parse_ads_env_rows() -> list[dict]:
-    config = [
-        ("Meta", os.getenv("TRUTH_META_ADS_JSON", "")),
-        ("TikTok", os.getenv("TRUTH_TIKTOK_ADS_JSON", "")),
-        ("Google Ads", os.getenv("TRUTH_GOOGLE_ADS_JSON", "")),
-    ]
-    rows: list[dict] = []
-    for default_platform, raw in config:
-        rows.extend(_truth_parse_single_ads_payload(default_platform, raw))
-    return rows
-
-
-def _truth_google_access_token(credentials: dict) -> str:
-    response = requests.post(
-        "https://oauth2.googleapis.com/token",
-        data={
-            "client_id": credentials.get("client_id", ""),
-            "client_secret": credentials.get("client_secret", ""),
-            "refresh_token": credentials.get("refresh_token", ""),
-            "grant_type": "refresh_token",
-        },
-        timeout=20,
-    )
-    if response.status_code != 200:
-        raise HTTPException(status_code=response.status_code, detail=f"Google OAuth error: {response.text[:300]}")
-    payload = response.json() or {}
-    access_token = str(payload.get("access_token") or "").strip()
-    if not access_token:
-        raise HTTPException(status_code=502, detail="Google OAuth did not return an access token")
-    return access_token
-
-
-def _truth_fetch_google_ads_rows(range_days: int, integration: dict | None = None, cache_scope: str = "global") -> tuple[list[dict], dict]:
-    cached = _truth_cache_get_ads("google", range_days, cache_scope)
-    if cached:
-        return cached
-
-    integration_rows = _truth_parse_integration_ads_rows("Google Ads", integration)
-    if integration_rows:
-        meta = {
-            "connected": True,
-            "configured": True,
-            "source": "integration_json",
-            "campaigns": len(integration_rows),
-            "error": None,
-            "last_sync": _truth_now_iso(),
-        }
-        _truth_cache_set_ads("google", range_days, integration_rows, meta, cache_scope)
-        return integration_rows, meta
-
-    if integration is None:
-        env_rows = _truth_parse_single_ads_payload("Google Ads", os.getenv("TRUTH_GOOGLE_ADS_JSON", ""))
-        if env_rows:
-            meta = {
-                "connected": True,
-                "configured": True,
-                "source": "env_json",
-                "campaigns": len(env_rows),
-                "error": None,
-                "last_sync": _truth_now_iso(),
-            }
-            _truth_cache_set_ads("google", range_days, env_rows, meta, cache_scope)
-            return env_rows, meta
-
-    credentials = _truth_build_provider_credentials("google", integration)
-    developer_token = credentials.get("developer_token", "")
-    customer_id = credentials.get("customer_id", "")
-    refresh_token = credentials.get("refresh_token", "")
-    client_id = credentials.get("client_id", "")
-    client_secret = credentials.get("client_secret", "")
-
-    if developer_token and customer_id and refresh_token and client_id and client_secret:
-        start_date, end_date = _truth_range_dates(range_days)
-        query = f"""
-            SELECT
-              campaign.id,
-              campaign.name,
-              metrics.cost_micros,
-              metrics.clicks,
-              metrics.impressions,
-              metrics.ctr,
-              metrics.average_cpc,
-              metrics.conversions_value
-            FROM campaign
-            WHERE segments.date BETWEEN '{start_date}' AND '{end_date}'
-        """.strip()
-
-        headers = {
-            "Authorization": f"Bearer {_truth_google_access_token(credentials)}",
-            "developer-token": developer_token,
-            "Content-Type": "application/json",
-        }
-        manager_account_id = str(credentials.get("manager_account_id") or "").strip().replace("-", "")
-        if manager_account_id:
-            headers["login-customer-id"] = manager_account_id
-
-        url = f"https://googleads.googleapis.com/v17/customers/{str(customer_id).strip().replace('-', '')}/googleAds:searchStream"
-        rows: list[dict] = []
-
-        try:
-            response = requests.post(url, headers=headers, json={"query": query}, timeout=30)
-            if response.status_code != 200:
-                raise HTTPException(status_code=response.status_code, detail=f"Google Ads API error: {response.text[:300]}")
-            payload = response.json() or []
-            batches = payload if isinstance(payload, list) else [payload]
-            for batch in batches:
-                for result in batch.get("results") or []:
-                    campaign = result.get("campaign") or {}
-                    metrics = result.get("metrics") or {}
-                    cost_micros = _truth_float(metrics.get("costMicros") if "costMicros" in metrics else metrics.get("cost_micros"))
-                    clicks = int(_truth_float(metrics.get("clicks")))
-                    impressions = int(_truth_float(metrics.get("impressions")))
-                    ctr = metrics.get("ctr")
-                    average_cpc = metrics.get("averageCpc") if "averageCpc" in metrics else metrics.get("average_cpc")
-                    conversions_value = metrics.get("conversionsValue") if "conversionsValue" in metrics else metrics.get("conversions_value")
-                    rows.append({
-                        "platform": "Google Ads",
-                        "campaign_id": str(campaign.get("id") or uuid.uuid4()),
-                        "campaign_name": str(campaign.get("name") or "Untitled campaign").strip(),
-                        "spend": cost_micros / 1_000_000 if cost_micros else 0.0,
-                        "clicks": clicks,
-                        "impressions": impressions,
-                        "ctr": _truth_float(ctr) * 100 if ctr not in (None, "") and _truth_float(ctr) <= 1 else (_truth_float(ctr) if ctr not in (None, "") else (_truth_safe_div(clicks, impressions) * 100 if impressions else None)),
-                        "cpc": (_truth_float(average_cpc) / 1_000_000) if average_cpc not in (None, "") else (_truth_safe_div(cost_micros / 1_000_000 if cost_micros else 0.0, clicks) if clicks else None),
-                        "platform_revenue": _truth_float(conversions_value) if conversions_value not in (None, "") else None,
-                    })
-
-            meta = {
-                "connected": True,
-                "configured": True,
-                "source": "api",
-                "campaigns": len(rows),
-                "error": None,
-                "last_sync": _truth_now_iso(),
-            }
-            _truth_cache_set_ads("google", range_days, rows, meta, cache_scope)
-            return rows, meta
-        except Exception as exc:
-            meta = {
-                "connected": False,
-                "configured": True,
-                "source": "api",
-                "campaigns": 0,
-                "error": str(exc),
-                "last_sync": None,
-            }
-            _truth_cache_set_ads("google", range_days, [], meta, cache_scope)
-            return [], meta
-
-    meta = {
-        "connected": False,
-        "configured": bool(integration),
-        "source": "api",
-        "campaigns": 0,
-        "error": "Missing Google Ads credentials",
-        "last_sync": None,
-    }
-    _truth_cache_set_ads("google", range_days, [], meta, cache_scope)
-    return [], meta
-
-
-def _truth_collect_ads_rows(range_days: int, user_id: str) -> tuple[list[dict], dict]:
-    user_integrations = _truth_get_user_integrations(user_id)
-    meta_integration = _truth_get_primary_integration(user_id, "meta", user_integrations)
-    tiktok_integration = _truth_get_primary_integration(user_id, "tiktok", user_integrations)
-    google_integration = _truth_get_primary_integration(user_id, "google", user_integrations)
-
-    meta_rows, meta_info = _truth_fetch_meta_ads_rows(
-        range_days,
-        integration=meta_integration,
-        cache_scope=_truth_ads_cache_scope(user_id, "meta", meta_integration),
-    )
-    tiktok_rows, tiktok_info = _truth_fetch_tiktok_ads_rows(
-        range_days,
-        integration=tiktok_integration,
-        cache_scope=_truth_ads_cache_scope(user_id, "tiktok", tiktok_integration),
-    )
-    google_rows, google_info = _truth_fetch_google_ads_rows(
-        range_days,
-        integration=google_integration,
-        cache_scope=_truth_ads_cache_scope(user_id, "google", google_integration),
-    )
-    env_rows = _truth_parse_ads_env_rows()
-
-    rows = [*meta_rows, *tiktok_rows, *google_rows]
-    if env_rows:
-        for row in env_rows:
-            platform = _truth_normalize_platform(row.get("platform"))
-            if platform == "Meta" and meta_integration:
-                continue
-            if platform == "TikTok" and tiktok_integration:
-                continue
-            has_real = any(_truth_normalize_platform(existing.get("platform")) == platform for existing in rows)
-            if not has_real:
-                rows.append(row)
-                if platform == "Meta" and not meta_info.get("connected"):
-                    meta_info = {**meta_info, "source": "env_json", "configured": True, "connected": True, "campaigns": 1, "last_sync": _truth_now_iso()}
-                if platform == "TikTok" and not tiktok_info.get("connected"):
-                    tiktok_info = {**tiktok_info, "source": "env_json", "configured": True, "connected": True, "campaigns": 1, "last_sync": _truth_now_iso()}
-
-    return rows, {
-        "meta": meta_info,
-        "tiktok": tiktok_info,
-        "google": google_info,
-    }
-
-
-def _truth_source_status(name: str, *, connected: bool, last_sync: str | None = None, completeness: float = 0.0, reliability: float = 0.0, **extra) -> dict:
-    status = {
-        "name": name,
-        "connected": bool(connected),
-        "last_sync": last_sync,
-        "completeness": _truth_pct(completeness),
-        "reliability": _truth_pct(reliability),
-    }
-    status.update(extra)
-    return status
-
-
-def _truth_cost_inputs(total_revenue: float) -> dict:
-    cogs_value_raw = os.getenv("TRUTH_COGS_VALUE", "").strip()
-    fees_value_raw = os.getenv("TRUTH_FEES_VALUE", "").strip()
-    cogs_percent_raw = os.getenv("TRUTH_COGS_PERCENT", "").strip()
-    fees_percent_raw = os.getenv("TRUTH_FEES_PERCENT", "").strip()
-
-    cogs_value = _truth_float(cogs_value_raw) if cogs_value_raw else None
-    fees_value = _truth_float(fees_value_raw) if fees_value_raw else None
-    cogs_percent = _truth_float(cogs_percent_raw) if cogs_percent_raw else None
-    fees_percent = _truth_float(fees_percent_raw) if fees_percent_raw else None
-
-    if cogs_value is None and cogs_percent is not None:
-        cogs_value = total_revenue * (cogs_percent / 100)
-    if fees_value is None and fees_percent is not None:
-        fees_value = total_revenue * (fees_percent / 100)
-
-    completeness = 0
-    if cogs_value is not None:
-        completeness += 50
-    if fees_value is not None:
-        completeness += 50
-
-    return {
-        "cogs_value": cogs_value,
-        "fees_value": fees_value,
-        "cogs_percent": cogs_percent,
-        "fees_percent": fees_percent,
-        "completeness": completeness,
-        "source": "env",
-    }
-
-
-def _truth_financial_bucket_from_entry(row: dict) -> str | None:
-    metadata = _truth_safe_dict(row.get("metadata"))
-    explicit_bucket = str(metadata.get("truth_bucket") or metadata.get("bucket") or "").strip().lower()
-    if explicit_bucket in {"cogs", "fees"}:
-        return explicit_bucket
-
-    category = str(row.get("category") or "").strip().lower().replace("-", "_").replace(" ", "_")
-    if category in {"cogs", "cost_of_goods", "cost_of_goods_sold", "inventory", "product_cost", "product_costs"}:
-        return "cogs"
-    if category in {"fees", "fee", "transaction_fee", "transaction_fees", "processing_fee", "processing_fees", "payment_fee", "payment_fees", "shopify_fee", "shopify_fees"}:
-        return "fees"
-
-    description = str(row.get("description") or "").strip().lower()
-    if any(token in description for token in ("cogs", "cost of goods", "inventory cost", "product cost")):
-        return "cogs"
-    if any(token in description for token in ("processing fee", "transaction fee", "payment fee", "shopify fee")):
-        return "fees"
-    return None
-
-
-def _truth_financial_inputs(user_id: str, range_days: int, total_revenue: float) -> dict:
-    fallback = _truth_cost_inputs(total_revenue)
-    if not (SUPABASE_URL and SUPABASE_SERVICE_KEY and user_id):
-        return fallback
-
-    try:
-        start_date, end_date = _truth_range_dates(range_days)
-        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-        result = (
-            supabase.table("financial_entries")
-            .select("amount,entry_type,category,date,description,metadata")
-            .eq("user_id", user_id)
-            .gte("date", start_date)
-            .lte("date", end_date)
-            .execute()
-        )
-        rows = result.data or []
-    except Exception as exc:
-        print(f"  ⚠️ [TRUTH] Financial entries lookup warning: {exc}")
-        return fallback
-
-    cogs_total = 0.0
-    fees_total = 0.0
-    recognized_rows = 0
-    for row in rows:
-        amount = abs(_truth_float(row.get("amount")))
-        if amount <= 0:
-            continue
-        bucket = _truth_financial_bucket_from_entry(row)
-        if not bucket:
-            continue
-        recognized_rows += 1
-        if bucket == "cogs":
-            cogs_total += amount
-        elif bucket == "fees":
-            fees_total += amount
-
-    if recognized_rows == 0:
-        return fallback
-
-    cogs_value = cogs_total if cogs_total > 0 else fallback.get("cogs_value")
-    fees_value = fees_total if fees_total > 0 else fallback.get("fees_value")
-    completeness = 0
-    if cogs_value is not None:
-        completeness += 50
-    if fees_value is not None:
-        completeness += 50
-
-    return {
-        "cogs_value": cogs_value,
-        "fees_value": fees_value,
-        "cogs_percent": (_truth_safe_div(cogs_value, total_revenue) * 100) if total_revenue and cogs_value is not None else fallback.get("cogs_percent"),
-        "fees_percent": (_truth_safe_div(fees_value, total_revenue) * 100) if total_revenue and fees_value is not None else fallback.get("fees_percent"),
-        "completeness": completeness,
-        "source": "financial_entries",
-        "recognized_rows": recognized_rows,
-    }
-
-
-def _truth_row_cost_inputs(revenue: float, total_revenue: float, aggregate_cost_inputs: dict) -> dict:
-    if revenue <= 0 or total_revenue <= 0:
-        return _truth_cost_inputs(revenue)
-
-    ratio = revenue / total_revenue
-    cogs_total = aggregate_cost_inputs.get("cogs_value")
-    fees_total = aggregate_cost_inputs.get("fees_value")
-    cogs_value = (cogs_total * ratio) if cogs_total is not None else None
-    fees_value = (fees_total * ratio) if fees_total is not None else None
-
-    completeness = 0
-    if cogs_value is not None:
-        completeness += 50
-    if fees_value is not None:
-        completeness += 50
-
-    return {
-        "cogs_value": cogs_value,
-        "fees_value": fees_value,
-        "cogs_percent": aggregate_cost_inputs.get("cogs_percent"),
-        "fees_percent": aggregate_cost_inputs.get("fees_percent"),
-        "completeness": completeness,
-        "source": aggregate_cost_inputs.get("source") or "env",
-    }
-
-
-def _truth_build_profit_engine(*, revenue: float, ad_spend: float, data_completeness: int, truth_block_allowed: bool, cogs_value: float | None = None, fees_value: float | None = None) -> dict:
-    known_costs = ad_spend
-    missing_parts: list[str] = []
-
-    if cogs_value is not None:
-        known_costs += cogs_value
-    else:
-        missing_parts.append("COGS")
-    if fees_value is not None:
-        known_costs += fees_value
-    else:
-        missing_parts.append("fees")
-
-    if not truth_block_allowed or data_completeness < 50:
-        warning = "Profit blocked until ad coverage and cost inputs are reliable enough"
-        if missing_parts:
-            warning = f"{warning}; missing {', '.join(missing_parts)}"
-        return {
-            "value": None,
-            "type": "UNKNOWN",
-            "confidence": min(data_completeness, 49),
-            "warning": warning,
-        }
-
-    if data_completeness >= 90 and cogs_value is not None and fees_value is not None:
-        return {
-            "value": revenue - known_costs,
-            "type": "VERIFIED",
-            "confidence": min(100, data_completeness),
-            "warning": "",
-        }
-
-    warning = "Estimated profit from partial costs only"
-    if missing_parts:
-        warning = f"{warning}; missing {', '.join(missing_parts)}"
-    return {
-        "value": revenue - known_costs,
-        "type": "ESTIMATED",
-        "confidence": max(50, min(89, data_completeness)),
-        "warning": warning,
-    }
-
-
-def _truth_label_from_score(score: int) -> str:
-    if score >= 90:
-        return "VERIFIED"
-    if score >= 60:
-        return "PARTIAL"
-    return "UNVERIFIED"
-
-
-def _truth_severity_weight(severity: str) -> int:
-    return {
-        "HIGH": 28,
-        "MEDIUM": 14,
-        "LOW": 6,
-    }.get(str(severity or "").upper(), 10)
-
-
-def _truth_build_source_statuses(*, orders: list[dict], tracked_orders: int, ads_integrations: dict, shopify_connected: bool) -> dict:
-    total_orders = len(orders)
-    tracked_ratio = (tracked_orders / total_orders * 100) if total_orders else 0
-    now_iso = _truth_now_iso()
-
-    meta_info = ads_integrations.get("meta", {})
-    tiktok_info = ads_integrations.get("tiktok", {})
-    google_info = ads_integrations.get("google", {})
-
-    meta_connected = bool(meta_info.get("connected"))
-    tiktok_connected = bool(tiktok_info.get("connected"))
-    google_connected = bool(google_info.get("connected"))
-
-    return {
-        "shopify_orders": _truth_source_status(
-            "Shopify Orders",
-            connected=shopify_connected,
-            last_sync=now_iso if shopify_connected else None,
-            completeness=100 if shopify_connected else 0,
-            reliability=96 if shopify_connected else 0,
-            order_count=total_orders,
-        ),
-        "utm_events": _truth_source_status(
-            "UTM Events",
-            connected=tracked_orders > 0,
-            last_sync=now_iso if tracked_orders > 0 else None,
-            completeness=tracked_ratio,
-            reliability=85 if tracked_orders > 0 else 20,
-            tracked_orders=tracked_orders,
-            total_orders=total_orders,
-        ),
-        "meta_ads": _truth_source_status(
-            "Meta Ads",
-            connected=meta_connected,
-            last_sync=meta_info.get("last_sync"),
-            completeness=100 if meta_connected else 0,
-            reliability=92 if meta_info.get("source") == "api" and meta_connected else (68 if meta_info.get("source") in {"env_json", "integration_json"} and meta_connected else 15),
-            source=meta_info.get("source"),
-            error=meta_info.get("error"),
-        ),
-        "tiktok_ads": _truth_source_status(
-            "TikTok Ads",
-            connected=tiktok_connected,
-            last_sync=tiktok_info.get("last_sync"),
-            completeness=100 if tiktok_connected else 0,
-            reliability=90 if tiktok_info.get("source") == "api" and tiktok_connected else (68 if tiktok_info.get("source") in {"env_json", "integration_json"} and tiktok_connected else 15),
-            source=tiktok_info.get("source"),
-            error=tiktok_info.get("error"),
-        ),
-        "google_ads": _truth_source_status(
-            "Google Ads",
-            connected=google_connected,
-            last_sync=google_info.get("last_sync"),
-            completeness=100 if google_connected else 0,
-            reliability=90 if google_info.get("source") == "api" and google_connected else (65 if google_info.get("source") in {"env_json", "integration_json"} and google_connected else 10),
-            source=google_info.get("source"),
-            error=google_info.get("error"),
-        ),
-        "stripe": _truth_source_status(
-            "Stripe",
-            connected=bool(STRIPE_SECRET_KEY),
-            last_sync=None,
-            completeness=25 if STRIPE_SECRET_KEY else 0,
-            reliability=60 if STRIPE_SECRET_KEY else 0,
-            optional=True,
-        ),
-    }
-
-
-def _truth_detect_anomalies(campaign_rows: list[dict]) -> list[dict]:
-    anomalies: list[dict] = []
-    for row in campaign_rows:
-        clicks = int(_truth_float(row.get("clicks")))
-        orders = int(_truth_float(row.get("orders")))
-        revenue = _truth_float(row.get("revenue_real"))
-        spend = _truth_float(row.get("spend"))
-        impressions = int(_truth_float(row.get("impressions")))
-        campaign_name = row.get("campaign_name") or "Unknown campaign"
-        platform = row.get("platform") or "Unknown"
-        is_paid = platform in {"Meta", "TikTok", "Google Ads"}
-
-        if orders > clicks and clicks >= 0:
-            anomalies.append({
-                "type": "ATTRIBUTION_ERROR",
-                "severity": "HIGH",
-                "message": f"{orders} orders with {clicks} clicks on {campaign_name}",
-                "campaign_name": campaign_name,
-                "platform": platform,
-            })
-
-        if revenue > 0 and clicks == 0 and impressions == 0:
-            anomalies.append({
-                "type": "GHOST_REVENUE",
-                "severity": "HIGH",
-                "message": f"Revenue detected on {campaign_name} with zero traffic",
-                "campaign_name": campaign_name,
-                "platform": platform,
-            })
-
-        if spend <= 0 and is_paid:
-            anomalies.append({
-                "type": "MISSING_SPEND_DATA",
-                "severity": "HIGH" if orders > 0 or revenue > 0 else "MEDIUM",
-                "message": f"Paid campaign {campaign_name} has no spend data",
-                "campaign_name": campaign_name,
-                "platform": platform,
-            })
-    return anomalies
-
-
-def _truth_build_insights(*, truth_block: dict, source_status: dict, anomalies: list[dict], unattributed_orders: int, total_orders: int, campaign_rows: list[dict], profit_engine: dict) -> list[dict]:
-    insights: list[dict] = []
-
-    if not truth_block.get("allowed"):
-        insights.append({
-            "problem": "Ad spend sources are missing",
-            "impact": "Real profit stays blocked until paid spend is connected",
-            "action": "Connect Meta Ads, TikTok Ads or Google Ads before trusting TRUTH metrics",
-        })
-
-    tracked_ratio = source_status.get("utm_events", {}).get("completeness", 0)
-    if total_orders and tracked_ratio < 70:
-        untracked_pct = max(0, 100 - tracked_ratio)
-        insights.append({
-            "problem": f"{untracked_pct}% of orders are not attributed by UTM",
-            "impact": "Profit and ROAS can be inflated because orders cannot be tied back to spend",
-            "action": "Deploy the storefront UTM tracker and pass UTM fields into checkout attributes",
-        })
-
-    for anomaly in anomalies[:2]:
-        insights.append({
-            "problem": anomaly.get("message"),
-            "impact": "Business truth is contradictory, so verified metrics are downgraded",
-            "action": "Fix tracking or reconnect the missing paid source before acting on these numbers",
-        })
-
-    if profit_engine.get("type") == "ESTIMATED":
-        insights.append({
-            "problem": "Profit is estimated from partial costs",
-            "impact": profit_engine.get("warning") or "Margins are directionally useful but not audit-grade",
-            "action": "Add verified COGS and fee inputs to unlock fully verified profit",
-        })
-
-    if not insights and campaign_rows:
-        top_row = sorted(campaign_rows, key=lambda row: _truth_float(row.get("revenue_real")), reverse=True)[0]
-        insights.append({
-            "problem": f"Top campaign is {top_row.get('campaign_name')}",
-            "impact": "This campaign has the biggest leverage on your truth score and margin quality",
-            "action": "Audit its spend, UTM coverage and costs first to improve the overall TRUTH layer",
-        })
-
-    return insights[:6]
-
-
-def _truth_status_from_roas(roas: float | None) -> tuple[str, str]:
-    if roas is None:
-        return ("UNKNOWN", "slate")
-    if roas < 1:
-        return ("LOSS", "red")
-    if roas <= 2:
-        return ("BREAK EVEN", "amber")
-    return ("PROFITABLE", "emerald")
-
-
-@app.get("/api/truth/dashboard")
-async def get_truth_dashboard(request: Request, range: str = "30d"):
-    user_id = get_user_id(request)
-    shop_domain, access_token = _get_shopify_connection(user_id)
-    days = _truth_range_to_days(range)
-    orders = _fetch_shopify_orders(shop_domain, access_token, days)
-    ads_rows, ads_integrations = _truth_collect_ads_rows(days, user_id)
-
-    campaigns: dict[str, dict] = {}
-    unattributed_orders = 0
-    tracked_orders = 0
-
-    for ad_row in ads_rows:
-        key = f"{_truth_normalize_platform(ad_row.get('platform'))}::{_truth_slug(ad_row.get('campaign_name'))}"
-        campaigns[key] = {
-            "platform": _truth_normalize_platform(ad_row.get("platform")),
-            "campaign_id": ad_row.get("campaign_id"),
-            "campaign_name": ad_row.get("campaign_name") or "Unknown campaign",
-            "spend": _truth_float(ad_row.get("spend")),
-            "clicks": int(_truth_float(ad_row.get("clicks"))),
-            "impressions": int(_truth_float(ad_row.get("impressions"))),
-            "ctr": ad_row.get("ctr"),
-            "cpc": ad_row.get("cpc"),
-            "orders": 0,
-            "revenue_real": 0.0,
-            "profit_real": None,
-            "roas_real": None,
-            "platform_revenue": ad_row.get("platform_revenue"),
-            "platform_roas": None,
-            "error_percent": None,
-            "conversion_rate": None,
-            "status": "UNKNOWN",
-            "status_tone": "slate",
-            "attribution_source": "utm_campaign",
-            "attributed_orders": [],
-            "utm_source": None,
-            "utm_content": None,
-                        "profit_engine": None,
-          }
-
-    for order in orders:
-        utm = _truth_extract_utm(order)
-        campaign_name = utm.get("utm_campaign") or "unknown"
-        platform = _truth_normalize_platform(utm.get("utm_source"))
-        key = f"{platform}::{_truth_slug(campaign_name)}"
-        revenue = _truth_float(order.get("total_price"))
-        customer = order.get("customer") or {}
-        if campaign_name == "unknown":
-            unattributed_orders += 1
-        else:
-            tracked_orders += 1
-
-        campaign_row = campaigns.setdefault(key, {
-            "platform": platform,
-            "campaign_id": _truth_slug(campaign_name) or str(order.get("id") or uuid.uuid4()),
-            "campaign_name": campaign_name,
-            "spend": 0.0,
-            "clicks": 0,
-            "impressions": 0,
-            "ctr": None,
-            "cpc": None,
-            "orders": 0,
-            "revenue_real": 0.0,
-            "profit_real": None,
-            "roas_real": None,
-            "platform_revenue": None,
-            "platform_roas": None,
-            "error_percent": None,
-            "conversion_rate": None,
-            "status": "UNKNOWN",
-            "status_tone": "slate",
-            "attribution_source": "utm_campaign" if utm.get("utm_campaign") else "unknown",
-            "attributed_orders": [],
-            "utm_source": utm.get("utm_source"),
-            "utm_content": utm.get("utm_content"),
-            "profit_engine": None,
-        })
-
-        campaign_row["orders"] += 1
-        campaign_row["revenue_real"] += revenue
-        campaign_row["utm_source"] = campaign_row.get("utm_source") or utm.get("utm_source")
-        campaign_row["utm_content"] = campaign_row.get("utm_content") or utm.get("utm_content")
-        campaign_row["attributed_orders"].append({
-            "order_id": order.get("id"),
-            "order_name": order.get("name") or f"#{order.get('order_number')}",
-            "created_at": order.get("created_at"),
-            "revenue": revenue,
-            "customer_id": customer.get("id"),
-            "customer_email": customer.get("email") or order.get("email"),
-            "utm_source": utm.get("utm_source"),
-            "utm_campaign": utm.get("utm_campaign"),
-            "utm_content": utm.get("utm_content"),
-        })
-
-    source_status = _truth_build_source_statuses(
-        orders=orders,
-        tracked_orders=tracked_orders,
-        ads_integrations=ads_integrations,
-        shopify_connected=True,
-    )
-
-    ad_sources = [source_status["meta_ads"], source_status["tiktok_ads"], source_status["google_ads"]]
-    missing_sources = [source.get("name") for source in ad_sources if not source.get("connected")]
-    truth_block = {
-        "allowed": any(source.get("connected") for source in ad_sources),
-        "reason": "" if any(source.get("connected") for source in ad_sources) else "Missing ad spend sources",
-        "missing_sources": missing_sources if not any(source.get("connected") for source in ad_sources) else [],
-    }
-
-    ad_coverage = max((source.get("completeness", 0) for source in ad_sources), default=0)
-    attribution_accuracy = source_status.get("utm_events", {}).get("completeness", 0)
-    source_data_completeness = round(
-        source_status.get("shopify_orders", {}).get("completeness", 0) * 0.25
-        + attribution_accuracy * 0.25
-        + ad_coverage * 0.50
-    )
-
-    total_revenue = sum(_truth_float(order.get("total_price")) for order in orders)
-    cost_inputs = _truth_financial_inputs(user_id, days, total_revenue)
-    data_completeness = round(source_data_completeness * 0.7 + cost_inputs.get("completeness", 0) * 0.3)
-
-    for row in campaigns.values():
-        spend = _truth_float(row.get("spend"))
-        clicks = int(_truth_float(row.get("clicks")))
-        impressions = int(_truth_float(row.get("impressions")))
-        revenue_real = _truth_float(row.get("revenue_real"))
-        platform_revenue = row.get("platform_revenue")
-        if row.get("ctr") is None and impressions:
-            row["ctr"] = _truth_safe_div(clicks, impressions) * 100
-        if row.get("cpc") is None and clicks:
-            row["cpc"] = _truth_safe_div(spend, clicks)
-        row_cost_inputs = _truth_row_cost_inputs(revenue_real, total_revenue, cost_inputs)
-        row["profit_engine"] = _truth_build_profit_engine(
-            revenue=revenue_real,
-            ad_spend=spend,
-            data_completeness=data_completeness,
-            truth_block_allowed=truth_block.get("allowed", False),
-            cogs_value=row_cost_inputs.get("cogs_value"),
-            fees_value=row_cost_inputs.get("fees_value"),
-        )
-        row["profit_real"] = row["profit_engine"].get("value")
-        row["roas_real"] = _truth_safe_div(revenue_real, spend) if truth_block.get("allowed") else None
-        row["platform_roas"] = _truth_safe_div(_truth_float(platform_revenue), spend) if platform_revenue is not None else None
-        row["conversion_rate"] = _truth_safe_div(row.get("orders", 0), clicks) * 100 if clicks else None
-        if platform_revenue is not None and revenue_real > 0:
-            row["error_percent"] = ((_truth_float(platform_revenue) - revenue_real) / revenue_real) * 100
-        row["status"], row["status_tone"] = _truth_status_from_roas(row.get("roas_real"))
-
-    anomalies = _truth_detect_anomalies(list(campaigns.values()))
-    consistency_penalty = sum(_truth_severity_weight(anomaly.get("severity")) for anomaly in anomalies)
-    consistency_score = max(0, 100 - min(100, consistency_penalty))
-    truth_score_value = round(
-        ad_coverage * 0.35
-        + attribution_accuracy * 0.35
-        + data_completeness * 0.20
-        + consistency_score * 0.10
-    )
-
-    campaign_rows = sorted(
-        campaigns.values(),
-        key=lambda item: (_truth_float(item.get("revenue_real")), _truth_float(item.get("spend"))),
-        reverse=True,
-    )
-
-    total_revenue = sum(_truth_float(row.get("revenue_real")) for row in campaign_rows)
-    total_spend = sum(_truth_float(row.get("spend")) for row in campaign_rows)
-    total_roas = _truth_safe_div(total_revenue, total_spend) if truth_block.get("allowed") else None
-    profit_engine = _truth_build_profit_engine(
-        revenue=total_revenue,
-        ad_spend=total_spend,
-        data_completeness=data_completeness,
-        truth_block_allowed=truth_block.get("allowed", False),
-        cogs_value=cost_inputs.get("cogs_value"),
-        fees_value=cost_inputs.get("fees_value"),
-    )
-    total_profit = profit_engine.get("value")
-
-    platform_summary: dict[str, dict] = {}
-    for row in campaign_rows:
-        platform = row.get("platform") or "Unknown"
-        platform_bucket = platform_summary.setdefault(platform, {"real": 0.0, "reported": 0.0})
-        platform_bucket["real"] += _truth_float(row.get("revenue_real"))
-        platform_bucket["reported"] += _truth_float(row.get("platform_revenue"))
-
-    insights = _truth_build_insights(
-        truth_block=truth_block,
-        source_status=source_status,
-        anomalies=anomalies,
-        unattributed_orders=unattributed_orders,
-        total_orders=len(orders),
-        campaign_rows=campaign_rows,
-        profit_engine=profit_engine,
-    )
-    alerts = [anomaly.get("message") for anomaly in anomalies if anomaly.get("severity") == "HIGH"][:6]
-
-    system_flags = {
-        "blocked": not truth_block.get("allowed"),
-        "hide_real_profit": truth_score_value < 60 or not truth_block.get("allowed"),
-        "show_warning_banner": truth_score_value < 60 or not truth_block.get("allowed"),
-        "show_estimated_metrics": 60 <= truth_score_value < 90,
-        "show_verified_metrics": truth_score_value >= 90 and truth_block.get("allowed"),
-        "metric_mode": "verified" if truth_score_value >= 90 and truth_block.get("allowed") else ("estimated" if truth_score_value >= 60 and truth_block.get("allowed") else "hidden"),
-        "ad_coverage": ad_coverage,
-        "attribution_accuracy": attribution_accuracy,
-        "data_completeness": data_completeness,
-        "consistency_score": consistency_score,
-        "cost_inputs": {
-            "cogs_present": cost_inputs.get("cogs_value") is not None,
-            "fees_present": cost_inputs.get("fees_value") is not None,
-        },
-    }
-
-    return {
-        "success": True,
-        "range": range,
-        "range_days": days,
-        "shop": shop_domain,
-        "truth_block": truth_block,
-        "truth_score": {
-            "value": truth_score_value,
-            "label": _truth_label_from_score(truth_score_value),
-        },
-        "profit_engine": profit_engine,
-        "anomalies": anomalies,
-        "data_sources_status": source_status,
-        "system_flags": system_flags,
-        "summary": {
-            "total_revenue_real": total_revenue,
-            "total_ad_spend": total_spend,
-            "total_cogs": cost_inputs.get("cogs_value"),
-            "total_fees": cost_inputs.get("fees_value"),
-            "total_profit": total_profit,
-            "real_roas": total_roas,
-            "campaign_count": len(campaign_rows),
-            "orders_count": len(orders),
-            "unattributed_orders": unattributed_orders,
-        },
-        "campaigns": campaign_rows,
-        "insights": insights[:8],
-        "alerts": alerts[:6],
-        "data_completeness": data_completeness,
-        "integrations": {
-            "shopify": {"connected": True, "configured": True, "source": "api"},
-            "meta": {
-                **ads_integrations.get("meta", {}),
-                "connected": bool(ads_integrations.get("meta", {}).get("connected")) or any(row.get("platform") == "Meta" and _truth_float(row.get("spend")) > 0 for row in campaign_rows),
-            },
-            "tiktok": {
-                **ads_integrations.get("tiktok", {}),
-                "connected": bool(ads_integrations.get("tiktok", {}).get("connected")) or any(row.get("platform") == "TikTok" and _truth_float(row.get("spend")) > 0 for row in campaign_rows),
-            },
-            "google": {
-                **ads_integrations.get("google", {}),
-                "connected": bool(ads_integrations.get("google", {}).get("connected")) or any(row.get("platform") == "Google Ads" and _truth_float(row.get("spend")) > 0 for row in campaign_rows),
-            },
-        },
-        "tracking": {
-            "utm_required": True,
-            "script_path": "/truth-utm-tracker.js",
-            "attribution_rule": "If utm_campaign exists, assign order to campaign; otherwise unknown.",
-        },
-    }
 
 
 @app.get("/api/shopify/customers")
@@ -8194,45 +5828,6 @@ async def send_invoice_email_endpoint(request: Request, payload: InvoiceEmailReq
         f"Facture générée par ShopBrain AI"
     )
 
-    def _send_invoice_via_smtp_fallback() -> tuple[bool, str]:
-        smtp_host = os.getenv("SMTP_HOST")
-        smtp_user = os.getenv("SMTP_USER")
-        smtp_pass = os.getenv("SMTP_PASS")
-        smtp_from = os.getenv("SMTP_FROM") or smtp_user
-        smtp_port = int(os.getenv("SMTP_PORT", "587"))
-        smtp_secure = (os.getenv("SMTP_SECURE") or "tls").lower()
-
-        if not all([smtp_host, smtp_user, smtp_pass, smtp_from]):
-            return False, "SMTP fallback not configured"
-
-        try:
-            smtp_msg = email.message.EmailMessage()
-            smtp_msg["From"] = f"ShopBrain AI <{smtp_from}>"
-            smtp_msg["Reply-To"] = smtp_from
-            smtp_msg["To"] = payload.to_email
-            smtp_msg["Subject"] = subject
-            smtp_msg["X-Mailer"] = "ShopBrain AI Invoicing"
-            smtp_msg["Message-ID"] = f"<invoice-{int(datetime.utcnow().timestamp())}@shopbrain.ai>"
-            smtp_msg.set_content(text_body)
-
-            context = ssl.create_default_context()
-            if smtp_secure == "ssl":
-                with smtplib.SMTP_SSL(smtp_host, smtp_port, context=context) as server:
-                    server.login(smtp_user, smtp_pass)
-                    server.send_message(smtp_msg)
-            else:
-                with smtplib.SMTP(smtp_host, smtp_port) as server:
-                    server.ehlo()
-                    if smtp_secure in ("tls", "starttls"):
-                        server.starttls(context=context)
-                        server.ehlo()
-                    server.login(smtp_user, smtp_pass)
-                    server.send_message(smtp_msg)
-
-            return True, ""
-        except Exception as smtp_err:
-            return False, str(smtp_err)
-
     try:
         access_token = _get_gmail_access_token()
 
@@ -8241,6 +5836,7 @@ async def send_invoice_email_endpoint(request: Request, payload: InvoiceEmailReq
         msg["Reply-To"] = GMAIL_SENDER_EMAIL
         msg["To"] = payload.to_email
         msg["Subject"] = subject
+        # Priority headers to help land in inbox
         msg["X-Priority"] = "1"
         msg["X-MSMail-Priority"] = "High"
         msg["Importance"] = "High"
@@ -8259,28 +5855,15 @@ async def send_invoice_email_endpoint(request: Request, payload: InvoiceEmailReq
         if resp.status_code == 200:
             msg_id = resp.json().get("id", "")
             print(f"✅ [INVOICE EMAIL] Facture envoyée à {payload.to_email} (id={msg_id})")
-            return {"success": True, "message": f"Facture envoyée à {payload.to_email}", "gmail_id": msg_id, "mode": "gmail_api_oauth2"}
-
-        print(f"❌ [INVOICE EMAIL] Gmail API erreur {resp.status_code}: {resp.text[:300]}")
-        raise RuntimeError(f"Gmail API send failed: {resp.status_code}")
-
-    except Exception as gmail_err:
-        print(f"⚠️ [INVOICE EMAIL] Gmail path failed, trying SMTP fallback: {gmail_err}")
-
-        smtp_ok, smtp_err = _send_invoice_via_smtp_fallback()
-        if smtp_ok:
-            print(f"✅ [INVOICE EMAIL] Facture envoyée à {payload.to_email} via SMTP fallback")
-            return {"success": True, "message": f"Facture envoyée à {payload.to_email}", "mode": "smtp_fallback"}
-
-        err_text = str(gmail_err or "")
-        err_lower = err_text.lower()
-        if "oauth2 refresh failed: 400" in err_lower or "invalid_grant" in err_lower:
-            raise HTTPException(
-                status_code=503,
-                detail="Connexion Gmail expirée côté serveur (refresh token invalide). Reconnectez Gmail ou configurez SMTP."
-            )
-
-        raise HTTPException(status_code=500, detail=f"Erreur envoi facture: {err_text}")
+            return {"success": True, "message": f"Facture envoyée à {payload.to_email}", "gmail_id": msg_id}
+        else:
+            print(f"❌ [INVOICE EMAIL] Erreur {resp.status_code}: {resp.text[:300]}")
+            raise HTTPException(status_code=500, detail=f"Erreur envoi email: {resp.status_code}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ [INVOICE EMAIL] Exception: {e}")
+        raise HTTPException(status_code=500, detail=f"Erreur envoi facture: {str(e)}")
 
 
 @app.get("/api/shopify/analytics")
@@ -8613,8 +6196,7 @@ async def get_shopify_insights(
         raise
     except Exception as exc:
         print(f"❌ [INSIGHTS] Unexpected error: {type(exc).__name__}: {str(exc)[:250]}")
-        import traceback; traceback.print_exc()
-        raise HTTPException(status_code=500, detail="Erreur interne lors de l'analyse. Réessayez dans 30 secondes.")
+        raise HTTPException(status_code=500, detail="Erreur interne lors de l'analyse anti-retours. Réessayez dans 30 secondes.")
 
 
 async def _get_shopify_insights_impl(
@@ -8738,11 +6320,7 @@ async def _get_shopify_insights_impl(
             detail="Aucune donnée Shopify exploitable (commandes/produits). Vérifiez la connexion Shopify et réessayez.",
         )
 
-    event_counts = {}
-    try:
-        event_counts = _fetch_shopify_event_counts(user_id, shop_domain, days)
-    except Exception as exc:
-        print(f"⚠️ [INSIGHTS] Event counts fetch failed (non-fatal): {type(exc).__name__}: {str(exc)[:200]}")
+    event_counts = _fetch_shopify_event_counts(user_id, shop_domain, days)
 
     # Blockers: orders + pixel signals
     order_counts = [p.get("orders", 0) for p in product_stats.values()]
@@ -9802,7 +7380,7 @@ async def save_stock_alert_threshold(request: Request):
 
 
 @app.get("/api/shopify/bundles")
-async def get_shopify_bundles(request: Request, range: str = "30d", limit: int = 10, language: str = "en"):
+async def get_shopify_bundles(request: Request, range: str = "30d", limit: int = 10):
     """🧩 Bundles & cross-sell suggestions based on order co-occurrence.
 
     Lightweight alternative to /api/shopify/insights when you only need bundles.
@@ -9812,7 +7390,6 @@ async def get_shopify_bundles(request: Request, range: str = "30d", limit: int =
     ensure_feature_allowed(tier, "cross_sell")
     shop_domain, access_token = _get_shopify_connection(user_id)
 
-    lang = "fr" if (language or "").strip().lower() == "fr" else "en"
     range_map = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}
     days = range_map.get(range, 30)
 
@@ -9894,10 +7471,10 @@ async def get_shopify_bundles(request: Request, range: str = "30d", limit: int =
 
     def _confidence_label(count: int) -> str:
         if count >= 8:
-            return "high" if lang == "en" else "forte"
+            return "forte"
         if count >= 4:
-            return "medium" if lang == "en" else "moyenne"
-        return "low" if lang == "en" else "faible"
+            return "moyenne"
+        return "faible"
 
     suggestions: list[dict] = []
     for (a, b), count in top_pairs:
@@ -9911,18 +7488,18 @@ async def get_shopify_bundles(request: Request, range: str = "30d", limit: int =
             "titles": [left, right],
             "discount_range_pct": [low, high],
             "placements": [
-                "product page (block: Frequently bought together)" if lang == "en" else "page_produit (bloc: Souvent achetés ensemble)",
-                "cart / drawer (cross-sell before checkout)" if lang == "en" else "panier / drawer (cross-sell avant checkout)",
-                "checkout (if supported by theme/app)" if lang == "en" else "checkout (si supporté par le thème/app)",
+                "page_produit (bloc: Souvent achetés ensemble)",
+                "panier / drawer (cross-sell avant checkout)",
+                "checkout (si supporté par le thème/app)",
             ],
             "offer": {
                 "type": "bundle",
                 "name": f"Bundle: {left} + {right}"[:120],
-                "message": (f"Add {right} and save {low}–{high}% on the bundle." if lang == "en" else f"Ajoute {right} et économise {low}–{high}% sur le pack."),
+                "message": f"Ajoute {right} et économise {low}–{high}% sur le pack.",
             },
             "copy": [
-                (f"Complete your purchase with {right}." if lang == "en" else f"Complète ton achat avec {right}."),
-                (f"Most frequent duo: {left} + {right}." if lang == "en" else f"Le duo le plus fréquent: {left} + {right}."),
+                f"Complète ton achat avec {right}.",
+                f"Le duo le plus fréquent: {left} + {right}.",
             ],
         })
 
@@ -9935,13 +7512,12 @@ async def get_shopify_bundles(request: Request, range: str = "30d", limit: int =
     }
 
 
-def _compute_bundles_suggestions(shop_domain: str, access_token: str, days: int, limit: int = 10, language: str = "en") -> dict:
+def _compute_bundles_suggestions(shop_domain: str, access_token: str, days: int, limit: int = 10) -> dict:
     """Compute bundle suggestions (same logic as endpoint) and return result dict.
 
     This function is synchronous and suitable to run in a background thread.
     """
     orders = _fetch_shopify_orders(shop_domain, access_token, days)
-    lang = "fr" if (language or "").strip().lower() == "fr" else "en"
     min_pair_count = max(1, int(os.getenv("BUNDLES_MIN_PAIR_COUNT", "2")))
     pair_counts: dict[tuple[str, str], int] = {}
     orders_with_2plus_items = 0
@@ -10027,10 +7603,10 @@ def _compute_bundles_suggestions(shop_domain: str, access_token: str, days: int,
 
     def _confidence_label(count: int) -> str:
         if count >= 8:
-            return "high" if lang == "en" else "forte"
+            return "forte"
         if count >= 4:
-            return "medium" if lang == "en" else "moyenne"
-        return "low" if lang == "en" else "faible"
+            return "moyenne"
+        return "faible"
 
     suggestions: list[dict] = []
     for (a, b), count in top_pairs:
@@ -10044,40 +7620,40 @@ def _compute_bundles_suggestions(shop_domain: str, access_token: str, days: int,
             "titles": [left, right],
             "discount_range_pct": [low, high],
             "placements": [
-                "product page (block: Frequently bought together)" if lang == "en" else "page_produit (bloc: Souvent achetés ensemble)",
-                "cart / drawer (cross-sell before checkout)" if lang == "en" else "panier / drawer (cross-sell avant checkout)",
-                "checkout (if supported by theme/app)" if lang == "en" else "checkout (si supporté par le thème/app)",
+                "page_produit (bloc: Souvent achetés ensemble)",
+                "panier / drawer (cross-sell avant checkout)",
+                "checkout (si supporté par le thème/app)",
             ],
             "offer": {
                 "type": "bundle",
                 "name": f"Bundle: {left} + {right}"[:120],
-                "message": (f"Add {right} and save {low}–{high}% on the bundle." if lang == "en" else f"Ajoute {right} et économise {low}–{high}% sur le pack."),
+                "message": f"Ajoute {right} et économise {low}–{high}% sur le pack.",
             },
             "copy": [
-                (f"Complete your purchase with {right}." if lang == "en" else f"Complète ton achat avec {right}."),
-                (f"Most frequent duo: {left} + {right}." if lang == "en" else f"Le duo le plus fréquent: {left} + {right}."),
+                f"Complète ton achat avec {right}.",
+                f"Le duo le plus fréquent: {left} + {right}.",
             ],
         })
 
     no_result_reason = None
     recommendations: list[str] = []
     if not orders:
-        no_result_reason = "No orders found in the selected period." if lang == "en" else "Aucune commande trouvée sur la période sélectionnée."
+        no_result_reason = "Aucune commande trouvée sur la période sélectionnée."
         recommendations = [
-            "Try 90d or 365d range." if lang == "en" else "Essayez la période 90j ou 365j.",
-            "Verify the store has paid orders." if lang == "en" else "Vérifiez que la boutique a des commandes payées.",
+            "Essayez la période 90j ou 365j.",
+            "Vérifiez que la boutique a des commandes payées.",
         ]
     elif orders_with_2plus_items == 0:
-        no_result_reason = "Orders mostly contain a single item; pair detection is not possible yet." if lang == "en" else "Les commandes ont surtout un seul article, impossible de détecter des paires."
+        no_result_reason = "Les commandes ont surtout un seul article, impossible de détecter des paires."
         recommendations = [
-            "Create multi-item offers to generate co-purchases." if lang == "en" else "Créer des offres multi-articles pour générer des co-achats.",
-            "Add cart upsells to increase 2+ item carts." if lang == "en" else "Ajouter des upsells dans le panier pour augmenter les paniers à 2+ articles.",
+            "Créer des offres multi-articles pour générer des co-achats.",
+            "Ajouter des upsells dans le panier pour augmenter les paniers à 2+ articles.",
         ]
     elif not top_pairs:
-        no_result_reason = (f"Co-purchases exist, but none reaches the minimum threshold ({min_pair_count})." if lang == "en" else f"Des co-achats existent, mais aucun n'atteint le seuil minimum ({min_pair_count}).")
+        no_result_reason = f"Des co-achats existent, mais aucun n'atteint le seuil minimum ({min_pair_count})."
         recommendations = [
-            "Temporarily reduce threshold with BUNDLES_MIN_PAIR_COUNT=1." if lang == "en" else "Réduire temporairement le seuil via BUNDLES_MIN_PAIR_COUNT=1.",
-            "Wait for more order volume to improve recommendation confidence." if lang == "en" else "Attendre plus de volume de commandes pour fiabiliser les recommandations.",
+            "Réduire temporairement le seuil via BUNDLES_MIN_PAIR_COUNT=1.",
+            "Attendre plus de volume de commandes pour fiabiliser les recommandations.",
         ]
 
     diagnostics = {
@@ -10099,7 +7675,7 @@ def _compute_bundles_suggestions(shop_domain: str, access_token: str, days: int,
     }
 
 
-def _run_bundles_worker(job_id: str, shop_domain: str, access_token: str, days: int, limit: int, language: str = "en"):
+def _run_bundles_worker(job_id: str, shop_domain: str, access_token: str, days: int, limit: int):
     try:
         with _BUNDLES_LOCK:
             _BUNDLES_JOBS[job_id]["status"] = "running"
@@ -10107,7 +7683,7 @@ def _run_bundles_worker(job_id: str, shop_domain: str, access_token: str, days: 
             _BUNDLES_JOBS[job_id]["shop_domain"] = shop_domain
             _BUNDLES_JOBS[job_id]["days"] = int(days)
             _BUNDLES_JOBS[job_id]["limit"] = int(limit)
-        result = _compute_bundles_suggestions(shop_domain, access_token, days, limit, language)
+        result = _compute_bundles_suggestions(shop_domain, access_token, days, limit)
         with _BUNDLES_LOCK:
             _BUNDLES_JOBS[job_id]["status"] = "completed"
             _BUNDLES_JOBS[job_id]["finished_at"] = time.time()
@@ -10118,19 +7694,16 @@ def _run_bundles_worker(job_id: str, shop_domain: str, access_token: str, days: 
         try:
             if SUPABASE_URL and SUPABASE_SERVICE_KEY:
                 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-                started_ts = _BUNDLES_JOBS[job_id].get("started_at")
-                finished_ts = _BUNDLES_JOBS[job_id].get("finished_at")
                 supabase.table("bundle_jobs").insert({
                     "job_id": job_id,
                     "shop_domain": shop_domain,
                     "status": "completed",
-                    "started_at": datetime.utcfromtimestamp(started_ts).isoformat() if started_ts else None,
-                    "finished_at": datetime.utcfromtimestamp(finished_ts).isoformat() if finished_ts else None,
-                    "result": result,
+                    "started_at": datetime.utcfromtimestamp(_BUNDLES_JOBS[job_id].get("started_at")) if _BUNDLES_JOBS[job_id].get("started_at") else None,
+                    "finished_at": datetime.utcfromtimestamp(_BUNDLES_JOBS[job_id].get("finished_at")) if _BUNDLES_JOBS[job_id].get("finished_at") else None,
+                    "result": json.dumps(result),
                 }).execute()
-                print(f"✅ [BUNDLES] Job {job_id} persisted to Supabase")
-        except Exception as persist_err:
-            print(f"⚠️ [BUNDLES] Failed to persist job {job_id}: {type(persist_err).__name__}: {str(persist_err)[:200]}")
+        except Exception:
+            pass
     except Exception as e:
         with _BUNDLES_LOCK:
             _BUNDLES_JOBS[job_id]["status"] = "failed"
@@ -10140,28 +7713,25 @@ def _run_bundles_worker(job_id: str, shop_domain: str, access_token: str, days: 
         try:
             if SUPABASE_URL and SUPABASE_SERVICE_KEY:
                 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-                started_ts = _BUNDLES_JOBS[job_id].get("started_at")
-                finished_ts = _BUNDLES_JOBS[job_id].get("finished_at")
                 supabase.table("bundle_jobs").insert({
                     "job_id": job_id,
                     "shop_domain": shop_domain,
                     "status": "failed",
-                    "started_at": datetime.utcfromtimestamp(started_ts).isoformat() if started_ts else None,
-                    "finished_at": datetime.utcfromtimestamp(finished_ts).isoformat() if finished_ts else None,
+                    "started_at": datetime.utcfromtimestamp(_BUNDLES_JOBS[job_id].get("started_at")) if _BUNDLES_JOBS[job_id].get("started_at") else None,
+                    "finished_at": datetime.utcfromtimestamp(_BUNDLES_JOBS[job_id].get("finished_at")) if _BUNDLES_JOBS[job_id].get("finished_at") else None,
                     "error": str(e),
                 }).execute()
-        except Exception as persist_err:
-            print(f"⚠️ [BUNDLES] Failed to persist failed job {job_id}: {type(persist_err).__name__}: {str(persist_err)[:200]}")
+        except Exception:
+            pass
 
 
 @app.post("/api/shopify/bundles/async")
-async def start_shopify_bundles_job(request: Request, range: str = "30d", limit: int = 10, language: str = "en"):
+async def start_shopify_bundles_job(request: Request, range: str = "30d", limit: int = 10):
     user_id = get_user_id(request)
     tier = get_user_tier(user_id)
     ensure_feature_allowed(tier, "cross_sell")
     shop_domain, access_token = _get_shopify_connection(user_id)
 
-    lang = "fr" if (language or "").strip().lower() == "fr" else "en"
     range_map = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}
     days = range_map.get(range, 30)
 
@@ -10175,10 +7745,9 @@ async def start_shopify_bundles_job(request: Request, range: str = "30d", limit:
             "shop_domain": shop_domain,
             "days": int(days),
             "limit": int(limit or 10),
-            "language": lang,
         }
 
-    thread = threading.Thread(target=_run_bundles_worker, args=(job_id, shop_domain, access_token, days, int(limit or 10), lang), daemon=True)
+    thread = threading.Thread(target=_run_bundles_worker, args=(job_id, shop_domain, access_token, days, int(limit or 10)), daemon=True)
     thread.start()
 
     return {
@@ -10269,10 +7838,8 @@ async def list_shopify_bundles_jobs(request: Request, limit: int = 20):
     if SUPABASE_URL and SUPABASE_SERVICE_KEY:
         try:
             supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-            print(f"📋 [BUNDLES LIST] Fetching from Supabase for shop={shop_domain}")
             rows = supabase.table("bundle_jobs").select("job_id,status,started_at,finished_at,result").eq("shop_domain", shop_domain).order("finished_at", desc=True).limit(limit).execute()
             raw_rows = rows.data or []
-            print(f"📋 [BUNDLES LIST] Got {len(raw_rows)} rows from Supabase")
             for row in raw_rows:
                 parsed = None
                 result_raw = row.get("result")
@@ -10290,8 +7857,7 @@ async def list_shopify_bundles_jobs(request: Request, limit: int = 20):
                     "finished_at": row.get("finished_at"),
                     "result": parsed,
                 })
-        except Exception as list_err:
-            print(f"⚠️ [BUNDLES LIST] Supabase fetch failed: {type(list_err).__name__}: {str(list_err)[:300]}")
+        except Exception:
             persisted = []
 
     combined_by_job_id: dict[str, dict] = {}
@@ -10325,9 +7891,6 @@ async def list_shopify_bundles_jobs(request: Request, limit: int = 20):
         "jobs": jobs_sorted,
         "local_jobs": jobs,
         "persisted_jobs": persisted,
-        "debug_local_count": len(jobs),
-        "debug_persisted_count": len(persisted),
-        "debug_combined_count": len(jobs_sorted),
     }
 
 
@@ -13070,8 +10633,6 @@ class ChatRequest(BaseModel):
     message: str
     context: str = None  # Optionnel: contexte (ex: product_id, store info)
     images: list[str] = []  # Optional: base64 data URIs of images
-    language: str = "en"  # User's UI language (fr or en)
-    dashboard_context: str = None  # Rich dashboard context
 
 
 @app.post("/api/ai/chat")
@@ -13099,63 +10660,25 @@ async def chat_with_ai(req: ChatRequest, request: Request):
     
     system_prompt = SHOPBRAIN_EXPERT_SYSTEM or "Tu es un assistant expert en e-commerce Shopify."
 
-    # Inject language instruction — strict single-language output (fr/en only)
-    raw_lang = (getattr(req, 'language', 'en') or 'en').strip().lower()
-    lang = raw_lang if raw_lang in ('fr', 'en') else 'en'
-    if lang == 'en':
-        system_prompt = (
-            "CRITICAL LANGUAGE LOCK (HIGHEST PRIORITY): Respond 100% in ENGLISH only. "
-            "Do not use French at all. If context, prior messages, or instructions contain French, "
-            "you must still answer fully in English. Never mix languages in the same answer, except unavoidable proper nouns.\n\n"
-            + system_prompt
-        )
-    else:
-        system_prompt = (
-            "VERROUILLAGE LANGUE CRITIQUE (PRIORITÉ MAXIMALE) : Réponds 100% en FRANÇAIS uniquement. "
-            "N'utilise pas l'anglais. Même si le contexte, les messages précédents ou des instructions sont en anglais, "
-            "tu dois répondre entièrement en français. Ne mélange jamais les langues dans une même réponse, "
-            "sauf noms propres inévitables.\n\n"
-            + system_prompt
-        )
-
-    # Inject dashboard context if provided
-    if req.dashboard_context:
-        system_prompt += f"\n\n{req.dashboard_context}"
-
     try:
         # Construire le prompt avec contexte si fourni
         full_message = message
         if context:
             # Inject product context as a system-level instruction so the AI truly "knows" the product
-            if lang == 'en':
-                product_context_instruction = (
-                    "\n\n========================================\n"
-                    "MERCHANT STORE PRODUCT CONTEXT\n"
-                    "========================================\n"
-                    f"{context}\n\n"
-                    "IMPORTANT INSTRUCTIONS:\n"
-                    "- This product EXISTS in the merchant's Shopify store. You have access to its data above.\n"
-                    "- Analyze this specific product when the merchant asks questions.\n"
-                    "- Evaluate title, description, pricing, tags, variants, and stock.\n"
-                    "- If asked whether title/description/photos are good, provide honest analysis with strengths ✅, weaknesses ❌, and concrete improvements.\n"
-                    "- If asked about price, compare with market references and provide a clear recommendation.\n"
-                    "- Be direct, actionable, and expert.\n"
-                )
-            else:
-                product_context_instruction = (
-                    "\n\n========================================\n"
-                    "PRODUIT DE LA BOUTIQUE DU MARCHAND\n"
-                    "========================================\n"
-                    f"{context}\n\n"
-                    "INSTRUCTIONS IMPORTANTES :\n"
-                    "- Ce produit EXISTE dans la boutique Shopify du marchand. Tu as accès à toutes ses données ci-dessus.\n"
-                    "- Analyse ce produit spécifique quand le marchand pose une question.\n"
-                    "- Tu peux évaluer le titre, la description, le prix, les tags, les variantes, le stock.\n"
-                    "- Si le marchand demande si sa description/titre/photos sont bons, donne une analyse honnête\n"
-                    "  avec points forts ✅ et points faibles ❌ et des suggestions concrètes d'amélioration.\n"
-                    "- Si le marchand demande un prix, compare avec le marché et donne ton avis.\n"
-                    "- Sois direct, actionnable et expert.\n"
-                )
+            product_context_instruction = (
+                "\n\n========================================\n"
+                "PRODUIT DE LA BOUTIQUE DU MARCHAND\n"
+                "========================================\n"
+                f"{context}\n\n"
+                "INSTRUCTIONS IMPORTANTES :\n"
+                "- Ce produit EXISTE dans la boutique Shopify du marchand. Tu as accès à toutes ses données ci-dessus.\n"
+                "- Analyse ce produit spécifique quand le marchand pose une question.\n"
+                "- Tu peux évaluer le titre, la description, le prix, les tags, les variantes, le stock.\n"
+                "- Si le marchand demande si sa description/titre/photos sont bons, donne une analyse honnête\n"
+                "  avec points forts ✅ et points faibles ❌ et des suggestions concrètes d'amélioration.\n"
+                "- Si le marchand demande un prix, compare avec le marché et donne ton avis.\n"
+                "- Sois direct, actionnable et expert.\n"
+            )
             system_prompt = system_prompt + product_context_instruction
             full_message = message  # Don't duplicate context in user message
         
@@ -13164,32 +10687,31 @@ async def chat_with_ai(req: ChatRequest, request: Request):
         print(f"📷 Images received: {len(images)} image(s)")
         if images:
             # Add vision capability instruction to system prompt
-            if lang == 'en':
-                vision_instruction = (
-                    "\n\n========================================\n"
-                    "VISION / IMAGE CAPABILITIES\n"
-                    "========================================\n"
-                    "You can SEE and ANALYZE user images.\n\n"
-                    "MANDATORY RULES:\n\n"
-                    "1. PRECISE IDENTIFICATION: identify exact brand and model when possible.\n"
-                    "2. REAL-MARKET PRICING: provide a concrete price range with references and condition adjustments.\n"
-                    "3. BE CONCISE: go straight to identification → pricing → actionable sales advice.\n"
-                    "4. E-COMMERCE FOCUS: if no explicit question, provide market position and 2-3 practical recommendations.\n"
-                    "5. Never claim you cannot analyze the image.\n"
-                )
-            else:
-                vision_instruction = (
-                    "\n\n========================================\n"
-                    "CAPACITÉ VISION / IMAGES\n"
-                    "========================================\n"
-                    "Tu as la capacité de VOIR et ANALYSER les images envoyées par l'utilisateur.\n\n"
-                    "RÈGLES OBLIGATOIRES :\n\n"
-                    "1. IDENTIFICATION PRÉCISE : Tu DOIS identifier la MARQUE EXACTE et le MODÈLE EXACT du produit visible.\n"
-                    "2. PRIX BASÉ SUR LE MARCHÉ RÉEL : donne une fourchette de prix concrète, ajustée à l'état.\n"
-                    "3. SOIS CONCIS : va droit au but (identification → prix → conseils).\n"
-                    "4. ORIENTATION E-COMMERCE : sans question explicite, donne positionnement + 2-3 recommandations actionnables.\n"
-                    "5. Ne dis jamais que tu ne peux pas analyser l'image.\n"
-                )
+            vision_instruction = (
+                "\n\n========================================\n"
+                "CAPACITÉ VISION / IMAGES\n"
+                "========================================\n"
+                "Tu as la capacité de VOIR et ANALYSER les images envoyées par l'utilisateur.\n\n"
+                "RÈGLES OBLIGATOIRES :\n\n"
+                "1. IDENTIFICATION PRÉCISE : Tu DOIS identifier la MARQUE EXACTE et le MODÈLE EXACT du produit visible.\n"
+                "   - Chaussures : identifie la marque (Nike, Adidas, New Balance…) ET le modèle (Air Jordan 1, Yeezy 350…).\n"
+                "   - Voitures : identifie la marque (Porsche, BMW, Ferrari…) ET le modèle (GT3 RS, M4, 488 Pista…).\n"
+                "   - Montres : identifie la marque (Rolex, Omega, Casio…) ET le modèle (Submariner, Speedmaster…).\n"
+                "   - Vêtements, sacs, électronique : même chose — marque + modèle + édition si possible.\n"
+                "   - NE DIS JAMAIS 'je ne peux pas identifier la marque/le modèle'. Tu PEUX et tu DOIS le faire.\n"
+                "   - Si tu n'es pas sûr à 100%, donne ton meilleur guess avec un niveau de confiance.\n\n"
+                "2. PRIX BASÉ SUR LE MARCHÉ RÉEL :\n"
+                "   - Quand l'utilisateur demande un prix, donne une FOURCHETTE DE PRIX PRÉCISE basée sur le marché réel.\n"
+                "   - Cite des plateformes de référence (StockX, Chrono24, AutoTrader, eBay, etc.) selon le type de produit.\n"
+                "   - Tiens compte de l'état visible (neuf, usagé, modifié) pour ajuster le prix.\n"
+                "   - Donne un prix minimum, un prix recommandé, et un prix maximum.\n\n"
+                "3. NE DÉCRIS PAS l'image en détail. L'utilisateur sait ce qu'il a envoyé.\n"
+                "   - Va DROIT AU BUT : identification → prix → conseils de vente.\n\n"
+                "4. ANALYSE E-COMMERCE :\n"
+                "   - Si l'utilisateur envoie une image sans question, donne : marque/modèle identifié, fourchette de prix,\n"
+                "     positionnement marché, et 2-3 conseils de vente concrets.\n\n"
+                "5. NE JAMAIS dire que tu ne peux pas voir ou analyser les images — tu PEUX les voir en haute résolution.\n"
+            )
             system_prompt = system_prompt + vision_instruction
             
             user_content = []
@@ -13215,32 +10737,28 @@ async def chat_with_ai(req: ChatRequest, request: Request):
                 print(f"⚠️ Web search failed (non-blocking): {ws_err}")
         
         if web_search_context:
-            if lang == 'en':
-                web_search_instruction = (
-                    "\n\n========================================\n"
-                    "🌐 WEB SEARCH RESULTS (REAL-TIME DATA)\n"
-                    "========================================\n"
-                    "You have internet access. Here are the latest search results:\n\n"
-                    f"{web_search_context}\n\n"
-                    "IMPORTANT INSTRUCTIONS:\n"
-                    "- Use these real and recent data points in your answer.\n"
-                    "- Include clickable URLs when referencing sources/products.\n"
-                    "- Use clear, actionable recommendations with concise structure.\n"
-                    "- Never claim you lack internet access in this context.\n"
-                )
-            else:
-                web_search_instruction = (
-                    "\n\n========================================\n"
-                    "🌐 RÉSULTATS DE RECHERCHE INTERNET (DONNÉES EN TEMPS RÉEL)\n"
-                    "========================================\n"
-                    "Tu as accès à Internet. Voici les résultats de recherche les plus récents :\n\n"
-                    f"{web_search_context}\n\n"
-                    "INSTRUCTIONS IMPORTANTES :\n"
-                    "- Utilise ces données réelles et récentes pour répondre.\n"
-                    "- Inclus des URLs cliquables quand tu cites des sources/produits.\n"
-                    "- Donne des recommandations claires et actionnables.\n"
-                    "- Ne dis jamais que tu n'as pas accès à Internet dans ce contexte.\n"
-                )
+            web_search_instruction = (
+                "\n\n========================================\n"
+                "🌐 RÉSULTATS DE RECHERCHE INTERNET (DONNÉES EN TEMPS RÉEL)\n"
+                "========================================\n"
+                "Tu as accès à Internet. Voici les résultats de recherche les plus récents :\n\n"
+                f"{web_search_context}\n\n"
+                "INSTRUCTIONS IMPORTANTES :\n"
+                "- Utilise ces données RÉELLES et RÉCENTES pour répondre à l'utilisateur.\n"
+                "- INCLUS LES LIENS (URLs) dans ta réponse ! Quand tu mentionnes un produit, un site, un article ou une ressource, \n"
+                "  donne le lien COMPLET pour que l'utilisateur puisse cliquer dessus.\n"
+                "- Format des liens dans ta réponse : [Nom du site ou du produit](URL_COMPLÈTE)\n"
+                "- Exemples :\n"
+                "  • 🔗 [Voir sur Amazon](https://www.amazon.ca/dp/...)\n"
+                "  • 🔗 [Article complet sur Shopify Blog](https://www.shopify.com/blog/...)\n"
+                "  • 🛒 [Nike Air Force 1 — 129.99$](https://www.nike.com/...)\n"
+                "- Si les résultats contiennent des liens 🔗, tu DOIS les inclure dans ta réponse.\n"
+                "- Si les résultats contiennent des produits 🛒 avec prix et liens, présente-les dans un format clair.\n"
+                "- Si les résultats parlent de tendances TikTok, Instagram, etc., résume les tendances clés avec les sources.\n"
+                "- Donne des recommandations CONCRÈTES et ACTIONNABLES basées sur ces données.\n"
+                "- Ne dis JAMAIS que tu n'as pas accès à Internet ou aux données en temps réel — TU AS CET ACCÈS.\n"
+                "- Présente les infos de façon structurée avec des émojis et du formatage clair.\n"
+            )
             system_prompt = system_prompt + web_search_instruction
             print(f"🌐 Web search context injected ({len(web_search_context)} chars)")
         
@@ -13775,11 +11293,15 @@ def get_ai_engine():
 
 def get_user_tier(user_id: str) -> str:
     """Resolve user's subscription tier from Supabase; default to free."""
-    tier_map = STRIPE_PLAN_VALUE_ALIASES
+    tier_map = {
+        'standard': 'standard', 'pro': 'pro', 'premium': 'premium',
+        '99': 'standard', '199': 'pro', '299': 'premium',
+    }
     try:
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
             supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-            sub_result = supabase.table("subscriptions").select("plan_tier,status,paid,created_at").eq("user_id", user_id).eq("paid", True).in_("status", ["active", "cancelling", "trialing"]).order("created_at", desc=True).limit(1).execute()
+            # Include both "active" and "cancelling" — cancelling users paid until period end
+            sub_result = supabase.table("subscriptions").select("plan_tier,status,paid,created_at").eq("user_id", user_id).eq("paid", True).in_("status", ["active", "cancelling"]).order("created_at", desc=True).limit(1).execute()
             if sub_result.data:
                 raw = (sub_result.data[0].get("plan_tier") or "").lower()
                 plan = tier_map.get(raw)
@@ -13845,11 +11367,10 @@ class AnalyzeStoreRequest(BaseModel):
     products: list
     analytics: dict
     tier: str  # standard, pro, premium
-    language: str = "en"
 
 
 @app.get("/api/ai/price-opportunities")
-async def price_opportunities_endpoint(request: Request, limit: int = 50, instructions: str = "", product_id: str = "", language: str = "en"):
+async def price_opportunities_endpoint(request: Request, limit: int = 50, instructions: str = "", product_id: str = ""):
     """💰 Retourne des opportunités de prix (léger, sans gros payload).
 
     Objectif: éviter que le frontend doive POST une liste complète de produits
@@ -13858,7 +11379,6 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
     """
     user_id = get_user_id(request)
     tier = get_user_tier(user_id)
-    lang = "fr" if (language or "").strip().lower() == "fr" else "en"
     ensure_feature_allowed(tier, "price_suggestions")
 
     if not SUPABASE_URL or not SUPABASE_SERVICE_KEY:
@@ -13941,7 +11461,7 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
             candidates.append(
                 {
                     "product_id": str(p.get("id") or ""),
-                    "title": p.get("title") or ("Produit" if lang == "fr" else "Product"),
+                    "title": p.get("title") or "Produit",
                     "vendor": p.get("vendor") or "",
                     "product_type": p.get("product_type") or "",
                     "tags": p.get("tags") or "",
@@ -14210,11 +11730,11 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
                         delta_pct = 0.0
 
                     if action == "keep":
-                        suggestion = "Price aligned with market" if lang == "en" else "Prix aligné au marché"
+                        suggestion = "Prix aligné au marché"
                     elif action == "increase":
-                        suggestion = "Price too low vs market" if lang == "en" else "Prix trop bas vs marché"
+                        suggestion = "Prix trop bas vs marché"
                     else:
-                        suggestion = "Price too high vs market" if lang == "en" else "Prix trop haut vs marché"
+                        suggestion = "Prix trop haut vs marché"
 
                     reason = _market_reason_text(
                         action=action,
@@ -14222,7 +11742,6 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
                         suggested_price=float(suggested),
                         snapshot=snapshot,
                         currency_code=shop_currency,
-                        language=lang,
                     )
 
                     opportunities.append(
@@ -14361,11 +11880,11 @@ async def price_opportunities_endpoint(request: Request, limit: int = 50, instru
                     {
                         "product_id": item["product_id"] or f"shopify-{len(opportunities)+1}",
                         "title": item["title"],
-                        "suggestion": ("Recommended adjustment (heuristic)" if lang == "en" else "Ajustement recommandé (heuristique)"),
+                        "suggestion": "Ajustement recommandé (heuristique)",
                         "current_price": round(current_price, 2),
                         "suggested_price": suggested_price,
                         "target_delta_pct": target_delta_pct,
-                        "reason": ("SERP API not configured: heuristic suggestion (+25%)." if lang == "en" else "SERP API non configurée: suggestion heuristique (+25%)."),
+                        "reason": "SERP API non configurée: suggestion heuristique (+25%).",
                         "source": "heuristic",
                         "currency_code": shop_currency,
                     }
@@ -14395,7 +11914,6 @@ async def analyze_store_endpoint(req: AnalyzeStoreRequest, request: Request):
     """
     try:
         user_id = get_user_id(request)
-        lang = "fr" if (getattr(req, "language", "en") or "en").strip().lower() == "fr" else "en"
         tier = get_user_tier(user_id)
         engine = get_ai_engine()
 
@@ -14419,7 +11937,7 @@ async def analyze_store_endpoint(req: AnalyzeStoreRequest, request: Request):
                         continue
 
                     # Best-effort: default to Canada context; if frontend passes currency later, it will be used.
-                    snapshot = _serpapi_price_snapshot(title, gl="ca", hl=("fr" if lang == "fr" else "en"), currency_code="CAD")
+                    snapshot = _serpapi_price_snapshot(title, gl="ca", hl="fr", currency_code="CAD")
                     if snapshot.get("count", 0) < 3:
                         continue
 
@@ -14450,13 +11968,8 @@ async def analyze_store_endpoint(req: AnalyzeStoreRequest, request: Request):
                             suggested_price=float(suggested),
                             snapshot=snapshot,
                             currency_code="CAD",
-                            language=lang,
                         )
-                        opt["expected_impact"] = (
-                            "Price considered aligned vs similar products: no change recommended."
-                            if lang == "en"
-                            else "Prix jugé correct vs produits similaires: pas de changement recommandé."
-                        )
+                        opt["expected_impact"] = "Prix jugé correct vs produits similaires: pas de changement recommandé."
                     elif action == "increase":
                         opt["reason"] = _market_reason_text(
                             action="increase",
@@ -14464,13 +11977,8 @@ async def analyze_store_endpoint(req: AnalyzeStoreRequest, request: Request):
                             suggested_price=float(suggested),
                             snapshot=snapshot,
                             currency_code="CAD",
-                            language=lang,
                         )
-                        opt["expected_impact"] = (
-                            "Increase to align with market and improve margin, then validate against conversion impact."
-                            if lang == "en"
-                            else "Augmenter pour se rapprocher du marché et améliorer la marge, à valider avec vos conversions."
-                        )
+                        opt["expected_impact"] = "Augmenter pour se rapprocher du marché et améliorer la marge, à valider avec vos conversions."
                     else:
                         opt["reason"] = _market_reason_text(
                             action="decrease",
@@ -14478,13 +11986,8 @@ async def analyze_store_endpoint(req: AnalyzeStoreRequest, request: Request):
                             suggested_price=float(suggested),
                             snapshot=snapshot,
                             currency_code="CAD",
-                            language=lang,
                         )
-                        opt["expected_impact"] = (
-                            "Decrease to align with market and reduce conversion-loss risk."
-                            if lang == "en"
-                            else "Baisser pour se rapprocher du marché et réduire le risque de perte de conversion."
-                        )
+                        opt["expected_impact"] = "Baisser pour se rapprocher du marché et réduire le risque de perte de conversion."
             except Exception as e:
                 print(f"SERP enrichment warning: {e}")
         
@@ -14891,7 +12394,10 @@ async def check_subscription_status(request: Request):
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
             # ── DB-FIRST APPROACH: DB is the source of truth (set by webhooks).
             #    Stripe API call is ONLY for auto-heal, NEVER blocks access.
-            tier_map = STRIPE_PLAN_VALUE_ALIASES
+            tier_map = {
+                '99': 'standard', '199': 'pro', '299': 'premium',
+                'standard': 'standard', 'pro': 'pro', 'premium': 'premium',
+            }
             capabilities = {
                 'standard': {'product_limit': 50, 'features': ['product_analysis', 'title_optimization', 'price_suggestions']},
                 'pro': {'product_limit': 500, 'features': ['product_analysis', 'content_generation', 'cross_sell', 'reports', 'automated_actions', 'invoicing']},
@@ -14902,7 +12408,7 @@ async def check_subscription_status(request: Request):
             subscription = None
             try:
                 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-                sub_result = supabase.table("subscriptions").select("*").eq("user_id", user_id).in_("status", ["active", "cancelling", "trialing"]).order("updated_at", desc=True).limit(1).execute()
+                sub_result = supabase.table("subscriptions").select("*").eq("user_id", user_id).in_("status", ["active", "cancelling"]).order("updated_at", desc=True).limit(1).execute()
                 if sub_result.data:
                     subscription = sub_result.data[0]
                     print(f"  📋 [STATUS] DB row (active): id={subscription.get('id')}, plan_tier={subscription.get('plan_tier')}, paid={subscription.get('paid')}, status={subscription.get('status')}, payment_date={subscription.get('payment_date')}")
@@ -14923,7 +12429,7 @@ async def check_subscription_status(request: Request):
 
                 # Step 2: If DB says paid=true + valid plan → verify from Stripe (source of truth) then GRANT ACCESS
                 payment_date = subscription.get('payment_date')
-                if paid_flag and plan and _subscription_status_allows_access(sub_status):
+                if paid_flag and plan and sub_status in ('active', 'cancelling'):
                     # CRITICAL: Verify plan from Stripe live to prevent stale plan display
                     stripe_verified_plan = None
                     upcoming_change = {"upcoming_plan": None, "upcoming_plan_effective_at": None}
@@ -14998,7 +12504,6 @@ async def check_subscription_status(request: Request):
                     elif cancel_at_period_end:
                         pass
                     print(f"  ✅ [STATUS] ACCESS GRANTED: paid={paid_flag}, plan={plan}, status={sub_status}, stripe_verified={stripe_verified_plan is not None}")
-                    effective_status = 'cancelling' if cancel_at_period_end else (sub_status if _subscription_status_allows_access(sub_status) else 'active')
                     return {
                         'success': True,
                         'has_subscription': True,
@@ -15007,8 +12512,8 @@ async def check_subscription_status(request: Request):
                         'upcoming_plan_effective_at': upcoming_change.get('upcoming_plan_effective_at'),
                         'current_period_end': current_period_end_iso,
                         'paid': True,
-                        'status': effective_status,
-                        'subscription_status': effective_status,
+                        'status': 'active' if not cancel_at_period_end else 'cancelling',
+                        'subscription_status': 'active' if not cancel_at_period_end else 'cancelling',
                         'payment_date': payment_date,
                         'started_at': subscription.get('start_date') or subscription.get('created_at'),
                         'capabilities': capabilities.get(plan, {}),
@@ -15096,12 +12601,11 @@ async def check_subscription_status(request: Request):
                                 healed_payment_date = subscription.get('payment_date') or _resolve_payment_date(_sg(stripe_sub, "created"))
                                 try:
                                     healed_period_end = _coerce_stripe_timestamp(_sg(stripe_sub, "current_period_end"))
-                                    healed_status = "trialing" if stripe_status == "trialing" else "active"
                                     heal_payload = {
                                         "plan_tier": healed_plan,
                                         "plan": True,
-                                        "paid": True, "status": healed_status,
-                                        "subscription_status": healed_status,
+                                        "paid": True, "status": "active",
+                                        "subscription_status": "active",
                                         "payment_date": healed_payment_date,
                                         "current_period_end": _stripe_ts_to_iso(healed_period_end) if healed_period_end else subscription.get("current_period_end"),
                                         "stripe_customer_id": _sg(stripe_sub, "customer") or subscription.get("stripe_customer_id"),
@@ -15118,7 +12622,7 @@ async def check_subscription_status(request: Request):
                                             raise
                                     supabase.table("user_profiles").update({
                                         "subscription_plan": healed_plan, "subscription_tier": healed_plan,
-                                        "subscription_status": healed_status,
+                                        "subscription_status": "active",
                                         "updated_at": datetime.utcnow().isoformat(),
                                     }).eq("id", user_id).execute()
                                     print(f"  ✅ [STATUS] Auto-healed: paid=true, plan={healed_plan}")
@@ -15132,8 +12636,8 @@ async def check_subscription_status(request: Request):
                                     'upcoming_plan_effective_at': upcoming_change.get('upcoming_plan_effective_at'),
                                     'current_period_end': _stripe_ts_to_iso(healed_period_end) if healed_period_end else subscription.get('current_period_end'),
                                     'paid': True,
-                                    'status': healed_status,
-                                    'subscription_status': healed_status,
+                                    'status': 'active',
+                                    'subscription_status': 'active',
                                     'payment_date': healed_payment_date,
                                     'started_at': subscription.get('start_date') or subscription.get('created_at'),
                                     'capabilities': capabilities.get(healed_plan, {}),
@@ -15202,14 +12706,13 @@ async def check_subscription_status(request: Request):
                     if recovered_sub_id and recovered_plan and recovered_status in ("active", "trialing"):
                         recovered_payment_date = _resolve_payment_date(_sg(recovered_sub, "created"))
                         recovered_period_end = _coerce_stripe_timestamp(_sg(recovered_sub, "current_period_end"))
-                        recovered_db_status = "trialing" if recovered_status == "trialing" else "active"
                         _sub_upsert(supabase, user_id, {
                             "user_id": user_id,
                             "plan_tier": recovered_plan,
                             "plan": True,
                             "paid": True,
-                            "status": recovered_db_status,
-                            "subscription_status": recovered_db_status,
+                            "status": "active",
+                            "subscription_status": "active",
                             "payment_date": recovered_payment_date,
                             "stripe_customer_id": recovered_customer,
                             "stripe_subscription_id": recovered_sub_id,
@@ -15222,7 +12725,7 @@ async def check_subscription_status(request: Request):
                                 "stripe_subscription_id": recovered_sub_id,
                                 "subscription_plan": recovered_plan,
                                 "subscription_tier": recovered_plan,
-                                "subscription_status": recovered_db_status,
+                                "subscription_status": "active",
                                 "updated_at": datetime.utcnow().isoformat(),
                             }).eq("id", user_id).execute()
                         except Exception:
@@ -15232,8 +12735,8 @@ async def check_subscription_status(request: Request):
                             'has_subscription': True,
                             'plan': recovered_plan,
                             'paid': True,
-                            'status': recovered_db_status,
-                            'subscription_status': recovered_db_status,
+                            'status': 'active',
+                            'subscription_status': 'active',
                             'payment_date': recovered_payment_date,
                             'started_at': _stripe_ts_to_iso(_coerce_stripe_timestamp(_sg(recovered_sub, 'start_date'))) or _stripe_ts_to_iso(_coerce_stripe_timestamp(_sg(recovered_sub, 'created'))),
                             'current_period_end': _stripe_ts_to_iso(recovered_period_end) if recovered_period_end else None,
@@ -15274,8 +12777,9 @@ async def create_checkout_session(req: CreateCheckoutSessionRequest, request: Re
         raw_plan = req.plan
         email = req.email
         
-        # Normalize plan key: accept both numeric and named values
-        plan = STRIPE_PLAN_VALUE_ALIASES.get(str(raw_plan).lower(), raw_plan)
+        # Normalize plan key: accept both numeric ('99','199','299') and named ('standard','pro','premium')
+        _plan_normalize = {'99': 'standard', '199': 'pro', '299': 'premium'}
+        plan = _plan_normalize.get(str(raw_plan), raw_plan)
         
         if plan not in STRIPE_PLANS:
             raise HTTPException(status_code=400, detail=f"Plan invalide: {raw_plan}")
@@ -15386,7 +12890,8 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
             def tier_from_amount(amount_cents: int | None):
                 if amount_cents is None:
                     return None
-                return STRIPE_PLAN_AMOUNT_TO_TIER.get(int(amount_cents))
+                exact_amount_map = {9900: "standard", 19900: "pro", 29900: "premium"}
+                return exact_amount_map.get(int(amount_cents))
 
             # Try subscription item price_id first (metadata may be stale after upgrades)
             if subscription:
@@ -15416,9 +12921,13 @@ async def verify_checkout_session(req: VerifyCheckoutRequest, request: Request):
                 if session_meta:
                     plan = _sg(session_meta, "plan")
 
-            # Normalize plan key from metadata or legacy values
+            # Normalize plan key (metadata might store '99', '199', '299')
+            _tier_normalize = {
+                '99': 'standard', '199': 'pro', '299': 'premium',
+                'standard': 'standard', 'pro': 'pro', 'premium': 'premium',
+            }
             if plan:
-                plan = STRIPE_PLAN_VALUE_ALIASES.get(str(plan).lower(), plan)
+                plan = _tier_normalize.get(str(plan).lower(), plan)
             
             # Final fallback — do NOT assign a paid plan if unknown
             if not plan:
@@ -17249,6 +14758,7 @@ async def switch_plan_inline(request: Request, _override_plan: str | None = None
         # Verify Stripe accepted the schedule update (target tier present in a future phase)
         schedule_verify = stripe.SubscriptionSchedule.retrieve(schedule_id)
         verify_phases = _sg(schedule_verify, "phases", []) or []
+        exact_amount_map = {9900: 'standard', 19900: 'pro', 29900: 'premium'}
         has_target_future_phase = False
         for phase in verify_phases:
             phase_start = _coerce_stripe_timestamp(_sg(phase, "start_date"))
@@ -17266,7 +14776,7 @@ async def switch_plan_inline(request: Request, _override_plan: str | None = None
                 phase_tier = PRICE_TO_TIER.get(phase_price_id)
                 if not phase_tier and phase_amount is not None:
                     try:
-                        phase_tier = STRIPE_PLAN_AMOUNT_TO_TIER.get(int(phase_amount))
+                        phase_tier = exact_amount_map.get(int(phase_amount))
                     except Exception:
                         phase_tier = None
                 if phase_tier == new_plan:

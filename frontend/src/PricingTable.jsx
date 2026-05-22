@@ -3,6 +3,15 @@ import { useTranslation } from './LanguageContext'
 import { supabase } from './supabaseClient'
 import { getMarketingPricingPlans, getPlanUiLabel } from './pricingConfig'
 
+const sanitizeCheckoutError = (detail, fallback) => {
+  const raw = typeof detail === 'string' ? detail : typeof detail?.message === 'string' ? detail.message : ''
+  if (!raw) return fallback
+  if (/invalidrequesterror|no such customer|no such subscription|request req_|column.*does not exist|relation.*does not exist|sqlstate|stripe/i.test(raw)) {
+    return fallback
+  }
+  return raw
+}
+
 // Prefill email/client reference so Stripe checkout is smoother
 // Supports test mode via URL params: ?mode=test&pk=pk_test_...&ptid=prctbl_test_...
 export default function StripePricingTable({ userEmail, userId, hasActiveSubscription, currentPlan }) {
@@ -80,7 +89,7 @@ export default function StripePricingTable({ userEmail, userId, hasActiveSubscri
         const errorData = await response.json().catch(() => ({}))
         setStatus({
           type: 'error',
-          message: `${t('error')}: ${errorData.detail || response.statusText || t('unableToCreateCheckoutSession')}`,
+          message: `${t('error')}: ${sanitizeCheckoutError(errorData.detail, response.statusText || t('unableToCreateCheckoutSession'))}`,
         })
         return
       }
@@ -93,7 +102,7 @@ export default function StripePricingTable({ userEmail, userId, hasActiveSubscri
 
       setStatus({ type: 'error', message: t('checkoutUrlMissing') })
     } catch (error) {
-      setStatus({ type: 'error', message: `${t('connectionError')}: ${error.message}` })
+      setStatus({ type: 'error', message: `${t('connectionError')}: ${sanitizeCheckoutError(error?.message, t('unableToCreateCheckoutSession'))}` })
     } finally {
       setCheckoutPlanId(null)
     }
