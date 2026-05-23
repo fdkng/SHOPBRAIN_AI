@@ -2308,7 +2308,96 @@ async def fast_init(request: Request):
                         subscription_data['subscription_status'] = sub_status or 'inactive'
             else:
                 print(f"  ❌ [INIT-SUB] No active subscription row found in DB for user {user_id}")
-                subscription_data = _inactive_subscription_payload(no_access_message)
+
+                # Last-resort: recover active Stripe sub from user_profiles (email/customer), then rehydrate DB.
+                # This mirrors /api/subscription/status so frontend login/init recognizes paid users
+                # even if the subscriptions row is stale or missing.
+                try:
+                    profile_res = supabase_client.table("user_profiles").select("email,stripe_customer_id").eq("id", user_id).limit(1).execute()
+                    profile_row = profile_res.data[0] if profile_res.data else {}
+                    candidate_customers = []
+
+                    profile_customer_id = profile_row.get("stripe_customer_id")
+                    if profile_customer_id:
+                        candidate_customers.append(profile_customer_id)
+
+                    profile_email = profile_row.get("email") or (profile_data or {}).get("email")
+                    if profile_email:
+                        try:
+                            customer_list = stripe.Customer.list(email=profile_email, limit=5)
+                            for customer_obj in (_sg(customer_list, "data", []) or []):
+                                cid = _sg(customer_obj, "id")
+                                if cid and cid not in candidate_customers:
+                                    candidate_customers.append(cid)
+                        except Exception as email_lookup_err:
+                            print(f"  ⚠️ [INIT-SUB] No-row email lookup warning: {email_lookup_err}")
+
+                    recovered_sub = None
+                    recovered_customer = None
+                    for customer_id in candidate_customers:
+                        for target_status in ("active", "trialing"):
+                            try:
+                                cust_subs = stripe.Subscription.list(customer=customer_id, status=target_status, limit=1)
+                                subs_data = _sg(cust_subs, "data", []) or []
+                                if subs_data:
+                                    recovered_sub = subs_data[0]
+                                    recovered_customer = customer_id
+                                    break
+                            except Exception:
+                                pass
+                        if recovered_sub:
+                            break
+
+                    if recovered_sub:
+                        recovered_sub_id = _normalize_stripe_subscription_id(recovered_sub)
+                        recovered_plan = _resolve_plan_from_stripe_subscription(recovered_sub)
+                        recovered_status = str(_sg(recovered_sub, "status") or "").lower()
+                        if recovered_sub_id and recovered_plan and recovered_status in ("active", "trialing"):
+                            recovered_payment_date = _resolve_payment_date(_sg(recovered_sub, "created"))
+                            recovered_period_end = _coerce_stripe_timestamp(_sg(recovered_sub, "current_period_end"))
+                            _sub_upsert(supabase_client, user_id, {
+                                "user_id": user_id,
+                                "plan_tier": recovered_plan,
+                                "plan": True,
+                                "paid": True,
+                                "status": "active",
+                                "subscription_status": "active",
+                                "payment_date": recovered_payment_date,
+                                "stripe_customer_id": recovered_customer,
+                                "stripe_subscription_id": recovered_sub_id,
+                                "current_period_end": _stripe_ts_to_iso(recovered_period_end) if recovered_period_end else None,
+                                "updated_at": datetime.utcnow().isoformat(),
+                            })
+                            try:
+                                supabase_client.table("user_profiles").update({
+                                    "stripe_customer_id": recovered_customer,
+                                    "stripe_subscription_id": recovered_sub_id,
+                                    "subscription_plan": recovered_plan,
+                                    "subscription_tier": recovered_plan,
+                                    "subscription_status": "active",
+                                    "updated_at": datetime.utcnow().isoformat(),
+                                }).eq("id", user_id).execute()
+                            except Exception:
+                                pass
+
+                            subscription_data = {
+                                'has_subscription': True,
+                                'plan': recovered_plan,
+                                'paid': True,
+                                'status': 'active',
+                                'subscription_status': 'active',
+                                'payment_date': recovered_payment_date,
+                                'started_at': _stripe_ts_to_iso(_coerce_stripe_timestamp(_sg(recovered_sub, 'start_date'))) or _stripe_ts_to_iso(_coerce_stripe_timestamp(_sg(recovered_sub, 'created'))),
+                                'current_period_end': _stripe_ts_to_iso(recovered_period_end) if recovered_period_end else None,
+                                'capabilities': capabilities.get(recovered_plan, {}),
+                            }
+                        else:
+                            subscription_data = _inactive_subscription_payload(no_access_message)
+                    else:
+                        subscription_data = _inactive_subscription_payload(no_access_message)
+                except Exception as no_row_recover_err:
+                    print(f"  ⚠️ [INIT-SUB] No-row Stripe recovery warning: {no_row_recover_err}")
+                    subscription_data = _inactive_subscription_payload(no_access_message)
         except Exception as e:
             print(f"  ⚠️ Subscription fetch error: {e}")
 
