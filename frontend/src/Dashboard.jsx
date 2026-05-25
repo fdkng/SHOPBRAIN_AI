@@ -7602,9 +7602,37 @@ analytics.subscribe("product_added_to_cart", (event) => {
                     ) : (
                       <div className="bg-white rounded-lg p-6 border border-[#E8E8EE] text-center">
                         <p className="text-[#6A6A85] mb-4">{t('noActiveSubscription')}</p>
-                        <button onClick={() => { clearStatus('change-plan'); setPendingPlanConfirm(null); setShowSettingsModal(false); setShowPlanMenu(true) }} className="bg-[#FF6B35] hover:bg-[#E85A28] px-6 py-3 rounded-lg text-white font-semibold">
+                        <button onClick={() => { clearStatus('change-plan'); setPendingPlanConfirm(null); setShowSettingsModal(false); setShowPlanMenu(true) }} className="bg-[#FF6B35] hover:bg-[#E85A28] px-6 py-3 rounded-lg text-white font-semibold w-full mb-3">
                           {t('subscribeToPlan')}
                         </button>
+                        {/* Recovery button for users who paid but subscription isn't recognized */}
+                        <button
+                          onClick={async () => {
+                            setStatus('billing', 'info', 'Recherche de votre abonnement Stripe...')
+                            try {
+                              const session = await getCachedSession()
+                              if (!session) { setStatus('billing', 'error', t('sessionExpiredReconnect')); return }
+                              const resp = await fetch(`${API_URL}/api/subscription/recover`, {
+                                method: 'POST',
+                                headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' }
+                              })
+                              const data = await resp.json().catch(() => ({}))
+                              if (data?.success) {
+                                setStatus('billing', 'success', `✅ Abonnement restauré : ${(data.plan || '').toUpperCase()}`)
+                                resetSubscriptionClientCaches()
+                                await initializeUser(true)
+                              } else {
+                                setStatus('billing', 'error', data?.message || 'Aucun abonnement actif trouvé dans Stripe.')
+                              }
+                            } catch (err) {
+                              setStatus('billing', 'error', formatUserFacingError(err, 'Erreur lors de la récupération.'))
+                            }
+                          }}
+                          className="text-sm text-[#0D9488] hover:text-[#0F766E] underline underline-offset-2 mt-1"
+                        >
+                          J&apos;ai déjà payé — Récupérer mon abonnement
+                        </button>
+                        {renderStatus('billing')}
                       </div>
                     )}
                   </div>

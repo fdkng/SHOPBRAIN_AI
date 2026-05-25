@@ -1666,9 +1666,9 @@ def _is_paid_subscription_row(row: dict | None) -> bool:
     raw_plan = row.get("plan")
     paid = raw_paid is True or str(raw_paid).lower().strip() in ("true", "1")
     plan_ok = raw_plan is True or str(raw_plan).lower().strip() in ("true", "1")
-    # Accept both 'active' and 'cancelling' (user paid, just scheduled to cancel at period end)
+    # Accept active, cancelling, past_due (payment failed but grace period still active)
     # period_is_valid check removed — the columns end_date/current_period_end don't exist in Supabase
-    return status in ("active", "cancelling") and (paid or plan_ok)
+    return status in ("active", "cancelling", "past_due") and (paid or plan_ok)
 
 
 def _inactive_subscription_payload(message: str | None = None) -> dict:
@@ -2082,7 +2082,7 @@ async def fast_init(request: Request):
             # Step 1: Read from DB
             sub_row = None
             try:
-                sub_result = supabase_client.table("subscriptions").select("*").eq("user_id", user_id).in_("status", ["active", "cancelling"]).order("updated_at", desc=True).limit(1).execute()
+                sub_result = supabase_client.table("subscriptions").select("*").eq("user_id", user_id).in_("status", ["active", "cancelling", "past_due"]).order("updated_at", desc=True).limit(1).execute()
                 if sub_result.data:
                     sub_row = sub_result.data[0]
                 else:
@@ -2144,20 +2144,28 @@ async def fast_init(request: Request):
                                     print(f"  ⚠️ [INIT-SUB] DB sync warning: {sync_err}")
                             elif stripe_verified_plan:
                                 plan = stripe_verified_plan  # Use Stripe value even if same (confirms accuracy)
-                            # If subscription is no longer active in Stripe, deny access
-                            if stripe_live_status not in ('active', 'trialing'):
+                            # If subscription is truly canceled/unpaid in Stripe, deny access
+                            # NOTE: past_due = payment failed but still in grace period → keep access
+                            # NOTE: paused = temporarily paused → keep access (don't permanently deactivate)
+                            _TERMINAL_STATUSES = ('canceled', 'unpaid')
+                            if stripe_live_status not in ('active', 'trialing', 'past_due', 'paused'):
                                 print(f"  ⚠️ [INIT-SUB] Stripe says status={stripe_live_status}, denying access")
-                                try:
-                                    supabase_client.table("subscriptions").update({
-                                        "status": "inactive", "subscription_status": "inactive",
-                                        "paid": False, "plan": False,
-                                        "updated_at": datetime.utcnow().isoformat()
-                                    }).eq("id", sub_row.get("id")).execute()
-                                except Exception:
-                                    pass
+                                if stripe_live_status in _TERMINAL_STATUSES:
+                                    # Only permanently deactivate DB on truly terminal statuses
+                                    try:
+                                        supabase_client.table("subscriptions").update({
+                                            "status": "inactive", "subscription_status": "inactive",
+                                            "paid": False, "plan": False,
+                                            "updated_at": datetime.utcnow().isoformat()
+                                        }).eq("id", sub_row.get("id")).execute()
+                                    except Exception:
+                                        pass
                                 subscription_data = _inactive_subscription_payload('Subscription no longer active in Stripe.')
                                 # Skip to end
                                 plan = None
+                            elif stripe_live_status == 'past_due':
+                                print(f"  ⚠️ [INIT-SUB] Stripe past_due — granting access with warning")
+                                sub_status = 'past_due'
                         except Exception as stripe_verify_err:
                             if _is_stripe_not_found_error(stripe_verify_err):
                                 # Subscription/customer was DELETED in Stripe — deny access
@@ -2242,7 +2250,7 @@ async def fast_init(request: Request):
                         try:
                             stripe_sub = stripe.Subscription.retrieve(stripe_sub_id)
                             stripe_status = str(_sg(stripe_sub, "status", "")).lower()
-                            if stripe_status in ('active', 'trialing'):
+                            if stripe_status in ('active', 'trialing', 'past_due'):
                                 # Resolve plan from Stripe
                                 healed_plan = _resolve_plan_from_stripe_subscription(stripe_sub)
                                 if healed_plan:
@@ -2335,7 +2343,7 @@ async def fast_init(request: Request):
                     recovered_sub = None
                     recovered_customer = None
                     for customer_id in candidate_customers:
-                        for target_status in ("active", "trialing"):
+                        for target_status in ("active", "trialing", "past_due"):
                             try:
                                 cust_subs = stripe.Subscription.list(customer=customer_id, status=target_status, limit=1)
                                 subs_data = _sg(cust_subs, "data", []) or []
@@ -2352,7 +2360,7 @@ async def fast_init(request: Request):
                         recovered_sub_id = _normalize_stripe_subscription_id(recovered_sub)
                         recovered_plan = _resolve_plan_from_stripe_subscription(recovered_sub)
                         recovered_status = str(_sg(recovered_sub, "status") or "").lower()
-                        if recovered_sub_id and recovered_plan and recovered_status in ("active", "trialing"):
+                        if recovered_sub_id and recovered_plan and recovered_status in ("active", "trialing", "past_due"):
                             recovered_payment_date = _resolve_payment_date(_sg(recovered_sub, "created"))
                             recovered_period_end = _coerce_stripe_timestamp(_sg(recovered_sub, "current_period_end"))
                             _sub_upsert(supabase_client, user_id, {
@@ -12497,7 +12505,7 @@ async def check_subscription_status(request: Request):
             subscription = None
             try:
                 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-                sub_result = supabase.table("subscriptions").select("*").eq("user_id", user_id).in_("status", ["active", "cancelling"]).order("updated_at", desc=True).limit(1).execute()
+                sub_result = supabase.table("subscriptions").select("*").eq("user_id", user_id).in_("status", ["active", "cancelling", "past_due"]).order("updated_at", desc=True).limit(1).execute()
                 if sub_result.data:
                     subscription = sub_result.data[0]
                     print(f"  📋 [STATUS] DB row (active): id={subscription.get('id')}, plan_tier={subscription.get('plan_tier')}, paid={subscription.get('paid')}, status={subscription.get('status')}, payment_date={subscription.get('payment_date')}")
@@ -12555,17 +12563,20 @@ async def check_subscription_status(request: Request):
                                     pass
                             elif stripe_verified_plan:
                                 plan = stripe_verified_plan
-                            # Deny if Stripe says inactive
-                            if stripe_live_status not in ('active', 'trialing'):
+                            # Deny only if truly terminal — past_due/paused still grants access
+                            _STATUS_TERMINAL = ('canceled', 'unpaid')
+                            if stripe_live_status not in ('active', 'trialing', 'past_due', 'paused'):
                                 print(f"  ⚠️ [STATUS] Stripe says status={stripe_live_status}, denying")
-                                try:
-                                    supabase.table("subscriptions").update({
-                                        "status": "inactive", "subscription_status": "inactive",
-                                        "paid": False, "plan": False,
-                                        "updated_at": datetime.utcnow().isoformat()
-                                    }).eq("id", subscription.get("id")).execute()
-                                except Exception:
-                                    pass
+                                if stripe_live_status in _STATUS_TERMINAL:
+                                    # Only wipe DB on truly terminal statuses
+                                    try:
+                                        supabase.table("subscriptions").update({
+                                            "status": "inactive", "subscription_status": "inactive",
+                                            "paid": False, "plan": False,
+                                            "updated_at": datetime.utcnow().isoformat()
+                                        }).eq("id", subscription.get("id")).execute()
+                                    except Exception:
+                                        pass
                                 return {
                                     'success': True,
                                     'has_subscription': False,
@@ -12575,6 +12586,9 @@ async def check_subscription_status(request: Request):
                                     'subscription_status': 'inactive',
                                     'message': 'Subscription no longer active in Stripe',
                                 }
+                            elif stripe_live_status == 'past_due':
+                                print(f"  ⚠️ [STATUS] Stripe past_due — granting access with warning")
+                                sub_status = 'past_due'
                         except Exception as stripe_verify_err:
                             if _is_stripe_not_found_error(stripe_verify_err):
                                 print(f"  🗑️ [STATUS] Stripe resource deleted: {stripe_verify_err}")
@@ -14493,6 +14507,108 @@ async def get_interface_settings(request: Request):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+@app.post("/api/subscription/recover")
+async def recover_subscription(request: Request):
+    """🔧 Force-recover a paid subscription from Stripe when DB row is corrupted/missing.
+    Clears the init cache and does a full Stripe lookup by email + customer ID."""
+    user_id = get_user_id(request)
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        # Clear init cache so next /api/init does a fresh lookup
+        _init_cache.pop(user_id, None)
+
+        # Get user profile for email + existing stripe data
+        profile_res = supabase.table("user_profiles").select("email,stripe_customer_id").eq("id", user_id).limit(1).execute()
+        profile_row = profile_res.data[0] if profile_res.data else {}
+        profile_email = profile_row.get("email")
+        candidate_customers = []
+        if profile_row.get("stripe_customer_id"):
+            candidate_customers.append(profile_row["stripe_customer_id"])
+        if profile_email:
+            try:
+                customer_list = stripe.Customer.list(email=profile_email, limit=5)
+                for c in (_sg(customer_list, "data", []) or []):
+                    cid = _sg(c, "id")
+                    if cid and cid not in candidate_customers:
+                        candidate_customers.append(cid)
+            except Exception as e:
+                print(f"  ⚠️ [RECOVER] Email customer lookup warning: {e}")
+
+        if not candidate_customers:
+            return {"success": False, "message": "No Stripe customer found for this account."}
+
+        recovered_sub = None
+        recovered_customer = None
+        for cid in candidate_customers:
+            for target_status in ("active", "trialing", "past_due"):
+                try:
+                    subs = stripe.Subscription.list(customer=cid, status=target_status, limit=1)
+                    data = _sg(subs, "data", []) or []
+                    if data:
+                        recovered_sub = data[0]
+                        recovered_customer = cid
+                        break
+                except Exception:
+                    pass
+            if recovered_sub:
+                break
+
+        if not recovered_sub:
+            return {"success": False, "message": "No active subscription found in Stripe for this account."}
+
+        recovered_sub_id = _normalize_stripe_subscription_id(recovered_sub)
+        recovered_plan = _resolve_plan_from_stripe_subscription(recovered_sub)
+        recovered_status = str(_sg(recovered_sub, "status") or "").lower()
+
+        if not recovered_sub_id or not recovered_plan:
+            return {"success": False, "message": "Could not resolve plan from Stripe subscription."}
+
+        recovered_period_end = _coerce_stripe_timestamp(_sg(recovered_sub, "current_period_end"))
+        recovered_payment_date = _resolve_payment_date(_sg(recovered_sub, "created"))
+
+        # Upsert the subscription row with correct data
+        _sub_upsert(supabase, user_id, {
+            "user_id": user_id,
+            "plan_tier": recovered_plan,
+            "plan": True,
+            "paid": True,
+            "status": "active",
+            "subscription_status": "active",
+            "payment_date": recovered_payment_date,
+            "stripe_customer_id": recovered_customer,
+            "stripe_subscription_id": recovered_sub_id,
+            "current_period_end": _stripe_ts_to_iso(recovered_period_end) if recovered_period_end else None,
+            "updated_at": datetime.utcnow().isoformat(),
+        })
+
+        # Sync user_profiles
+        try:
+            supabase.table("user_profiles").update({
+                "stripe_customer_id": recovered_customer,
+                "stripe_subscription_id": recovered_sub_id,
+                "subscription_plan": recovered_plan,
+                "subscription_tier": recovered_plan,
+                "subscription_status": "active",
+                "updated_at": datetime.utcnow().isoformat(),
+            }).eq("id", user_id).execute()
+        except Exception:
+            pass
+
+        print(f"✅ [RECOVER] Restored subscription for user {user_id}: plan={recovered_plan}, sub_id={recovered_sub_id}")
+        return {
+            "success": True,
+            "plan": recovered_plan,
+            "status": "active",
+            "stripe_subscription_id": recovered_sub_id,
+            "message": f"Subscription successfully restored ({recovered_plan.upper()}).",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ [RECOVER] Error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
 @app.post("/api/subscription/cancel")
 async def cancel_subscription(request: Request):
     """Annule l'abonnement à la fin de la période de facturation"""
@@ -14577,7 +14693,7 @@ async def switch_plan_inline(request: Request, _override_plan: str | None = None
             supabase.table("subscriptions")
             .select("*")
             .eq("user_id", user_id)
-            .in_("status", ["active", "cancelling"])
+            .in_("status", ["active", "cancelling", "past_due"])
             .order("updated_at", desc=True)
             .limit(1)
             .execute()
