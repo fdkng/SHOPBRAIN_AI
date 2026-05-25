@@ -1394,6 +1394,11 @@ PRICE_TO_TIER = {
     "price_1SQfzmPSvADOSbOzpxoK8hG3": "standard",
     "price_1SQg0xPSvADOSbOzrZbOGs06": "pro",
     "price_1SQg3CPSvADOSbOzHXSoDkGN": "premium",
+    # New CAD prices (added May 2026)
+    "price_1TSiPbPSvADOSbOzQ2VdVeII": "pro",
+    "price_1TSiO8PSvADOSbOzQBuDLKqr": "standard",
+    "price_1TSiKwPSvADOSbOz1u7GmrkY": "standard",
+    "price_1TSiBTPSvADOSbOzFHAp13AD": "standard",
 }
 
 
