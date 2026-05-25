@@ -2100,11 +2100,25 @@ async def fast_init(request: Request):
                 paid_flag = _is_paid_subscription_row(sub_row)
                 plan = tier_map.get(str(raw_tier).lower()) if raw_tier else None
 
+                # If plan_tier is missing from DB but we have a stripe sub_id, try to resolve plan from Stripe inline
+                if not plan and sub_row.get('stripe_subscription_id'):
+                    try:
+                        _tmp_sub = stripe.Subscription.retrieve(_normalize_stripe_subscription_id(sub_row.get('stripe_subscription_id')), expand=['items'])
+                        plan = _resolve_plan_from_stripe_subscription(_tmp_sub)
+                        if plan:
+                            print(f"  🔄 [INIT-SUB] Resolved missing plan_tier from Stripe inline: {plan}")
+                            try:
+                                supabase_client.table("subscriptions").update({"plan_tier": plan, "updated_at": datetime.utcnow().isoformat()}).eq("id", sub_row.get("id")).execute()
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
                 print(f"  📋 [INIT-SUB] DB row found: plan_tier={raw_tier}, status={sub_status}, paid={paid_flag}, plan_resolved={plan}")
 
-                # Step 2: DECISION — if DB says paid=true + valid plan + active status → GRANT ACCESS
+                # Step 2: DECISION — if DB says paid=true + valid plan + active/cancelling/past_due → GRANT ACCESS
                 payment_date = sub_row.get('payment_date')
-                if paid_flag and plan and sub_status in ('active', 'cancelling'):
+                if paid_flag and plan and sub_status in ('active', 'cancelling', 'past_due'):
                     # CRITICAL: Always verify plan from Stripe (source of truth) when we have a sub ID
                     # This prevents stale DB plan_tier from showing the wrong plan after upgrades/downgrades
                     stripe_verified_plan = None
@@ -2301,17 +2315,12 @@ async def fast_init(request: Request):
                             else:
                                 print(f"  ⚠️ [INIT-SUB] Stripe auto-heal failed (transient, non-blocking): {stripe_err}")
 
-                    # If email search found zero customers at all, the Stripe account is empty
-                    # Proactively deactivate stale DB row to prevent ghost subscriptions
-                    if not healed and not (stripe_sub_id and str(stripe_sub_id).startswith("sub_")):
-                        # We searched Stripe thoroughly and found nothing — clean up the stale DB row
-                        _deactivate_subscription_row(supabase_client, sub_row.get("id"), "No active Stripe subscription found after exhaustive search", user_id=user_id)
-                        subscription_data = _inactive_subscription_payload('No active subscription found in Stripe.')
-
-                    elif not healed:
-                        # Sub ID was found but Stripe returned non-active status or retrieval failed
-                        print(f"  ❌ [INIT-SUB] ACCESS DENIED: paid={paid_flag}, plan={plan}, stripe_sub_id={stripe_sub_id}")
-                        subscription_data = _inactive_subscription_payload('Payment not yet validated. If you just paid, please wait a few seconds and refresh.')
+                    # IMPORTANT: NEVER wipe DB row just because Stripe search returned empty/failed.
+                    # Stripe API can be slow, rate-limited, or the customer_id may be mismatched.
+                    # Only _deactivate_subscription_row on explicit Stripe not-found errors (above).
+                    if not healed:
+                        print(f"  ⚠️ [INIT-SUB] Auto-heal could not confirm via Stripe — leaving DB unchanged, denying access gracefully")
+                        subscription_data = _inactive_subscription_payload('Payment not yet confirmed. If you just paid, please wait a few seconds and refresh.')
                         subscription_data['status'] = sub_status or 'inactive'
                         subscription_data['subscription_status'] = sub_status or 'inactive'
             else:
@@ -12747,13 +12756,13 @@ async def check_subscription_status(request: Request):
                                 }
                     except Exception as stripe_err:
                         if _is_stripe_not_found_error(stripe_err):
-                            print(f"  🗑️ [STATUS] Auto-heal: Stripe resource deleted: {stripe_err}")
-                            _deactivate_subscription_row(supabase, subscription.get("id"), f"Auto-heal: Stripe resource deleted", user_id=user_id)
+                            print(f"  🗑️ [STATUS] Auto-heal: Stripe resource explicitly deleted: {stripe_err}")
+                            _deactivate_subscription_row(supabase, subscription.get("id"), f"Status endpoint: Stripe resource explicitly deleted", user_id=user_id)
                         else:
                             print(f"  ⚠️ [STATUS] Stripe auto-heal failed (transient, non-blocking): {stripe_err}")
 
-                # Auto-heal failed or no stripe_sub_id → deny
-                print(f"  ❌ [STATUS] ACCESS DENIED: paid={paid_flag}, plan={plan}, stripe_sub_id={stripe_sub_id}")
+                # Auto-heal failed or no stripe_sub_id → deny gracefully WITHOUT wiping DB
+                print(f"  ⚠️ [STATUS] Could not confirm via Stripe — leaving DB unchanged")
                 return {
                     'success': True,
                     'has_subscription': False,
@@ -12761,7 +12770,7 @@ async def check_subscription_status(request: Request):
                     'paid': False,
                     'status': sub_status or 'inactive',
                     'subscription_status': sub_status or 'inactive',
-                    'message': 'Payment not yet validated. If you just paid, please wait a few seconds and refresh.',
+                    'message': 'Payment not yet confirmed. If you just paid, please wait a few seconds and refresh.',
                 }
 
             # No row at all
